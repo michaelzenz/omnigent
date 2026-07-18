@@ -669,6 +669,8 @@ class HostProcess:
         self._watcher_tasks: set[asyncio.Task[None]] = set()
         # Strong ref to the orphan-reaper task (see :meth:`_orphan_reaper_loop`).
         self._reaper_task: asyncio.Task[None] | None = None
+        # Strong ref to the ambient Codex rollout mirror task.
+        self._codex_ambient_task: asyncio.Task[None] | None = None
         # Number of host-owned ``subprocess`` operations (e.g. the git worktree
         # commands in :mod:`omnigent.host.git_worktree`) currently in flight.
         # The orphan reaper skips its sweep while this is >0 so it never
@@ -1776,6 +1778,16 @@ class HostProcess:
         self._reaper_task = asyncio.create_task(
             self._orphan_reaper_loop(), name="host-orphan-reaper"
         )
+        from omnigent.host.codex_ambient_bridge import (
+            codex_ambient_sync_enabled,
+            run_codex_ambient_bridge,
+        )
+
+        if codex_ambient_sync_enabled():
+            self._codex_ambient_task = asyncio.create_task(
+                run_codex_ambient_bridge(self._server_url),
+                name="host-codex-ambient-bridge",
+            )
         backoff = _RECONNECT_BASE_S
         try:
             while True:
@@ -1847,6 +1859,11 @@ class HostProcess:
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
+            if self._codex_ambient_task is not None:
+                self._codex_ambient_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._codex_ambient_task
+                self._codex_ambient_task = None
             if self._reaper_task is not None:
                 self._reaper_task.cancel()
                 self._reaper_task = None

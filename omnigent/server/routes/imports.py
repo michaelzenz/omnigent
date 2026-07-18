@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from omnigent.session_import import (
     IMPORT_SOURCE_LABEL_KEY,
     ImportSource,
     title_from_items,
+    import_conversation_id,
 )
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.conversation_store import ConversationAlreadyExistsError
@@ -85,12 +85,6 @@ class _ImportLockEntry:
 
 _IMPORT_LOCKS: dict[tuple[ImportSource, str], _ImportLockEntry] = {}
 _IMPORT_LOCKS_GUARD = threading.Lock()
-
-
-def _import_conversation_id(source: ImportSource, external_session_id: str) -> str:
-    """Derive one stable database identity for an imported source session."""
-    value = f"import:{source}:{external_session_id}"
-    return hashlib.sha256(value.encode()).hexdigest()[:32]
 
 
 async def _serialize_source_import(body: ImportSessionRequest) -> AsyncIterator[None]:
@@ -172,7 +166,7 @@ def create_imports_router(
                 title=title_from_items(items),
                 agent_id=agent_id,
                 workspace=body.workspace,
-                conversation_id=_import_conversation_id(body.source, body.external_session_id),
+                conversation_id=import_conversation_id(body.source, body.external_session_id),
             )
         except ConversationAlreadyExistsError as exc:
             raise OmnigentError(

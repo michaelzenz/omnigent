@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -38,6 +39,12 @@ class LocalSessionImport:
     def title(self) -> str | None:
         """Return a sidebar title derived from the first user message."""
         return title_from_items(self.items)
+
+
+def import_conversation_id(source: ImportSource, external_session_id: str) -> str:
+    """Derive the stable Omnigent session id for one imported source session."""
+    value = f"import:{source}:{external_session_id}"
+    return hashlib.sha256(value.encode()).hexdigest()[:32]
 
 
 def title_from_items(items: Sequence[NewConversationItem]) -> str | None:
