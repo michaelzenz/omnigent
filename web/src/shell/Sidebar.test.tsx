@@ -177,6 +177,27 @@ function showSharedTab() {
   fireEvent.mouseDown(screen.getByTestId("sidebar-tab-shared"), { button: 0 });
 }
 
+function showPuppyGardenTab() {
+  fireEvent.click(screen.getByTestId("sidebar-tab-puppy-garden"));
+}
+
+function renderSidebarWithRoutes(initialEntry = "/") {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          <Routes>
+            <Route path="/" element={<Sidebar open onClose={vi.fn()} />} />
+            <Route path="/puppy-garden" element={<Sidebar open onClose={vi.fn()} />} />
+            <Route path="/c/:conversationId" element={<Sidebar open onClose={vi.fn()} />} />
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   useConvMock.mockReset();
   localStorage.clear();
@@ -436,9 +457,48 @@ describe("Sidebar tabs", () => {
     renderSidebar();
     expect(screen.queryByTestId("sidebar-tab-mine")).toBeNull();
     expect(screen.queryByTestId("sidebar-tab-shared")).toBeNull();
+    expect(screen.getByTestId("sidebar-tab-puppy-garden")).toBeInTheDocument();
     // Falls back to the owned list; the shared row never appears.
     expect(screen.getByText("conv_mine")).toBeInTheDocument();
     expect(screen.queryByText("conv_shared")).toBeNull();
+  });
+
+  it("renders PuppyGarden between New session and Search", () => {
+    mockConversations([conv("conv_mine", "Claude Code")]);
+    renderSidebar();
+
+    const newSession = screen.getByTestId("new-chat-button");
+    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
+    const search = screen.getByTestId("sidebar-search-button");
+
+    expect(newSession.compareDocumentPosition(puppyGarden)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(puppyGarden.compareDocumentPosition(search)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(puppyGarden).toHaveAttribute("href", "/puppy-garden");
+  });
+
+  it("keeps PuppyGarden selected when My sessions tab is clicked", () => {
+    mockConversations([conv("conv_mine", "Claude Code")]);
+    renderSidebarWithRoutes("/");
+
+    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
+    showPuppyGardenTab();
+    expect(puppyGarden).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.mouseDown(screen.getByTestId("sidebar-tab-mine"), { button: 0 });
+    expect(puppyGarden).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("leaves PuppyGarden when a session row is clicked", () => {
+    mockConversations([conv("conv_mine", "Claude Code")]);
+    renderSidebarWithRoutes("/puppy-garden");
+
+    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
+    expect(puppyGarden).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByRole("link", { name: /conv_mine/ }));
+    expect(puppyGarden).toHaveAttribute("aria-selected", "false");
   });
 
   it("gives a pinned shared session a Pinned section on the Shared tab, not My sessions", () => {

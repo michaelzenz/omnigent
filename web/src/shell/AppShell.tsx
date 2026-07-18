@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Outlet, useParams, useSearchParams } from "@/lib/routing";
+import { Outlet, useLocation, useParams, useSearchParams } from "@/lib/routing";
 import { useConversations } from "@/hooks/useConversations";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
@@ -144,6 +144,9 @@ export function AppShell() {
   // Read early: the conversationId scopes the per-session workspace state
   // (rail open/width/tab/open files) used throughout this component.
   const { conversationId } = useParams<{ conversationId: string }>();
+  const location = useLocation();
+  const isPuppyGardenPage =
+    location.pathname.split("/").filter(Boolean).at(-1) === "puppy-garden";
   const [fileViewerCommentsOpen, setFileViewerCommentsOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>(() =>
     conversationId ? (readSessionWorkspaceState(conversationId).rightRailTab ?? "files") : "files",
@@ -1255,9 +1258,15 @@ export function AppShell() {
               onOpenSearch={() => setCommandPaletteOpen(true)}
             />
 
-            {/* Content region (everything right of the sidebar): a relative
-          flex row holding the chat+workspace group and the push panels
-          as siblings. */}
+            {/* Content region (everything right of the sidebar). PuppyGarden
+          uses a minimal main-only slot — it owns board + chat in
+          PuppyGardenShell and never mounts ChatHeader / WorkspacePanel. */}
+            {isPuppyGardenPage ? (
+              <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                {isElectronShell() && <UpdateBanner />}
+                <Outlet />
+              </main>
+            ) : (
             <div className="relative flex min-h-0 min-w-0 flex-1">
               {/* Chat + workspace group. The full-width header overlay is
             scoped to this group, so it spans the chat *and* the right
@@ -1273,50 +1282,50 @@ export function AppShell() {
                   panelOpen && !terminalFirst && "md:hidden",
                 )}
               >
-                <ChatHeader
-                  sidebarOpen={sidebarOpen}
-                  onOpenSidebar={() => setSidebarOpen(true)}
-                  isChildSession={isChildSession}
-                  parentSessionId={activeSession?.parentSessionId}
-                  conversationId={conversationId}
-                  boundAgent={boundAgent}
-                  canShare={canShare}
-                  shareDisabled={shareDisabled}
-                  shareDisabledReason={shareDisabledReason}
-                  onShare={() => setShareOpen(true)}
-                  hasAgentInfo={hasAgentInfo}
-                  onAgentInfo={() => setAgentInfoOpen(true)}
-                  hasHeaderMenu={hasHeaderMenu}
-                  showFilesPanel={showFilesPanel}
-                  hasRailContent={hasRailContent}
-                  rightPanelOpen={rightPanelOpen}
-                  onToggleRightPanel={toggleRightPanel}
-                  mobileMenu={{
-                    fileViewerOpen,
-                    panelOpen,
-                    terminalFirst,
-                    executionLogsOpen,
-                    filesPanelOpen,
-                    subagentsPanelOpen,
-                    shellsPanelOpen,
-                    todosPanelOpen,
-                    hideTerminalsTab,
-                    showShellsTab: railTabsAvailable.terminals,
-                    terminalsLength: railTerminals.length,
-                    todosSupported,
-                    todosCompleted,
-                    todosTotal: todos.length,
-                    debugMode,
-                    changedCount,
-                    subagentsWorking,
-                    agentCount,
-                    onOpenFiles: openFilesPanel,
-                    onOpenShells: openShellsPanel,
-                    onOpenSubagents: openSubagentsPanel,
-                    onOpenTodos: openTodosPanel,
-                    onOpenMainExecutionLog: openMainExecutionLog,
-                  }}
-                />
+                  <ChatHeader
+                    sidebarOpen={sidebarOpen}
+                    onOpenSidebar={() => setSidebarOpen(true)}
+                    isChildSession={isChildSession}
+                    parentSessionId={activeSession?.parentSessionId}
+                    conversationId={conversationId}
+                    boundAgent={boundAgent}
+                    canShare={canShare}
+                    shareDisabled={shareDisabled}
+                    shareDisabledReason={shareDisabledReason}
+                    onShare={() => setShareOpen(true)}
+                    hasAgentInfo={hasAgentInfo}
+                    onAgentInfo={() => setAgentInfoOpen(true)}
+                    hasHeaderMenu={hasHeaderMenu}
+                    showFilesPanel={showFilesPanel}
+                    hasRailContent={hasRailContent}
+                    rightPanelOpen={rightPanelOpen}
+                    onToggleRightPanel={toggleRightPanel}
+                    mobileMenu={{
+                      fileViewerOpen,
+                      panelOpen,
+                      terminalFirst,
+                      executionLogsOpen,
+                      filesPanelOpen,
+                      subagentsPanelOpen,
+                      shellsPanelOpen,
+                      todosPanelOpen,
+                      hideTerminalsTab,
+                      showShellsTab: railTabsAvailable.terminals,
+                      terminalsLength: railTerminals.length,
+                      todosSupported,
+                      todosCompleted,
+                      todosTotal: todos.length,
+                      debugMode,
+                      changedCount,
+                      subagentsWorking,
+                      agentCount,
+                      onOpenFiles: openFilesPanel,
+                      onOpenShells: openShellsPanel,
+                      onOpenSubagents: openSubagentsPanel,
+                      onOpenTodos: openTodosPanel,
+                      onOpenMainExecutionLog: openMainExecutionLog,
+                    }}
+                  />
                 <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                   {isElectronShell() && <UpdateBanner />}
                   <Outlet />
@@ -1464,6 +1473,7 @@ export function AppShell() {
                 </div>
               )}
             </div>
+            )}
           </div>
           {conversationId && (
             <PermissionsModal

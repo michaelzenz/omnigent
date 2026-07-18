@@ -1754,7 +1754,23 @@ export function resetLandingDraft(): void {
   landingDraft = null;
 }
 
-export function NewChatLandingScreen() {
+export type NewChatComposerProps = {
+  /** Navigate to `/c/:id` after session creation. Default true. */
+  navigateOnCreate?: boolean;
+  /** Called with the new session id when `navigateOnCreate` is false. */
+  onSessionCreated?: (sessionId: string) => void;
+  /** Focus the message textarea on mount. Default true. */
+  autoFocus?: boolean;
+  /** Tighter footer-tray spacing for narrow embeds (e.g. PuppyGarden sidebar). */
+  compactFooter?: boolean;
+};
+
+export function NewChatComposer({
+  navigateOnCreate = true,
+  onSessionCreated,
+  autoFocus = true,
+  compactFooter = false,
+}: NewChatComposerProps = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -1789,12 +1805,6 @@ export function NewChatLandingScreen() {
   const [pendingAgent, setPendingAgent] = useState<AgentBundleInput | null>(null);
   // Sentinel id for the pending custom agent in the picker dropdown.
   const PENDING_AGENT_ID = "__pending_custom_agent__";
-
-  // Surface element backing the iOS native server switcher overlay, which
-  // the in-session view shows too — the picker stays reachable while starting
-  // a new session. The hook hides it whenever the sidebar covers the surface.
-  const [landingSurface, setLandingSurface] = useState<HTMLElement | null>(null);
-  useNativeServerSwitcherForMainSurface(landingSurface, true);
 
   const [message, setMessage] = useState<string>(() => landingDraft?.message ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -2626,6 +2636,7 @@ export function NewChatLandingScreen() {
   const {
     mentionIndex,
     mentionedItems,
+    setMentionedItems,
     attachMention,
     openMentionDir,
     removeMentionedItem,
@@ -2941,7 +2952,14 @@ export function NewChatLandingScreen() {
       // doesn't resurrect what we just sent).
       submittedRef.current = true;
       landingDraft = null;
-      navigate(`/c/${data.id}`);
+      if (navigateOnCreate) {
+        navigate(`/c/${data.id}`);
+      } else {
+        onSessionCreated?.(data.id);
+        setMessage("");
+        setFiles([]);
+        setMentionedItems([]);
+      }
     } catch {
       setCreateError("Couldn't reach the server. Check your connection and try again.");
     } finally {
@@ -2972,25 +2990,8 @@ export function NewChatLandingScreen() {
   );
 
   return (
-    // pb-12 lifts the content slightly above the geometric center, where
-    // the hero reads better optically.
-    <div
-      ref={setLandingSurface}
-      className="flex flex-1 items-center justify-center"
-      data-testid="new-chat-landing"
-    >
-      {/* Padding lives inside the 840px cap, so the composer renders at
-          840 − 80 = 760px max on desktop. px-4 on phones (16px gutters)
-          keeps the composer from feeling cramped against the viewport
-          edges; widens to the full px-10 at the md breakpoint and up. */}
-      <div className="flex w-full max-w-[840px] flex-col items-center gap-8 px-4 pt-8 pb-16 md:select-none md:px-10">
-        <div className="flex flex-col items-center gap-3.5 sm:flex-row">
-          <OttoEyes className="h-18 w-auto shrink-0" />
-          <h1 className="text-center text-3xl font-medium tracking-[-0.03em] text-foreground sm:text-left">
-            What should we do?
-          </h1>
-        </div>
-        <div className="relative flex w-full flex-col gap-3">
+    <>
+      <div className="relative flex w-full flex-col gap-3">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -3134,7 +3135,7 @@ export function NewChatLandingScreen() {
               placeholder={pillSkills.length > 0 ? "" : "Describe a task to start a new session…"}
               aria-label="Describe a task to start a new session"
               rows={1}
-              autoFocus
+              autoFocus={autoFocus}
               data-testid="new-chat-landing-input"
               // Compose-pill text spec: SF Pro Text system stack at
               // 14px/20px. (Note: sub-16px inputs make mobile Safari
@@ -3328,7 +3329,12 @@ export function NewChatLandingScreen() {
               chip row can wrap on narrow screens — with a fixed h-16 the
               chips overflowed the viewport on phones, widening the whole
               page (#sidebar-wider-than-screen on the landing page). */}
-          <div className="relative z-0 -mt-9 flex w-full items-center rounded-b-2xl bg-tray/40 pt-8 pr-3 pb-2 pl-2">
+          <div
+            className={cn(
+              "relative flex w-full items-center rounded-b-2xl bg-tray/40 pr-3 pb-2 pl-2",
+              compactFooter ? "mt-1 pt-2" : "z-0 -mt-9 pt-8",
+            )}
+          >
             <div className="flex flex-wrap items-center gap-1">
               {/* Host chip */}
               <DropdownMenu
@@ -3843,7 +3849,6 @@ export function NewChatLandingScreen() {
             </p>
           )}
         </div>
-      </div>
 
       {/* Connect-host instructions, reachable from the host dropdown even when
           no hosts are online — the zero-host escape hatch. */}
@@ -3869,6 +3874,36 @@ export function NewChatLandingScreen() {
           setPickedHarness(null);
         }}
       />
+    </>
+  );
+}
+
+/** Full-page new-session landing at `/` — hero + {@link NewChatComposer}. */
+export function NewChatLandingScreen() {
+  const [landingSurface, setLandingSurface] = useState<HTMLElement | null>(null);
+  useNativeServerSwitcherForMainSurface(landingSurface, true);
+
+  return (
+    // pb-12 lifts the content slightly above the geometric center, where
+    // the hero reads better optically.
+    <div
+      ref={setLandingSurface}
+      className="flex flex-1 items-center justify-center"
+      data-testid="new-chat-landing"
+    >
+      {/* Padding lives inside the 840px cap, so the composer renders at
+          840 − 80 = 760px max on desktop. px-4 on phones (16px gutters)
+          keeps the composer from feeling cramped against the viewport
+          edges; widens to the full px-10 at the md breakpoint and up. */}
+      <div className="flex w-full max-w-[840px] flex-col items-center gap-8 px-4 pt-8 pb-16 md:select-none md:px-10">
+        <div className="flex flex-col items-center gap-3.5 sm:flex-row">
+          <OttoEyes className="h-18 w-auto shrink-0" />
+          <h1 className="text-center text-3xl font-medium tracking-[-0.03em] text-foreground sm:text-left">
+            What should we do?
+          </h1>
+        </div>
+        <NewChatComposer />
+      </div>
     </div>
   );
 }

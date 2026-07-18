@@ -109,7 +109,7 @@ import {
   useStopSession,
 } from "@/hooks/useConversations";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, tabsListVariants } from "@/components/ui/tabs";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isSingleUserMode } from "@/lib/capabilities";
 import { showToast } from "@/components/ui/toast";
@@ -207,14 +207,21 @@ interface SidebarProps {
  * mount path. Instead compare the active route's last non-empty path segment,
  * which is `inbox` in both standalone and embedded modes. Conversation ids are
  * `conv_…`-prefixed, so a chat route's leaf can never collide with `inbox`.
+ * Same pattern for the PuppyGarden board at `/puppy-garden`.
  */
-function useActiveNavItem(): { isNewChatPage: boolean; isInboxPage: boolean } {
+function useActiveNavItem(): {
+  isNewChatPage: boolean;
+  isInboxPage: boolean;
+  isPuppyGardenPage: boolean;
+} {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
-  const isInboxPage = useLocation().pathname.split("/").filter(Boolean).at(-1) === "inbox";
-  // Exclude inbox: it also has no `:conversationId`, so it would otherwise
-  // light up the "New session" button.
-  const isNewChatPage = activeConversationId == null && !isInboxPage;
-  return { isNewChatPage, isInboxPage };
+  const leaf = useLocation().pathname.split("/").filter(Boolean).at(-1);
+  const isInboxPage = leaf === "inbox";
+  const isPuppyGardenPage = leaf === "puppy-garden";
+  // Exclude inbox and PuppyGarden: both have no `:conversationId`, so they
+  // would otherwise light up the "New session" button.
+  const isNewChatPage = activeConversationId == null && !isInboxPage && !isPuppyGardenPage;
+  return { isNewChatPage, isInboxPage, isPuppyGardenPage };
 }
 
 /**
@@ -362,7 +369,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
   }
 
   // Which top-level nav button to highlight for the current route.
-  const { isNewChatPage, isInboxPage } = useActiveNavItem();
+  const { isNewChatPage, isInboxPage, isPuppyGardenPage } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -565,6 +572,27 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                 New session
               </Link>
             </Button>
+            {!selectionMode && (
+              <div className="mt-3">
+                <div className={cn(tabsListVariants(), "w-full")} role="tablist">
+                  <Link
+                    to="/puppy-garden"
+                    role="tab"
+                    aria-selected={isPuppyGardenPage}
+                    data-testid="sidebar-tab-puppy-garden"
+                    onClick={onNavClick}
+                    className={cn(
+                      "relative inline-flex h-7 flex-1 cursor-pointer items-center justify-center rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap transition-all",
+                      isPuppyGardenPage
+                        ? "bg-background text-foreground shadow-sm dark:bg-input/30"
+                        : "text-foreground/60 hover:text-foreground dark:text-muted-foreground",
+                    )}
+                  >
+                    <span className="min-w-0 truncate">PuppyGarden</span>
+                  </Link>
+                </div>
+              </div>
+            )}
             {selectionMode ? (
               <BulkActionBar
                 selectedIds={selectedIds}
