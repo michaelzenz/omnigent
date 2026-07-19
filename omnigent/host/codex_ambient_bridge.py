@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,8 +36,8 @@ from omnigent.ssh_remote import (
     ssh_remote_active_codex_rollout,
     ssh_remote_codex_rollouts,
     ssh_remote_file_size,
+    ssh_remote_path_exists,
     ssh_remote_rollout_to_tempfile,
-    ssh_run,
 )
 
 _logger = logging.getLogger(__name__)
@@ -412,11 +411,9 @@ async def _sync_tracked_rollout(
     )
 
 
-async def _remote_rollout_exists(alias: str, remote_path: str) -> bool:
+async def _remote_rollout_exists(profile: SshConnectionProfile, remote_path: str) -> bool:
     """Return whether a rollout file still exists on the remote host."""
-    quoted = shlex.quote(remote_path)
-    code, _, _ = await ssh_run(alias, f"test -f {quoted}")
-    return code == 0
+    return await ssh_remote_path_exists(profile, remote_path)
 
 
 async def _prune_deleted_remote_codex_sessions(
@@ -433,10 +430,10 @@ async def _prune_deleted_remote_codex_sessions(
     for state_key, tracked in list(state.threads.items()):
         if tracked.ssh_alias != profile.alias:
             continue
-        active = await ssh_remote_active_codex_rollout(profile.alias, tracked.thread_id)
+        active = await ssh_remote_active_codex_rollout(profile, tracked.thread_id)
         if active is not None:
             continue
-        if await _remote_rollout_exists(profile.alias, tracked.rollout_path):
+        if await _remote_rollout_exists(profile, tracked.rollout_path):
             continue
         try:
             await _delete_omnigent_session(client, session_id=tracked.session_id)
@@ -489,9 +486,9 @@ async def _ensure_remote_tracked_rollout(
 
     temp_path: Path | None = None
     try:
-        temp_path = await ssh_remote_rollout_to_tempfile(profile.alias, remote_path)
+        temp_path = await ssh_remote_rollout_to_tempfile(profile, remote_path)
         imported = load_codex_session_from_rollout(temp_path, thread_id)
-        remote_size = await ssh_remote_file_size(profile.alias, remote_path)
+        remote_size = await ssh_remote_file_size(profile, remote_path)
     except (OSError, SessionImportNotFoundError):
         return None
     finally:
@@ -534,14 +531,13 @@ async def _sync_remote_tracked_rollout(
     client: httpx.AsyncClient,
     *,
     tracked: _TrackedRollout,
+    profile: SshConnectionProfile,
 ) -> _TrackedRollout:
     """Tail one remote rollout and mirror any newly appended items."""
-    if tracked.ssh_alias is None:
-        return tracked
     temp_path: Path | None = None
     try:
         temp_path = await ssh_remote_rollout_to_tempfile(
-            tracked.ssh_alias,
+            profile,
             tracked.rollout_path,
             byte_offset=tracked.byte_offset,
         )
@@ -594,7 +590,7 @@ async def _poll_remote_codex_once(
         state = pruned
         changed = True
     try:
-        rollouts = await ssh_remote_codex_rollouts(profile.alias)
+        rollouts = await ssh_remote_codex_rollouts(profile)
     except OSError:
         _logger.warning("Failed to list remote Codex rollouts via %s", profile.alias, exc_info=True)
         return state, changed
@@ -609,7 +605,7 @@ async def _poll_remote_codex_once(
         if tracked is None:
             continue
         previous = state.threads.get(_tracked_state_key(tracked))
-        synced = await _sync_remote_tracked_rollout(client, tracked=tracked)
+        synced = await _sync_remote_tracked_rollout(client, tracked=tracked, profile=profile)
         if previous != synced:
             state.threads[_tracked_state_key(synced)] = synced
             changed = True

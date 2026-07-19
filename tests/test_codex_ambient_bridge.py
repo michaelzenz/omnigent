@@ -228,11 +228,7 @@ async def test_poll_codex_ambient_once_tails_new_items(tmp_path: Path) -> None:
         base_url="http://test",
         headers={HOST_AMBIENT_ID_HEADER: _HOST_ID},
     ) as client:
-        updated = await _poll_codex_ambient_once(
-            client,
-            state=state,
-            codex_home=tmp_path,
-        )
+        updated = await _poll_codex_ambient_once(client, state=state, codex_home=tmp_path)
 
     assert event_route.called
     event_body = json.loads(event_route.calls[0].request.content.decode())
@@ -301,11 +297,7 @@ async def test_poll_codex_ambient_once_deletes_removed_codex_session(tmp_path: P
         base_url="http://test",
         headers={HOST_AMBIENT_ID_HEADER: _HOST_ID},
     ) as client:
-        updated = await _poll_codex_ambient_once(
-            client,
-            state=state,
-            codex_home=tmp_path,
-        )
+        updated = await _poll_codex_ambient_once(client, state=state, codex_home=tmp_path)
 
     assert delete_route.called
     assert session_id not in updated.threads

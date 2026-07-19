@@ -1867,6 +1867,9 @@ class HostProcess:
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._codex_ambient_task
                 self._codex_ambient_task = None
+            from omnigent.ssh_session import shutdown_ssh_pool
+
+            await shutdown_ssh_pool()
             if self._reaper_task is not None:
                 self._reaper_task.cancel()
                 self._reaper_task = None
