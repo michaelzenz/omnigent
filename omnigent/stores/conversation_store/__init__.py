@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from omnigent.ambient_codex import AmbientCodexCursor, AmbientCodexTrack
 from omnigent.entities import (
     Agent,
     Conversation,
@@ -340,6 +341,42 @@ class ConversationStore(ABC):
         :param external_session_id: Source harness session id.
         :returns: The matching conversation, or ``None``.
         """
+        ...
+
+    @abstractmethod
+    def list_ambient_codex_tracks(self, poller_host_id: str) -> list[AmbientCodexTrack]:
+        """Return Codex ambient tracks owned by ``poller_host_id``."""
+        ...
+
+    @abstractmethod
+    def set_ambient_codex_on_import(
+        self,
+        conversation_id: str,
+        poller_host_id: str,
+        cursor: AmbientCodexCursor,
+    ) -> None:
+        """Claim ambient polling for a newly imported Codex session."""
+        ...
+
+    @abstractmethod
+    def update_ambient_codex_cursor(
+        self,
+        conversation_id: str,
+        poller_host_id: str,
+        cursor: AmbientCodexCursor,
+    ) -> bool:
+        """Advance ambient cursor when ``poller_host_id`` matches. Returns False if not owner."""
+        ...
+
+    @abstractmethod
+    def sync_ambient_codex(
+        self,
+        conversation_id: str,
+        poller_host_id: str,
+        items: list[NewConversationItem],
+        cursor: AmbientCodexCursor,
+    ) -> tuple[bool, list[ConversationItem]]:
+        """Append rollout items and advance the ambient cursor atomically."""
         ...
 
     @abstractmethod

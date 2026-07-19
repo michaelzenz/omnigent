@@ -23,6 +23,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import QueryableAttribute, Session, aliased
 from sqlalchemy.sql.selectable import Subquery
 
+from omnigent.ambient_codex import (
+    AmbientCodexCursor,
+    AmbientCodexTrack,
+    thread_id_from_external_session_id,
+)
 from omnigent._wrapper_labels import UI_MODE_LABEL_KEY, WRAPPER_LABEL_KEY
 from omnigent.db.converters import sql_agent_to_entity
 from omnigent.db.db_models import (
@@ -1058,6 +1063,108 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .limit(1)
             ).scalar_one_or_none()
         return self.get_conversation(conversation_id) if conversation_id is not None else None
+
+    def list_ambient_codex_tracks(self, poller_host_id: str) -> list[AmbientCodexTrack]:
+        """Return Codex ambient tracks owned by ``poller_host_id``."""
+        with self._session() as session:
+            rows = session.execute(
+                select(
+                    SqlConversationMetadata.id,
+                    SqlConversationMetadata.external_session_id,
+                    SqlConversationMetadata.ambient_byte_offset,
+                    SqlConversationMetadata.ambient_turn_id,
+                    SqlConversationMetadata.ambient_rollout_path,
+                    SqlConversationMetadata.ambient_connection_id,
+                    SqlConversationMetadata.workspace,
+                ).where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.ambient_poller_host_id == poller_host_id,
+                )
+            ).all()
+        tracks: list[AmbientCodexTrack] = []
+        for row in rows:
+            if row.external_session_id is None:
+                continue
+            if row.ambient_byte_offset is None or row.ambient_rollout_path is None:
+                continue
+            thread_id = thread_id_from_external_session_id(row.external_session_id)
+            if thread_id is None:
+                continue
+            tracks.append(
+                AmbientCodexTrack(
+                    session_id=row.id,
+                    external_session_id=row.external_session_id,
+                    thread_id=thread_id,
+                    byte_offset=int(row.ambient_byte_offset),
+                    turn_id=row.ambient_turn_id or "history",
+                    rollout_path=row.ambient_rollout_path,
+                    connection_id=row.ambient_connection_id,
+                    workspace=row.workspace,
+                )
+            )
+        return tracks
+
+    def set_ambient_codex_on_import(
+        self,
+        conversation_id: str,
+        poller_host_id: str,
+        cursor: AmbientCodexCursor,
+    ) -> None:
+        """Claim ambient polling for a newly imported Codex session."""
+        with self._session() as session:
+            meta = session.get(
+                SqlConversationMetadata, (current_workspace_id(), conversation_id)
+            )
+            if meta is None:
+                raise ValueError(f"conversation {conversation_id!r} has no metadata row")
+            existing = meta.ambient_poller_host_id
+            if existing is not None and existing != poller_host_id:
+                raise ValueError(
+                    f"conversation {conversation_id!r} already owned by host {existing!r}"
+                )
+            meta.ambient_poller_host_id = poller_host_id
+            meta.ambient_byte_offset = cursor.byte_offset
+            meta.ambient_turn_id = cursor.turn_id
+            meta.ambient_rollout_path = cursor.rollout_path
+            meta.ambient_connection_id = cursor.connection_id
+
+    def update_ambient_codex_cursor(
+        self,
+        conversation_id: str,
+        poller_host_id: str,
+        cursor: AmbientCodexCursor,
+    ) -> bool:
+        """Advance ambient cursor when ``poller_host_id`` matches."""
+        with self._session() as session:
+            meta = session.get(
+                SqlConversationMetadata, (current_workspace_id(), conversation_id)
+            )
+            if meta is None or meta.ambient_poller_host_id != poller_host_id:
+                return False
+            meta.ambient_byte_offset = cursor.byte_offset
+            meta.ambient_turn_id = cursor.turn_id
+            meta.ambient_rollout_path = cursor.rollout_path
+            meta.ambient_connection_id = cursor.connection_id
+            return True
+
+    def sync_ambient_codex(
+        self,
+        conversation_id: str,
+        poller_host_id: str,
+        items: list[NewConversationItem],
+        cursor: AmbientCodexCursor,
+    ) -> tuple[bool, list[ConversationItem]]:
+        """Append rollout items and advance the ambient cursor."""
+        with self._session() as session:
+            meta = session.get(
+                SqlConversationMetadata, (current_workspace_id(), conversation_id)
+            )
+            if meta is None or meta.ambient_poller_host_id != poller_host_id:
+                return False, []
+        persisted = self.append(conversation_id, items) if items else []
+        if not self.update_ambient_codex_cursor(conversation_id, poller_host_id, cursor):
+            return False, persisted
+        return True, persisted
 
     def get_runner_ids(self, conversation_ids: list[str]) -> dict[str, str | None]:
         """

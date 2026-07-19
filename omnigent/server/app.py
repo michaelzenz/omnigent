@@ -63,6 +63,7 @@ from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
 from omnigent.server.routes.harnesses import create_harnesses_router
+from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
@@ -2158,6 +2159,11 @@ def create_app(
         tags=["harnesses"],
     )
     app.include_router(
+        create_ssh_connections_router(auth_provider=auth_provider),
+        prefix="/v1",
+        tags=["ssh"],
+    )
+    app.include_router(
         create_terminal_attach_router(
             auth_provider=auth_provider,
             permission_store=permission_store,
@@ -2491,6 +2497,17 @@ def create_app(
                 permission_store=permission_store,
                 agent_store=agent_store,
                 agent_cache=agent_cache,
+            ),
+            prefix="/v1",
+            tags=["hosts"],
+        )
+        from omnigent.server.routes.ambient_sync import create_ambient_sync_router
+
+        app.include_router(
+            create_ambient_sync_router(
+                conversation_store,
+                host_store,
+                auth_provider=auth_provider,
             ),
             prefix="/v1",
             tags=["hosts"],

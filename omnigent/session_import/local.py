@@ -198,21 +198,11 @@ def _find_archived_codex_rollout(codex_home: Path, session_id: str) -> Path | No
     return max(matches, key=lambda path: path.stat().st_mtime) if matches else None
 
 
-def load_codex_session(
+def load_codex_session_from_rollout(
+    rollout_path: Path,
     session_id: str,
-    *,
-    codex_home: Path | None = None,
 ) -> LocalSessionImport:
-    """Load one Codex session from its local rollout JSONL file."""
-    configured_home = os.environ.get("CODEX_HOME")
-    home = codex_home or (Path(configured_home).expanduser() if configured_home else None)
-    home = home or Path.home() / ".codex"
-    rollout_path = _find_codex_rollout(home, session_id) or _find_archived_codex_rollout(
-        home, session_id
-    )
-    if rollout_path is None:
-        raise SessionImportNotFoundError(f"Codex session {session_id!r} was not found")
-
+    """Load one Codex session from a rollout JSONL file path."""
     workspace: str | None = None
     turn_id = "history"
     items: list[NewConversationItem] = []
@@ -251,6 +241,24 @@ def load_codex_session(
     )
 
 
+def load_codex_session(
+    session_id: str,
+    *,
+    codex_home: Path | None = None,
+) -> LocalSessionImport:
+    """Load one Codex session from its local rollout JSONL file."""
+    configured_home = os.environ.get("CODEX_HOME")
+    home = codex_home or (Path(configured_home).expanduser() if configured_home else None)
+    home = home or Path.home() / ".codex"
+    rollout_path = _find_codex_rollout(home, session_id) or _find_archived_codex_rollout(
+        home, session_id
+    )
+    if rollout_path is None:
+        raise SessionImportNotFoundError(f"Codex session {session_id!r} was not found")
+
+    return load_codex_session_from_rollout(rollout_path, session_id)
+
+
 def load_local_session(source: ImportSource, session_id: str) -> LocalSessionImport:
     """Load one local session from the selected first-party harness."""
     if source == "claude":
@@ -261,5 +269,6 @@ def load_local_session(source: ImportSource, session_id: str) -> LocalSessionImp
 __all__ = [
     "load_claude_session",
     "load_codex_session",
+    "load_codex_session_from_rollout",
     "load_local_session",
 ]

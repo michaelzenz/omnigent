@@ -13,6 +13,8 @@
  *   Workspace panel default for new chats, and UI/code font controls.
  * - **Git** — Git behavior, e.g. the default base branch pre-filled when
  *   naming a new worktree branch in the composer.
+ * - **Connection** — SSH profiles for remote machines, with automatic
+ *   connectivity checks.
  * - **Keyboard shortcuts** — the full shortcuts reference, shown inline.
  * - **Account** — only when the accounts auth provider is active. Absorbs
  *   the old sidebar AccountMenu: signed-in identity, change password, and
@@ -89,6 +91,7 @@ import {
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 import { absoluteTime } from "@/lib/relativeTime";
 import { useSettingsRoute } from "@/shell/settingsNav";
+import { ConnectionSettingsBody } from "@/shell/ConnectionSettingsSection";
 import {
   normalizeResolvedTheme,
   normalizeThemeMode,
@@ -213,6 +216,7 @@ export function SettingsPage() {
   return (
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       {section === "appearance" && <AppearanceSection />}
+      {section === "connection" && <ConnectionSection />}
       {section === "git" && <GitSection />}
       {section === "shortcuts" && <ShortcutsSection />}
       {section === "account" && hasAuthSession && <AccountSection />}
@@ -842,6 +846,18 @@ function AppearanceSection() {
 
         <UiCodeFontFamilyControl />
       </div>
+    </Section>
+  );
+}
+
+/** SSH connection profiles and connectivity checks. */
+function ConnectionSection() {
+  return (
+    <Section
+      title="Connection"
+      description="Add SSH config aliases for remote machines. Connections are tested using your local ~/.ssh/config. When Codex import is enabled, rollouts on that host are mirrored into Omnigent."
+    >
+      <ConnectionSettingsBody />
     </Section>
   );
 }

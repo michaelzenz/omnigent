@@ -11,6 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
+from omnigent.ambient_codex import AmbientCodexCursor, HOST_AMBIENT_ID_HEADER
 from omnigent.db.utils import builtin_agent_id
 from omnigent.entities import NewConversationItem, parse_item_data
 from omnigent.errors import ErrorCode, OmnigentError
@@ -18,6 +19,7 @@ from omnigent.native_coding_agents import native_coding_agent_for_harness
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
 from omnigent.server.routes._auth_helpers import require_access, require_user
 from omnigent.server.routes._content_type import require_json_content_type
+from omnigent.server.routes.sessions import _announce_session_added
 from omnigent.session_import import (
     IMPORT_EXTERNAL_SESSION_ID_LABEL_KEY,
     IMPORT_SOURCE_LABEL_KEY,
@@ -49,6 +51,15 @@ class ImportItemInput(BaseModel):
             ) from exc
 
 
+class ImportAmbientCodexInput(BaseModel):
+    """Initial ambient poll cursor for a newly imported Codex session."""
+
+    byte_offset: int = Field(ge=0)
+    turn_id: str = Field(default="history", min_length=1, max_length=128)
+    rollout_path: str = Field(min_length=1, max_length=2048)
+    connection_id: str | None = Field(default=None, max_length=64)
+
+
 class ImportSessionRequest(BaseModel):
     """Request body for importing one local harness session."""
 
@@ -56,6 +67,7 @@ class ImportSessionRequest(BaseModel):
     external_session_id: str = Field(min_length=1, max_length=128)
     workspace: str | None = Field(default=None, max_length=2048)
     items: list[ImportItemInput] = Field(min_length=1, max_length=100_000)
+    ambient_codex: ImportAmbientCodexInput | None = None
 
     @field_validator("external_session_id")
     @classmethod
@@ -128,6 +140,19 @@ def create_imports_router(
     ) -> ImportSessionResponse:
         """Import one normalized transcript, rejecting duplicate sources."""
         user_id = require_user(request, auth_provider)
+        poller_host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
+        if poller_host_id is not None:
+            poller_host_id = poller_host_id.strip() or None
+        if body.ambient_codex is not None and poller_host_id is None:
+            raise OmnigentError(
+                f"ambient_codex requires the {HOST_AMBIENT_ID_HEADER} header",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        if body.ambient_codex is not None and body.source != "codex":
+            raise OmnigentError(
+                "ambient_codex is only supported for codex imports",
+                code=ErrorCode.INVALID_INPUT,
+            )
         items = [item.to_item() for item in body.items]
         existing = await asyncio.to_thread(
             conversation_store.find_imported_conversation,
@@ -194,9 +219,23 @@ def create_imports_router(
                     conversation.id,
                     LEVEL_OWNER,
                 )
+            if body.ambient_codex is not None and poller_host_id is not None:
+                await asyncio.to_thread(
+                    conversation_store.set_ambient_codex_on_import,
+                    conversation.id,
+                    poller_host_id,
+                    AmbientCodexCursor(
+                        byte_offset=body.ambient_codex.byte_offset,
+                        turn_id=body.ambient_codex.turn_id,
+                        rollout_path=body.ambient_codex.rollout_path,
+                        connection_id=body.ambient_codex.connection_id,
+                    ),
+                )
         except Exception:
             await conversation_store.delete_conversation(conversation.id)
             raise
+
+        _announce_session_added(user_id, conversation.id)
 
         response.status_code = 201
         return ImportSessionResponse(

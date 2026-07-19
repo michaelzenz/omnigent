@@ -1785,7 +1785,10 @@ class HostProcess:
 
         if codex_ambient_sync_enabled():
             self._codex_ambient_task = asyncio.create_task(
-                run_codex_ambient_bridge(self._server_url),
+                run_codex_ambient_bridge(
+                    self._server_url,
+                    host_id=self._identity.host_id,
+                ),
                 name="host-codex-ambient-bridge",
             )
         backoff = _RECONNECT_BASE_S

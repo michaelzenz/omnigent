@@ -57,6 +57,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from omnigent.ambient_codex import AmbientCodexCursor, HOST_AMBIENT_ID_HEADER
 from omnigent.codex_native_elicitation import codex_elicitation_id
 from omnigent.cost_plan import (
     COST_CONTROL_LABEL_NAMESPACE,
@@ -347,6 +348,10 @@ _EXTERNAL_ASSISTANT_MESSAGE_TYPE: str = "external_assistant_message"
 # semantic item observed outside the Omnigent task runtime. Unlike a
 # normal ``message`` POST, this does not create or steer an agent task.
 _EXTERNAL_CONVERSATION_ITEM_TYPE: str = "external_conversation_item"
+
+# Batch sync from the Codex ambient bridge: append items and advance the
+# server-owned poll cursor in one request.
+_AMBIENT_CODEX_SYNC_TYPE: str = "ambient_codex_sync"
 
 # Internal input used by terminal-backed integrations to publish a live
 # assistant text delta observed outside the Omnigent task runtime. The
@@ -909,6 +914,7 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _STOP_SESSION_TYPE,
     _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
     _EXTERNAL_CONVERSATION_ITEM_TYPE,
+    _AMBIENT_CODEX_SYNC_TYPE,
     _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
     _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
     _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
@@ -5247,6 +5253,139 @@ async def _persist_external_conversation_item(
     )
     _drive_terminal_resolved_elicitation(session_id, persisted)
     return persisted.id
+
+
+def _parse_ambient_codex_sync_items(data: dict[str, object]) -> list[NewConversationItem]:
+    """Validate ambient_codex_sync item payloads."""
+    items_raw = data.get("items")
+    if items_raw is None:
+        return []
+    if not isinstance(items_raw, list):
+        raise OmnigentError(
+            "ambient_codex_sync requires array data.items",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    parsed: list[NewConversationItem] = []
+    for index, entry in enumerate(items_raw):
+        if not isinstance(entry, dict):
+            raise OmnigentError(
+                f"ambient_codex_sync data.items[{index}] must be an object",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        item_type = entry.get("type")
+        if not isinstance(item_type, str) or item_type not in ITEM_TYPE_TO_DATA_CLS:
+            raise OmnigentError(
+                f"ambient_codex_sync data.items[{index}] has unknown type",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        item_data = entry.get("data")
+        if not isinstance(item_data, dict):
+            raise OmnigentError(
+                f"ambient_codex_sync data.items[{index}] requires object data",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        response_id = entry.get("response_id")
+        if response_id is None:
+            response_id = generate_task_id()
+        if not isinstance(response_id, str) or not response_id.strip():
+            raise OmnigentError(
+                f"ambient_codex_sync data.items[{index}].response_id must be a non-empty string",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        if item_type == "function_call_output" and isinstance(item_data.get("output"), str):
+            item_data = {**item_data, "output": cap_tool_output(item_data["output"])}
+        try:
+            parsed.append(
+                NewConversationItem(
+                    type=item_type,
+                    response_id=response_id.strip(),
+                    data=parse_item_data(item_type, {"type": item_type, **item_data}),
+                )
+            )
+        except (ValueError, TypeError) as exc:
+            raise OmnigentError(
+                f"Invalid ambient_codex_sync data.items[{index}]: {exc}",
+                code=ErrorCode.INVALID_INPUT,
+            ) from exc
+    return parsed
+
+
+def _parse_ambient_codex_cursor(data: dict[str, object]) -> AmbientCodexCursor:
+    """Validate ambient_codex_sync cursor fields."""
+    byte_offset = data.get("byte_offset")
+    if not isinstance(byte_offset, int) or byte_offset < 0:
+        raise OmnigentError(
+            "ambient_codex_sync requires non-negative integer data.byte_offset",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    turn_id = data.get("turn_id")
+    if turn_id is None:
+        turn_id = "history"
+    if not isinstance(turn_id, str) or not turn_id.strip():
+        raise OmnigentError(
+            "ambient_codex_sync requires non-empty string data.turn_id",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    rollout_path = data.get("rollout_path")
+    if not isinstance(rollout_path, str) or not rollout_path.strip():
+        raise OmnigentError(
+            "ambient_codex_sync requires non-empty string data.rollout_path",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    connection_id = data.get("connection_id")
+    if connection_id is not None and (
+        not isinstance(connection_id, str) or not connection_id.strip()
+    ):
+        raise OmnigentError(
+            "ambient_codex_sync data.connection_id must be a non-empty string or null",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    return AmbientCodexCursor(
+        byte_offset=byte_offset,
+        turn_id=turn_id.strip(),
+        rollout_path=rollout_path.strip(),
+        connection_id=connection_id.strip() if isinstance(connection_id, str) else None,
+    )
+
+
+async def _persist_ambient_codex_sync(
+    session_id: str,
+    conv: Conversation,
+    body: SessionEventInput,
+    conversation_store: ConversationStore,
+    *,
+    poller_host_id: str,
+) -> list[str]:
+    """Persist a Codex ambient batch and advance the server-owned cursor."""
+    items = _parse_ambient_codex_sync_items(body.data)
+    cursor = _parse_ambient_codex_cursor(body.data)
+    ok, persisted = await asyncio.to_thread(
+        conversation_store.sync_ambient_codex,
+        session_id,
+        poller_host_id,
+        items,
+        cursor,
+    )
+    if not ok:
+        raise OmnigentError(
+            "This host is not the ambient poller for the session",
+            code=ErrorCode.FORBIDDEN,
+        )
+    item_ids: list[str] = []
+    for persisted_item in persisted:
+        await _seed_missing_title_from_user_message(
+            conv,
+            NewConversationItem(
+                type=persisted_item.type,
+                response_id=persisted_item.response_id,
+                data=persisted_item.data,
+                created_by=persisted_item.created_by,
+            ),
+            conversation_store,
+        )
+        _publish_external_conversation_item(session_id, persisted_item)
+        item_ids.append(persisted_item.id)
+    return item_ids
 
 
 def _is_kiro_native_session(conv: Conversation) -> bool:
@@ -19816,6 +19955,7 @@ def create_sessions_router(
             _STOP_SESSION_TYPE,
             _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
             _EXTERNAL_CONVERSATION_ITEM_TYPE,
+            _AMBIENT_CODEX_SYNC_TYPE,
             _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
             _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
             _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
@@ -20203,6 +20343,21 @@ def create_sessions_router(
                 created_by=_attribution_user(user_id),
             )
             return {"queued": False, "item_id": item_id}
+        if body.type == _AMBIENT_CODEX_SYNC_TYPE:
+            poller_host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
+            if poller_host_id is None or not poller_host_id.strip():
+                raise OmnigentError(
+                    f"ambient_codex_sync requires the {HOST_AMBIENT_ID_HEADER} header",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            item_ids = await _persist_ambient_codex_sync(
+                session_id,
+                conv,
+                body,
+                conversation_store,
+                poller_host_id=poller_host_id.strip(),
+            )
+            return {"queued": False, "item_ids": item_ids}
         if body.type == _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE:
             _publish_external_output_text_delta(session_id, body)
             return {"queued": False}

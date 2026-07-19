@@ -539,6 +539,12 @@ class SqlConversationMetadata(OmnigentBase):
     # Required when host_id is set; enforced by check constraint below.
     workspace: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     git_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Codex ambient bridge: poll cursor owned by one host daemon.
+    ambient_poller_host_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    ambient_byte_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
+    ambient_rollout_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    ambient_turn_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ambient_connection_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         CheckConstraint("kind IN (1, 2)", name="ck_conversation_metadata_kind"),
@@ -550,6 +556,11 @@ class SqlConversationMetadata(OmnigentBase):
         Index("ix_conversation_metadata_kind", "workspace_id", "kind", "id"),
         # Supports list_conversations_by_runner_id and get_runner_ids.
         Index("ix_conversation_metadata_runner_id", "workspace_id", "runner_id", "id"),
+        Index(
+            "ix_conversation_metadata_ambient_poller_host_id",
+            "workspace_id",
+            "ambient_poller_host_id",
+        ),
     )
 
 
