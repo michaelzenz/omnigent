@@ -221,6 +221,12 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
       }, DEBOUNCE_MS);
     };
 
+    const invalidateConversationLists = () => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["archived-project-names"] });
+    };
+
     // See commentsFingerprintsRef: invalidate `["comments", id]` (prefix —
     // covers the per-file variants too) when a session's fingerprint moves.
     const syncCommentsFingerprints = (items: SessionListWireItem[]) => {
@@ -242,6 +248,9 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
           return;
         case "hosts_changed":
           void queryClient.invalidateQueries({ queryKey: ["hosts"] });
+          return;
+        case "session_added":
+          invalidateConversationLists();
           return;
         case "removed":
           for (const id of frame.ids) commentsFingerprintsRef.current.delete(id);

@@ -1103,8 +1103,15 @@ def _discovery_key(user_id: str | None) -> str:
     :param user_id: Authenticated user id, e.g. ``"alice@example.com"``, or
         ``None`` in single-user / no-auth mode.
     :returns: ``user_id`` when set, else :data:`_SHARED_DISCOVERY_KEY`.
+        The reserved ``"local"`` single-user identity shares the same
+        discovery channel as ``None`` so host imports and browser tabs
+        converge on one fan-out key.
     """
-    return user_id if user_id is not None else _SHARED_DISCOVERY_KEY
+    from omnigent.server.auth import RESERVED_USER_LOCAL
+
+    if user_id is None or user_id == RESERVED_USER_LOCAL:
+        return _SHARED_DISCOVERY_KEY
+    return user_id
 
 
 def _announce_session_added(user_id: str | None, session_id: str) -> None:
@@ -15859,6 +15866,10 @@ def create_sessions_router(
                             items = await _fetch_watched_items([sid], user_id)
                             if items:
                                 await _send({"type": "changed", "items": items})
+                                # Nudge the client to reconcile immediately so
+                                # off-tab creates (ambient imports, CLI) appear
+                                # without waiting for the HTTP fallback poll.
+                                await _send({"type": "session_added", "session_id": sid})
                         except WebSocketDisconnect:
                             # Client gone mid-send — propagate to tear the stream down.
                             raise
@@ -15872,6 +15883,16 @@ def create_sessions_router(
                                 sid,
                                 exc_info=True,
                             )
+                            try:
+                                await _send({"type": "session_added", "session_id": sid})
+                            except WebSocketDisconnect:
+                                raise
+                            except Exception:  # noqa: BLE001
+                                _logger.warning(
+                                    "session-updates session_added fallback failed for %r",
+                                    sid,
+                                    exc_info=True,
+                                )
                 elif evt_type == "hosts_changed":
                     async with emit_lock:
                         try:
