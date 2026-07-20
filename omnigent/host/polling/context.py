@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 
+from omnigent.host.http_client import build_host_http_headers
 from omnigent.host.identity import CONFIG_PATH
 
 _POST_TIMEOUT_S = 30.0
@@ -24,9 +25,7 @@ class PollContext:
 
 def build_poll_http_client(server_url: str, *, host_id: str) -> httpx.AsyncClient:
     """Build the shared Omnigent HTTP client for host pollers."""
-    from omnigent.host.codex_ambient_bridge import _build_http_headers
-
-    headers = _build_http_headers(server_url, host_id=host_id)
+    headers = build_host_http_headers(server_url, host_id=host_id)
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
     return httpx.AsyncClient(
         base_url=server_url.rstrip("/"),
