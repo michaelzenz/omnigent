@@ -352,6 +352,7 @@ _EXTERNAL_CONVERSATION_ITEM_TYPE: str = "external_conversation_item"
 # Batch sync from the Codex ambient bridge: append items and advance the
 # server-owned poll cursor in one request.
 _AMBIENT_CODEX_SYNC_TYPE: str = "ambient_codex_sync"
+_AMBIENT_CURSOR_PROJECTS_SYNC_TYPE: str = "ambient_cursor_projects_sync"
 _AMBIENT_CURSOR_CLI_SYNC_TYPE: str = "ambient_cursor_cli_sync"
 _AMBIENT_CURSOR_IDE_SYNC_TYPE: str = "ambient_cursor_ide_sync"
 
@@ -917,6 +918,7 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
     _EXTERNAL_CONVERSATION_ITEM_TYPE,
     _AMBIENT_CODEX_SYNC_TYPE,
+    _AMBIENT_CURSOR_PROJECTS_SYNC_TYPE,
     _AMBIENT_CURSOR_CLI_SYNC_TYPE,
     _AMBIENT_CURSOR_IDE_SYNC_TYPE,
     _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
@@ -20396,7 +20398,11 @@ def create_sessions_router(
                 poller_host_id=poller_host_id.strip(),
             )
             return {"queued": False, "item_ids": item_ids}
-        if body.type in {_AMBIENT_CURSOR_CLI_SYNC_TYPE, _AMBIENT_CURSOR_IDE_SYNC_TYPE}:
+        if body.type in {
+            _AMBIENT_CURSOR_PROJECTS_SYNC_TYPE,
+            _AMBIENT_CURSOR_CLI_SYNC_TYPE,
+            _AMBIENT_CURSOR_IDE_SYNC_TYPE,
+        }:
             poller_host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
             if poller_host_id is None or not poller_host_id.strip():
                 raise OmnigentError(

@@ -130,14 +130,14 @@ def create_ambient_sync_router(
         }
 
     @router.get(
-        "/hosts/{host_id}/ambient/cursor-cli",
+        "/hosts/{host_id}/ambient/cursor-projects",
         response_model=AmbientCursorTracksResponse,
     )
-    async def list_cursor_cli_ambient_tracks(
+    async def list_cursor_projects_ambient_tracks(
         request: Request,
         host_id: str,
     ) -> dict[str, Any]:
-        """Return Cursor CLI ambient tracks owned by ``host_id``."""
+        """Return Cursor project ambient tracks owned by ``host_id``."""
         await _require_host_access(
             request,
             host_id,
@@ -147,31 +147,7 @@ def create_ambient_sync_router(
         tracks = await asyncio.to_thread(
             conversation_store.list_ambient_cursor_tracks,
             host_id,
-            "cursor-cli",
-        )
-        return {
-            "tracks": [_cursor_track_to_response(track).model_dump() for track in tracks],
-        }
-
-    @router.get(
-        "/hosts/{host_id}/ambient/cursor-ide",
-        response_model=AmbientCursorTracksResponse,
-    )
-    async def list_cursor_ide_ambient_tracks(
-        request: Request,
-        host_id: str,
-    ) -> dict[str, Any]:
-        """Return Cursor IDE ambient tracks owned by ``host_id``."""
-        await _require_host_access(
-            request,
-            host_id,
-            auth_provider=auth_provider,
-            host_store=host_store,
-        )
-        tracks = await asyncio.to_thread(
-            conversation_store.list_ambient_cursor_tracks,
-            host_id,
-            "cursor-ide",
+            "cursor-projects",
         )
         return {
             "tracks": [_cursor_track_to_response(track).model_dump() for track in tracks],

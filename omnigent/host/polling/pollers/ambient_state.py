@@ -13,42 +13,35 @@ from omnigent.entities import NewConversationItem
 from omnigent.session_import.models import ImportSource, import_conversation_id
 from omnigent.ssh_connections_store import SshConnectionProfile, read_ssh_connections
 
-AmbientImportSource = Literal["codex", "cursor-cli", "cursor-ide"]
+AmbientImportSource = Literal["codex", "cursor-projects"]
 
 _HYDRATE_ENDPOINT: dict[AmbientImportSource, str] = {
     "codex": "codex",
-    "cursor-cli": "cursor-cli",
-    "cursor-ide": "cursor-ide",
+    "cursor-projects": "cursor-projects",
 }
 _SYNC_EVENT_TYPE: dict[AmbientImportSource, str] = {
     "codex": "ambient_codex_sync",
-    "cursor-cli": "ambient_cursor_cli_sync",
-    "cursor-ide": "ambient_cursor_ide_sync",
+    "cursor-projects": "ambient_cursor_projects_sync",
 }
 _IMPORT_AMBIENT_KEY: dict[AmbientImportSource, str] = {
     "codex": "ambient_codex",
-    "cursor-cli": "ambient_track",
-    "cursor-ide": "ambient_track",
+    "cursor-projects": "ambient_track",
 }
 _IMPORT_PATH_KEY: dict[AmbientImportSource, str] = {
     "codex": "rollout_path",
-    "cursor-cli": "source_path",
-    "cursor-ide": "source_path",
+    "cursor-projects": "source_path",
 }
 _SYNC_PATH_KEY: dict[AmbientImportSource, str] = {
     "codex": "rollout_path",
-    "cursor-cli": "source_path",
-    "cursor-ide": "source_path",
+    "cursor-projects": "source_path",
 }
 _HYDRATE_SESSION_KEY_FIELD: dict[AmbientImportSource, str] = {
     "codex": "thread_id",
-    "cursor-cli": "session_key",
-    "cursor-ide": "session_key",
+    "cursor-projects": "session_key",
 }
 _HYDRATE_PATH_FIELD: dict[AmbientImportSource, str] = {
     "codex": "rollout_path",
-    "cursor-cli": "source_path",
-    "cursor-ide": "source_path",
+    "cursor-projects": "source_path",
 }
 
 

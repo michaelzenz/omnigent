@@ -23,7 +23,7 @@ from omnigent.host.polling.pollers.ambient_state import (
 )
 from omnigent.session_import.cursor_common import session_key_from_external_session_id
 
-CursorAmbientSource = Literal["cursor-cli", "cursor-ide"]
+CursorAmbientSource = Literal["cursor-projects"]
 CursorBridgeState = AmbientBridgeState
 CursorBridgeStateDelta = AmbientBridgeStateDelta
 TrackedCursorSession = TrackedAmbientSession
@@ -41,7 +41,7 @@ def TrackedCursorSession_from(
     workspace: str | None = None,
     connection_id: str | None = None,
     ssh_alias: str | None = None,
-    import_source: CursorAmbientSource = "cursor-cli",
+    import_source: CursorAmbientSource = "cursor-projects",
 ) -> TrackedAmbientSession:
     return TrackedAmbientSession(
         session_key=session_key,

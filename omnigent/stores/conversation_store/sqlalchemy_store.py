@@ -1074,6 +1074,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         import_source: str,
     ) -> list[AmbientCodexTrack]:
         """Return ambient tracks owned by ``poller_host_id`` for one import source."""
+        import_sources = {import_source}
+        if import_source == "cursor-projects":
+            import_sources.add("cursor-ide")
         with self._session() as session:
             rows = session.execute(
                 select(
@@ -1100,7 +1103,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                         SqlConversationLabel.workspace_id == current_workspace_id(),
                         SqlConversationLabel.conversation_id.in_(conversation_ids),
                         SqlConversationLabel.key == IMPORT_SOURCE_LABEL_KEY,
-                        SqlConversationLabel.value == import_source,
+                        SqlConversationLabel.value.in_(import_sources),
                     )
                 ).all()
             }

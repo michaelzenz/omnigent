@@ -72,8 +72,7 @@ class ImportAmbientTrackInput(BaseModel):
 _IMPORT_NATIVE_HARNESS = {
     "claude": "claude-native",
     "codex": "codex-native",
-    "cursor-cli": "cursor-native",
-    "cursor-ide": "cursor-native",
+    "cursor-projects": "cursor-native",
 }
 
 
@@ -176,9 +175,9 @@ def create_imports_router(
                 "ambient_codex is only supported for codex imports",
                 code=ErrorCode.INVALID_INPUT,
             )
-        if body.ambient_track is not None and body.source not in {"cursor-cli", "cursor-ide"}:
+        if body.ambient_track is not None and body.source != "cursor-projects":
             raise OmnigentError(
-                "ambient_track is only supported for cursor-cli and cursor-ide imports",
+                "ambient_track is only supported for cursor-projects imports",
                 code=ErrorCode.INVALID_INPUT,
             )
         if body.ambient_codex is not None and body.ambient_track is not None:

@@ -190,17 +190,8 @@ async def ssh_remote_rollout_to_tempfile(
 
 
 @dataclass(frozen=True)
-class RemoteCursorCliChat:
-    """One cursor-agent CLI chat discovered on a remote host."""
-
-    path: str
-    chat_id: str
-    mtime_ms: int
-
-
-@dataclass(frozen=True)
-class RemoteCursorIdeTranscript:
-    """One Cursor IDE transcript discovered on a remote host."""
+class RemoteCursorProjectsTranscript:
+    """One Cursor project transcript discovered on a remote host."""
 
     path: str
     transcript_id: str
@@ -225,32 +216,10 @@ def _parse_remote_cursor_listing(stdout: bytes) -> list[tuple[str, str, int]]:
     return entries
 
 
-async def ssh_remote_cursor_cli_chats(profile: SshConnectionProfile) -> list[RemoteCursorCliChat]:
-    """List cursor-agent CLI chat stores on a remote host, newest first."""
-    remote_cmd = _bash_lc(
-        'find "$HOME/.cursor/chats" -type f -name store.db -print0 2>/dev/null | '
-        "while IFS= read -r -d '' path; do "
-        'chat_id=$(basename "$(dirname "$path")"); '
-        'mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null) || continue; '
-        "printf '%s\\0%s\\0%s\\0' \"$path\" \"$mtime\" \"$chat_id\"; "
-        "done"
-    )
-    code, stdout, stderr = await ssh_run(profile, remote_cmd, timeout_s=60.0)
-    if code != 0:
-        message = stderr.decode().strip() or "remote find failed"
-        raise OSError(message)
-    chats = [
-        RemoteCursorCliChat(path=path, chat_id=chat_id, mtime_ms=mtime_ms)
-        for path, chat_id, mtime_ms in _parse_remote_cursor_listing(stdout)
-    ]
-    chats.sort(key=lambda entry: entry.mtime_ms, reverse=True)
-    return chats
-
-
-async def ssh_remote_cursor_ide_transcripts(
+async def ssh_remote_cursor_projects_transcripts(
     profile: SshConnectionProfile,
-) -> list[RemoteCursorIdeTranscript]:
-    """List Cursor IDE transcript JSONL files on a remote host, newest first."""
+) -> list[RemoteCursorProjectsTranscript]:
+    """List Cursor project transcript JSONL files on a remote host, newest first."""
     remote_cmd = _bash_lc(
         'find "$HOME/.cursor/projects" -path "*/agent-transcripts/*/*.jsonl" -type f -print0 2>/dev/null | '
         "while IFS= read -r -d '' path; do "
@@ -264,13 +233,13 @@ async def ssh_remote_cursor_ide_transcripts(
     if code != 0:
         message = stderr.decode().strip() or "remote find failed"
         raise OSError(message)
-    transcripts: list[RemoteCursorIdeTranscript] = []
+    transcripts: list[RemoteCursorProjectsTranscript] = []
     for path, combined, mtime_ms in _parse_remote_cursor_listing(stdout):
         if "|" not in combined:
             continue
         transcript_id, workspace_slug = combined.split("|", 1)
         transcripts.append(
-            RemoteCursorIdeTranscript(
+            RemoteCursorProjectsTranscript(
                 path=path,
                 transcript_id=transcript_id,
                 workspace_slug=workspace_slug,

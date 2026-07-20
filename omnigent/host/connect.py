@@ -1785,20 +1785,17 @@ class HostProcess:
         from omnigent.host.codex_ambient_bridge import codex_ambient_sync_enabled
         from omnigent.host.polling import (
             CodexAmbientPoller,
-            CursorCliAmbientPoller,
-            CursorIdeAmbientPoller,
+            CursorProjectsAmbientPoller,
             PollScheduler,
         )
         from omnigent.host.polling.pollers.cursor_config import (
-            cursor_cli_ambient_sync_enabled,
-            cursor_ide_ambient_sync_enabled,
+            cursor_projects_ambient_sync_enabled,
         )
 
         if any(
             (
                 codex_ambient_sync_enabled(),
-                cursor_cli_ambient_sync_enabled(),
-                cursor_ide_ambient_sync_enabled(),
+                cursor_projects_ambient_sync_enabled(),
             )
         ):
             self._poll_scheduler = PollScheduler(
@@ -1807,10 +1804,8 @@ class HostProcess:
             )
             if codex_ambient_sync_enabled():
                 self._poll_scheduler.register(CodexAmbientPoller())
-            if cursor_cli_ambient_sync_enabled():
-                self._poll_scheduler.register(CursorCliAmbientPoller())
-            if cursor_ide_ambient_sync_enabled():
-                self._poll_scheduler.register(CursorIdeAmbientPoller())
+            if cursor_projects_ambient_sync_enabled():
+                self._poll_scheduler.register(CursorProjectsAmbientPoller())
             await self._poll_scheduler.start()
         backoff = _RECONNECT_BASE_S
         try:

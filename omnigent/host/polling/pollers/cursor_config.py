@@ -1,4 +1,4 @@
-"""Configuration for Cursor ambient pollers."""
+"""Configuration for the Cursor projects ambient poller."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import yaml
 
 from omnigent.host.identity import CONFIG_PATH
 
-_CLI_ENV_VAR = "OMNIGENT_CURSOR_CLI_AMBIENT_SYNC"
-_IDE_ENV_VAR = "OMNIGENT_CURSOR_IDE_AMBIENT_SYNC"
+_ENV_VAR = "OMNIGENT_CURSOR_PROJECTS_AMBIENT_SYNC"
+_LEGACY_IDE_ENV_VAR = "OMNIGENT_CURSOR_IDE_AMBIENT_SYNC"
 _DEFAULT_POLL_INTERVAL_S = 3.0
 _DEFAULT_REMOTE_INTERVAL_S = 3.0
 _DEFAULT_REMOTE_BACKOFF_CAP_S = 30.0
@@ -19,7 +19,7 @@ _DEFAULT_REMOTE_BACKOFF_CAP_S = 30.0
 
 @dataclass(frozen=True)
 class CursorPollerConfig:
-    """Resolved Cursor ambient poller settings."""
+    """Resolved Cursor projects ambient poller settings."""
 
     enabled: bool
     interval_s: float
@@ -79,35 +79,24 @@ def _load_section(config_path: Path, section_name: str) -> CursorPollerConfig:
     )
 
 
-def load_cursor_cli_poller_config(config_path: Path = CONFIG_PATH) -> CursorPollerConfig:
-    env_value = os.environ.get(_CLI_ENV_VAR)
-    if env_value is not None:
-        enabled = env_value.strip().lower() not in {"0", "false", "no", "off"}
-        return CursorPollerConfig(
-            enabled=enabled,
-            interval_s=_DEFAULT_POLL_INTERVAL_S,
-            remote_interval_s=_DEFAULT_REMOTE_INTERVAL_S,
-            remote_backoff_cap_s=_DEFAULT_REMOTE_BACKOFF_CAP_S,
-        )
-    return _load_section(config_path, "cursor_cli")
+def load_cursor_projects_poller_config(config_path: Path = CONFIG_PATH) -> CursorPollerConfig:
+    for env_var in (_ENV_VAR, _LEGACY_IDE_ENV_VAR):
+        env_value = os.environ.get(env_var)
+        if env_value is not None:
+            enabled = env_value.strip().lower() not in {"0", "false", "no", "off"}
+            return CursorPollerConfig(
+                enabled=enabled,
+                interval_s=_DEFAULT_POLL_INTERVAL_S,
+                remote_interval_s=_DEFAULT_REMOTE_INTERVAL_S,
+                remote_backoff_cap_s=_DEFAULT_REMOTE_BACKOFF_CAP_S,
+            )
+    config = _load_section(config_path, "cursor_projects")
+    if not config.enabled:
+        legacy = _load_section(config_path, "cursor_ide")
+        if legacy.enabled:
+            return legacy
+    return config
 
 
-def load_cursor_ide_poller_config(config_path: Path = CONFIG_PATH) -> CursorPollerConfig:
-    env_value = os.environ.get(_IDE_ENV_VAR)
-    if env_value is not None:
-        enabled = env_value.strip().lower() not in {"0", "false", "no", "off"}
-        return CursorPollerConfig(
-            enabled=enabled,
-            interval_s=_DEFAULT_POLL_INTERVAL_S,
-            remote_interval_s=_DEFAULT_REMOTE_INTERVAL_S,
-            remote_backoff_cap_s=_DEFAULT_REMOTE_BACKOFF_CAP_S,
-        )
-    return _load_section(config_path, "cursor_ide")
-
-
-def cursor_cli_ambient_sync_enabled(config_path: Path = CONFIG_PATH) -> bool:
-    return load_cursor_cli_poller_config(config_path).enabled
-
-
-def cursor_ide_ambient_sync_enabled(config_path: Path = CONFIG_PATH) -> bool:
-    return load_cursor_ide_poller_config(config_path).enabled
+def cursor_projects_ambient_sync_enabled(config_path: Path = CONFIG_PATH) -> bool:
+    return load_cursor_projects_poller_config(config_path).enabled

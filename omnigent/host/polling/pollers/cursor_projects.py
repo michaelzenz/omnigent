@@ -1,4 +1,10 @@
-"""Cursor CLI ambient chat poller."""
+"""Cursor projects ambient transcript poller.
+
+Reads ``~/.cursor/projects/*/agent-transcripts/*/*.jsonl`` — Cursor's
+per-project transcript log. Cursor writes the same session UUID here for
+both IDE and CLI chats, so one poller covers both without duplicating the
+older ``~/.cursor/chats/`` SQLite store.
+"""
 
 from __future__ import annotations
 
@@ -13,21 +19,21 @@ from omnigent.host.polling.pollers.ambient_state import (
     hydrate_ambient_bridge_state,
     merge_bridge_deltas,
 )
-from omnigent.host.polling.pollers.cursor_cli_local import CursorCliLocalSubPoller
-from omnigent.host.polling.pollers.cursor_cli_remote import CursorCliRemoteSubPoller
-from omnigent.host.polling.pollers.cursor_config import load_cursor_cli_poller_config
+from omnigent.host.polling.pollers.cursor_config import load_cursor_projects_poller_config
+from omnigent.host.polling.pollers.cursor_projects_local import CursorProjectsLocalSubPoller
+from omnigent.host.polling.pollers.cursor_projects_remote import CursorProjectsRemoteSubPoller
 from omnigent.ssh_connections_store import SshConnectionProfile
 
 
-class CursorCliAmbientPoller(AmbientPoller):
-    """Mirror standalone and remote cursor-agent CLI chats into Omnigent."""
+class CursorProjectsAmbientPoller(AmbientPoller):
+    """Mirror local and remote ``~/.cursor/projects`` transcripts into Omnigent."""
 
     read_only = True
 
     def __init__(
         self,
         *,
-        chats_root: Path | None = None,
+        projects_root: Path | None = None,
         config_path: Path = CONFIG_PATH,
         poll_interval_s: float | None = None,
         read_only: bool | None = None,
@@ -37,14 +43,14 @@ class CursorCliAmbientPoller(AmbientPoller):
             poll_interval_s=poll_interval_s,
             read_only=read_only,
         )
-        self._chats_root = chats_root
+        self._projects_root = projects_root
 
     @property
     def name(self) -> str:
-        return "cursor-cli"
+        return "cursor-projects"
 
     def _load_config(self) -> AmbientPollerConfig:
-        config = load_cursor_cli_poller_config(self._config_path)
+        config = load_cursor_projects_poller_config(self._config_path)
         return AmbientPollerConfig(
             enabled=config.enabled,
             interval_s=config.interval_s,
@@ -59,14 +65,14 @@ class CursorCliAmbientPoller(AmbientPoller):
         return await hydrate_ambient_bridge_state(
             ctx.client,
             host_id=ctx.host_id,
-            import_source="cursor-cli",
+            import_source="cursor-projects",
         )
 
     def _empty_state(self) -> AmbientBridgeState:
         return AmbientBridgeState(tracks={})
 
-    def _create_local_subpoller(self) -> CursorCliLocalSubPoller:
-        return CursorCliLocalSubPoller(chats_root=self._chats_root)
+    def _create_local_subpoller(self) -> CursorProjectsLocalSubPoller:
+        return CursorProjectsLocalSubPoller(projects_root=self._projects_root)
 
     def _create_remote_subpoller(
         self,
@@ -74,8 +80,8 @@ class CursorCliAmbientPoller(AmbientPoller):
         *,
         interval_s: float,
         backoff_cap_s: float,
-    ) -> CursorCliRemoteSubPoller:
-        return CursorCliRemoteSubPoller(
+    ) -> CursorProjectsRemoteSubPoller:
+        return CursorProjectsRemoteSubPoller(
             profile,
             interval_s=interval_s,
             backoff_cap_s=backoff_cap_s,
@@ -85,4 +91,4 @@ class CursorCliAmbientPoller(AmbientPoller):
         return apply_bridge_delta(state, merge_bridge_deltas(*deltas))
 
     def _remote_failure_label(self) -> str:
-        return "Cursor CLI"
+        return "Cursor projects"
