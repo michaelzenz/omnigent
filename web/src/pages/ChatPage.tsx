@@ -1392,7 +1392,7 @@ export function shouldShowTerminalSurface(
  * `MainTerminalView`. The pill itself stays visible (rendered via
  * `ConnectionIndicator`) so the user can flip back to Chat.
  */
-function MainAgentSurface({
+export function MainAgentSurface({
   conversationId,
   bubbles,
   status,

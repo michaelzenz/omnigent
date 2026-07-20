@@ -23,6 +23,9 @@
 // behavior gates must use `isNativeWrapper`, never `isTerminalFirst`.
 
 import { createContext, useContext } from "react";
+import { isNativeWrapper as isNativeWrapperLabel } from "@/lib/nativeCodingAgents";
+
+const CLAUDE_NATIVE_WRAPPER = "claude-code-native-ui";
 
 export type TerminalFirstView = "chat" | "terminal";
 
@@ -98,4 +101,28 @@ export const TerminalFirstContextProvider = TerminalFirstContext.Provider;
  */
 export function useTerminalFirst(): TerminalFirstContextValue | null {
   return useContext(TerminalFirstContext);
+}
+
+/**
+ * Minimal terminal-first context for embedded chat surfaces (e.g.
+ * PuppyGarden's sidebar) that are chat-only and not wired to AppShell's
+ * terminal panel. `isNativeWrapper` is derived from session labels so
+ * native-CLI harness behavior (elicitation cards, send queueing, model
+ * picker) matches the main chat page.
+ */
+export function terminalFirstContextForEmbeddedSession(
+  labels: Record<string, string> | undefined,
+): TerminalFirstContextValue {
+  const wrapper = labels?.["omnigent.wrapper"];
+  return {
+    isClaudeNative: wrapper === CLAUDE_NATIVE_WRAPPER,
+    isNativeWrapper: isNativeWrapperLabel(wrapper),
+    isTerminalFirst: false,
+    isShellView: false,
+    view: "chat",
+    terminalViewKey: null,
+    setView: () => {},
+    terminalsAvailable: false,
+    terminalStartingUp: false,
+  };
 }

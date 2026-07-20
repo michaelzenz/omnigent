@@ -1,25 +1,47 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-} from "@/components/ai-elements/conversation";
 import { Loader2Icon } from "lucide-react";
 import { buildBubbles, createBubbleCache, type Bubble } from "@/lib/renderItems";
+import { getCurrentAuthorId } from "@/lib/identity";
+import {
+  isCostRoutingSession,
+  parseCostRoutingVerdict,
+} from "@/components/CostRoutingControl";
+import { useServerInfo } from "@/lib/CapabilitiesContext";
+import { type Agent, useAgents, useSessionAgent } from "@/hooks/useAgents";
+import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRefresh";
+import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
+import {
+  livenessRowFromSession,
+  useSessionLiveness,
+} from "@/hooks/useSessionLiveness";
+import { useSession } from "@/hooks/useSession";
 import {
   buildPendingBubbles,
-  BubbleView,
   computeIsWorking,
-  Composer,
+  computeShowsWorking,
+  dispatchInitialPrompt,
+  effortLevelsForConv,
+  MainAgentSurface,
   mergePendingBubbles,
+  modelPickerKindForConv,
+  readOnlyReasonForSessionLabels,
+  reorderCommittedRequestElicitations,
+  shouldQueueSend,
+  shouldSendInitialPrompt,
+  shouldShowCodexGoalControl,
+  shouldShowCodexPlanModeControl,
+  shouldShowEffortPicker,
+  subAgentComposerLabel,
 } from "@/pages/ChatPage";
-import { getCurrentAuthorId } from "@/lib/identity";
 import {
   consumePendingInitialPrompt,
   useChatStore,
   type PendingInitialPrompt,
 } from "@/store/chatStore";
-import { useAgents } from "@/hooks/useAgents";
+import {
+  TerminalFirstContextProvider,
+  terminalFirstContextForEmbeddedSession,
+} from "./TerminalFirstContext";
 import { NewChatComposer } from "./NewChatDialog";
 
 const PUPPY_GARDEN_SESSION_KEY = "omnigent:puppy-garden-session-id";
@@ -43,12 +65,17 @@ interface PuppyGardenSessionViewProps {
 }
 
 /**
- * Full session view for the PuppyGarden sidebar. Renders the shared chatStore's
- * transcript and composer for the board session, and resets when the session is
- * deleted (conversationLoadError on the store).
+ * Full session view for the PuppyGarden sidebar. Reuses MainAgentSurface so
+ * cursor-native elicitation cards, send queueing, and composer props match
+ * the main chat page.
  */
 function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGardenSessionViewProps) {
-  const { data: agents, isLoading: agentsLoading } = useAgents();
+  const { data: agents, isLoading: agentsLoading, error: agentsError, refetch: refetchAgents } =
+    useAgents();
+  const { data: boundAgentBySession } = useSessionAgent(sessionId);
+  const { session: activeSession, isLoading: sessionLoading } = useSession(sessionId);
+  const runnerOnline = useSessionRunnerOnline(sessionId);
+  useRefreshSessionStateOnRunnerOnline(sessionId, runnerOnline);
 
   const blocks = useChatStore((s) => s.blocks);
   const pendingUserMessages = useChatStore((s) => s.pendingUserMessages);
@@ -57,50 +84,66 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
   const loadingConversation = useChatStore((s) => s.loadingConversation);
   const conversationLoadError = useChatStore((s) => s.conversationLoadError);
   const boundAgentId = useChatStore((s) => s.boundAgentId);
+  const boundAgentName = useChatStore((s) => s.boundAgentName);
   const status = useChatStore((s) => s.status);
   const sessionStatus = useChatStore((s) => s.sessionStatus);
+  const backgroundTaskCount = useChatStore((s) => s.backgroundTaskCount);
+  const hasMoreHistory = useChatStore((s) => s.hasMoreHistory);
+  const loadingMoreHistory = useChatStore((s) => s.loadingMoreHistory);
+  const codexModelOptions = useChatStore((s) => s.codexModelOptions);
+  const selectedModel = useChatStore((s) => s.selectedModel);
+  const llmModel = useChatStore((s) => s.llmModel);
+  const sandboxStatus = useChatStore((s) => s.sandboxStatus);
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const bubbleCacheRef = useRef(createBubbleCache());
-  const [replyQuotes] = useState<string[]>([]);
-  // Prevents double-send across StrictMode's setup→cleanup→setup double-invoke.
-  const autoSentRef = useRef(false);
+  const initialPromptSentRef = useRef<string | null>(null);
 
-  // Bind chatStore to this session.
   useEffect(() => {
     void useChatStore.getState().switchTo(sessionId);
   }, [sessionId]);
 
-  // If the session was deleted, the store will surface a load error — reset.
   useEffect(() => {
     if (conversationLoadError) onReset();
   }, [conversationLoadError, onReset]);
 
   const agentId = selectedAgentId ?? boundAgentId ?? agents?.[0]?.id ?? null;
 
-  // Auto-send the initial prompt once the session stream is ready. The prompt is
-  // consumed in the parent before this component mounts so it's passed directly
-  // as a prop — no store read needed, no timing race with the Map deletion.
   useEffect(() => {
-    if (!pendingPrompt || autoSentRef.current) return;
-    if (loadingConversation || !agentId) return;
-    autoSentRef.current = true;
-    const store = useChatStore.getState();
-    if (pendingPrompt.skill) {
-      void store.sendSlashCommand(pendingPrompt.skill.name, pendingPrompt.skill.args, agentId);
-    } else {
-      void store.send(pendingPrompt.text, agentId, pendingPrompt.files ?? []);
+    if (boundAgentId === null) return;
+    setSelectedAgentId(boundAgentId);
+    if (agents && !agents.some((a) => a.id === boundAgentId)) {
+      void refetchAgents();
     }
-  }, [pendingPrompt, loadingConversation, agentId]);
+  }, [boundAgentId, agents, refetchAgents]);
 
-  const isWorking = computeIsWorking(sessionStatus);
+  useEffect(() => {
+    if (
+      !shouldSendInitialPrompt({
+        initialPrompt: pendingPrompt?.text ?? null,
+        promptConversationId: sessionId,
+        sentForConversationId: initialPromptSentRef.current,
+        conversationId: sessionId,
+        loadingConversation,
+        agentId,
+      })
+    ) {
+      return;
+    }
+    if (!pendingPrompt || !agentId) return;
+    initialPromptSentRef.current = sessionId;
+    const { send, sendSlashCommand } = useChatStore.getState();
+    dispatchInitialPrompt(pendingPrompt, agentId, send, sendSlashCommand);
+  }, [pendingPrompt, sessionId, loadingConversation, agentId]);
+
+  const hasPendingElicitation = useMemo(
+    () => blocks.some((b) => b.type === "elicitation" && b.status === "pending"),
+    [blocks],
+  );
 
   const bubbles = useMemo<Bubble[]>(() => {
-    const committed = buildBubbles(
-      blocks,
-      activeResponse,
-      bubbleCacheRef.current,
-      interruptedResponseIds,
+    const committed = reorderCommittedRequestElicitations(
+      buildBubbles(blocks, activeResponse, bubbleCacheRef.current, interruptedResponseIds),
     );
     if (pendingUserMessages.length === 0) return committed;
     return mergePendingBubbles(
@@ -109,17 +152,83 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
     );
   }, [blocks, activeResponse, interruptedResponseIds, pendingUserMessages]);
 
+  const isWorking = !hasPendingElicitation && computeIsWorking(sessionStatus);
+  const showsWorking = computeShowsWorking(sessionStatus, {
+    hasPendingElicitation,
+    runnerOnline,
+    backgroundTaskCount,
+  });
+
+  const livenessRow = livenessRowFromSession(activeSession);
+  const liveness = useSessionLiveness(sessionId, livenessRow, {
+    turnActive: status === "streaming",
+  });
+
+  const sandboxLaunching = sandboxStatus !== null && sandboxStatus.stage !== "failed";
+  const isUnreachable =
+    !sandboxLaunching && (liveness.kind === "host_offline" || liveness.kind === "local_stranded");
+
   const onSend = useCallback(
     (text: string, files?: File[]) => {
       if (!agentId) return;
-      void useChatStore.getState().send(text, agentId, files);
+      if (isUnreachable) return;
+      const chat = useChatStore.getState();
+      if (shouldQueueSend(chat.conversationId, chat.status, chat.sessionStatus, chat.queuedMessages)) {
+        chat.enqueueMessage(text, files);
+        return;
+      }
+      void chat.send(text, agentId, files);
     },
-    [agentId],
+    [agentId, isUnreachable],
+  );
+
+  const onSendSlashCommand = useCallback(
+    (name: string, args: string) => {
+      if (!agentId || isUnreachable) return;
+      void useChatStore.getState().sendSlashCommand(name, args, agentId);
+    },
+    [agentId, isUnreachable],
   );
 
   const onStop = useCallback(() => {
     useChatStore.getState().stop();
   }, []);
+
+  const activeSessionLabels = activeSession?.labels;
+  const capabilitySource = { labels: activeSessionLabels ?? {} };
+  const modelPickerKind = modelPickerKindForConv(capabilitySource);
+  const effortLevels = effortLevelsForConv(
+    capabilitySource,
+    codexModelOptions,
+    selectedModel ?? llmModel,
+  );
+  const showEffort = shouldShowEffortPicker(capabilitySource) && effortLevels.length > 0;
+  const permissionLevel = activeSession?.permissionLevel ?? (sessionLoading ? null : 1);
+  const readOnlyReason = readOnlyReasonForSessionLabels(activeSession, null);
+  const subAgentLabel = subAgentComposerLabel(activeSession);
+
+  const serverInfo = useServerInfo();
+  const costRoutingVerdict = useMemo(
+    () => parseCostRoutingVerdict(activeSessionLabels),
+    [activeSessionLabels],
+  );
+  const costRoutingEligible =
+    serverInfo !== "loading" &&
+    serverInfo.smart_routing_enabled &&
+    isCostRoutingSession(activeSession);
+
+  const visibleAgents = boundAgentId
+    ? boundAgentBySession
+      ? [boundAgentBySession]
+      : boundAgentName
+        ? [{ id: boundAgentId, name: boundAgentName } as Agent]
+        : agents?.filter((a) => a.id === boundAgentId)
+    : agents;
+
+  const terminalFirstContextValue = useMemo(
+    () => terminalFirstContextForEmbeddedSession(activeSessionLabels),
+    [activeSessionLabels],
+  );
 
   if (loadingConversation) {
     return (
@@ -131,48 +240,41 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
   }
 
   return (
-    <>
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <Conversation className="chat-scroll-fade flex-1">
-          <ConversationContent className="mx-auto w-full gap-4 pt-20 pb-6">
-            {bubbles.map((bubble) => {
-              const key =
-                bubble.kind === "user"
-                  ? (bubble.stableKey ?? bubble.itemId)
-                  : bubble.kind === "assistant"
-                    ? bubble.stableId
-                    : bubble.kind === "routing_decision"
-                      ? bubble.itemId
-                      : bubble.kind;
-              return <BubbleView key={key} bubble={bubble} />;
-            })}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
-      </div>
-      <Composer
+    <TerminalFirstContextProvider value={terminalFirstContextValue}>
+      <MainAgentSurface
+        conversationId={sessionId}
+        bubbles={bubbles}
         status={status}
         isWorking={isWorking}
-        disabled={!agentId}
+        showsWorking={showsWorking}
+        runnerOnline={runnerOnline}
+        liveness={liveness}
+        agentsError={agentsError}
+        disabled={!agentId || agentsError !== null}
         onSend={onSend}
+        onSendSlashCommand={onSendSlashCommand}
         onStop={onStop}
-        agents={agents}
+        onShowReconnectHelp={() => {}}
+        agents={visibleAgents}
         agentsLoading={agentsLoading}
         selectedAgentId={agentId}
         onSelectAgent={setSelectedAgentId}
-        permissionLevel={2}
-        readOnlyReason={null}
-        replyQuotes={replyQuotes}
-        onRemoveQuote={() => {}}
-        onClearAllQuotes={() => {}}
-        effortLevels={[]}
-        showEffort={false}
-        showModels={false}
-        modelPickerKind={null}
-        codexModelOptions={[]}
-        showCodexPlanMode={false}
+        hasMoreHistory={hasMoreHistory}
+        loadingMoreHistory={loadingMoreHistory}
+        permissionLevel={permissionLevel}
+        readOnlyReason={readOnlyReason}
+        effortLevels={effortLevels}
+        showEffort={showEffort}
+        showModels={modelPickerKind !== null}
+        modelPickerKind={modelPickerKind}
+        codexModelOptions={codexModelOptions}
+        showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
+        showCodexGoal={shouldShowCodexGoalControl(capabilitySource)}
+        costRoutingVerdict={costRoutingVerdict}
+        costRoutingEligible={costRoutingEligible}
+        subAgentLabel={subAgentLabel}
       />
-    </>
+    </TerminalFirstContextProvider>
   );
 }
 
@@ -191,9 +293,6 @@ export function PuppyGardenChatSidebar() {
   });
 
   const handleSessionCreated = useCallback((id: string) => {
-    // Consume the pending prompt immediately — before React re-renders and mounts
-    // PuppyGardenSessionView — so the session view receives it as a stable prop
-    // rather than racing to read from the store map.
     const pendingPrompt = consumePendingInitialPrompt(id);
     localStorage.setItem(PUPPY_GARDEN_SESSION_KEY, id);
     setSession({ id, pendingPrompt });
