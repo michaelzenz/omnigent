@@ -1066,6 +1066,14 @@ class SqlAlchemyConversationStore(ConversationStore):
 
     def list_ambient_codex_tracks(self, poller_host_id: str) -> list[AmbientCodexTrack]:
         """Return Codex ambient tracks owned by ``poller_host_id``."""
+        return self.list_ambient_cursor_tracks(poller_host_id, "codex")
+
+    def list_ambient_cursor_tracks(
+        self,
+        poller_host_id: str,
+        import_source: str,
+    ) -> list[AmbientCodexTrack]:
+        """Return ambient tracks owned by ``poller_host_id`` for one import source."""
         with self._session() as session:
             rows = session.execute(
                 select(
@@ -1081,20 +1089,37 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlConversationMetadata.ambient_poller_host_id == poller_host_id,
                 )
             ).all()
+        if not rows:
+            return []
+        conversation_ids = [row.id for row in rows]
+        with self._conv_session() as conv_session:
+            matching_ids = {
+                label_row.conversation_id
+                for label_row in conv_session.execute(
+                    select(SqlConversationLabel.conversation_id).where(
+                        SqlConversationLabel.workspace_id == current_workspace_id(),
+                        SqlConversationLabel.conversation_id.in_(conversation_ids),
+                        SqlConversationLabel.key == IMPORT_SOURCE_LABEL_KEY,
+                        SqlConversationLabel.value == import_source,
+                    )
+                ).all()
+            }
         tracks: list[AmbientCodexTrack] = []
         for row in rows:
+            if row.id not in matching_ids:
+                continue
             if row.external_session_id is None:
                 continue
             if row.ambient_byte_offset is None or row.ambient_rollout_path is None:
                 continue
-            thread_id = thread_id_from_external_session_id(row.external_session_id)
-            if thread_id is None:
+            session_key = thread_id_from_external_session_id(row.external_session_id)
+            if session_key is None:
                 continue
             tracks.append(
                 AmbientCodexTrack(
                     session_id=row.id,
                     external_session_id=row.external_session_id,
-                    thread_id=thread_id,
+                    thread_id=session_key,
                     byte_offset=int(row.ambient_byte_offset),
                     turn_id=row.ambient_turn_id or "history",
                     rollout_path=row.ambient_rollout_path,

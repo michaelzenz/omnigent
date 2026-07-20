@@ -60,6 +60,23 @@ class ImportAmbientCodexInput(BaseModel):
     connection_id: str | None = Field(default=None, max_length=64)
 
 
+class ImportAmbientTrackInput(BaseModel):
+    """Initial ambient poll cursor for a newly imported Cursor session."""
+
+    byte_offset: int = Field(ge=0)
+    turn_id: str = Field(default="history", min_length=1, max_length=128)
+    source_path: str = Field(min_length=1, max_length=2048)
+    connection_id: str | None = Field(default=None, max_length=64)
+
+
+_IMPORT_NATIVE_HARNESS = {
+    "claude": "claude-native",
+    "codex": "codex-native",
+    "cursor-cli": "cursor-native",
+    "cursor-ide": "cursor-native",
+}
+
+
 class ImportSessionRequest(BaseModel):
     """Request body for importing one local harness session."""
 
@@ -68,6 +85,7 @@ class ImportSessionRequest(BaseModel):
     workspace: str | None = Field(default=None, max_length=2048)
     items: list[ImportItemInput] = Field(min_length=1, max_length=100_000)
     ambient_codex: ImportAmbientCodexInput | None = None
+    ambient_track: ImportAmbientTrackInput | None = None
 
     @field_validator("external_session_id")
     @classmethod
@@ -148,9 +166,24 @@ def create_imports_router(
                 f"ambient_codex requires the {HOST_AMBIENT_ID_HEADER} header",
                 code=ErrorCode.INVALID_INPUT,
             )
+        if body.ambient_track is not None and poller_host_id is None:
+            raise OmnigentError(
+                f"ambient_track requires the {HOST_AMBIENT_ID_HEADER} header",
+                code=ErrorCode.INVALID_INPUT,
+            )
         if body.ambient_codex is not None and body.source != "codex":
             raise OmnigentError(
                 "ambient_codex is only supported for codex imports",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        if body.ambient_track is not None and body.source not in {"cursor-cli", "cursor-ide"}:
+            raise OmnigentError(
+                "ambient_track is only supported for cursor-cli and cursor-ide imports",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        if body.ambient_codex is not None and body.ambient_track is not None:
+            raise OmnigentError(
+                "Provide only one of ambient_codex or ambient_track",
                 code=ErrorCode.INVALID_INPUT,
             )
         items = [item.to_item() for item in body.items]
@@ -172,7 +205,7 @@ def create_imports_router(
                 code=ErrorCode.CONFLICT,
             )
 
-        native_agent = native_coding_agent_for_harness(f"{body.source}-native")
+        native_agent = native_coding_agent_for_harness(_IMPORT_NATIVE_HARNESS.get(body.source))
         if native_agent is None:
             raise OmnigentError(
                 f"Unsupported import source: {body.source}",
@@ -229,6 +262,18 @@ def create_imports_router(
                         turn_id=body.ambient_codex.turn_id,
                         rollout_path=body.ambient_codex.rollout_path,
                         connection_id=body.ambient_codex.connection_id,
+                    ),
+                )
+            if body.ambient_track is not None and poller_host_id is not None:
+                await asyncio.to_thread(
+                    conversation_store.set_ambient_codex_on_import,
+                    conversation.id,
+                    poller_host_id,
+                    AmbientCodexCursor(
+                        byte_offset=body.ambient_track.byte_offset,
+                        turn_id=body.ambient_track.turn_id,
+                        rollout_path=body.ambient_track.source_path,
+                        connection_id=body.ambient_track.connection_id,
                     ),
                 )
         except Exception:

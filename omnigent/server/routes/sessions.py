@@ -352,6 +352,8 @@ _EXTERNAL_CONVERSATION_ITEM_TYPE: str = "external_conversation_item"
 # Batch sync from the Codex ambient bridge: append items and advance the
 # server-owned poll cursor in one request.
 _AMBIENT_CODEX_SYNC_TYPE: str = "ambient_codex_sync"
+_AMBIENT_CURSOR_CLI_SYNC_TYPE: str = "ambient_cursor_cli_sync"
+_AMBIENT_CURSOR_IDE_SYNC_TYPE: str = "ambient_cursor_ide_sync"
 
 # Internal input used by terminal-backed integrations to publish a live
 # assistant text delta observed outside the Omnigent task runtime. The
@@ -915,6 +917,8 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
     _EXTERNAL_CONVERSATION_ITEM_TYPE,
     _AMBIENT_CODEX_SYNC_TYPE,
+    _AMBIENT_CURSOR_CLI_SYNC_TYPE,
+    _AMBIENT_CURSOR_IDE_SYNC_TYPE,
     _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
     _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
     _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
@@ -5317,12 +5321,12 @@ def _parse_ambient_codex_sync_items(data: dict[str, object]) -> list[NewConversa
     return parsed
 
 
-def _parse_ambient_codex_cursor(data: dict[str, object]) -> AmbientCodexCursor:
-    """Validate ambient_codex_sync cursor fields."""
+def _parse_ambient_track_cursor(data: dict[str, object], *, event_type: str) -> AmbientCodexCursor:
+    """Validate ambient track cursor fields for Codex or Cursor sync events."""
     byte_offset = data.get("byte_offset")
     if not isinstance(byte_offset, int) or byte_offset < 0:
         raise OmnigentError(
-            "ambient_codex_sync requires non-negative integer data.byte_offset",
+            f"{event_type} requires non-negative integer data.byte_offset",
             code=ErrorCode.INVALID_INPUT,
         )
     turn_id = data.get("turn_id")
@@ -5330,13 +5334,19 @@ def _parse_ambient_codex_cursor(data: dict[str, object]) -> AmbientCodexCursor:
         turn_id = "history"
     if not isinstance(turn_id, str) or not turn_id.strip():
         raise OmnigentError(
-            "ambient_codex_sync requires non-empty string data.turn_id",
+            f"{event_type} requires non-empty string data.turn_id",
             code=ErrorCode.INVALID_INPUT,
         )
+    source_path = data.get("source_path")
     rollout_path = data.get("rollout_path")
-    if not isinstance(rollout_path, str) or not rollout_path.strip():
+    path = (
+        source_path
+        if isinstance(source_path, str) and source_path.strip()
+        else rollout_path
+    )
+    if not isinstance(path, str) or not path.strip():
         raise OmnigentError(
-            "ambient_codex_sync requires non-empty string data.rollout_path",
+            f"{event_type} requires non-empty string data.source_path or data.rollout_path",
             code=ErrorCode.INVALID_INPUT,
         )
     connection_id = data.get("connection_id")
@@ -5344,15 +5354,20 @@ def _parse_ambient_codex_cursor(data: dict[str, object]) -> AmbientCodexCursor:
         not isinstance(connection_id, str) or not connection_id.strip()
     ):
         raise OmnigentError(
-            "ambient_codex_sync data.connection_id must be a non-empty string or null",
+            f"{event_type} data.connection_id must be a non-empty string or null",
             code=ErrorCode.INVALID_INPUT,
         )
     return AmbientCodexCursor(
         byte_offset=byte_offset,
         turn_id=turn_id.strip(),
-        rollout_path=rollout_path.strip(),
+        rollout_path=path.strip(),
         connection_id=connection_id.strip() if isinstance(connection_id, str) else None,
     )
+
+
+def _parse_ambient_codex_cursor(data: dict[str, object]) -> AmbientCodexCursor:
+    """Validate ambient_codex_sync cursor fields."""
+    return _parse_ambient_track_cursor(data, event_type=_AMBIENT_CODEX_SYNC_TYPE)
 
 
 async def _persist_ambient_codex_sync(
@@ -5365,7 +5380,7 @@ async def _persist_ambient_codex_sync(
 ) -> list[str]:
     """Persist a Codex ambient batch and advance the server-owned cursor."""
     items = _parse_ambient_codex_sync_items(body.data)
-    cursor = _parse_ambient_codex_cursor(body.data)
+    cursor = _parse_ambient_track_cursor(body.data, event_type=body.type)
     ok, persisted = await asyncio.to_thread(
         conversation_store.sync_ambient_codex,
         session_id,
@@ -19977,6 +19992,8 @@ def create_sessions_router(
             _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
             _EXTERNAL_CONVERSATION_ITEM_TYPE,
             _AMBIENT_CODEX_SYNC_TYPE,
+            _AMBIENT_CURSOR_CLI_SYNC_TYPE,
+            _AMBIENT_CURSOR_IDE_SYNC_TYPE,
             _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
             _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
             _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
@@ -20369,6 +20386,21 @@ def create_sessions_router(
             if poller_host_id is None or not poller_host_id.strip():
                 raise OmnigentError(
                     f"ambient_codex_sync requires the {HOST_AMBIENT_ID_HEADER} header",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            item_ids = await _persist_ambient_codex_sync(
+                session_id,
+                conv,
+                body,
+                conversation_store,
+                poller_host_id=poller_host_id.strip(),
+            )
+            return {"queued": False, "item_ids": item_ids}
+        if body.type in {_AMBIENT_CURSOR_CLI_SYNC_TYPE, _AMBIENT_CURSOR_IDE_SYNC_TYPE}:
+            poller_host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
+            if poller_host_id is None or not poller_host_id.strip():
+                raise OmnigentError(
+                    f"{body.type} requires the {HOST_AMBIENT_ID_HEADER} header",
                     code=ErrorCode.INVALID_INPUT,
                 )
             item_ids = await _persist_ambient_codex_sync(

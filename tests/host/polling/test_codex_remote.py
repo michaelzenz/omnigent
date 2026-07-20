@@ -51,7 +51,7 @@ async def test_remote_sub_poller_skips_import_after_409(tmp_path: Path) -> None:
             new=AsyncMock(return_value=[rollout]),
         ),
         patch(
-            "omnigent.host.polling.pollers.codex_remote.rollout_is_recent",
+            "omnigent.host.polling.pollers.ambient_subpoller.source_is_recent",
             return_value=True,
         ),
         patch(
@@ -63,7 +63,7 @@ async def test_remote_sub_poller_skips_import_after_409(tmp_path: Path) -> None:
             return_value=type("Imported", (), {"workspace": "/repo", "items": ()})(),
         ),
         patch(
-            "omnigent.host.polling.pollers.codex_remote.import_codex_session",
+            "omnigent.host.polling.pollers.ambient_subpoller.import_ambient_session",
             new=AsyncMock(return_value=None),
         ) as import_mock,
     ):

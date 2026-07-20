@@ -349,6 +349,15 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def list_ambient_cursor_tracks(
+        self,
+        poller_host_id: str,
+        import_source: str,
+    ) -> list[AmbientCodexTrack]:
+        """Return Cursor ambient tracks owned by ``poller_host_id``."""
+        ...
+
+    @abstractmethod
     def set_ambient_codex_on_import(
         self,
         conversation_id: str,

@@ -1783,14 +1783,34 @@ class HostProcess:
             self._orphan_reaper_loop(), name="host-orphan-reaper"
         )
         from omnigent.host.codex_ambient_bridge import codex_ambient_sync_enabled
-        from omnigent.host.polling import CodexAmbientPoller, PollScheduler
+        from omnigent.host.polling import (
+            CodexAmbientPoller,
+            CursorCliAmbientPoller,
+            CursorIdeAmbientPoller,
+            PollScheduler,
+        )
+        from omnigent.host.polling.pollers.cursor_config import (
+            cursor_cli_ambient_sync_enabled,
+            cursor_ide_ambient_sync_enabled,
+        )
 
-        if codex_ambient_sync_enabled():
+        if any(
+            (
+                codex_ambient_sync_enabled(),
+                cursor_cli_ambient_sync_enabled(),
+                cursor_ide_ambient_sync_enabled(),
+            )
+        ):
             self._poll_scheduler = PollScheduler(
                 server_url=self._server_url,
                 host_id=self._identity.host_id,
             )
-            self._poll_scheduler.register(CodexAmbientPoller())
+            if codex_ambient_sync_enabled():
+                self._poll_scheduler.register(CodexAmbientPoller())
+            if cursor_cli_ambient_sync_enabled():
+                self._poll_scheduler.register(CursorCliAmbientPoller())
+            if cursor_ide_ambient_sync_enabled():
+                self._poll_scheduler.register(CursorIdeAmbientPoller())
             await self._poll_scheduler.start()
         backoff = _RECONNECT_BASE_S
         try:

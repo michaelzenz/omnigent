@@ -29,6 +29,15 @@ from omnigent.session_import.models import import_conversation_id
 _HOST_ID = "a" * 32
 
 
+@pytest.fixture
+def no_ssh_connections(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep poll-once tests local-only regardless of machine SSH config."""
+    monkeypatch.setattr(
+        "omnigent.host.codex_ambient_bridge.read_ssh_connections",
+        lambda: [],
+    )
+
+
 def _write_rollout(path: Path, session_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     records = [
@@ -139,7 +148,9 @@ async def test_hydrate_bridge_state_loads_server_tracks() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_poll_codex_ambient_once_imports_recent_rollout(tmp_path: Path) -> None:
+async def test_poll_codex_ambient_once_imports_recent_rollout(
+    tmp_path: Path, no_ssh_connections: None
+) -> None:
     session_id = "019e96aa-0be2-7343-8d3b-6f914d60936b"
     rollout = (
         tmp_path
@@ -180,7 +191,9 @@ async def test_poll_codex_ambient_once_imports_recent_rollout(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_poll_codex_ambient_once_tails_new_items(tmp_path: Path) -> None:
+async def test_poll_codex_ambient_once_tails_new_items(
+    tmp_path: Path, no_ssh_connections: None
+) -> None:
     session_id = "019e96aa-0be2-7343-8d3b-6f914d60936b"
     rollout = (
         tmp_path
@@ -238,7 +251,9 @@ async def test_poll_codex_ambient_once_tails_new_items(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_poll_codex_ambient_once_skips_conflict_import(tmp_path: Path) -> None:
+async def test_poll_codex_ambient_once_skips_conflict_import(
+    tmp_path: Path, no_ssh_connections: None
+) -> None:
     session_id = "019e96aa-0be2-7343-8d3b-6f914d60936b"
     rollout = (
         tmp_path
@@ -266,7 +281,9 @@ async def test_poll_codex_ambient_once_skips_conflict_import(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_poll_codex_ambient_once_deletes_removed_codex_session(tmp_path: Path) -> None:
+async def test_poll_codex_ambient_once_deletes_removed_codex_session(
+    tmp_path: Path, no_ssh_connections: None
+) -> None:
     session_id = "019e96aa-0be2-7343-8d3b-6f914d60936b"
     omnigent_session_id = import_conversation_id("codex", session_id)
     state = _BridgeState(

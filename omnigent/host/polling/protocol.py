@@ -20,6 +20,10 @@ class PollSource(Protocol):
     def interval_s(self, ctx: PollContext) -> float:
         """Seconds to wait between successful poll cycles."""
 
+    @property
+    def read_only(self) -> bool:
+        """When ``True``, the poller only mirrors external sessions into Omnigent."""
+
     async def on_start(self, ctx: PollContext) -> None:
         """Hydrate state before the first poll."""
 
