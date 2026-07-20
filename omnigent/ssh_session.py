@@ -2,6 +2,8 @@
 
 Uses OpenSSH ControlMaster so repeated commands to the same config Host
 reuse one live connection instead of paying handshake cost every time.
+A process-wide semaphore limits concurrent remote commands so pollers share
+one narrow throttle.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from omnigent.ssh_connections_store import validate_ssh_alias
@@ -16,6 +19,7 @@ from omnigent.ssh_connections_store import validate_ssh_alias
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_S = 30.0
+_DEFAULT_MAX_CONCURRENT_COMMANDS = 1
 _CONTROL_PERSIST_S = 300
 _CONTROL_DIR = Path.home() / ".omnigent" / "ssh" / "control"
 
@@ -73,6 +77,15 @@ def build_ssh_close_command(alias: str, *, control_path: Path) -> list[str]:
         f"ControlPath={control_path}",
         alias.strip(),
     ]
+
+
+@dataclass(frozen=True)
+class SshPoolStats:
+    """Runtime counters for the global SSH command throttle."""
+
+    in_flight: int
+    max_concurrent: int
+    shutting_down: bool
 
 
 class SshSession:
@@ -139,9 +152,19 @@ class SshSession:
 class SshSessionPool:
     """Reuses one :class:`SshSession` per SSH config Host alias."""
 
-    def __init__(self, *, control_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        control_dir: Path | None = None,
+        max_concurrent_commands: int = _DEFAULT_MAX_CONCURRENT_COMMANDS,
+    ) -> None:
         self._control_dir = control_dir or default_control_dir()
         self._sessions: dict[str, SshSession] = {}
+        self._session_lock = asyncio.Lock()
+        self._command_semaphore = asyncio.Semaphore(max(1, max_concurrent_commands))
+        self._max_concurrent = max(1, max_concurrent_commands)
+        self._shutting_down = False
+        self._in_flight = 0
 
     def session(self, alias: str) -> SshSession:
         """Return the pooled session for *alias*, creating it when needed."""
@@ -149,6 +172,15 @@ class SshSessionPool:
         if trimmed not in self._sessions:
             self._sessions[trimmed] = SshSession(trimmed, control_dir=self._control_dir)
         return self._sessions[trimmed]
+
+    async def _session_for_alias(self, alias: str) -> SshSession:
+        trimmed = alias.strip()
+        async with self._session_lock:
+            session = self._sessions.get(trimmed)
+            if session is None:
+                session = SshSession(trimmed, control_dir=self._control_dir)
+                self._sessions[trimmed] = session
+            return session
 
     async def run(
         self,
@@ -158,13 +190,33 @@ class SshSessionPool:
         timeout_s: float = _DEFAULT_TIMEOUT_S,
     ) -> tuple[int, bytes, bytes]:
         """Run one remote command via the pooled session for *alias*."""
-        return await self.session(alias).run(remote_command, timeout_s=timeout_s)
+        if self._shutting_down:
+            raise RuntimeError("SSH session pool is shutting down")
+        async with self._command_semaphore:
+            session = await self._session_for_alias(alias)
+            self._in_flight += 1
+            try:
+                return await session.run(remote_command, timeout_s=timeout_s)
+            finally:
+                self._in_flight -= 1
+
+    def stats(self) -> SshPoolStats:
+        """Return runtime counters for observability."""
+        return SshPoolStats(
+            in_flight=self._in_flight,
+            max_concurrent=self._max_concurrent,
+            shutting_down=self._shutting_down,
+        )
 
     async def close(self) -> None:
         """Close all pooled multiplex masters."""
-        for session in self._sessions.values():
-            await session.close()
-        self._sessions.clear()
+        self._shutting_down = True
+        while self._in_flight > 0:
+            await asyncio.sleep(0.01)
+        async with self._session_lock:
+            for session in self._sessions.values():
+                await session.close()
+            self._sessions.clear()
 
     async def __aenter__(self) -> SshSessionPool:
         return self
@@ -193,14 +245,22 @@ async def shutdown_ssh_pool() -> None:
     _global_pool = None
 
 
-def reset_ssh_pool_for_tests(*, control_dir: Path | None = None) -> SshSessionPool:
+def reset_ssh_pool_for_tests(
+    *,
+    control_dir: Path | None = None,
+    max_concurrent_commands: int = _DEFAULT_MAX_CONCURRENT_COMMANDS,
+) -> SshSessionPool:
     """Replace the global pool (tests only)."""
     global _global_pool
-    _global_pool = SshSessionPool(control_dir=control_dir)
+    _global_pool = SshSessionPool(
+        control_dir=control_dir,
+        max_concurrent_commands=max_concurrent_commands,
+    )
     return _global_pool
 
 
 __all__ = [
+    "SshPoolStats",
     "SshSession",
     "SshSessionPool",
     "build_ssh_close_command",

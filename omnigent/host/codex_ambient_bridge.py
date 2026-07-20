@@ -654,27 +654,22 @@ async def run_codex_ambient_bridge(
     codex_home: Path | None = None,
 ) -> None:
     """Poll standalone Codex rollouts and mirror them into Omnigent."""
-    home = codex_home or default_codex_home()
-    headers = _build_http_headers(server_url, host_id=host_id)
-    timeout = httpx.Timeout(_POST_TIMEOUT_S)
-    async with httpx.AsyncClient(
-        base_url=server_url.rstrip("/"),
-        headers=headers,
-        timeout=timeout,
-    ) as client:
-        state = await _hydrate_bridge_state(client, host_id=host_id)
+    from omnigent.host.polling import CodexAmbientPoller, PollScheduler
+
+    scheduler = PollScheduler(server_url=server_url, host_id=host_id)
+    scheduler.register(
+        CodexAmbientPoller(
+            codex_home=codex_home,
+            poll_interval_s=poll_interval_s,
+        )
+    )
+    await scheduler.start()
+    try:
         while True:
-            try:
-                state = await _poll_codex_ambient_once(
-                    client,
-                    state=state,
-                    codex_home=home,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 — ambient sync must survive transient failures
-                _logger.warning("Codex ambient bridge poll failed", exc_info=True)
-            await asyncio.sleep(poll_interval_s)
+            await asyncio.sleep(3600.0)
+    except asyncio.CancelledError:
+        await scheduler.stop()
+        raise
 
 
 __all__ = [

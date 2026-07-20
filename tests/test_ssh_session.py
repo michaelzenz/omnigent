@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
@@ -92,6 +93,55 @@ async def test_ssh_session_pool_reuses_session(tmp_path: Path) -> None:
     third = pool.session("other.ssh")
     assert first is second
     assert first is not third
+
+
+@pytest.mark.asyncio
+async def test_ssh_session_pool_serializes_concurrent_commands(tmp_path: Path) -> None:
+    active = 0
+    peak = 0
+    gate = asyncio.Event()
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await gate.wait()
+            active -= 1
+            return (b"ok\n", b"")
+
+    async def _capture_exec(*_argv: str, **_kwargs: object) -> _Proc:
+        return _Proc()
+
+    pool = SshSessionPool(control_dir=tmp_path, max_concurrent_commands=1)
+    with patch("omnigent.ssh_session.asyncio.create_subprocess_exec", side_effect=_capture_exec):
+        first = asyncio.create_task(pool.run("arca.ssh", "echo one"))
+        second = asyncio.create_task(pool.run("other.ssh", "echo two"))
+        await asyncio.sleep(0)
+        assert active == 1
+        gate.set()
+        await asyncio.gather(first, second)
+
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_ssh_session_pool_rejects_commands_after_close(tmp_path: Path) -> None:
+    pool = SshSessionPool(control_dir=tmp_path)
+    await pool.close()
+    with pytest.raises(RuntimeError, match="shutting down"):
+        await pool.run("arca.ssh", "echo hi")
+
+
+@pytest.mark.asyncio
+async def test_ssh_session_pool_stats(tmp_path: Path) -> None:
+    pool = SshSessionPool(control_dir=tmp_path, max_concurrent_commands=2)
+    stats = pool.stats()
+    assert stats.in_flight == 0
+    assert stats.max_concurrent == 2
+    assert stats.shutting_down is False
 
 
 @pytest.mark.asyncio

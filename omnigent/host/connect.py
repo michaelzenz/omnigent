@@ -15,7 +15,8 @@ import logging
 import os
 import subprocess
 import sys
-from collections.abc import Iterator, Mapping
+from typing import TYPE_CHECKING
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,6 +91,9 @@ from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
 )
 from omnigent.version import VERSION
+
+if TYPE_CHECKING:
+    from omnigent.host.polling import PollScheduler
 
 _logger = logging.getLogger(__name__)
 
@@ -669,8 +673,8 @@ class HostProcess:
         self._watcher_tasks: set[asyncio.Task[None]] = set()
         # Strong ref to the orphan-reaper task (see :meth:`_orphan_reaper_loop`).
         self._reaper_task: asyncio.Task[None] | None = None
-        # Strong ref to the ambient Codex rollout mirror task.
-        self._codex_ambient_task: asyncio.Task[None] | None = None
+        # Ambient source pollers (Codex rollout mirror, etc.).
+        self._poll_scheduler: PollScheduler | None = None
         # Number of host-owned ``subprocess`` operations (e.g. the git worktree
         # commands in :mod:`omnigent.host.git_worktree`) currently in flight.
         # The orphan reaper skips its sweep while this is >0 so it never
@@ -1778,19 +1782,16 @@ class HostProcess:
         self._reaper_task = asyncio.create_task(
             self._orphan_reaper_loop(), name="host-orphan-reaper"
         )
-        from omnigent.host.codex_ambient_bridge import (
-            codex_ambient_sync_enabled,
-            run_codex_ambient_bridge,
-        )
+        from omnigent.host.codex_ambient_bridge import codex_ambient_sync_enabled
+        from omnigent.host.polling import CodexAmbientPoller, PollScheduler
 
         if codex_ambient_sync_enabled():
-            self._codex_ambient_task = asyncio.create_task(
-                run_codex_ambient_bridge(
-                    self._server_url,
-                    host_id=self._identity.host_id,
-                ),
-                name="host-codex-ambient-bridge",
+            self._poll_scheduler = PollScheduler(
+                server_url=self._server_url,
+                host_id=self._identity.host_id,
             )
+            self._poll_scheduler.register(CodexAmbientPoller())
+            await self._poll_scheduler.start()
         backoff = _RECONNECT_BASE_S
         try:
             while True:
@@ -1862,11 +1863,9 @@ class HostProcess:
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
-            if self._codex_ambient_task is not None:
-                self._codex_ambient_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._codex_ambient_task
-                self._codex_ambient_task = None
+            if self._poll_scheduler is not None:
+                await self._poll_scheduler.stop()
+                self._poll_scheduler = None
             from omnigent.ssh_session import shutdown_ssh_pool
 
             await shutdown_ssh_pool()
