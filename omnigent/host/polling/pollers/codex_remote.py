@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import httpx
@@ -10,7 +11,9 @@ import httpx
 from omnigent.host.polling.context import PollContext
 from omnigent.host.polling.pollers.codex_state import (
     BridgeState,
+    BridgeStateDelta,
     TrackedRollout,
+    apply_bridge_delta,
     delete_omnigent_session,
     import_codex_session,
     post_ambient_codex_sync,
@@ -25,10 +28,9 @@ from omnigent.session_import.local import load_codex_session_from_rollout
 from omnigent.session_import.models import SessionImportNotFoundError
 from omnigent.ssh_connections_store import SshConnectionProfile
 from omnigent.ssh_remote import (
-    ssh_remote_active_codex_rollout,
+    RemoteCodexRollout,
     ssh_remote_codex_rollouts,
-    ssh_remote_file_size,
-    ssh_remote_path_exists,
+    ssh_remote_missing_rollout_thread_ids,
     ssh_remote_rollout_to_tempfile,
 )
 
@@ -38,17 +40,59 @@ _logger = logging.getLogger(__name__)
 class CodexRemoteSubPoller:
     """Scan Codex rollouts on one configured SSH host."""
 
-    def __init__(self, profile: SshConnectionProfile) -> None:
+    def __init__(
+        self,
+        profile: SshConnectionProfile,
+        *,
+        interval_s: float,
+        backoff_cap_s: float,
+    ) -> None:
         self._profile = profile
+        self._interval_s = interval_s
+        self._backoff_cap_s = backoff_cap_s
+        self._last_poll_at: float | None = None
+        self._backoff_s = 0.0
+        self._consecutive_failures = 0
+        self._import_conflicts: set[str] = set()
 
     @property
     def profile(self) -> SshConnectionProfile:
         return self._profile
 
+    def is_due(self, now: float) -> bool:
+        """Return whether this remote host should be polled at *now*."""
+        if self._last_poll_at is None:
+            return True
+        return now - self._last_poll_at >= max(self._interval_s, self._backoff_s)
+
+    def record_outcome(self, now: float, *, success: bool) -> None:
+        """Update per-remote backoff after one poll attempt."""
+        self._last_poll_at = now
+        if success:
+            self._consecutive_failures = 0
+            self._backoff_s = 0.0
+            return
+        self._consecutive_failures += 1
+        self._backoff_s = min(
+            self._backoff_cap_s,
+            self._interval_s * (2 ** min(self._consecutive_failures, 5)),
+        )
+
     async def poll_once(self, ctx: PollContext, state: BridgeState) -> BridgeState:
-        pruned = await self._prune_deleted_sessions(ctx.client, state=state)
-        if pruned is not state:
-            state = pruned
+        """Compatibility wrapper that mutates *state* in place."""
+        try:
+            delta = await self.poll_once_delta(ctx, state)
+        except OSError:
+            self.record_outcome(time.monotonic(), success=False)
+            return state
+        self.record_outcome(time.monotonic(), success=True)
+        return apply_bridge_delta(state, delta)
+
+    async def poll_once_delta(self, ctx: PollContext, state: BridgeState) -> BridgeStateDelta:
+        """Scan one SSH host and return thread updates without mutating *state*."""
+        updated: dict[str, TrackedRollout] = {}
+        removed: set[str] = set()
+        removed.update(await self._prune_deleted_sessions(ctx.client, state=state))
         try:
             rollouts = await ssh_remote_codex_rollouts(self._profile)
         except OSError:
@@ -57,40 +101,54 @@ class CodexRemoteSubPoller:
                 self._profile.alias,
                 exc_info=True,
             )
-            return state
+            raise
         for rollout in rollouts:
             tracked = await self._ensure_tracked_rollout(
                 ctx.client,
                 state=state,
-                remote_path=rollout.path,
-                rollout_mtime_ms=rollout.mtime_ms,
+                rollout=rollout,
+                updated=updated,
             )
             if tracked is None:
                 continue
             previous = state.threads.get(tracked_state_key(tracked))
+            if previous is None:
+                previous = updated.get(tracked_state_key(tracked))
             synced = await self._sync_tracked_rollout(ctx.client, tracked=tracked)
             if previous != synced:
-                state.threads[tracked_state_key(synced)] = synced
-        return state
+                updated[tracked_state_key(synced)] = synced
+        return BridgeStateDelta(updated=updated, removed=removed)
 
     async def _prune_deleted_sessions(
         self,
         client: httpx.AsyncClient,
         *,
         state: BridgeState,
-    ) -> BridgeState:
-        if not state.threads:
-            return state
-        remaining = dict(state.threads)
-        changed = False
-        for state_key, tracked in list(state.threads.items()):
+    ) -> set[str]:
+        entries: list[tuple[str, str, str]] = []
+        for state_key, tracked in state.threads.items():
             if tracked.ssh_alias != self._profile.alias:
                 continue
-            active = await ssh_remote_active_codex_rollout(self._profile, tracked.thread_id)
-            if active is not None:
+            entries.append((state_key, tracked.thread_id, tracked.rollout_path))
+        if not entries:
+            return set()
+        try:
+            missing_thread_ids = await ssh_remote_missing_rollout_thread_ids(
+                self._profile,
+                [(thread_id, rollout_path) for _, thread_id, rollout_path in entries],
+            )
+        except OSError:
+            _logger.warning(
+                "Failed to batch-check removed remote Codex threads via %s",
+                self._profile.alias,
+                exc_info=True,
+            )
+            return set()
+        removed: set[str] = set()
+        for state_key, thread_id, _rollout_path in entries:
+            if thread_id not in missing_thread_ids:
                 continue
-            if await ssh_remote_path_exists(self._profile, tracked.rollout_path):
-                continue
+            tracked = state.threads[state_key]
             try:
                 await delete_omnigent_session(client, session_id=tracked.session_id)
             except httpx.HTTPError:
@@ -101,25 +159,27 @@ class CodexRemoteSubPoller:
                     exc_info=True,
                 )
                 continue
-            remaining.pop(state_key, None)
-            changed = True
-        if not changed:
-            return state
-        return BridgeState(threads=remaining)
+            removed.add(state_key)
+        return removed
 
     async def _ensure_tracked_rollout(
         self,
         client: httpx.AsyncClient,
         *,
         state: BridgeState,
-        remote_path: str,
-        rollout_mtime_ms: int,
+        rollout: RemoteCodexRollout,
+        updated: dict[str, TrackedRollout],
     ) -> TrackedRollout | None:
+        remote_path = rollout.path
         thread_id = thread_id_from_rollout_path(Path(remote_path))
         if thread_id is None:
             return None
         state_key = f"{self._profile.alias}:{thread_id}"
+        if state_key in self._import_conflicts:
+            return None
         existing = state.threads.get(state_key)
+        if existing is None:
+            existing = updated.get(state_key)
         if existing is not None:
             if existing.rollout_path != remote_path:
                 existing = TrackedRollout(
@@ -132,17 +192,16 @@ class CodexRemoteSubPoller:
                     connection_id=self._profile.id,
                     ssh_alias=self._profile.alias,
                 )
-                state.threads[state_key] = existing
+                updated[state_key] = existing
             return existing
 
-        if not rollout_is_recent(rollout_mtime_ms):
+        if not rollout_is_recent(rollout.mtime_ms):
             return None
 
         temp_path: Path | None = None
         try:
             temp_path = await ssh_remote_rollout_to_tempfile(self._profile, remote_path)
             imported = load_codex_session_from_rollout(temp_path, thread_id)
-            remote_size = await ssh_remote_file_size(self._profile, remote_path)
         except (OSError, SessionImportNotFoundError):
             return None
         finally:
@@ -155,23 +214,24 @@ class CodexRemoteSubPoller:
             workspace=imported.workspace,
             items=imported.items,
             rollout_path=remote_path,
-            byte_offset=remote_size,
+            byte_offset=rollout.size,
             connection_id=self._profile.id,
             ssh_alias=self._profile.alias,
         )
         if session_id is None:
+            self._import_conflicts.add(state_key)
             return None
         tracked = TrackedRollout(
             thread_id=thread_id,
             rollout_path=remote_path,
             session_id=session_id,
-            byte_offset=remote_size,
+            byte_offset=rollout.size,
             turn_id="history",
             workspace=imported.workspace,
             connection_id=self._profile.id,
             ssh_alias=self._profile.alias,
         )
-        state.threads[state_key] = tracked
+        updated[state_key] = tracked
         _logger.info(
             "Imported remote Codex session %s via %s as Omnigent session %s",
             thread_id,

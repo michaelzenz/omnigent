@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from pathlib import Path
 
 from omnigent.host.identity import CONFIG_PATH
@@ -9,9 +12,16 @@ from omnigent.host.polling.context import PollContext
 from omnigent.host.polling.pollers.codex_config import load_codex_poller_config
 from omnigent.host.polling.pollers.codex_local import CodexLocalSubPoller
 from omnigent.host.polling.pollers.codex_remote import CodexRemoteSubPoller
-from omnigent.host.polling.pollers.codex_state import BridgeState, hydrate_bridge_state
+from omnigent.host.polling.pollers.codex_state import (
+    BridgeState,
+    apply_bridge_delta,
+    hydrate_bridge_state,
+    merge_bridge_deltas,
+)
 from omnigent.session_import.codex_rollout import default_codex_home
 from omnigent.ssh_connections_store import read_ssh_connections
+
+_logger = logging.getLogger(__name__)
 
 
 class CodexAmbientPoller:
@@ -52,9 +62,20 @@ class CodexAmbientPoller:
         return self._codex_home
 
     def _sync_remote_subpollers(self) -> None:
+        config = self._config()
         profiles = [profile for profile in read_ssh_connections() if profile.codex_remote]
         by_id = {poller.profile.id: poller for poller in self._remotes}
-        self._remotes = [by_id.get(profile.id, CodexRemoteSubPoller(profile)) for profile in profiles]
+        self._remotes = [
+            by_id.get(
+                profile.id,
+                CodexRemoteSubPoller(
+                    profile,
+                    interval_s=config.remote_interval_s,
+                    backoff_cap_s=config.remote_backoff_cap_s,
+                ),
+            )
+            for profile in profiles
+        ]
 
     async def on_start(self, ctx: PollContext) -> None:
         self._state = await hydrate_bridge_state(ctx.client, host_id=ctx.host_id)
@@ -68,8 +89,30 @@ class CodexAmbientPoller:
             self._local = CodexLocalSubPoller(codex_home=self._codex_home_path())
         self._sync_remote_subpollers()
         self._state = await self._local.poll_once(ctx, self._state)
-        for remote in self._remotes:
-            self._state = await remote.poll_once(ctx, self._state)
+
+        now = time.monotonic()
+        due_remotes = [remote for remote in self._remotes if remote.is_due(now)]
+        if not due_remotes:
+            return
+
+        results = await asyncio.gather(
+            *(remote.poll_once_delta(ctx, self._state) for remote in due_remotes),
+            return_exceptions=True,
+        )
+        deltas = []
+        for remote, result in zip(due_remotes, results, strict=True):
+            if isinstance(result, Exception):
+                remote.record_outcome(now, success=False)
+                _logger.warning(
+                    "Remote Codex poll failed via %s",
+                    remote.profile.alias,
+                    exc_info=result,
+                )
+                continue
+            remote.record_outcome(now, success=True)
+            deltas.append(result)
+        if deltas:
+            self._state = apply_bridge_delta(self._state, merge_bridge_deltas(*deltas))
 
     async def on_stop(self) -> None:
         self._state = None

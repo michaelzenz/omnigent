@@ -34,6 +34,7 @@ class CodexLocalSubPoller:
 
     def __init__(self, *, codex_home: Path) -> None:
         self._codex_home = codex_home
+        self._import_conflicts: set[str] = set()
 
     async def poll_once(self, ctx: PollContext, state: BridgeState) -> BridgeState:
         pruned = await self._prune_deleted_sessions(ctx.client, state=state)
@@ -126,6 +127,9 @@ class CodexLocalSubPoller:
                 state.threads[thread_id] = existing
             return existing
 
+        if thread_id in self._import_conflicts:
+            return None
+
         rollout_mtime_ms = int(rollout_path.stat().st_mtime * 1000)
         if not rollout_is_recent(rollout_mtime_ms):
             return None
@@ -145,6 +149,7 @@ class CodexLocalSubPoller:
             connection_id=None,
         )
         if session_id is None:
+            self._import_conflicts.add(thread_id)
             return None
         tracked = TrackedRollout(
             thread_id=thread_id,

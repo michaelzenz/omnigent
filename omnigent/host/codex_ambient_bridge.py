@@ -45,12 +45,17 @@ def _poll_context_for_client(client) -> PollContext:
 async def _poll_codex_ambient_once(client, *, state: BridgeState, codex_home: Path) -> BridgeState:
     """Scan Codex rollouts once and mirror any new history."""
     ctx = _poll_context_for_client(client)
+    config = load_codex_poller_config()
     local = CodexLocalSubPoller(codex_home=codex_home)
     state = await local.poll_once(ctx, state)
     for profile in read_ssh_connections():
         if not profile.codex_remote:
             continue
-        remote = CodexRemoteSubPoller(profile)
+        remote = CodexRemoteSubPoller(
+            profile,
+            interval_s=config.remote_interval_s,
+            backoff_cap_s=config.remote_backoff_cap_s,
+        )
         state = await remote.poll_once(ctx, state)
     return state
 

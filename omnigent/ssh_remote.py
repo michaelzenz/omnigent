@@ -34,6 +34,7 @@ class RemoteCodexRollout:
 
     path: str
     mtime_ms: int
+    size: int
 
 
 async def ssh_run(
@@ -87,19 +88,20 @@ async def ssh_remote_file_size(profile: SshConnectionProfile, remote_path: str) 
 
 
 def _parse_rollout_listing(stdout: bytes) -> list[RemoteCodexRollout]:
-    """Parse null-delimited path/mtime pairs from a remote rollout listing."""
+    """Parse null-delimited path/mtime/size triplets from a remote rollout listing."""
     parts = [part.decode("utf-8") for part in stdout.split(b"\0") if part]
     rollouts: list[RemoteCodexRollout] = []
     index = 0
-    while index + 1 < len(parts):
+    while index + 2 < len(parts):
         path = parts[index]
         try:
             mtime_s = int(parts[index + 1])
+            size = int(parts[index + 2])
         except ValueError:
-            index += 2
+            index += 3
             continue
-        rollouts.append(RemoteCodexRollout(path=path, mtime_ms=mtime_s * 1000))
-        index += 2
+        rollouts.append(RemoteCodexRollout(path=path, mtime_ms=mtime_s * 1000, size=size))
+        index += 3
     rollouts.sort(key=lambda entry: entry.mtime_ms, reverse=True)
     return rollouts
 
@@ -116,7 +118,8 @@ async def ssh_remote_codex_rollouts(
         f"find {home}/archived_sessions -maxdepth 1 -type f -name 'rollout-*.jsonl' -print0 2>/dev/null) | "
         "while IFS= read -r -d '' path; do "
         'mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null) || continue; '
-        "printf '%s\\0%s\\0' \"$path\" \"$mtime\"; "
+        'size=$(wc -c < "$path" 2>/dev/null) || continue; '
+        "printf '%s\\0%s\\0%s\\0' \"$path\" \"$mtime\" \"$size\"; "
         "done"
     )
     code, stdout, stderr = await ssh_run(profile, remote_cmd, timeout_s=60.0)
@@ -143,6 +146,32 @@ async def ssh_remote_active_codex_rollout(
         return None
     path = stdout.decode().strip()
     return path or None
+
+
+async def ssh_remote_missing_rollout_thread_ids(
+    profile: SshConnectionProfile,
+    entries: list[tuple[str, str]],
+    *,
+    codex_home: str = "~/.codex",
+) -> set[str]:
+    """Return thread ids with no active or archived rollout left on the remote host."""
+    if not entries:
+        return set()
+    home = _remote_codex_home(codex_home)
+    checks: list[str] = []
+    for thread_id, rollout_path in entries:
+        quoted_thread = shlex.quote(thread_id)
+        quoted_path = shlex.quote(rollout_path)
+        checks.append(
+            f'active=$(find {home}/sessions -type f -name "*{thread_id}.jsonl" 2>/dev/null | head -n 1); '
+            f'if [ -z "$active" ] && [ ! -f {quoted_path} ]; then printf "%s\\0" {quoted_thread}; fi'
+        )
+    remote_cmd = _bash_lc("; ".join(checks))
+    code, stdout, stderr = await ssh_run(profile, remote_cmd, timeout_s=60.0)
+    if code != 0:
+        message = stderr.decode().strip() or "remote prune check failed"
+        raise OSError(message)
+    return {part.decode("utf-8") for part in stdout.split(b"\0") if part}
 
 
 async def ssh_remote_rollout_to_tempfile(

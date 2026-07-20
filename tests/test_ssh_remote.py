@@ -16,9 +16,12 @@ def test_parse_rollout_listing_sorts_newest_first() -> None:
     stdout = (
         b"/old/rollout.jsonl\0"
         b"100\0"
+        b"10\0"
         b"/new/rollout.jsonl\0"
         b"200\0"
+        b"20\0"
     )
     rollouts = _parse_rollout_listing(stdout)
     assert [entry.path for entry in rollouts] == ["/new/rollout.jsonl", "/old/rollout.jsonl"]
     assert rollouts[0].mtime_ms == 200_000
+    assert rollouts[0].size == 20

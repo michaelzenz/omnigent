@@ -20,6 +20,7 @@ def test_codex_poller_config_reads_polling_section(tmp_path, monkeypatch: pytest
     config = load_codex_poller_config(config_path)
     assert config.enabled is False
     assert config.interval_s == 7.5
+    assert config.remote_interval_s == 3.0
     assert codex_ambient_sync_enabled(config_path) is False
 
 

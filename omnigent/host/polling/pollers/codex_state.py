@@ -34,6 +34,40 @@ class BridgeState:
     threads: dict[str, TrackedRollout]
 
 
+@dataclass
+class BridgeStateDelta:
+    """Thread updates produced by one sub-poller tick."""
+
+    updated: dict[str, TrackedRollout]
+    removed: set[str]
+
+
+def apply_bridge_delta(state: BridgeState, delta: BridgeStateDelta) -> BridgeState:
+    """Merge one sub-poller delta into shared bridge state."""
+    if not delta.updated and not delta.removed:
+        return state
+    threads = dict(state.threads)
+    for key in delta.removed:
+        threads.pop(key, None)
+    threads.update(delta.updated)
+    return BridgeState(threads=threads)
+
+
+def merge_bridge_deltas(*deltas: BridgeStateDelta) -> BridgeStateDelta:
+    """Combine multiple sub-poller deltas into one merge step."""
+    updated: dict[str, TrackedRollout] = {}
+    removed: set[str] = set()
+    for delta in deltas:
+        removed.difference_update(delta.updated)
+        removed.update(delta.removed)
+        for key, tracked in delta.updated.items():
+            if key not in removed:
+                updated[key] = tracked
+    for key in removed:
+        updated.pop(key, None)
+    return BridgeStateDelta(updated=updated, removed=removed)
+
+
 def tracked_state_key(tracked: TrackedRollout) -> str:
     if tracked.ssh_alias:
         return f"{tracked.ssh_alias}:{tracked.thread_id}"
