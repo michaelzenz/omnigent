@@ -1451,6 +1451,7 @@ class SqlTask(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
@@ -1503,10 +1504,15 @@ class SqlTaskEvent(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    manager_agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     source: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
+    source_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     search_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     summary: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
@@ -1527,6 +1533,13 @@ class SqlTaskEvent(OmnigentBase):
             "workspace_id",
             "state",
             "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_task_events_manager_agent_state",
+            "workspace_id",
+            "manager_agent_id",
+            "state",
             "id",
         ),
     )
@@ -1702,5 +1715,40 @@ class SqlTaskEventExecution(OmnigentBase):
             "event_id",
             "status",
             "id",
+        ),
+        Index(
+            "ix_task_event_executions_conversation_id",
+            "workspace_id",
+            "conversation_id",
+            "id",
+        ),
+    )
+
+
+class SqlTaskSessionBinding(OmnigentBase):
+    """SQLAlchemy model for the ``task_session_bindings`` table."""
+
+    __tablename__ = "task_session_bindings"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    session_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    binding_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index(
+            "ix_task_session_bindings_task_id",
+            "workspace_id",
+            "task_id",
+            "session_id",
         ),
     )

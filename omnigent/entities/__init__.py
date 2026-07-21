@@ -35,6 +35,7 @@ from omnigent.entities.task import (
     TaskEventRoutingAttempt,
     TaskEventRoutingResolution,
     TaskEventTag,
+    TaskSessionBinding,
     TaskTag,
 )
 from omnigent.entities.session_resources import (
@@ -82,6 +83,7 @@ __all__ = [
     "TaskEventRoutingAttempt",
     "TaskEventRoutingResolution",
     "TaskEventTag",
+    "TaskSessionBinding",
     "TaskTag",
     "TerminalCommandData",
     "filter_resources_by_type",

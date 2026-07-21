@@ -3159,6 +3159,8 @@ def server(
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
     from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
     cfg = _load_config(config_path)
 
@@ -3186,6 +3188,8 @@ def server(
     comment_store = SqlAlchemyCommentStore(db_uri)
     policy_store = SqlAlchemyPolicyStore(db_uri)
     permission_store = SqlAlchemyPermissionStore(db_uri)
+    task_store = SqlAlchemyTaskStore(db_uri)
+    task_event_store = SqlAlchemyTaskEventStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -3238,6 +3242,8 @@ def server(
         artifact_store=artifact_store,
         comment_store=comment_store,
         policy_store=policy_store,
+        task_store=task_store,
+        task_event_store=task_event_store,
         caps=caps,
     )
 

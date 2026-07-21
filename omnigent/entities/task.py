@@ -24,6 +24,8 @@ class Task:
     :param charter: Keyword-dense routing charter maintained by the manager.
     :param search_text: Plain searchable mirror of title, charter, and tags.
     :param state: One of ``"active"``, ``"paused"``, ``"done"``, ``"archived"``.
+    :param manager_conversation_id: Manager session for this task, or ``None``
+        before bootstrap.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
@@ -37,6 +39,7 @@ class Task:
     search_text: str
     state: str
     created_at: int
+    manager_conversation_id: str | None = None
     updated_at: int | None = None
 
 
@@ -76,6 +79,14 @@ class TaskEvent:
     :param routed_at: Unix epoch seconds when routing completed, or ``None``.
     :param processed_at: Unix epoch seconds when the manager finished handling,
         or ``None``.
+    :param manager_agent_id: Denormalized routed manager agent, or ``None``
+        before routing.
+    :param manager_conversation_id: Denormalized manager session wake target,
+        or ``None`` before routing.
+    :param source_key: Stable external id for ingress dedupe, or ``None``.
+    :param source_offset: Ingress cursor (e.g. byte offset), or ``None``.
+    :param source_session_id: Omnigent session the event originated from,
+        or ``None``.
     """
 
     id: str
@@ -90,6 +101,11 @@ class TaskEvent:
     source: str | None = None
     summary: str | None = None
     selected_routing_attempt_id: str | None = None
+    manager_agent_id: str | None = None
+    manager_conversation_id: str | None = None
+    source_key: str | None = None
+    source_offset: int | None = None
+    source_session_id: str | None = None
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None
@@ -209,3 +225,24 @@ class TaskEventExecution:
     error: str | None = None
     error_code: str | None = None
     updated_at: int | None = None
+
+
+@dataclass
+class TaskSessionBinding:
+    """
+    Maps an Omnigent session to the task manager that owns it.
+
+    :param session_id: Bound conversation id.
+    :param task_id: Task the session belongs to.
+    :param manager_agent_id: Manager agent for the task.
+    :param binding_kind: One of ``"ambient"``, ``"worker"``, ``"manager"``.
+    :param created_at: Unix epoch seconds when the binding was created.
+    :param manager_conversation_id: Manager session wake target, or ``None``.
+    """
+
+    session_id: str
+    task_id: str
+    manager_agent_id: str
+    binding_kind: str
+    created_at: int
+    manager_conversation_id: str | None = None

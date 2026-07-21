@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     )
     from omnigent.stores.comment_store import CommentStore
     from omnigent.stores.policy_store import PolicyStore
+    from omnigent.stores.task_event_store import TaskEventStore
+    from omnigent.stores.task_store import TaskStore
     from omnigent.terminals import TerminalRegistry
     from omnigent.tools import ToolManager
 
@@ -37,6 +39,8 @@ def init(
     artifact_store: ArtifactStore | None = None,
     comment_store: CommentStore | None = None,
     policy_store: PolicyStore | None = None,
+    task_store: TaskStore | None = None,
+    task_event_store: TaskEventStore | None = None,
     caps: RuntimeCaps | None = None,
 ) -> None:
     """
@@ -61,6 +65,11 @@ def init(
     :param policy_store: The PolicyStore instance for
         session-scoped policies managed via the CRUD API.
         ``None`` when session policies are not configured.
+    :param task_store: The TaskStore instance for managed tasks.
+        ``None`` when agent tasks are not configured.
+    :param task_event_store: The TaskEventStore instance for task
+        events, routing, and executions. ``None`` when agent tasks
+        are not configured.
     :param caps: Operator-configured execution ceiling.
         ``None`` uses :class:`RuntimeCaps` defaults.
     """
@@ -72,6 +81,8 @@ def init(
         artifact_store=artifact_store,
         comment_store=comment_store,
         policy_store=policy_store,
+        task_store=task_store,
+        task_event_store=task_event_store,
         caps=caps,
     )
 
@@ -154,6 +165,24 @@ def get_policy_store() -> PolicyStore | None:
     :returns: The PolicyStore set during :func:`init`, or ``None``.
     """
     return _globals._policy_store
+
+
+def get_task_store() -> TaskStore | None:
+    """
+    Return the TaskStore instance, or ``None`` if not configured.
+
+    :returns: The TaskStore set during :func:`init`, or ``None``.
+    """
+    return _globals._task_store
+
+
+def get_task_event_store() -> TaskEventStore | None:
+    """
+    Return the TaskEventStore instance, or ``None`` if not configured.
+
+    :returns: The TaskEventStore set during :func:`init`, or ``None``.
+    """
+    return _globals._task_event_store
 
 
 def get_agent_cache() -> AgentCache:

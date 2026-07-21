@@ -6,6 +6,8 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_store import TaskStore
 
 __all__ = [
     "AgentStore",
@@ -14,4 +16,6 @@ __all__ = [
     "FileStore",
     "PermissionStore",
     "ScheduledTaskStore",
+    "TaskEventStore",
+    "TaskStore",
 ]
