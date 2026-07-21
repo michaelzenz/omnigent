@@ -1429,3 +1429,278 @@ class SqlScheduledTaskRun(OmnigentBase):
             "id",
         ),
     )
+
+
+class SqlTask(OmnigentBase):
+    """
+    SQLAlchemy model for the ``tasks`` table.
+
+    A task is a long-lived unit of work owned by one manager agent. Inbound
+    :class:`SqlTaskEvent` rows route to a task so the manager can update task
+    state and dispatch workers.
+    """
+
+    __tablename__ = "tasks"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    charter: Mapped[str | None] = mapped_column(Text, nullable=True)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4)", name="ck_tasks_state"),
+        Index("ix_tasks_state_updated", "workspace_id", "state", "updated_at", "id"),
+        Index("ix_tasks_manager_agent_id", "workspace_id", "manager_agent_id", "id"),
+        Index("ix_tasks_created_at", "workspace_id", "created_at", "id"),
+    )
+
+
+class SqlTaskTag(OmnigentBase):
+    """SQLAlchemy model for the ``task_tags`` table."""
+
+    __tablename__ = "task_tags"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    task_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    tag_type: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tag: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    __table_args__ = (
+        Index("ix_task_tags_reverse", "workspace_id", "tag_type", "tag", "task_id"),
+    )
+
+
+class SqlTaskEvent(OmnigentBase):
+    """SQLAlchemy model for the ``task_events`` table."""
+
+    __tablename__ = "task_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    summary: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
+    selected_routing_attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    routed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7)", name="ck_task_events_state"),
+        Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
+        Index("ix_task_events_state_created", "workspace_id", "state", "created_at", "id"),
+        Index("ix_task_events_event_type", "workspace_id", "event_type", "created_at", "id"),
+        Index(
+            "ix_task_events_awaiting_user_selection",
+            "workspace_id",
+            "state",
+            "updated_at",
+            "id",
+        ),
+    )
+
+
+class SqlTaskEventTag(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_tags`` table."""
+
+    __tablename__ = "task_event_tags"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    tag_type: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tag: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    __table_args__ = (
+        Index(
+            "ix_task_event_tags_reverse",
+            "workspace_id",
+            "tag_type",
+            "tag",
+            "event_id",
+        ),
+    )
+
+
+class SqlTaskEventRoutingAttempt(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_routing_attempts`` table."""
+
+    __tablename__ = "task_event_routing_attempts"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    candidate_task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    candidate_manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    rank: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decision: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    manager_reason: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    proposed_at: Mapped[int] = mapped_column(Integer)
+    responded_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selected_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN (1, 2, 3, 4, 5)",
+            name="ck_task_event_routing_attempts_decision",
+        ),
+        Index(
+            "ix_task_event_routing_attempts_event",
+            "workspace_id",
+            "event_id",
+            "id",
+        ),
+        Index(
+            "ix_task_event_routing_attempts_event_decision",
+            "workspace_id",
+            "event_id",
+            "decision",
+            "id",
+        ),
+        Index(
+            "ix_task_event_routing_attempts_candidate_task",
+            "workspace_id",
+            "candidate_task_id",
+            "event_id",
+        ),
+    )
+
+
+class SqlTaskEventRoutingResolution(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_routing_resolutions`` table."""
+
+    __tablename__ = "task_event_routing_resolutions"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    selected_attempt_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    selected_task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    selected_manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    resolved_by_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index(
+            "ix_task_event_routing_resolutions_event",
+            "workspace_id",
+            "event_id",
+            "id",
+        ),
+    )
+
+
+class SqlTaskEventExecution(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_executions`` table."""
+
+    __tablename__ = "task_event_executions"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    worker_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    status: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    attempt_no: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    assigned_at: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    error: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN (1, 2, 3, 4, 5)",
+            name="ck_task_event_executions_status",
+        ),
+        Index(
+            "ix_task_event_executions_event",
+            "workspace_id",
+            "event_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_task_event_executions_task",
+            "workspace_id",
+            "task_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_task_event_executions_worker",
+            "workspace_id",
+            "worker_agent_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_task_event_executions_event_status",
+            "workspace_id",
+            "event_id",
+            "status",
+            "id",
+        ),
+    )

@@ -41,6 +41,18 @@ _CODECS = [
         ec.encode_scheduled_task_run_status,
         ec.decode_scheduled_task_run_status,
     ),
+    (ec.TASK_STATE, ec.encode_task_state, ec.decode_task_state),
+    (ec.TASK_EVENT_STATE, ec.encode_task_event_state, ec.decode_task_event_state),
+    (
+        ec.TASK_EVENT_ROUTING_DECISION,
+        ec.encode_task_event_routing_decision,
+        ec.decode_task_event_routing_decision,
+    ),
+    (
+        ec.TASK_EVENT_EXECUTION_STATUS,
+        ec.encode_task_event_execution_status,
+        ec.decode_task_event_execution_status,
+    ),
 ]
 
 
@@ -127,4 +139,33 @@ def test_shipped_codes_are_stable() -> None:
         "succeeded": 3,
         "failed": 4,
         "skipped": 5,
+    }
+    assert ec.TASK_STATE == {
+        "active": 1,
+        "paused": 2,
+        "done": 3,
+        "archived": 4,
+    }
+    assert ec.TASK_EVENT_STATE == {
+        "received": 1,
+        "routing": 2,
+        "awaiting_user_selection": 3,
+        "routed": 4,
+        "processed": 5,
+        "failed": 6,
+        "dismissed": 7,
+    }
+    assert ec.TASK_EVENT_ROUTING_DECISION == {
+        "proposed": 1,
+        "accepted": 2,
+        "rejected": 3,
+        "selected": 4,
+        "not_selected": 5,
+    }
+    assert ec.TASK_EVENT_EXECUTION_STATUS == {
+        "queued": 1,
+        "running": 2,
+        "succeeded": 3,
+        "failed": 4,
+        "cancelled": 5,
     }

@@ -28,6 +28,15 @@ from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
+from omnigent.entities.task import (
+    Task,
+    TaskEvent,
+    TaskEventExecution,
+    TaskEventRoutingAttempt,
+    TaskEventRoutingResolution,
+    TaskEventTag,
+    TaskTag,
+)
 from omnigent.entities.session_resources import (
     DEFAULT_ENVIRONMENT_ID,
     SessionResourceView,
@@ -67,6 +76,13 @@ __all__ = [
     "SessionResourceView",
     "SlashCommandData",
     "StoredFile",
+    "Task",
+    "TaskEvent",
+    "TaskEventExecution",
+    "TaskEventRoutingAttempt",
+    "TaskEventRoutingResolution",
+    "TaskEventTag",
+    "TaskTag",
     "TerminalCommandData",
     "filter_resources_by_type",
     "get_resource_by_id",

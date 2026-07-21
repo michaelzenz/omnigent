@@ -5,7 +5,9 @@ Several low-cardinality closed-set columns (``conversations.kind``,
 ``account_tokens.kind``, ``policies.type``, ``policies.scope``,
 ``hosts.status``, ``agents.kind``, ``scheduled_tasks.state``,
 ``scheduled_tasks.execution_target``,
-``scheduled_task_runs.status``) are stored as
+``scheduled_task_runs.status``, ``tasks.state``,
+``task_events.state``, ``task_event_routing_attempts.decision``,
+``task_event_executions.status``) are stored as
 integer codes rather
 than their string names — smaller rows and a tighter ``CHECK`` than a
 free ``VARCHAR``. The string names remain the
@@ -106,6 +108,39 @@ SCHEDULED_TASK_RUN_STATUS: dict[str, int] = {
     "succeeded": 3,
     "failed": 4,
     "skipped": 5,
+}
+
+TASK_STATE: dict[str, int] = {
+    "active": 1,
+    "paused": 2,
+    "done": 3,
+    "archived": 4,
+}
+
+TASK_EVENT_STATE: dict[str, int] = {
+    "received": 1,
+    "routing": 2,
+    "awaiting_user_selection": 3,
+    "routed": 4,
+    "processed": 5,
+    "failed": 6,
+    "dismissed": 7,
+}
+
+TASK_EVENT_ROUTING_DECISION: dict[str, int] = {
+    "proposed": 1,
+    "accepted": 2,
+    "rejected": 3,
+    "selected": 4,
+    "not_selected": 5,
+}
+
+TASK_EVENT_EXECUTION_STATUS: dict[str, int] = {
+    "queued": 1,
+    "running": 2,
+    "succeeded": 3,
+    "failed": 4,
+    "cancelled": 5,
 }
 
 
@@ -299,3 +334,59 @@ def encode_scheduled_task_run_status(name: str) -> int:
 def decode_scheduled_task_run_status(code: int) -> str:
     """Decode a ``scheduled_task_runs.status`` int code to its name."""
     return _decode(SCHEDULED_TASK_RUN_STATUS, code, field="scheduled_task_runs.status")
+
+
+def encode_task_state(name: str) -> int:
+    """Encode a ``tasks.state`` name to its int code."""
+    return _encode(TASK_STATE, name, field="tasks.state")
+
+
+def decode_task_state(code: int) -> str:
+    """Decode a ``tasks.state`` int code to its name."""
+    return _decode(TASK_STATE, code, field="tasks.state")
+
+
+def encode_task_event_state(name: str) -> int:
+    """Encode a ``task_events.state`` name to its int code."""
+    return _encode(TASK_EVENT_STATE, name, field="task_events.state")
+
+
+def decode_task_event_state(code: int) -> str:
+    """Decode a ``task_events.state`` int code to its name."""
+    return _decode(TASK_EVENT_STATE, code, field="task_events.state")
+
+
+def encode_task_event_routing_decision(name: str) -> int:
+    """Encode a ``task_event_routing_attempts.decision`` name to its int code."""
+    return _encode(
+        TASK_EVENT_ROUTING_DECISION,
+        name,
+        field="task_event_routing_attempts.decision",
+    )
+
+
+def decode_task_event_routing_decision(code: int) -> str:
+    """Decode a ``task_event_routing_attempts.decision`` int code to its name."""
+    return _decode(
+        TASK_EVENT_ROUTING_DECISION,
+        code,
+        field="task_event_routing_attempts.decision",
+    )
+
+
+def encode_task_event_execution_status(name: str) -> int:
+    """Encode a ``task_event_executions.status`` name to its int code."""
+    return _encode(
+        TASK_EVENT_EXECUTION_STATUS,
+        name,
+        field="task_event_executions.status",
+    )
+
+
+def decode_task_event_execution_status(code: int) -> str:
+    """Decode a ``task_event_executions.status`` int code to its name."""
+    return _decode(
+        TASK_EVENT_EXECUTION_STATUS,
+        code,
+        field="task_event_executions.status",
+    )
