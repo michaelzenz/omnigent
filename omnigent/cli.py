@@ -3345,6 +3345,8 @@ def server(
         agent_cache=agent_cache,
         runner_tunnel_tokens=_runner_tunnel_tokens,
         permission_store=permission_store,
+        task_store=task_store,
+        task_event_store=task_event_store,
         auth_provider=auth_provider,
         host_store=host_store,
         account_store=account_store,

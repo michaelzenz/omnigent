@@ -59,6 +59,7 @@ from omnigent.server.performance_metrics import (
     set_request_session_id_for_access_log,
     set_request_user_agent_for_access_log,
 )
+from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -91,6 +92,8 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
 
@@ -1092,6 +1095,8 @@ def create_app(
     policy_store: PolicyStore | None = None,
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
+    task_store: TaskStore | None = None,
+    task_event_store: TaskEventStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
@@ -1136,6 +1141,9 @@ def create_app(
         starts an :class:`ScheduledTaskScheduler` that arms a timer per
         active task and fires the injected ``on_fire`` callback on
         schedule. ``None`` disables the scheduler entirely.
+    :param task_store: Store for managed agent tasks. When provided with
+        ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
+    :param task_event_store: Store for task events and execution history.
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -2195,6 +2203,18 @@ def create_app(
             ),
             prefix="/v1",
             tags=["comments"],
+        )
+    if task_store is not None and task_event_store is not None:
+        app.include_router(
+            create_agent_tasks_router(
+                task_store,
+                task_event_store,
+                agent_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+            ),
+            prefix="/v1",
+            tags=["agent_tasks"],
         )
     if policy_store is not None:
         app.include_router(
