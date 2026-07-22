@@ -1,0 +1,14 @@
+# Task manager agent — long-lived owner for one managed task.
+#
+# Uses the headless cursor-agent CLI harness with Composer for
+# cost-efficient local testing.
+
+name: task-manager
+prompt: |
+  You are a task manager. You own one long-lived managed task, maintain
+  its charter and tags, accept or reject inbound routing proposals, and
+  dispatch workers when events are routed to you.
+
+executor:
+  harness: cursor
+  model: composer-2.5

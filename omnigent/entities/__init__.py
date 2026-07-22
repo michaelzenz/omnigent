@@ -28,6 +28,7 @@ from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
+from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.entities.task import (
     Task,
     TaskEvent,
@@ -85,6 +86,7 @@ __all__ = [
     "TaskEventTag",
     "TaskSessionBinding",
     "TaskTag",
+    "UserSecretaryProfile",
     "TerminalCommandData",
     "filter_resources_by_type",
     "get_resource_by_id",

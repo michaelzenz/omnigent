@@ -204,3 +204,31 @@ async def test_delete_archives_task(
     get_resp = await client.get(f"/v1/agent-tasks/{created['id']}")
     assert get_resp.status_code == 200
     assert get_resp.json()["state"] == "archived"
+
+
+async def test_secretary_profile_and_bootstrap(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+) -> None:
+    """Secretary profile defaults feed manager bootstrap."""
+    profile_resp = await client.put(
+        "/v1/agent-tasks/secretary/profile",
+        json={
+            "agent_id": manager_agent_id,
+            "host_id": _uid("secretary_host"),
+            "workspace": "/tmp/secretary",
+            "harness": "cursor",
+            "model": "composer-2.5",
+        },
+    )
+    assert profile_resp.status_code == 200
+    assert profile_resp.json()["harness"] == "cursor"
+
+    created = await client.post(
+        "/v1/agent-tasks",
+        json={"manager_agent_id": manager_agent_id, "title": "Bootstrap me"},
+    )
+    task_id = created.json()["id"]
+    bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
+    assert bootstrap_resp.status_code == 200
+    assert bootstrap_resp.json()["manager_conversation_id"] is not None

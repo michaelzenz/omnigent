@@ -38,6 +38,7 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "task_event_routing_attempts",
         "task_event_routing_resolutions",
         "task_event_executions",
+        "user_secretary_profiles",
     } <= tables
 
 
@@ -70,6 +71,19 @@ def test_task_events_state_check_enforced(db_engine: Engine) -> None:
                 ),
                 {"id": bytes.fromhex("11111111111111111111111111111111")},
             )
+
+
+def test_task_events_state_8_allowed(db_engine: Engine) -> None:
+    """The awaiting_new_manager_decision state code is accepted."""
+    with db_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO task_events "
+                "(workspace_id, id, event_type, title, state, created_at) "
+                "VALUES (0, :id, 'build.finished', 'done', 8, 1)"
+            ),
+            {"id": bytes.fromhex("22222222222222222222222222222222")},
+        )
 
 
 def test_task_event_routing_attempts_decision_check_enforced(db_engine: Engine) -> None:

@@ -45,6 +45,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
@@ -598,6 +599,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         comment_store=SqlAlchemyCommentStore(db_uri),
         task_store=SqlAlchemyTaskStore(db_uri),
         task_event_store=SqlAlchemyTaskEventStore(db_uri),
+        secretary_profile_store=SqlAlchemySecretaryProfileStore(db_uri),
     )
 
 

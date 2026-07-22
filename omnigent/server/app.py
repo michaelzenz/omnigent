@@ -60,6 +60,7 @@ from omnigent.server.performance_metrics import (
     set_request_user_agent_for_access_log,
 )
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
+from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -92,6 +93,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
@@ -1097,6 +1099,7 @@ def create_app(
     scheduled_task_store: ScheduledTaskStore | None = None,
     task_store: TaskStore | None = None,
     task_event_store: TaskEventStore | None = None,
+    secretary_profile_store: SecretaryProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
@@ -1144,6 +1147,9 @@ def create_app(
     :param task_store: Store for managed agent tasks. When provided with
         ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
     :param task_event_store: Store for task events and execution history.
+    :param secretary_profile_store: Per-user secretary profile defaults.
+        When provided with task stores, enables secretary profile/session
+        routes and resolve-time bootstrap defaults.
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -2210,11 +2216,25 @@ def create_app(
                 task_store,
                 task_event_store,
                 agent_store,
+                conversation_store=conversation_store,
+                secretary_profile_store=secretary_profile_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
             ),
             prefix="/v1",
             tags=["agent_tasks"],
+        )
+        app.include_router(
+            create_task_events_router(
+                task_store,
+                task_event_store,
+                conversation_store,
+                secretary_profile_store=secretary_profile_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+            ),
+            prefix="/v1",
+            tags=["task_events"],
         )
     if policy_store is not None:
         app.include_router(
