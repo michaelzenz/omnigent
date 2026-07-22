@@ -12,6 +12,7 @@ and land in `awaiting_manager_triage` for manager assessment.
 | Task manager | [TASK_MANAGER.md](TASK_MANAGER.md) |
 | Task secretary | [TASK_SECRETARY.md](TASK_SECRETARY.md) (includes orphan session routing search text) |
 | Task worker | [TASK_WORKER.md](TASK_WORKER.md) |
+| Poll plugin author | [TASK_POLL_AUTHOR.md](TASK_POLL_AUTHOR.md) (see [POLL_PLUGINS.md](POLL_PLUGINS.md)) |
 
 ## Routing thresholds
 
@@ -40,3 +41,9 @@ user accepts a secretary proposal. Secretary writes routing search text, propose
 task match; **no auto-adopt** for sessions.
 
 Event ingress uses auto-route thresholds; **session adoption does not**.
+
+## Poll plugins
+
+[POLL_PLUGINS.md](POLL_PLUGINS.md) — agent-authored host scripts under
+`$OMNIGENT_DATA_DIR/poll_plugins/<name>/run.py` emit task events without host
+restarts. The [poll plugin author](TASK_POLL_AUTHOR.md) role creates and maintains them.
