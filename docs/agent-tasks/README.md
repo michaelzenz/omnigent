@@ -10,7 +10,7 @@ and land in `awaiting_manager_triage` for manager assessment.
 |------|--------|
 | User / operator | [USER_GUIDE.md](USER_GUIDE.md) |
 | Task manager | [TASK_MANAGER.md](TASK_MANAGER.md) |
-| Task secretary | [TASK_SECRETARY.md](TASK_SECRETARY.md) |
+| Task secretary | [TASK_SECRETARY.md](TASK_SECRETARY.md) (includes orphan session routing search text) |
 | Task worker | [TASK_WORKER.md](TASK_WORKER.md) |
 
 ## Routing thresholds
@@ -33,6 +33,10 @@ Manager proposals use `awaiting_user_ack` (separate lane).
 
 See [API_REFERENCE.md](API_REFERENCE.md). Phase 5 adds `POST /v1/task-events` ingress.
 
-## Deferred
+## Session adoption (Phase 5.5)
 
-Orphan session adoption (`binding_kind=ambient`) is planned for a follow-up phase.
+[SESSION_ADOPTION.md](SESSION_ADOPTION.md) — orphan sessions stay unbound until the
+user accepts a secretary proposal. Secretary writes routing search text, proposes a
+task match; **no auto-adopt** for sessions.
+
+Event ingress uses auto-route thresholds; **session adoption does not**.

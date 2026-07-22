@@ -15,6 +15,14 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
+from omnigent.agent_tasks.adoption import (
+    SESSION_ADOPTION_PROPOSAL,
+    adopt_session,
+    find_open_adoption_proposal,
+    flush_pending_orphan_sessions,
+    propose_session_adoption,
+    reject_session_adoption,
+)
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL
 from omnigent.agent_tasks.dashboard import build_task_dashboard
@@ -30,8 +38,9 @@ from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.server.auth import AuthProvider
-from omnigent.server.routes._auth_helpers import get_user_id, require_user
+from omnigent.server.auth import LEVEL_OWNER, AuthProvider
+from omnigent.server.routes._auth_helpers import get_user_id, require_access, require_user
+from omnigent.server.routes.task_events import _event_to_response
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
@@ -165,6 +174,16 @@ class DispatchTaskWorkerRequest(BaseModel):
     worker_agent_id: str | None = None
     title: str | None = None
     instructions: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    model: str | None = None
+
+
+class AdoptSessionRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
+
+    task_id: str
     host_id: str | None = None
     workspace: str | None = None
     harness: str | None = None
@@ -402,12 +421,13 @@ def create_agent_tasks_router(
                         conversation_store.get_conversation,
                         profile.conversation_id,
                     )
-                    if existing is not None:
-                        return {
-                            "object": "agent.task.secretary_session",
-                            "conversation_id": existing.id,
-                            "created": False,
-                        }
+                if existing is not None:
+                    await flush_pending_orphan_sessions(effective_user_id)
+                    return {
+                        "object": "agent.task.secretary_session",
+                        "conversation_id": existing.id,
+                        "created": False,
+                    }
                 params = resolve_bootstrap_params(
                     host_id=profile.host_id,
                     workspace=profile.workspace,
@@ -433,6 +453,7 @@ def create_agent_tasks_router(
                     effective_user_id,
                     conversation_id=conversation.id,
                 )
+                await flush_pending_orphan_sessions(effective_user_id)
                 return {
                     "object": "agent.task.secretary_session",
                     "conversation_id": conversation.id,
@@ -656,6 +677,115 @@ def create_agent_tasks_router(
                 "execution_id": execution.id,
                 "conversation_id": worker_conversation_id,
                 "status": execution.status,
+            }
+
+        async def _require_session_or_404(session_id: str, user_id: str | None) -> None:
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+            if conv is None:
+                raise OmnigentError("Session not found", code=ErrorCode.NOT_FOUND)
+            await require_access(
+                user_id,
+                session_id,
+                LEVEL_OWNER,
+                permission_store,
+                conversation_store,
+            )
+
+        @router.post("/agent-tasks/sessions/{session_id}/propose-adoption")
+        async def propose_session_adoption_route(
+            request: Request,
+            session_id: str,
+        ) -> dict[str, Any]:
+            """Score tasks and create a user-gated session adoption proposal."""
+            user_id = require_user(request, auth_provider)
+            await _require_session_or_404(session_id, user_id)
+            created = await asyncio.to_thread(
+                propose_session_adoption,
+                session_id=session_id,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                owner_user_id=_effective_user_id(user_id),
+            )
+            return _event_to_response(created)
+
+        @router.post("/agent-tasks/sessions/{session_id}/adopt")
+        async def adopt_session_route(
+            request: Request,
+            session_id: str,
+            body: AdoptSessionRequest,
+        ) -> dict[str, Any]:
+            """Bind an orphan session to a task after user acceptance."""
+            user_id = require_user(request, auth_provider)
+            await _require_session_or_404(session_id, user_id)
+            await _get_task_or_404(body.task_id, user_id)
+            profile = None
+            if secretary_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    secretary_profile_store.get,
+                    _effective_user_id(user_id),
+                )
+            params = resolve_bootstrap_params(
+                host_id=body.host_id,
+                workspace=body.workspace,
+                harness=body.harness,
+                model=body.model,
+                secretary_profile=profile,
+            )
+            proposal = await asyncio.to_thread(
+                find_open_adoption_proposal,
+                task_event_store,
+                session_id,
+            )
+            runner_router = getattr(request.app.state, "runner_router", None)
+            proposal_event, adopted_event = await adopt_session(
+                session_id=session_id,
+                task_id=body.task_id,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+                params=params,
+                proposal_event=proposal,
+            )
+            binding = await asyncio.to_thread(task_event_store.get_binding, session_id)
+            return {
+                "object": "agent.task.session_adoption",
+                "session_id": session_id,
+                "task_id": body.task_id,
+                "binding_kind": binding.binding_kind if binding is not None else None,
+                "proposal": (
+                    _event_to_response(proposal_event)
+                    if proposal_event.event_type == SESSION_ADOPTION_PROPOSAL
+                    else None
+                ),
+                "event": _event_to_response(adopted_event),
+            }
+
+        @router.post("/agent-tasks/sessions/{session_id}/reject-adoption")
+        async def reject_session_adoption_route(
+            request: Request,
+            session_id: str,
+        ) -> dict[str, Any]:
+            """Dismiss adoption for a session that should stay orphan."""
+            user_id = require_user(request, auth_provider)
+            await _require_session_or_404(session_id, user_id)
+            proposal = await asyncio.to_thread(
+                find_open_adoption_proposal,
+                task_event_store,
+                session_id,
+            )
+            dismissed = await asyncio.to_thread(
+                reject_session_adoption,
+                session_id=session_id,
+                conversation_store=conversation_store,
+                task_event_store=task_event_store,
+                proposal_event=proposal,
+            )
+            return {
+                "object": "agent.task.session_adoption_rejection",
+                "session_id": session_id,
+                "proposal": _event_to_response(dismissed) if dismissed is not None else None,
             }
 
     return router

@@ -2151,6 +2151,7 @@ def create_app(
             agent_store,
             auth_provider=auth_provider,
             permission_store=permission_store,
+            host_store=host_store,
         ),
         prefix="/v1",
         tags=["imports"],
@@ -2237,12 +2238,23 @@ def create_app(
             tags=["task_events"],
         )
         from omnigent.agent_tasks.completion import TaskCompletionContext, configure_task_completion
+        from omnigent.agent_tasks.adoption import SessionAdoptionContext, configure_session_adoption
 
         configure_task_completion(
             TaskCompletionContext(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
+        )
+        configure_session_adoption(
+            SessionAdoptionContext(
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                secretary_profile_store=secretary_profile_store,
+                host_store=host_store,
                 runner_router=runner_router,
             )
         )

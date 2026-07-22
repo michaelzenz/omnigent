@@ -29,6 +29,7 @@ from omnigent.session_import import (
 )
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.conversation_store import ConversationAlreadyExistsError
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 
 
@@ -138,6 +139,7 @@ def create_imports_router(
     *,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
+    host_store: HostStore | None = None,
 ) -> APIRouter:
     """Create the local-session import router."""
     router = APIRouter()
@@ -280,6 +282,14 @@ def create_imports_router(
             raise
 
         _announce_session_added(user_id, conversation.id)
+
+        from omnigent.agent_tasks.adoption import notify_new_session
+
+        await notify_new_session(
+            conversation.id,
+            user_id=user_id,
+            host_id=poller_host_id,
+        )
 
         response.status_code = 201
         return ImportSessionResponse(

@@ -14840,6 +14840,14 @@ def create_sessions_router(
             # Push the new session to this user's other open tabs so it
             # enters the sidebar without a list poll (WS /sessions/updates).
             _announce_session_added(user_id, result.session_id)
+            from omnigent.agent_tasks.adoption import notify_new_session
+
+            conv = conversation_store.get_conversation(result.session_id)
+            await notify_new_session(
+                result.session_id,
+                user_id=user_id,
+                host_id=conv.host_id if conv is not None else None,
+            )
             return result
 
         try:
@@ -14931,6 +14939,9 @@ def create_sessions_router(
         # Push the new session to this user's other open tabs (see the
         # multipart path above for the rationale).
         _announce_session_added(user_id, resp.id)
+        from omnigent.agent_tasks.adoption import notify_new_session
+
+        await notify_new_session(resp.id, user_id=user_id, host_id=body.host_id)
 
         # Managed host: schedule a BACKGROUND sandbox provision bound
         # to this session and return immediately — provisioning takes

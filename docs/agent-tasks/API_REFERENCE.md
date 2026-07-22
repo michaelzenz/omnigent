@@ -30,3 +30,6 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/agent-tasks/{id}/dispatch` |
 | PUT | `/v1/agent-tasks/secretary/profile` |
 | POST | `/v1/agent-tasks/secretary/session` |
+| POST | `/v1/agent-tasks/sessions/{session_id}/propose-adoption` |
+| POST | `/v1/agent-tasks/sessions/{session_id}/adopt` |
+| POST | `/v1/agent-tasks/sessions/{session_id}/reject-adoption` |

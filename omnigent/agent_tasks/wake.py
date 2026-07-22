@@ -136,3 +136,47 @@ async def wake_secretary_for_stalled_events(
         conversation_store=conversation_store,
         runner_router=runner_router,
     )
+
+
+def _format_orphan_session_notice(session_ids: list[str]) -> str:
+    lines = [
+        f"[System: {len(session_ids)} new session(s) need routing profiles]",
+        "Read each session, write omnigent.task.routing_search_text, then call "
+        "propose-adoption. User must accept before adopt.",
+    ]
+    for session_id in session_ids[:10]:
+        lines.append(f"- session {session_id}")
+    if len(session_ids) > 10:
+        lines.append(f"- ... and {len(session_ids) - 10} more")
+    return "\n".join(lines)
+
+
+async def wake_secretary_for_orphan_sessions(
+    *,
+    user_id: str,
+    session_ids: list[str],
+    secretary_profile_store: SecretaryProfileStore,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+) -> bool:
+    """Wake the secretary when orphan sessions need routing search text."""
+    if not session_ids:
+        return False
+    profile = secretary_profile_store.get(user_id)
+    if profile is None or profile.conversation_id is None:
+        _logger.warning(
+            "orphan session wake skipped: no live secretary for user %s",
+            user_id,
+        )
+        return False
+    conv = conversation_store.get_conversation(profile.conversation_id)
+    if conv is None:
+        return False
+    notice = _format_orphan_session_notice(session_ids)
+    return await _wake_parent_for_blocked_child(
+        profile.conversation_id,
+        conv,
+        notice,
+        conversation_store=conversation_store,
+        runner_router=runner_router,
+    )
