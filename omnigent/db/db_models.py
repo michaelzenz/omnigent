@@ -1524,7 +1524,7 @@ class SqlTaskEvent(OmnigentBase):
     processed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_task_events_state"),
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8, 9)", name="ck_task_events_state"),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
         Index("ix_task_events_state_created", "workspace_id", "state", "created_at", "id"),
         Index("ix_task_events_event_type", "workspace_id", "event_type", "created_at", "id"),

@@ -2236,6 +2236,16 @@ def create_app(
             prefix="/v1",
             tags=["task_events"],
         )
+        from omnigent.agent_tasks.completion import TaskCompletionContext, configure_task_completion
+
+        configure_task_completion(
+            TaskCompletionContext(
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
+        )
     if policy_store is not None:
         app.include_router(
             create_session_policies_router(

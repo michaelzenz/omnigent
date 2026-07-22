@@ -8,8 +8,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
+from omnigent.agent_tasks.proposals import resolve_proposal
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
+from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -28,13 +30,20 @@ _VALID_EVENT_STATES = frozenset(TASK_EVENT_STATE)
 class ResolveTaskEventRequest(BaseModel):
     """Request body for ``POST /v1/task-events/{event_id}/resolve``."""
 
-    resolution: Literal["route_to_task", "select_attempt"]
+    resolution: Literal[
+        "route_to_task",
+        "select_attempt",
+        "accept_proposal",
+        "edit_and_dispatch",
+        "reject_proposal",
+    ]
     task_id: str | None = None
     routing_attempt_id: str | None = None
     host_id: str | None = None
     workspace: str | None = None
     harness: str | None = None
     model: str | None = None
+    edited_payload: dict[str, Any] | None = None
 
 
 class BatchResolveTaskEventsRequest(BaseModel):
@@ -189,9 +198,37 @@ def create_task_events_router(
         event_id: str,
         body: ResolveTaskEventRequest,
     ) -> dict[str, Any]:
-        """Route a stalled event to a task manager."""
+        """Route a stalled event or fulfill a manager proposal."""
         user_id = require_user(request, auth_provider)
         event = await _get_event_or_404(event_id)
+        profile = await _load_secretary_profile(user_id)
+
+        if body.resolution in {"accept_proposal", "edit_and_dispatch", "reject_proposal"}:
+            if event.task_id is None:
+                raise OmnigentError("Proposal is not bound to a task", code=ErrorCode.CONFLICT)
+            task = await asyncio.to_thread(task_store.get, event.task_id)
+            if task is None:
+                raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+            _require_task_access(task, user_id)
+            edited_payload = body.edited_payload
+            if body.resolution == "edit_and_dispatch" and edited_payload is None:
+                raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
+            updated, execution = await asyncio.to_thread(
+                resolve_proposal,
+                event=event,
+                resolution=body.resolution,
+                task=task,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                edited_payload=edited_payload,
+                secretary_profile=profile,
+            )
+            response = _event_to_response(updated)
+            if execution is not None:
+                response["execution_id"] = execution.id
+                response["worker_conversation_id"] = execution.conversation_id
+            return response
+
         task: Task | None = None
         if body.resolution == "route_to_task":
             if body.task_id is None:
@@ -200,7 +237,6 @@ def create_task_events_router(
             if task is None:
                 raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
             _require_task_access(task, user_id)
-        profile = await _load_secretary_profile(user_id)
         updated = await resolve_task_event(
             event=event,
             resolution=body.resolution,
@@ -217,6 +253,30 @@ def create_task_events_router(
             model=body.model,
             secretary_profile=profile,
         )
+        return _event_to_response(updated)
+
+    @router.post("/task-events/{event_id}/complete")
+    async def complete_task_event(request: Request, event_id: str) -> dict[str, Any]:
+        """Mark a routed inbound event as processed by the task manager."""
+        require_user(request, auth_provider)
+        event = await _get_event_or_404(event_id)
+        if event.state not in {"routed", "received"}:
+            raise OmnigentError(
+                f"Cannot complete event in state {event.state!r}",
+                code=ErrorCode.CONFLICT,
+            )
+
+        def _complete() -> TaskEvent:
+            updated = task_event_store.update_event(
+                event_id,
+                state="processed",
+                processed_at=now_epoch(),
+            )
+            if updated is None:
+                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+            return updated
+
+        updated = await asyncio.to_thread(_complete)
         return _event_to_response(updated)
 
     @router.post("/task-events/batch-resolve")

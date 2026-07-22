@@ -20514,6 +20514,15 @@ def create_sessions_router(
                 response_id=response_id,
                 background_task_count=bg_count,
             )
+            from omnigent.agent_tasks.completion import notify_worker_session_status
+
+            output_text = output if isinstance(output, str) else None
+            if status in {"idle", "failed"}:
+                await notify_worker_session_status(
+                    session_id,
+                    status,
+                    output=output_text,
+                )
             forward_body = body.model_dump()
             forward_body["data"] = await _enrich_idle_status_with_subagent_output(
                 forward_body["data"], status, session_id, conversation_store

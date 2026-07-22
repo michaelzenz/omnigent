@@ -8,16 +8,26 @@ ingress and manager wake are handled in later phases.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL
+from omnigent.agent_tasks.dashboard import build_task_dashboard
+from omnigent.agent_tasks.dispatch import (
+    dispatch_worker_for_event,
+    parse_dispatch_payload,
+    resolve_dispatch_params,
+)
+from omnigent.agent_tasks.event_types import MANAGER_PROPOSAL, MANAGER_WORK_ITEM
+from omnigent.agent_tasks.proposals import create_manager_proposal
 from omnigent.db.enum_codecs import TASK_STATE
-from omnigent.entities import Task, TaskEventExecution, TaskTag
+from omnigent.db.utils import now_epoch
+from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
@@ -133,6 +143,28 @@ class PutSecretaryProfileRequest(BaseModel):
 class BootstrapTaskManagerRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/{task_id}/bootstrap``."""
 
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    model: str | None = None
+
+
+class CreateTaskEventRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/events``."""
+
+    event_type: Literal["manager.proposal", "manager.work_item"]
+    title: str
+    summary: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class DispatchTaskWorkerRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/dispatch``."""
+
+    event_id: str
+    worker_agent_id: str | None = None
+    title: str | None = None
+    instructions: str | None = None
     host_id: str | None = None
     workspace: str | None = None
     harness: str | None = None
@@ -522,5 +554,108 @@ def create_agent_tasks_router(
             )
             tags = await asyncio.to_thread(task_store.get_tags, task_id)
             return _task_to_response(bootstrapped, tags=tags)
+
+        @router.get("/agent-tasks/{task_id}/dashboard")
+        async def get_task_dashboard(request: Request, task_id: str) -> dict[str, Any]:
+            """Return a card-shaped snapshot for one managed task."""
+            user_id = get_user_id(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            return await asyncio.to_thread(build_task_dashboard, task, task_event_store)
+
+        @router.post("/agent-tasks/{task_id}/events")
+        async def create_task_event(
+            request: Request,
+            task_id: str,
+            body: CreateTaskEventRequest,
+        ) -> dict[str, Any]:
+            """Create a manager-internal task event (proposal or work item)."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            if body.event_type == MANAGER_PROPOSAL:
+                created = await asyncio.to_thread(
+                    create_manager_proposal,
+                    task=task,
+                    task_event_store=task_event_store,
+                    title=body.title,
+                    payload=body.payload,
+                    summary=body.summary,
+                )
+            else:
+                event_id = uuid.uuid4().hex
+                created = await asyncio.to_thread(
+                    task_event_store.create_event,
+                    event_id,
+                    MANAGER_WORK_ITEM,
+                    body.title,
+                    task_id=task.id,
+                    payload=json.dumps(body.payload),
+                    source="manager",
+                    summary=body.summary,
+                    state="routed",
+                    manager_agent_id=task.manager_agent_id,
+                    manager_conversation_id=task.manager_conversation_id,
+                )
+                await asyncio.to_thread(
+                    task_event_store.update_event,
+                    created.id,
+                    routed_at=now_epoch(),
+                )
+            return {
+                "id": created.id,
+                "object": "agent.task.event",
+                "event_type": created.event_type,
+                "title": created.title,
+                "state": created.state,
+                "task_id": created.task_id,
+                "payload": created.payload,
+            }
+
+        @router.post("/agent-tasks/{task_id}/dispatch")
+        async def dispatch_task_worker(
+            request: Request,
+            task_id: str,
+            body: DispatchTaskWorkerRequest,
+        ) -> dict[str, Any]:
+            """Dispatch a worker for a routed task event."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            event = await asyncio.to_thread(task_event_store.get_event, body.event_id)
+            if event is None:
+                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+            profile = None
+            if secretary_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    secretary_profile_store.get,
+                    _effective_user_id(user_id),
+                )
+            payload = parse_dispatch_payload(event.payload)
+            params = resolve_dispatch_params(
+                payload=payload,
+                worker_agent_id=body.worker_agent_id,
+                title=body.title,
+                instructions=body.instructions,
+                host_id=body.host_id,
+                workspace=body.workspace,
+                harness=body.harness,
+                model=body.model,
+                secretary_profile=profile,
+            )
+
+            def _dispatch() -> tuple[TaskEventExecution, str]:
+                return dispatch_worker_for_event(
+                    task=task,
+                    event=event,
+                    params=params,
+                    task_event_store=task_event_store,
+                    conversation_store=conversation_store,
+                )
+
+            execution, worker_conversation_id = await asyncio.to_thread(_dispatch)
+            return {
+                "object": "agent.task.dispatch",
+                "execution_id": execution.id,
+                "conversation_id": worker_conversation_id,
+                "status": execution.status,
+            }
 
     return router

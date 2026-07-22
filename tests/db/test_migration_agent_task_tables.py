@@ -86,6 +86,19 @@ def test_task_events_state_8_allowed(db_engine: Engine) -> None:
         )
 
 
+def test_task_events_state_9_allowed(db_engine: Engine) -> None:
+    """The awaiting_user_ack state code is accepted."""
+    with db_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO task_events "
+                "(workspace_id, id, event_type, title, state, created_at) "
+                "VALUES (0, :id, 'manager.proposal', 'retry', 9, 1)"
+            ),
+            {"id": bytes.fromhex("33333333333333333333333333333333")},
+        )
+
+
 def test_task_event_routing_attempts_decision_check_enforced(db_engine: Engine) -> None:
     """Invalid routing decision codes are rejected."""
     with db_engine.begin() as conn:
