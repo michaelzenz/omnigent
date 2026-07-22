@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
+from omnigent.agent_tasks.constants import MANAGER_TRIAGE_EVENT_STATES
+from omnigent.agent_tasks.distributor import distribute_event
+from omnigent.agent_tasks.event_types import is_manager_internal_event
 from omnigent.agent_tasks.proposals import resolve_proposal
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
+from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt
+from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt, TaskEventTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
@@ -25,6 +31,60 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
 _VALID_EVENT_STATES = frozenset(TASK_EVENT_STATE)
+
+
+class TaskEventTagInput(BaseModel):
+    """One typed tag on an ingress task event."""
+
+    tag_type: str
+    tag: str
+
+    @field_validator("tag_type", "tag")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must be a non-empty string")
+        return stripped
+
+
+class CreateIngressTaskEventRequest(BaseModel):
+    """Request body for ``POST /v1/task-events`` ingress."""
+
+    event_type: str
+    title: str
+    summary: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source: str | None = None
+    source_key: str | None = None
+    source_offset: int = 0
+    source_session_id: str | None = None
+    priority: int = 0
+    tags: list[TaskEventTagInput] = Field(default_factory=list)
+
+    @field_validator("event_type", "title")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must be a non-empty string")
+        return stripped
+
+    @field_validator("source")
+    @classmethod
+    def _source_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("source_key")
+    @classmethod
+    def _source_key_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class ResolveTaskEventRequest(BaseModel):
@@ -146,6 +206,78 @@ def create_task_events_router(
     def _runner_router(request: Request) -> RunnerRouter | None:
         return getattr(request.app.state, "runner_router", None)
 
+    def _effective_user_id(user_id: str | None) -> str:
+        return user_id if user_id is not None else "__anonymous__"
+
+    def _require_ingress_auth(request: Request) -> str | None:
+        user_id = get_user_id(request, auth_provider)
+        poller_host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
+        if poller_host_id is not None:
+            poller_host_id = poller_host_id.strip() or None
+        if user_id is None and poller_host_id is None:
+            return require_user(request, auth_provider)
+        return user_id
+
+    @router.post("/task-events")
+    async def create_task_event_ingress(
+        request: Request,
+        body: CreateIngressTaskEventRequest,
+    ) -> dict[str, Any]:
+        """Ingest an external task event and run the distributor."""
+        user_id = _require_ingress_auth(request)
+        if is_manager_internal_event(body.event_type):
+            raise OmnigentError(
+                "manager-internal event types cannot be ingressed",
+                code=ErrorCode.INVALID_INPUT,
+            )
+
+        if body.source is not None and body.source_key is not None:
+            existing = await asyncio.to_thread(
+                task_event_store.get_event_by_source,
+                source=body.source,
+                source_key=body.source_key,
+                source_offset=body.source_offset,
+                event_type=body.event_type,
+            )
+            if existing is not None:
+                return _event_to_response(existing)
+
+        profile = await _load_secretary_profile(user_id)
+        event_id = uuid.uuid4().hex
+        tags = [
+            TaskEventTag(event_id=event_id, tag_type=tag.tag_type, tag=tag.tag)
+            for tag in body.tags
+        ]
+
+        def _create() -> TaskEvent:
+            return task_event_store.create_event(
+                event_id,
+                body.event_type,
+                body.title,
+                payload=json.dumps(body.payload),
+                source=body.source,
+                source_key=body.source_key,
+                source_offset=body.source_offset,
+                source_session_id=body.source_session_id,
+                summary=body.summary,
+                state="received",
+                priority=body.priority,
+                tags=tags,
+            )
+
+        created = await asyncio.to_thread(_create)
+        distributed = await distribute_event(
+            event=created,
+            task_store=task_store,
+            task_event_store=task_event_store,
+            conversation_store=conversation_store,
+            runner_router=_runner_router(request),
+            secretary_profile_store=secretary_profile_store,
+            secretary_profile=profile,
+            owner_user_id=_effective_user_id(user_id),
+        )
+        return _event_to_response(distributed)
+
     @router.get("/task-events")
     async def list_task_events(
         request: Request,
@@ -260,9 +392,14 @@ def create_task_events_router(
         """Mark a routed inbound event as processed by the task manager."""
         require_user(request, auth_provider)
         event = await _get_event_or_404(event_id)
-        if event.state not in {"routed", "received"}:
+        if event.state not in MANAGER_TRIAGE_EVENT_STATES:
             raise OmnigentError(
                 f"Cannot complete event in state {event.state!r}",
+                code=ErrorCode.CONFLICT,
+            )
+        if is_manager_internal_event(event.event_type):
+            raise OmnigentError(
+                "Cannot complete manager-internal events via ingress complete",
                 code=ErrorCode.CONFLICT,
             )
 

@@ -69,7 +69,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     )
     assert resolve_resp.status_code == 200
     resolved = resolve_resp.json()
-    assert resolved["state"] == "routed"
+    assert resolved["state"] == "awaiting_manager_triage"
     assert resolved["task_id"] == task_id
     assert resolved["manager_conversation_id"] is not None
 

@@ -99,6 +99,19 @@ def test_task_events_state_9_allowed(db_engine: Engine) -> None:
         )
 
 
+def test_task_events_state_10_allowed(db_engine: Engine) -> None:
+    """The awaiting_manager_triage state code is accepted."""
+    with db_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO task_events "
+                "(workspace_id, id, event_type, title, state, created_at) "
+                "VALUES (0, :id, 'build.finished', 'done', 10, 1)"
+            ),
+            {"id": bytes.fromhex("44444444444444444444444444444444")},
+        )
+
+
 def test_task_event_routing_attempts_decision_check_enforced(db_engine: Engine) -> None:
     """Invalid routing decision codes are rejected."""
     with db_engine.begin() as conn:

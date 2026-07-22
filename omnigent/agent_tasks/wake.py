@@ -1,13 +1,14 @@
-"""Best-effort wake delivery for managed task managers."""
+"""Best-effort wake delivery for managed task managers and secretaries."""
 
 from __future__ import annotations
 
 import logging
 
-from omnigent.entities import TaskEvent, TaskEventExecution
+from omnigent.entities import Task, TaskEvent, TaskEventExecution
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 
 _logger = logging.getLogger(__name__)
 
@@ -78,6 +79,60 @@ async def wake_task_manager_for_event(
         manager_conversation_id,
         conv,
         _format_event_notice(event),
+        conversation_store=conversation_store,
+        runner_router=runner_router,
+    )
+
+
+def _format_secretary_stall_notice(
+    events: list[TaskEvent],
+    ranked_candidates: dict[str, list[tuple[Task, float]]],
+) -> str:
+    lines = [f"[System: {len(events)} task event(s) need routing decisions]"]
+    for event in events:
+        candidates = ranked_candidates.get(event.id, [])
+        candidate_text = ""
+        if candidates:
+            rendered = ", ".join(
+                f"{task.title} ({score:.2f})" for task, score in candidates[:3]
+            )
+            candidate_text = f" — candidates: {rendered}"
+        lines.append(f"- {event.event_type}: {event.title!r} ({event.state}){candidate_text}")
+    return "\n".join(lines)
+
+
+async def wake_secretary_for_stalled_events(
+    *,
+    user_id: str,
+    events: list[TaskEvent],
+    ranked_candidates: dict[str, list[tuple[Task, float]]],
+    secretary_profile_store: SecretaryProfileStore,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+) -> bool:
+    """Wake the task secretary when routing stalls and needs user input."""
+    if not events:
+        return False
+    profile = secretary_profile_store.get(user_id)
+    if profile is None or profile.conversation_id is None:
+        _logger.warning(
+            "secretary wake skipped: no live session for user %s (%s event(s))",
+            user_id,
+            len(events),
+        )
+        return False
+    conv = conversation_store.get_conversation(profile.conversation_id)
+    if conv is None:
+        _logger.warning(
+            "secretary wake skipped: conversation %s missing",
+            profile.conversation_id,
+        )
+        return False
+    notice = _format_secretary_stall_notice(events, ranked_candidates)
+    return await _wake_parent_for_blocked_child(
+        profile.conversation_id,
+        conv,
+        notice,
         conversation_store=conversation_store,
         runner_router=runner_router,
     )

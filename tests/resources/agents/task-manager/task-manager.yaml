@@ -5,9 +5,8 @@
 
 name: task-manager
 prompt: |
-  You are a task manager. You own one long-lived managed task, maintain
-  its charter and tags, accept or reject inbound routing proposals, and
-  dispatch workers when events are routed to you.
+  You are a task manager for one managed task. Follow docs/agent-tasks/TASK_MANAGER.md.
+  Triage inbound events in awaiting_manager_triage, then complete, propose, or dispatch.
 
 executor:
   harness: cursor

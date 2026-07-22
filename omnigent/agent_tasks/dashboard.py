@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from omnigent.agent_tasks.constants import MANAGER_TRIAGE_EVENT_STATES
 from omnigent.agent_tasks.event_types import MANAGER_PROPOSAL, is_manager_internal_event
 from omnigent.entities import Task, TaskEvent, TaskEventExecution
 from omnigent.stores.task_event_store import TaskEventStore
@@ -28,7 +29,7 @@ def build_task_dashboard(
     pending_inbound = [
         _event_summary(event)
         for event in events
-        if event.state == "routed" and not is_manager_internal_event(event.event_type)
+        if event.state in MANAGER_TRIAGE_EVENT_STATES and not is_manager_internal_event(event.event_type)
     ]
 
     workers: dict[str, list[dict[str, Any]]] = {}

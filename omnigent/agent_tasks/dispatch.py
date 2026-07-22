@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
+from omnigent.agent_tasks.constants import DISPATCHABLE_EVENT_STATES
 from omnigent.agent_tasks.event_types import MANAGER_WORK_ITEM
 from omnigent.agent_tasks.executions import mark_execution_running, start_execution
 from omnigent.db.utils import now_epoch
@@ -16,8 +17,6 @@ from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
-
-_DISPATCHABLE_EVENT_STATES = frozenset({"routed", "received"})
 
 
 @dataclass(frozen=True)
@@ -132,7 +131,7 @@ def dispatch_worker_for_event(
             "Task manager is not bootstrapped",
             code=ErrorCode.CONFLICT,
         )
-    if event.state not in _DISPATCHABLE_EVENT_STATES:
+    if event.state not in DISPATCHABLE_EVENT_STATES:
         raise OmnigentError(
             f"Cannot dispatch for event in state {event.state!r}",
             code=ErrorCode.CONFLICT,

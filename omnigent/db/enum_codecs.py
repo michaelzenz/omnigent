@@ -127,6 +127,7 @@ TASK_EVENT_STATE: dict[str, int] = {
     "dismissed": 7,
     "awaiting_new_manager_decision": 8,
     "awaiting_user_ack": 9,
+    "awaiting_manager_triage": 10,
 }
 
 TASK_EVENT_ROUTING_DECISION: dict[str, int] = {

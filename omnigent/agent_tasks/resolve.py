@@ -5,11 +5,8 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from omnigent.agent_tasks.bootstrap import (
-    BootstrapParams,
-    bootstrap_task_manager,
-    resolve_bootstrap_params,
-)
+from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
+from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
@@ -123,41 +120,31 @@ async def resolve_task_event(
             elif row.decision == "accepted":
                 task_event_store.update_routing_attempt(row.id, decision="not_selected")
 
-    params: BootstrapParams = resolve_bootstrap_params(
+    params = resolve_bootstrap_params(
         host_id=host_id,
         workspace=workspace,
         harness=harness,
         model=model,
         secretary_profile=secretary_profile,
     )
-    bootstrapped = bootstrap_task_manager(
-        task=target_task,
-        task_store=task_store,
-        task_event_store=task_event_store,
-        conversation_store=conversation_store,
-        params=params,
-    )
     if selected_attempt_id is not None:
         task_event_store.create_resolution(
             _generate_resolution_id(),
             event.id,
             selected_attempt_id,
-            bootstrapped.id,
-            bootstrapped.manager_agent_id,
+            target_task.id,
+            target_task.manager_agent_id,
             resolved_by_user_id=resolved_by_user_id,
         )
-    routed_at = now_epoch()
-    updated = task_event_store.update_event(
-        event.id,
-        task_id=bootstrapped.id,
-        state="routed",
-        selected_routing_attempt_id=selected_attempt_id,
-        manager_agent_id=bootstrapped.manager_agent_id,
-        manager_conversation_id=bootstrapped.manager_conversation_id,
-        routed_at=routed_at,
+    updated = route_event_to_task(
+        event=event,
+        task=target_task,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        conversation_store=conversation_store,
+        params=params,
+        selected_attempt_id=selected_attempt_id,
     )
-    if updated is None:
-        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
     if wake and updated.manager_conversation_id is not None:
         await wake_task_manager_for_event(
             manager_conversation_id=updated.manager_conversation_id,
