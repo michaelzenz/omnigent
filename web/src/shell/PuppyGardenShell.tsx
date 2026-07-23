@@ -1,4 +1,5 @@
 import { PuppyGardenChatSidebar } from "./PuppyGardenChatSidebar";
+import { PuppyGardenBoard } from "./puppyGarden/PuppyGardenBoard";
 
 /**
  * Self-contained layout for `/puppy-garden`. Mirrors the AppShell "chat +
@@ -15,7 +16,9 @@ export function PuppyGardenShell() {
         className="min-h-0 min-w-0 bg-white"
         data-testid="puppy-garden-board"
         aria-label="PuppyGarden board"
-      />
+      >
+        <PuppyGardenBoard />
+      </div>
       <PuppyGardenChatSidebar />
     </div>
   );

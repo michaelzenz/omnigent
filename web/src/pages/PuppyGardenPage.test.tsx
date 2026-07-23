@@ -6,6 +6,10 @@ vi.mock("@/shell/PuppyGardenChatSidebar", () => ({
   PuppyGardenChatSidebar: () => <div data-testid="puppy-garden-chat-sidebar" />,
 }));
 
+vi.mock("@/shell/puppyGarden/PuppyGardenBoard", () => ({
+  PuppyGardenBoard: () => <div data-testid="puppy-garden-board-content" />,
+}));
+
 afterEach(cleanup);
 
 describe("PuppyGardenPage", () => {
