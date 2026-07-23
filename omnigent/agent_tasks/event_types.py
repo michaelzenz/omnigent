@@ -19,9 +19,8 @@ def is_manager_internal_event(event_type: str) -> bool:
 
 
 def is_distributor_candidate(*, event_type: str, task_id: str | None) -> bool:
-    """Return whether an event should enter the distributor candidate pool."""
-    return (
-        task_id is None
-        and not is_manager_internal_event(event_type)
-        and not is_session_internal_event(event_type)
+    """Return whether an event should enter the distributor."""
+    _ = task_id
+    return not is_manager_internal_event(event_type) and not is_session_internal_event(
+        event_type
     )

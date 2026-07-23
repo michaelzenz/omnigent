@@ -6,13 +6,15 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from omnigent.host.identity import CONFIG_PATH
 from omnigent.host.polling.context import PollContext
 from omnigent.host.polling.poll_plugins_paths import RUN_SCRIPT_NAME, iter_plugin_dirs
 from omnigent.host.polling.pollers.script_plugins_config import (
-    load_script_poll_plugins_config,
+    load_plugin_poll_config,
+    load_script_poll_plugins_defaults,
 )
 from omnigent.process_logging import data_dir
 
@@ -20,36 +22,47 @@ _logger = logging.getLogger(__name__)
 
 
 class ScriptPollPluginsPoller:
-    """Execute each plugin folder's ``run.py`` on a fixed interval."""
+    """Execute each plugin folder's ``run.py`` on its configured interval."""
 
     read_only = False
 
     def __init__(self, *, config_path: Path = CONFIG_PATH) -> None:
         self._config_path = config_path
+        self._last_run: dict[str, float] = {}
 
     @property
     def name(self) -> str:
         return "poll_plugins"
 
     def enabled(self, ctx: PollContext) -> bool:
-        return load_script_poll_plugins_config(self._config_path).enabled
+        return True
 
     def interval_s(self, ctx: PollContext) -> float:
-        return load_script_poll_plugins_config(self._config_path).interval_s
+        return load_script_poll_plugins_defaults(self._config_path).tick_s
 
     async def on_start(self, ctx: PollContext) -> None:
-        return None
+        self._last_run = {}
 
     async def on_stop(self) -> None:
-        return None
+        self._last_run = {}
 
     async def poll_once(self, ctx: PollContext) -> None:
-        config = load_script_poll_plugins_config(self._config_path)
+        defaults = load_script_poll_plugins_defaults(self._config_path)
         plugin_dirs = iter_plugin_dirs()
         if not plugin_dirs:
             return
+        now = time.monotonic()
         for plugin_dir in plugin_dirs:
-            await self._run_plugin(plugin_dir, ctx=ctx, timeout_s=config.timeout_s)
+            plugin_config = load_plugin_poll_config(plugin_dir, defaults)
+            last_run = self._last_run.get(plugin_dir.name, 0.0)
+            if now - last_run < plugin_config.interval_s:
+                continue
+            await self._run_plugin(
+                plugin_dir,
+                ctx=ctx,
+                timeout_s=plugin_config.timeout_s,
+            )
+            self._last_run[plugin_dir.name] = now
 
     async def _run_plugin(
         self,

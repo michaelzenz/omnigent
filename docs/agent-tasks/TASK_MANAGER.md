@@ -32,3 +32,16 @@ Proposal payload must include `worker_agent_id`, `title`, `instructions`,
 
 - Ingest `build.*` or other external event types yourself.
 - Resolve your own proposals (the user does that).
+
+## Poll plugins
+
+Follow-up events from poll plugins may include an explicit `task_id` (via
+`watches.json` `context.task_id`). Those events skip distributor scoring and
+land on your triage queue directly.
+
+When a blocker PR must be watched, ask the poll plugin author to add an
+explicit watch with your managed task id, for example:
+
+```json
+{"repo": "org/repo", "pr": 456, "context": {"blocked_pr": 123, "task_id": "<your-task-id>"}}
+```

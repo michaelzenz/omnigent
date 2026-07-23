@@ -1792,28 +1792,22 @@ class HostProcess:
         from omnigent.host.polling.pollers.cursor_config import (
             cursor_projects_ambient_sync_enabled,
         )
-        from omnigent.host.polling.pollers.script_plugins_config import (
-            script_poll_plugins_enabled,
-        )
 
-        if any(
-            (
-                codex_ambient_sync_enabled(),
-                cursor_projects_ambient_sync_enabled(),
-                script_poll_plugins_enabled(),
-            )
-        ):
-            self._poll_scheduler = PollScheduler(
-                server_url=self._server_url,
-                host_id=self._identity.host_id,
-            )
-            if codex_ambient_sync_enabled():
-                self._poll_scheduler.register(CodexAmbientPoller())
-            if cursor_projects_ambient_sync_enabled():
-                self._poll_scheduler.register(CursorProjectsAmbientPoller())
-            if script_poll_plugins_enabled():
-                self._poll_scheduler.register(ScriptPollPluginsPoller())
-            await self._poll_scheduler.start()
+        pollers: list[CodexAmbientPoller | CursorProjectsAmbientPoller | ScriptPollPluginsPoller] = [
+            ScriptPollPluginsPoller(),
+        ]
+        if codex_ambient_sync_enabled():
+            pollers.insert(0, CodexAmbientPoller())
+        if cursor_projects_ambient_sync_enabled():
+            pollers.append(CursorProjectsAmbientPoller())
+
+        self._poll_scheduler = PollScheduler(
+            server_url=self._server_url,
+            host_id=self._identity.host_id,
+        )
+        for poller in pollers:
+            self._poll_scheduler.register(poller)
+        await self._poll_scheduler.start()
         backoff = _RECONNECT_BASE_S
         try:
             while True:

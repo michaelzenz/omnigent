@@ -92,6 +92,32 @@ async def distribute_event(
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
     event = routing
 
+    if event.task_id is not None:
+        bound_task = task_store.get(event.task_id)
+        if bound_task is not None and bound_task.state == "active":
+            params = _bootstrap_params(secretary_profile)
+            return await _finish_route(
+                event=event,
+                task=bound_task,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+                params=params,
+                secretary_profile_store=secretary_profile_store,
+                owner_user_id=owner_user_id,
+            )
+        return await _stall(
+            event=event,
+            reason="new_manager_decision",
+            ranked=[],
+            task_event_store=task_event_store,
+            secretary_profile_store=secretary_profile_store,
+            conversation_store=conversation_store,
+            runner_router=runner_router,
+            owner_user_id=owner_user_id,
+        )
+
     if event.source_session_id:
         binding = task_event_store.get_binding(event.source_session_id)
         if binding is not None:

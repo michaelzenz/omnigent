@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
-from omnigent.host.polling.poll_plugins_paths import RUN_SCRIPT_NAME, iter_plugin_dirs
+from omnigent.host.polling.poll_plugins_paths import (
+    PLUGIN_CONFIG_NAME,
+    RUN_SCRIPT_NAME,
+    iter_plugin_dirs,
+)
 from omnigent.host.polling.pollers.script_plugins import ScriptPollPluginsPoller
 from omnigent.host.polling.pollers.script_plugins_config import (
-    load_script_poll_plugins_config,
+    ScriptPollPluginsDefaults,
+    load_plugin_poll_config,
+    load_script_poll_plugins_defaults,
 )
 
 
@@ -22,21 +29,55 @@ def test_iter_plugin_dirs_skips_hidden_and_requires_run_py(tmp_path: Path) -> No
     assert names == ["good"]
 
 
-def test_script_poll_plugins_config_defaults_disabled(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.yaml"
-    config = load_script_poll_plugins_config(config_path)
-    assert config.enabled is False
-    assert config.interval_s == 60.0
+def test_script_poll_plugins_defaults(tmp_path: Path) -> None:
+    config = load_script_poll_plugins_defaults(tmp_path / "config.yaml")
+    assert config.default_interval_s == 60.0
+    assert config.default_timeout_s == 120.0
+    assert config.tick_s == 5.0
 
 
-def test_script_poll_plugins_config_from_yaml(tmp_path: Path) -> None:
+def test_script_poll_plugins_defaults_from_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
-        "host:\n  polling:\n    poll_plugins:\n      enabled: true\n      interval_s: 45\n"
+        "host:\n  polling:\n    poll_plugins:\n"
+        "      default_interval_s: 45\n      default_timeout_s: 90\n      tick_s: 10\n"
     )
-    config = load_script_poll_plugins_config(config_path)
-    assert config.enabled is True
-    assert config.interval_s == 45.0
+    config = load_script_poll_plugins_defaults(config_path)
+    assert config.default_interval_s == 45.0
+    assert config.default_timeout_s == 90.0
+    assert config.tick_s == 10.0
+
+
+def test_plugin_poll_config_uses_plugin_yaml(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "github_pr"
+    plugin_dir.mkdir()
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 30\ntimeout_s: 15\n")
+    defaults = ScriptPollPluginsDefaults(
+        default_interval_s=60.0,
+        default_timeout_s=120.0,
+        tick_s=5.0,
+    )
+    config = load_plugin_poll_config(plugin_dir, defaults)
+    assert config.interval_s == 30.0
+    assert config.timeout_s == 15.0
+
+
+def test_plugin_poll_config_falls_back_to_defaults(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "bare"
+    plugin_dir.mkdir()
+    defaults = ScriptPollPluginsDefaults(
+        default_interval_s=60.0,
+        default_timeout_s=120.0,
+        tick_s=5.0,
+    )
+    config = load_plugin_poll_config(plugin_dir, defaults)
+    assert config.interval_s == 60.0
+    assert config.timeout_s == 120.0
+
+
+def test_script_poll_plugins_poller_is_always_enabled() -> None:
+    poller = ScriptPollPluginsPoller()
+    assert poller.enabled(None) is True  # type: ignore[arg-type]
 
 
 async def test_run_plugin_executes_run_py(tmp_path: Path) -> None:
@@ -54,4 +95,40 @@ async def test_run_plugin_executes_run_py(tmp_path: Path) -> None:
 
     poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
     await poller._run_plugin(plugin_dir, ctx=_Ctx(), timeout_s=10.0)  # type: ignore[arg-type]
+    assert (plugin_dir / "ran.txt").read_text() == "1"
+
+
+async def test_poll_once_skips_plugin_until_interval_elapsed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plugins_root = tmp_path / "poll_plugins"
+    plugin_dir = plugins_root / "demo"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / RUN_SCRIPT_NAME).write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
+    )
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 60\n")
+
+    import omnigent.host.polling.pollers.script_plugins as script_plugins_module
+
+    monkeypatch.setattr(
+        script_plugins_module,
+        "iter_plugin_dirs",
+        lambda root=None: [plugin_dir],
+    )
+
+    class _Ctx:
+        server_url = "http://127.0.0.1:8123"
+        host_id = "host_test"
+
+    poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
+    poller._last_run["demo"] = time.monotonic()
+    await poller.poll_once(_Ctx())  # type: ignore[arg-type]
+    assert not (plugin_dir / "ran.txt").exists()
+
+    poller._last_run["demo"] = time.monotonic() - 120.0
+    await poller.poll_once(_Ctx())  # type: ignore[arg-type]
     assert (plugin_dir / "ran.txt").read_text() == "1"

@@ -20,14 +20,15 @@ Given user instructions (from chat or a future UI form):
 
 1. Pick a short folder name: `github_pr`, `buildkite_main`, …
 2. Create `{poll_plugins_dir}/<name>/run.py` (see skeleton in POLL_PLUGINS.md).
-3. Add `watches.json` if the user specified explicit targets.
-4. Document behavior in a one-line comment at the top of `run.py`.
+3. Create `{poll_plugins_dir}/<name>/config.yaml` with `interval_s`.
+4. Add `watches.json` if the user specified explicit targets.
+5. Document behavior in a one-line comment at the top of `run.py`.
 
 Default plugin directory:
 
 - `$OMNIGENT_DATA_DIR/poll_plugins/` or `~/.omnigent/poll_plugins/`
 
-Ensure `host.polling.poll_plugins.enabled` is true in config (or `OMNIGENT_POLL_PLUGINS=1`).
+Plugins run automatically when the host daemon is up. An empty directory is a no-op.
 
 ### Update existing plugin
 
@@ -40,7 +41,7 @@ Ensure `host.polling.poll_plugins.enabled` is true in config (or `OMNIGENT_POLL_
 
 | User says | You do |
 |-----------|--------|
-| "Watch PR 456 in org/repo until it merges; unblocks my PR 123" | Edit `github_pr/watches.json`; ensure `run.py` emits `github.pr.merged` with `unblocks:pr:123` |
+| "Watch PR 456 in org/repo until it merges; unblocks my PR 123" | Edit `github_pr/watches.json` with `context.blocked_pr` and `context.task_id`; ensure `run.py` emits `github.pr.merged` with `task_id` |
 | "Also poll PRs where I'm requested reviewer" | Extend `run.py` auto_discover or `watches.json` |
 | "Stop watching 456" | Remove from `watches.json` or set `"active": false` |
 
@@ -53,6 +54,9 @@ Always use ingress dedup fields:
 - `source_offset`: increment per transition type (or use head SHA hash)
 
 Put routing tokens in **`summary`**: `repo:…`, `pr:…`, `unblocks:pr:…`.
+
+When the manager supplies a managed task id, set `context.task_id` on the watch
+so follow-up events POST with `task_id` and skip distributor scoring.
 
 ## Testing
 

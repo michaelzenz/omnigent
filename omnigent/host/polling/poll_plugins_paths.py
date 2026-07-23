@@ -8,6 +8,7 @@ from omnigent.process_logging import data_dir
 
 POLL_PLUGINS_DIRNAME = "poll_plugins"
 RUN_SCRIPT_NAME = "run.py"
+PLUGIN_CONFIG_NAME = "config.yaml"
 
 
 def poll_plugins_root() -> Path:

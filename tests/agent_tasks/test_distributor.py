@@ -132,3 +132,38 @@ async def test_distributor_skips_internal_events(db_uri: str, stores: dict) -> N
         runner_router=None,
     )
     assert updated.state == "awaiting_user_ack"
+
+
+@pytest.mark.asyncio
+async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = stores["event_store"]
+    event_id = _uid("bound_event")
+    event = event_store.create_event(
+        event_id,
+        "github.pr.merged",
+        "Blocker PR merged",
+        summary="repo:org/repo pr:456 merged unblocks:pr:123",
+        task_id=stores["task_id"],
+        state="received",
+    )
+    profile = UserSecretaryProfile(
+        user_id="__anonymous__",
+        agent_id=stores["manager_agent_id"],
+        harness="cursor",
+        model="composer-2.5",
+        host_id=_uid("host_bound"),
+        workspace="/tmp/dist-bound",
+        created_at=1,
+    )
+    updated = await distribute_event(
+        event=event,
+        task_store=stores["task_store"],
+        task_event_store=event_store,
+        conversation_store=stores["conversation_store"],
+        runner_router=None,
+        secretary_profile=profile,
+    )
+    assert updated.state == "awaiting_manager_triage"
+    assert updated.task_id == stores["task_id"]
+    attempts = event_store.list_routing_attempts(event_id)
+    assert attempts == []

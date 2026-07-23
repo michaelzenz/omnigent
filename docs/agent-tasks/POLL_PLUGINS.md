@@ -9,8 +9,36 @@ Each plugin is one folder; the host only executes **`run.py`**.
 ~/.omnigent/poll_plugins/          # or $OMNIGENT_DATA_DIR/poll_plugins/
   <plugin_name>/
     run.py                         # required — sole entry point
+    config.yaml                    # required — poll interval for this plugin
     *.json / *.yaml                # optional — plugin-owned state (agent-generated)
 ```
+
+Each plugin folder must include **`config.yaml`** with at least:
+
+```yaml
+interval_s: 60
+```
+
+Optional per-plugin overrides:
+
+```yaml
+interval_s: 120
+timeout_s: 90
+```
+
+Host-wide defaults (when a plugin omits a field) live in `~/.omnigent/config.yaml`:
+
+```yaml
+host:
+  polling:
+    poll_plugins:
+      default_interval_s: 60
+      default_timeout_s: 120
+      tick_s: 5
+```
+
+`tick_s` is how often the host checks which plugins are due; each plugin runs
+when its own `interval_s` has elapsed.
 
 Rules:
 
@@ -18,18 +46,6 @@ Rules:
 - **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
 - **All other files are plugin-private** — watches, cursors, snapshots; agents choose the schema.
 - Do not edit Omnigent host code to add behavior — add or update a plugin folder.
-
-Enable the host poller in `~/.omnigent/config.yaml`:
-
-```yaml
-host:
-  polling:
-    poll_plugins:
-      enabled: true
-      interval_s: 60
-```
-
-Or set `OMNIGENT_POLL_PLUGINS=1` in the host environment.
 
 ## Host contract
 
@@ -86,9 +102,14 @@ Example body:
     "repo": "org/repo",
     "pr_number": 456,
     "blocked_pr": 123
-  }
+  },
+  "task_id": "<managed-task-id>"
 }
 ```
+
+When a watch is tied to a specific managed task, include `task_id` on the
+ingress body (or `context.task_id` in `watches.json` for the `github_pr`
+plugin). The distributor routes directly to that task and skips scoring.
 
 Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server returns existing event.
 
@@ -118,7 +139,11 @@ Example `watches.json`:
 {
   "auto_discover": ["authored", "review_requested"],
   "explicit": [
-    {"repo": "org/repo", "pr": 456, "context": {"blocked_pr": 123}}
+    {
+      "repo": "org/repo",
+      "pr": 456,
+      "context": {"blocked_pr": 123, "task_id": "<managed-task-id>"}
+    }
   ]
 }
 ```
@@ -145,9 +170,11 @@ See `examples/poll_plugins/github_pr/run.py` in the repository.
 
 1. `github_pr` plugin auto-discovers your open PR #123.
 2. CI fails → `run.py` posts `github.pr.checks_failed` → task manager triages.
-3. Manager (or poll author agent) adds to `watches.json`: watch PR #456, `blocked_pr: 123`.
-4. When #456 merges → `run.py` posts `github.pr.merged` with `unblocks:pr:123` in summary.
-5. Distributor routes to “Land PR #123” task → manager dispatches rerun/merge.
+3. Manager (or poll author agent) adds to `watches.json`: watch PR #456 with
+   `blocked_pr: 123` and `task_id` set to the managed task that owns PR #123.
+4. When #456 merges → `run.py` posts `github.pr.merged` with `task_id` and
+   `unblocks:pr:123` in summary.
+5. Distributor fast-paths to that task → manager dispatches rerun/merge.
 
 ## Do not
 

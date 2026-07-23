@@ -59,6 +59,7 @@ class CreateIngressTaskEventRequest(BaseModel):
     source_key: str | None = None
     source_offset: int = 0
     source_session_id: str | None = None
+    task_id: str | None = None
     priority: int = 0
     tags: list[TaskEventTagInput] = Field(default_factory=list)
 
@@ -81,6 +82,14 @@ class CreateIngressTaskEventRequest(BaseModel):
     @field_validator("source_key")
     @classmethod
     def _source_key_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("task_id")
+    @classmethod
+    def _task_id_non_empty(cls, value: str | None) -> str | None:
         if value is None:
             return None
         stripped = value.strip()
@@ -231,6 +240,16 @@ def create_task_events_router(
                 code=ErrorCode.INVALID_INPUT,
             )
 
+        if body.task_id is not None:
+            task = await asyncio.to_thread(task_store.get, body.task_id)
+            if task is None:
+                raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+            if task.state != "active":
+                raise OmnigentError(
+                    "Task is not active",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+
         if body.source is not None and body.source_key is not None:
             existing = await asyncio.to_thread(
                 task_event_store.get_event_by_source,
@@ -259,6 +278,7 @@ def create_task_events_router(
                 source_key=body.source_key,
                 source_offset=body.source_offset,
                 source_session_id=body.source_session_id,
+                task_id=body.task_id,
                 summary=body.summary,
                 state="received",
                 priority=body.priority,

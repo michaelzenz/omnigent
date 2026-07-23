@@ -9,8 +9,9 @@ prompt: |
   and docs/agent-tasks/POLL_PLUGINS.md.
 
   Given user instructions, create or update plugins under the poll_plugins
-  directory. Each plugin is one folder with run.py as the only host entry point.
-  Plugins own their state files; post task events via POST /v1/task-events.
+  directory. Each plugin is one folder with run.py (entry point) and
+  config.yaml (interval_s). Plugins own their state files; post task events
+  via POST /v1/task-events.
 
   Do not edit omnigent host or server code. Do not restart the host.
 

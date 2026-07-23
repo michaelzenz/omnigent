@@ -65,7 +65,56 @@ async def test_ingress_auto_routes_matching_task(
     assert ingress.status_code == 200
     body = ingress.json()
     assert body["state"] == "awaiting_manager_triage"
+    assert ingress.json()["state"] == "awaiting_manager_triage"
     assert body["task_id"] == task_id
+
+
+async def test_ingress_fast_paths_explicit_task_id(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+) -> None:
+    await _secretary_profile(client, manager_agent_id)
+    created = await client.post(
+        "/v1/agent-tasks",
+        json={
+            "manager_agent_id": manager_agent_id,
+            "title": "Land PR #123",
+            "charter": "land pr 123 after blocker merges",
+        },
+    )
+    task_id = created.json()["id"]
+
+    ingress = await client.post(
+        "/v1/task-events",
+        json={
+            "event_type": "github.pr.merged",
+            "title": "Blocker PR merged",
+            "summary": "repo:org/repo pr:456 merged unblocks:pr:123",
+            "task_id": task_id,
+            "source": "poll_plugin:github_pr",
+            "source_key": "org/repo#456",
+            "source_offset": 1,
+        },
+    )
+    assert ingress.status_code == 200
+    body = ingress.json()
+    assert body["state"] == "awaiting_manager_triage"
+    assert body["task_id"] == task_id
+
+
+async def test_ingress_rejects_unknown_task_id(client: httpx.AsyncClient) -> None:
+    resp = await client.post(
+        "/v1/task-events",
+        json={
+            "event_type": "github.pr.merged",
+            "title": "Blocker PR merged",
+            "task_id": "missing-task-id",
+            "source": "poll_plugin:github_pr",
+            "source_key": "org/repo#456",
+            "source_offset": 1,
+        },
+    )
+    assert resp.status_code == 404
 
 
 async def test_ingress_dedupes_by_source(
