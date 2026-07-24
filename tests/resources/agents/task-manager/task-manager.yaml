@@ -1,7 +1,4 @@
 # Task manager agent — long-lived owner for one managed task.
-#
-# Uses the headless cursor-agent CLI harness with Composer for
-# cost-efficient local testing.
 
 name: task-manager
 prompt: |
@@ -9,5 +6,5 @@ prompt: |
   Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.
 
 executor:
-  harness: cursor
+  harness: cursor-native
   model: composer-2.5

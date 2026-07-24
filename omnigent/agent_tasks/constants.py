@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from omnigent.errors import ErrorCode, OmnigentError
+# Headless Claude SDK: honors the task-secretary YAML prompt as system_prompt.
+DEFAULT_SECRETARY_HARNESS = "claude-sdk"
+# Claude Code picker label "Sonnet 4.6" — use the ``sonnet`` alias, not ``claude-sonnet-4-6``.
+DEFAULT_SECRETARY_MODEL = "sonnet"
 
-# Headless ``cursor`` harness (``cursor-sdk``). Chat-first embeds like Puppy Garden
-# need the SDK path so agent prompts and ``is_meta`` manual context reach the model.
-DEFAULT_TASK_HARNESS = "cursor"
+# Task manager/worker/reviewer agents: Cursor native TUI.
+DEFAULT_TASK_HARNESS = "cursor-native"
 DEFAULT_TASK_MODEL = "composer-2.5"
 DEFAULT_TASK_WORKSPACE = "~/"
 
@@ -20,18 +22,7 @@ DISPATCHABLE_ITEM_STATES = frozenset({"awaiting_user_ack", "approved"})
 
 
 def resolve_task_harness(harness: str) -> str:
-    """Return a runnable Cursor harness for managed task agents."""
-    if harness == "cursor-native":
-        return harness
-    if harness != "cursor":
-        return harness
-    from omnigent.onboarding.cursor_auth import cursor_sdk_installed
-    from omnigent.onboarding.extra_install import extra_install_display
-
-    if cursor_sdk_installed():
-        return harness
-    raise OmnigentError(
-        "Task agents use the headless Cursor harness, which requires the "
-        f"'cursor-sdk' package. Install it with: {extra_install_display('cursor')}",
-        code=ErrorCode.INVALID_INPUT,
-    )
+    """Return a runnable harness id for managed task agents."""
+    if harness == "cursor":
+        return "cursor-native"
+    return harness

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL, DEFAULT_TASK_WORKSPACE
+from omnigent.agent_tasks.constants import (
+    DEFAULT_SECRETARY_HARNESS,
+    DEFAULT_SECRETARY_MODEL,
+    DEFAULT_TASK_WORKSPACE,
+)
 from omnigent.db.db_models import SqlUserSecretaryProfile, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities.secretary import UserSecretaryProfile
@@ -63,8 +67,8 @@ class SqlAlchemySecretaryProfileStore(SecretaryProfileStore):
                 row = SqlUserSecretaryProfile(
                     user_id=user_id,
                     agent_id=agent_id,
-                    harness=harness or DEFAULT_TASK_HARNESS,
-                    model=model or DEFAULT_TASK_MODEL,
+                    harness=harness or DEFAULT_SECRETARY_HARNESS,
+                    model=model or DEFAULT_SECRETARY_MODEL,
                     conversation_id=conversation_id,
                     host_id=host_id,
                     workspace=workspace or DEFAULT_TASK_WORKSPACE,

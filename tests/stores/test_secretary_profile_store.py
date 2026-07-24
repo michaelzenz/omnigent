@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL
+from omnigent.agent_tasks.constants import DEFAULT_SECRETARY_HARNESS, DEFAULT_SECRETARY_MODEL
 from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
 
 
@@ -22,8 +22,8 @@ def test_upsert_and_get_profile(store: SqlAlchemySecretaryProfileStore) -> None:
         host_id=uuid.uuid4().hex,
         workspace="/tmp/workspace",
     )
-    assert created.harness == DEFAULT_TASK_HARNESS
-    assert created.model == DEFAULT_TASK_MODEL
+    assert created.harness == DEFAULT_SECRETARY_HARNESS
+    assert created.model == DEFAULT_SECRETARY_MODEL
     loaded = store.get("alice@example.com")
     assert loaded is not None
     assert loaded.agent_id == "a" * 32

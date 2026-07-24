@@ -6,5 +6,5 @@ prompt: |
   Review code or changes for the assigned item; leave actionable feedback and finish when done.
 
 executor:
-  harness: cursor
+  harness: cursor-native
   model: composer-2.5

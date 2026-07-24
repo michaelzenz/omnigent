@@ -38,8 +38,6 @@ def _bootstrap_params(secretary_profile: UserSecretaryProfile | None) -> Bootstr
     return resolve_bootstrap_params(
         host_id=secretary_profile.host_id if secretary_profile else None,
         workspace=secretary_profile.workspace if secretary_profile else None,
-        harness=secretary_profile.harness if secretary_profile else None,
-        model=secretary_profile.model if secretary_profile else None,
         secretary_profile=secretary_profile,
     )
 

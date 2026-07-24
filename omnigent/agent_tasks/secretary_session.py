@@ -11,8 +11,8 @@ from omnigent.agent_tasks.agent_builtins import (
 )
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
-    DEFAULT_TASK_HARNESS,
-    DEFAULT_TASK_MODEL,
+    DEFAULT_SECRETARY_HARNESS,
+    DEFAULT_SECRETARY_MODEL,
     DEFAULT_TASK_WORKSPACE,
     resolve_task_harness,
 )
@@ -100,8 +100,8 @@ def get_or_create_secretary_profile(
         profile_user_id,
         agent_id=agent_id,
         host_id=host_id,
-        harness=DEFAULT_TASK_HARNESS,
-        model=DEFAULT_TASK_MODEL,
+        harness=DEFAULT_SECRETARY_HARNESS,
+        model=DEFAULT_SECRETARY_MODEL,
         workspace=DEFAULT_TASK_WORKSPACE,
     )
 

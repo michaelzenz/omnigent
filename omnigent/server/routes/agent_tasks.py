@@ -23,7 +23,11 @@ from omnigent.agent_tasks.adoption import (
     reject_session_adoption,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
-from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL, DEFAULT_TASK_WORKSPACE
+from omnigent.agent_tasks.constants import (
+    DEFAULT_SECRETARY_HARNESS,
+    DEFAULT_SECRETARY_MODEL,
+    DEFAULT_TASK_WORKSPACE,
+)
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
@@ -155,8 +159,8 @@ class PutSecretaryProfileRequest(BaseModel):
     """Request body for ``PUT /v1/agent-tasks/secretary/profile``."""
 
     agent_id: str
-    harness: str = DEFAULT_TASK_HARNESS
-    model: str = DEFAULT_TASK_MODEL
+    harness: str = DEFAULT_SECRETARY_HARNESS
+    model: str = DEFAULT_SECRETARY_MODEL
     host_id: str | None = None
     workspace: str = DEFAULT_TASK_WORKSPACE
 
@@ -601,7 +605,8 @@ def create_agent_tasks_router(
                 await asyncio.to_thread(
                     secretary_profile_store.upsert,
                     effective_user_id,
-                    harness=DEFAULT_TASK_HARNESS,
+                    harness=DEFAULT_SECRETARY_HARNESS,
+                    model=DEFAULT_SECRETARY_MODEL,
                     clear_conversation_id=True,
                 )
                 profile = await asyncio.to_thread(secretary_profile_store.get, effective_user_id)

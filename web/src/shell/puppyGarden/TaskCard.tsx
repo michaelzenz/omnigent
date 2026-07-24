@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
-import { useSecretaryProfile, useTaskDashboard } from "@/hooks/useAgentTasks";
+import { useTaskDashboard } from "@/hooks/useAgentTasks";
 import { TaskCardInbox } from "./TaskCardInbox";
 import { TaskCardSidePanel } from "./TaskCardSidePanel";
 import { TaskCardWork } from "./TaskCardWork";
@@ -18,8 +18,7 @@ interface TaskCardProps {
 export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
   const { data: agents = [] } = useAvailableAgents();
-  const { data: secretaryProfile } = useSecretaryProfile();
-  const defaultModel = secretaryProfile?.model ?? "composer-2.5";
+  const defaultModel = "composer-2.5";
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
 
   const selectedExecution = useMemo(

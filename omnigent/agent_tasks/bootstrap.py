@@ -48,12 +48,9 @@ def resolve_bootstrap_params(
         or (secretary_profile.workspace if secretary_profile else None)
         or DEFAULT_TASK_WORKSPACE
     )
-    resolved_harness = resolve_task_harness(
-        harness
-        or (secretary_profile.harness if secretary_profile else None)
-        or DEFAULT_TASK_HARNESS
-    )
-    resolved_model = model or (secretary_profile.model if secretary_profile else DEFAULT_TASK_MODEL)
+    # Host/workspace come from the secretary profile; harness/model use task-agent defaults.
+    resolved_harness = resolve_task_harness(harness or DEFAULT_TASK_HARNESS)
+    resolved_model = model or DEFAULT_TASK_MODEL
     if not resolved_host_id or not resolved_workspace:
         raise OmnigentError(
             "host_id and workspace are required to bootstrap a manager session",
