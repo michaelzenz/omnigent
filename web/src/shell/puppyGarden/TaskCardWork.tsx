@@ -23,7 +23,7 @@ function workerDisplayName(workerAgentId: string, agents: AvailableAgent[]): str
 function WorkItemRow({ execution }: { execution: TaskExecutionSummary }) {
   const subtitle = executionSubtitle(execution);
   const content = (
-    <div className="flex items-start justify-between gap-2 rounded-md border border-border bg-background px-2 py-1">
+    <div className="flex items-start justify-between gap-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1">
       <div className="min-w-0">
         <p className="truncate text-sm leading-tight font-medium">{execution.event_title ?? "Work item"}</p>
         {subtitle ? (
@@ -60,8 +60,11 @@ function WorkerGroup({
   const shouldScrollItems = executions.length > WORK_ITEM_SCROLL_THRESHOLD;
 
   return (
-    <section className="space-y-0.5" data-testid={`worker-group-${group.worker_agent_id}`}>
-      <h4 className="text-xs leading-none font-medium text-muted-foreground">
+    <article
+      className="rounded-md border border-border bg-background p-2 shadow-sm"
+      data-testid={`worker-group-${group.worker_agent_id}`}
+    >
+      <h4 className="mb-1 text-xs leading-none font-medium text-muted-foreground">
         {workerDisplayName(group.worker_agent_id, agents)}
       </h4>
       <ul
@@ -79,7 +82,7 @@ function WorkerGroup({
           <WorkItemRow key={execution.id} execution={execution} />
         ))}
       </ul>
-    </section>
+    </article>
   );
 }
 
