@@ -6,5 +6,5 @@ prompt: |
   Update docs for the assigned item and finish when the writing task is complete.
 
 executor:
-  harness: cursor-native
+  harness: cursor
   model: composer-2.5

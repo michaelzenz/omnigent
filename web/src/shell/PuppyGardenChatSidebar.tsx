@@ -35,7 +35,7 @@ import {
 import { useChatStore } from "@/store/chatStore";
 import {
   TerminalFirstContextProvider,
-  useEmbeddedTerminalFirstContext,
+  terminalFirstContextForEmbeddedSession,
 } from "./TerminalFirstContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -200,10 +200,9 @@ function PuppyGardenSessionView({
         : agents?.filter((a) => a.id === boundAgentId)
     : agents;
 
-  const terminalFirstContextValue = useEmbeddedTerminalFirstContext(
-    sessionId,
-    activeSessionLabels,
-    liveness,
+  const terminalFirstContextValue = useMemo(
+    () => terminalFirstContextForEmbeddedSession(activeSessionLabels),
+    [activeSessionLabels],
   );
 
   if (loadingConversation) {

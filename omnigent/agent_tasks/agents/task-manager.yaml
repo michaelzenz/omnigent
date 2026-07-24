@@ -6,5 +6,5 @@ prompt: |
   Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.
 
 executor:
-  harness: cursor-native
+  harness: cursor
   model: composer-2.5

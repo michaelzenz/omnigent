@@ -601,6 +601,7 @@ def create_agent_tasks_router(
                 await asyncio.to_thread(
                     secretary_profile_store.upsert,
                     effective_user_id,
+                    harness=DEFAULT_TASK_HARNESS,
                     clear_conversation_id=True,
                 )
                 profile = await asyncio.to_thread(secretary_profile_store.get, effective_user_id)
