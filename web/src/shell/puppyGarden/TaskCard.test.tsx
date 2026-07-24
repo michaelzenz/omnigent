@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -41,6 +41,10 @@ function renderCard() {
 }
 
 afterEach(cleanup);
+
+function expandWorkerGroup(workerAgentId: string) {
+  fireEvent.click(screen.getByTestId(`worker-group-toggle-${workerAgentId}`));
+}
 
 function workItemTitles(workerAgentId: string): string[] {
   const list =
@@ -265,7 +269,59 @@ describe("TaskCard", () => {
       />,
     );
 
+    expandWorkerGroup("w1");
     expect(screen.getByTestId("worker-items-scroll-w1")).toBeInTheDocument();
+  });
+
+  it("folds worker groups to running tasks by default", () => {
+    render(
+      <TaskCardWork
+        agents={[
+          { id: "w1", name: "task-worker", display_name: "Task Worker", description: null, harness: null, skills: [] },
+        ]}
+        workers={[
+          {
+            worker_agent_id: "w1",
+            executions: [
+              {
+                id: "r1",
+                task_item_id: "item-r1",
+                event_id: "ev-r1",
+                event_title: "Running task",
+                status: "running",
+                result_summary: null,
+                error: null,
+                conversation_id: null,
+                attempt_no: 1,
+                assigned_at: 1,
+                started_at: 1,
+                finished_at: null,
+              },
+              {
+                id: "q1",
+                task_item_id: "item-q1",
+                event_id: "ev-q1",
+                event_title: "Queued task",
+                status: "queued",
+                result_summary: null,
+                error: null,
+                conversation_id: null,
+                attempt_no: 1,
+                assigned_at: 2,
+                started_at: null,
+                finished_at: null,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(workItemTitles("w1")).toEqual(["Running task"]);
+    expect(screen.getByText("+1")).toBeInTheDocument();
+
+    expandWorkerGroup("w1");
+    expect(workItemTitles("w1")).toEqual(["Running task", "Queued task"]);
   });
 
   it("renders worker task items in fifo receive order within each status bucket", () => {
@@ -368,6 +424,7 @@ describe("TaskCard", () => {
       />,
     );
 
+    expandWorkerGroup("w1");
     expect(workItemTitles("w1")).toEqual([
       "Running first",
       "Running second",

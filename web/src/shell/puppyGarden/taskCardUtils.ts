@@ -49,6 +49,11 @@ export function sortWorkerGroups(groups: TaskWorkerGroup[]): TaskWorkerGroup[] {
   return [...groups].sort((a, b) => workerGroupRank(a) - workerGroupRank(b));
 }
 
+/** Folded worker cards show only in-flight executions. */
+export function getFoldedExecutions(executions: TaskExecutionSummary[]): TaskExecutionSummary[] {
+  return sortExecutions(executions).filter((execution) => execution.status === "running");
+}
+
 export function buildWorkerOptions(
   workerAgentIds: string[],
   proposalPayload: DispatchPayload,

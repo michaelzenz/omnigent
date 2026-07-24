@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWorkerOptions,
+  getFoldedExecutions,
   proposalHasEdits,
   sortExecutions,
   workStateLabel,
@@ -162,6 +163,40 @@ describe("taskCardUtils", () => {
       },
     ]);
     expect(sorted.map((row) => row.id)).toEqual(["r1", "r2", "q1", "q2", "d1", "d2"]);
+  });
+
+  it("returns only running executions when folded", () => {
+    const folded = getFoldedExecutions([
+      {
+        id: "1",
+        task_item_id: "item-1",
+        event_id: "e1",
+        event_title: "Done item",
+        status: "succeeded",
+        result_summary: null,
+        error: null,
+        conversation_id: null,
+        attempt_no: 1,
+        assigned_at: 1,
+        started_at: null,
+        finished_at: 3,
+      },
+      {
+        id: "2",
+        task_item_id: "item-2",
+        event_id: "e2",
+        event_title: "Running item",
+        status: "running",
+        result_summary: null,
+        error: null,
+        conversation_id: null,
+        attempt_no: 1,
+        assigned_at: 2,
+        started_at: 2,
+        finished_at: null,
+      },
+    ]);
+    expect(folded.map((row) => row.id)).toEqual(["2"]);
   });
 
   it("builds worker options from proposal and task history", () => {
