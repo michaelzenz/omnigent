@@ -12,6 +12,7 @@ from omnigent.entities import Task
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class TaskCompletionContext:
 
     task_store: TaskStore
     task_event_store: TaskEventStore
+    task_item_store: TaskItemStore
     conversation_store: ConversationStore
     runner_router: RunnerRouter | None = None
 
@@ -78,15 +80,24 @@ async def notify_worker_session_status(
     )
     if completed is None:
         return True
+
+    item_state = "done" if terminal_status == "succeeded" else "queued"
+    _context.task_item_store.update_item(execution.task_item_id, state=item_state)
+
     task = _context.task_store.get(binding.task_id)
     if task is None or task.manager_conversation_id is None:
         return True
-    event = _context.task_event_store.get_event(execution.event_id)
+    event = (
+        _context.task_event_store.get_event(execution.event_id)
+        if execution.event_id is not None
+        else None
+    )
     await wake_task_manager_for_execution(
         manager_conversation_id=task.manager_conversation_id,
         execution=completed,
         event=event,
         conversation_store=_context.conversation_store,
         runner_router=_context.runner_router,
+        task_item_store=_context.task_item_store,
     )
     return True

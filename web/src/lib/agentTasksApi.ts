@@ -20,8 +20,23 @@ export interface TaskEventSummary {
   updated_at: number | null;
 }
 
+export interface TaskItemSummary {
+  id: string;
+  title: string;
+  instructions: string | null;
+  state: string;
+  worker_agent_id: string | null;
+  model: string | null;
+  host_id: string | null;
+  workspace: string | null;
+  harness: string | null;
+  created_at: number;
+  updated_at: number | null;
+}
+
 export interface TaskExecutionSummary {
   id: string;
+  task_item_id: string;
   event_id: string;
   event_title: string | null;
   status: string;
@@ -50,8 +65,8 @@ export interface TaskDashboard {
   derived: {
     has_running_workers: boolean;
   };
-  pending_proposals: TaskEventSummary[];
-  pending_inbound_events: TaskEventSummary[];
+  inbox_items: TaskItemSummary[];
+  reconcile_queue_count: number;
   workers: TaskWorkerGroup[];
 }
 
@@ -114,16 +129,41 @@ export async function fetchSecretaryProfile(): Promise<SecretaryProfile | null> 
   return readJson<SecretaryProfile>(res);
 }
 
-export type ProposalResolution = "accept_proposal" | "edit_and_dispatch" | "reject_proposal";
+export type EventResolution = "route_to_task" | "select_attempt";
 
 export async function resolveTaskEvent(
   eventId: string,
   body: {
-    resolution: ProposalResolution;
+    resolution: EventResolution;
+    task_id?: string;
+    routing_attempt_id?: string;
+    host_id?: string;
+    workspace?: string;
+    harness?: string;
+    model?: string;
     edited_payload?: DispatchPayload;
   },
 ): Promise<void> {
   const res = await authenticatedFetch(`/v1/task-events/${encodeURIComponent(eventId)}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
+export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item";
+
+export async function resolveTaskItem(
+  taskItemId: string,
+  body: {
+    resolution: ItemResolution;
+    edited_payload?: DispatchPayload;
+  },
+): Promise<void> {
+  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

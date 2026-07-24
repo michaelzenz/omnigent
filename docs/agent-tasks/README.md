@@ -2,7 +2,11 @@
 
 Long-lived **tasks** are owned by a **task manager** agent. External **events**
 enter via `POST /v1/task-events`, are scored and routed by the **distributor**,
-and land in `awaiting_manager_triage` for manager assessment.
+and are reconciled into **task items** (the manager backlog and Puppy Garden inbox).
+
+## Layers
+
+`Task` → `TaskEvent` (signals) → `TaskItem` (backlog/inbox) → `TaskEventExecution` (worker runs)
 
 ## Roles
 
@@ -25,10 +29,14 @@ Otherwise the event stalls for secretary/user resolution.
 
 ## Event states (routing)
 
-`received` → `routing` → `awaiting_manager_triage` | `awaiting_user_selection` |
-`awaiting_new_manager_decision` → `processed` | `dismissed`
+`received` → `routing` → `awaiting_user_selection` | `awaiting_grouping` →
+`grouping_proposed` → `routed` → `reconciled` | `dismissed` | `failed`
 
-Manager proposals use `awaiting_user_ack` (separate lane).
+Session adoption uses `awaiting_user_ack` (separate lane).
+
+## Task item states
+
+`draft` → `awaiting_user_ack` (inbox) → `approved` → `queued` / `running` / `done` / `cancelled`
 
 ## API
 

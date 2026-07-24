@@ -8,7 +8,6 @@ ingress and manager wake are handled in later phases.
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from typing import Any, Literal
 
@@ -27,15 +26,21 @@ from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_boots
 from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.dispatch import (
-    dispatch_worker_for_event,
-    parse_dispatch_payload,
+    dispatch_worker_for_item,
     resolve_dispatch_params,
 )
-from omnigent.agent_tasks.event_types import MANAGER_PROPOSAL, MANAGER_WORK_ITEM
-from omnigent.agent_tasks.proposals import create_manager_proposal
+from omnigent.agent_tasks.grouping import (
+    create_grouping_proposal,
+    resolve_grouping_proposal,
+)
+from omnigent.agent_tasks.items import (
+    create_task_item,
+    reconcile_events,
+    resolve_task_item,
+    submit_item_for_user_ack,
+)
 from omnigent.db.enum_codecs import TASK_STATE
-from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskTag
+from omnigent.entities import GroupingProposal, Task, TaskEventExecution, TaskItem, TaskTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
@@ -46,6 +51,7 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
@@ -158,19 +164,48 @@ class BootstrapTaskManagerRequest(BaseModel):
     model: str | None = None
 
 
-class CreateTaskEventRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/events``."""
+class CreateTaskItemRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/items``."""
 
-    event_type: Literal["manager.proposal", "manager.work_item"]
     title: str
-    summary: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
+    instructions: str | None = None
+    worker_agent_id: str | None = None
+    model: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    priority: int = 0
+    state: str = "draft"
+    canonical_key: str | None = None
+    event_ids: list[str] = Field(default_factory=list)
+    submit_for_user_ack: bool = False
+
+    @field_validator("title")
+    @classmethod
+    def _title_non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must be a non-empty string")
+        return stripped
 
 
-class DispatchTaskWorkerRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/dispatch``."""
+class ReconcileEventsRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/reconcile``."""
 
-    event_id: str
+    event_ids: list[str] = Field(min_length=1)
+
+    @field_validator("event_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        return cleaned
+
+
+class DispatchTaskItemRequest(BaseModel):
+    """Request body for ``POST /v1/task-items/{item_id}/dispatch``."""
+
     worker_agent_id: str | None = None
     title: str | None = None
     instructions: str | None = None
@@ -178,6 +213,34 @@ class DispatchTaskWorkerRequest(BaseModel):
     workspace: str | None = None
     harness: str | None = None
     model: str | None = None
+
+
+class ResolveTaskItemRequest(BaseModel):
+    """Request body for ``POST /v1/task-items/{item_id}/resolve``."""
+
+    resolution: Literal["accept_item", "edit_and_dispatch", "reject_item"]
+    edited_payload: dict[str, Any] | None = None
+
+
+class CreateGroupingProposalRequest(BaseModel):
+    """Request body for ``POST /v1/grouping-proposals``."""
+
+    event_ids: list[str] = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("event_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        return cleaned
+
+
+class ResolveGroupingProposalRequest(BaseModel):
+    """Request body for ``POST /v1/grouping-proposals/{proposal_id}/resolve``."""
+
+    resolution: Literal["accept_grouping", "reject_grouping"]
 
 
 class AdoptSessionRequest(BaseModel):
@@ -234,6 +297,7 @@ def _execution_to_response(execution: TaskEventExecution) -> dict[str, Any]:
         "id": execution.id,
         "object": "agent.task.execution",
         "event_id": execution.event_id,
+        "task_item_id": execution.task_item_id,
         "task_id": execution.task_id,
         "manager_agent_id": execution.manager_agent_id,
         "worker_agent_id": execution.worker_agent_id,
@@ -251,9 +315,43 @@ def _execution_to_response(execution: TaskEventExecution) -> dict[str, Any]:
     }
 
 
+def _item_to_response(item: TaskItem) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "object": "agent.task.item",
+        "task_id": item.task_id,
+        "title": item.title,
+        "state": item.state,
+        "canonical_key": item.canonical_key,
+        "instructions": item.instructions,
+        "worker_agent_id": item.worker_agent_id,
+        "model": item.model,
+        "host_id": item.host_id,
+        "workspace": item.workspace,
+        "harness": item.harness,
+        "priority": item.priority,
+        "created_by": item.created_by,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def _grouping_proposal_to_response(proposal: GroupingProposal) -> dict[str, Any]:
+    return {
+        "id": proposal.id,
+        "object": "agent.task.grouping_proposal",
+        "owner_user_id": proposal.owner_user_id,
+        "state": proposal.state,
+        "payload": proposal.payload,
+        "created_at": proposal.created_at,
+        "resolved_at": proposal.resolved_at,
+    }
+
+
 def create_agent_tasks_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
+    task_item_store: TaskItemStore,
     agent_store: AgentStore,
     conversation_store: ConversationStore | None = None,
     secretary_profile_store: SecretaryProfileStore | None = None,
@@ -264,6 +362,7 @@ def create_agent_tasks_router(
 
     :param task_store: Store for task CRUD and tags.
     :param task_event_store: Store for execution history reads.
+    :param task_item_store: Store for task items and grouping proposals.
     :param agent_store: Used to validate ``manager_agent_id`` references.
     :param conversation_store: Used for manager/secretary session bootstrap.
     :param secretary_profile_store: Per-user secretary defaults for bootstrap.
@@ -581,75 +680,171 @@ def create_agent_tasks_router(
             """Return a card-shaped snapshot for one managed task."""
             user_id = get_user_id(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
-            return await asyncio.to_thread(build_task_dashboard, task, task_event_store)
+            return await asyncio.to_thread(
+                build_task_dashboard,
+                task,
+                task_event_store,
+                task_item_store,
+            )
 
-        @router.post("/agent-tasks/{task_id}/events")
-        async def create_task_event(
+        @router.get("/agent-tasks/{task_id}/items")
+        async def list_task_items(
             request: Request,
             task_id: str,
-            body: CreateTaskEventRequest,
+            state: str | None = None,
         ) -> dict[str, Any]:
-            """Create a manager-internal task event (proposal or work item)."""
-            user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(task_id, user_id)
-            if body.event_type == MANAGER_PROPOSAL:
-                created = await asyncio.to_thread(
-                    create_manager_proposal,
-                    task=task,
-                    task_event_store=task_event_store,
-                    title=body.title,
-                    payload=body.payload,
-                    summary=body.summary,
-                )
-            else:
-                event_id = uuid.uuid4().hex
-                created = await asyncio.to_thread(
-                    task_event_store.create_event,
-                    event_id,
-                    MANAGER_WORK_ITEM,
-                    body.title,
-                    task_id=task.id,
-                    payload=json.dumps(body.payload),
-                    source="manager",
-                    summary=body.summary,
-                    state="routed",
-                    manager_agent_id=task.manager_agent_id,
-                    manager_conversation_id=task.manager_conversation_id,
-                )
-                await asyncio.to_thread(
-                    task_event_store.update_event,
-                    created.id,
-                    routed_at=now_epoch(),
-                )
+            """List task items for one managed task."""
+            user_id = get_user_id(request, auth_provider)
+            await _get_task_or_404(task_id, user_id)
+            items = await asyncio.to_thread(
+                task_item_store.list_items_for_task,
+                task_id,
+                state=state,
+            )
             return {
-                "id": created.id,
-                "object": "agent.task.event",
-                "event_type": created.event_type,
-                "title": created.title,
-                "state": created.state,
-                "task_id": created.task_id,
-                "payload": created.payload,
+                "object": "list",
+                "data": [_item_to_response(item) for item in items],
             }
 
-        @router.post("/agent-tasks/{task_id}/dispatch")
-        async def dispatch_task_worker(
+        @router.post("/agent-tasks/{task_id}/items")
+        async def create_task_item_route(
             request: Request,
             task_id: str,
-            body: DispatchTaskWorkerRequest,
+            body: CreateTaskItemRequest,
         ) -> dict[str, Any]:
-            """Dispatch a worker for a routed task event."""
+            """Create a task item and optionally link routed events."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
-            event = await asyncio.to_thread(task_event_store.get_event, body.event_id)
-            if event is None:
-                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+
+            def _create() -> TaskItem:
+                item = create_task_item(
+                    task=task,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    title=body.title,
+                    state=body.state,
+                    canonical_key=body.canonical_key,
+                    instructions=body.instructions,
+                    worker_agent_id=body.worker_agent_id,
+                    model=body.model,
+                    host_id=body.host_id,
+                    workspace=body.workspace,
+                    harness=body.harness,
+                    priority=body.priority,
+                    event_ids=body.event_ids or None,
+                )
+                if body.submit_for_user_ack and item.state == "draft":
+                    return submit_item_for_user_ack(task_item_store, item.id)
+                return item
+
+            created = await asyncio.to_thread(_create)
+            return _item_to_response(created)
+
+        @router.get("/agent-tasks/{task_id}/reconcile-queue")
+        async def get_reconcile_queue(request: Request, task_id: str) -> dict[str, Any]:
+            """Return routed events awaiting manager reconcile."""
+            user_id = get_user_id(request, auth_provider)
+            await _get_task_or_404(task_id, user_id)
+            events = await asyncio.to_thread(
+                task_event_store.list_events,
+                state="routed",
+                task_id=task_id,
+            )
+            return {
+                "object": "list",
+                "data": [_event_to_response(event) for event in events],
+            }
+
+        @router.post("/agent-tasks/{task_id}/reconcile")
+        async def reconcile_task_events(
+            request: Request,
+            task_id: str,
+            body: ReconcileEventsRequest,
+        ) -> dict[str, Any]:
+            """Mark routed events reconciled without creating items."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            reconciled = await asyncio.to_thread(
+                reconcile_events,
+                task=task,
+                event_ids=body.event_ids,
+                task_event_store=task_event_store,
+            )
+            return {
+                "object": "list",
+                "data": [_event_to_response(event) for event in reconciled],
+            }
+
+        async def _get_item_or_404(item_id: str, user_id: str | None) -> TaskItem:
+            item = await asyncio.to_thread(task_item_store.get_item, item_id)
+            if item is None:
+                raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+            await _get_task_or_404(item.task_id, user_id)
+            return item
+
+        @router.post("/task-items/{item_id}/resolve")
+        async def resolve_task_item_route(
+            request: Request,
+            item_id: str,
+            body: ResolveTaskItemRequest,
+        ) -> dict[str, Any]:
+            """Accept, edit, or reject a user-inbox task item."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            task = await _get_task_or_404(item.task_id, user_id)
             profile = None
             if secretary_profile_store is not None:
                 profile = await asyncio.to_thread(
                     secretary_profile_store.get,
                     _effective_user_id(user_id),
                 )
-            payload = parse_dispatch_payload(event.payload)
+            if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
+                raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
+
+            def _resolve() -> tuple[TaskItem, TaskEventExecution | None]:
+                return resolve_task_item(
+                    item=item,
+                    resolution=body.resolution,
+                    task=task,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    conversation_store=conversation_store,
+                    edited_payload=body.edited_payload,
+                    secretary_profile=profile,
+                )
+
+            updated, execution = await asyncio.to_thread(_resolve)
+            response = _item_to_response(updated)
+            if execution is not None:
+                response["execution_id"] = execution.id
+                response["worker_conversation_id"] = execution.conversation_id
+            return response
+
+        @router.post("/task-items/{item_id}/dispatch")
+        async def dispatch_task_item(
+            request: Request,
+            item_id: str,
+            body: DispatchTaskItemRequest,
+        ) -> dict[str, Any]:
+            """Dispatch a worker for one task item."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            task = await _get_task_or_404(item.task_id, user_id)
+            profile = None
+            if secretary_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    secretary_profile_store.get,
+                    _effective_user_id(user_id),
+                )
+            payload = {
+                "worker_agent_id": item.worker_agent_id,
+                "title": item.title,
+                "instructions": item.instructions or "",
+                "host_id": item.host_id,
+                "workspace": item.workspace,
+                "harness": item.harness,
+                "model": item.model,
+            }
             params = resolve_dispatch_params(
                 payload=payload,
                 worker_agent_id=body.worker_agent_id,
@@ -663,10 +858,11 @@ def create_agent_tasks_router(
             )
 
             def _dispatch() -> tuple[TaskEventExecution, str]:
-                return dispatch_worker_for_event(
+                return dispatch_worker_for_item(
                     task=task,
-                    event=event,
+                    item=item,
                     params=params,
+                    task_item_store=task_item_store,
                     task_event_store=task_event_store,
                     conversation_store=conversation_store,
                 )
@@ -678,6 +874,74 @@ def create_agent_tasks_router(
                 "conversation_id": worker_conversation_id,
                 "status": execution.status,
             }
+
+        @router.get("/grouping-proposals")
+        async def list_grouping_proposals(
+            request: Request,
+            state: str | None = None,
+        ) -> dict[str, Any]:
+            """List grouping proposals for the caller."""
+            user_id = require_user(request, auth_provider)
+            proposals = await asyncio.to_thread(
+                task_item_store.list_grouping_proposals,
+                owner_user_id=_effective_user_id(user_id),
+                state=state,
+            )
+            return {
+                "object": "list",
+                "data": [_grouping_proposal_to_response(proposal) for proposal in proposals],
+            }
+
+        @router.post("/grouping-proposals")
+        async def create_grouping_proposal_route(
+            request: Request,
+            body: CreateGroupingProposalRequest,
+        ) -> dict[str, Any]:
+            """Create a secretary grouping proposal over orphan events."""
+            user_id = require_user(request, auth_provider)
+            created = await asyncio.to_thread(
+                create_grouping_proposal,
+                owner_user_id=_effective_user_id(user_id),
+                payload=body.payload,
+                event_ids=body.event_ids,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+            )
+            return _grouping_proposal_to_response(created)
+
+        @router.post("/grouping-proposals/{proposal_id}/resolve")
+        async def resolve_grouping_proposal_route(
+            request: Request,
+            proposal_id: str,
+            body: ResolveGroupingProposalRequest,
+        ) -> dict[str, Any]:
+            """Accept or reject a secretary grouping proposal."""
+            user_id = require_user(request, auth_provider)
+            proposal = await asyncio.to_thread(
+                task_item_store.get_grouping_proposal,
+                proposal_id,
+            )
+            if proposal is None:
+                raise OmnigentError("Grouping proposal not found", code=ErrorCode.NOT_FOUND)
+            if proposal.owner_user_id != _effective_user_id(user_id) and not _is_admin(user_id):
+                raise OmnigentError("Grouping proposal not found", code=ErrorCode.NOT_FOUND)
+            profile = None
+            if secretary_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    secretary_profile_store.get,
+                    _effective_user_id(user_id),
+                )
+            updated = await asyncio.to_thread(
+                resolve_grouping_proposal,
+                proposal=proposal,
+                resolution=body.resolution,
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                secretary_profile=profile,
+            )
+            return _grouping_proposal_to_response(updated)
 
         async def _require_session_or_404(session_id: str, user_id: str | None) -> None:
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)

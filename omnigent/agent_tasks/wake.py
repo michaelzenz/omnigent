@@ -29,8 +29,12 @@ async def wake_task_manager_for_execution(
     event: TaskEvent | None,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    task_item_store: "TaskItemStore | None" = None,
 ) -> bool:
     """Wake the task manager when a worker execution reaches a terminal state."""
+    from omnigent.stores.task_item_store import TaskItemStore as _TaskItemStore
+
+    _ = _TaskItemStore
     conv = conversation_store.get_conversation(manager_conversation_id)
     if conv is None:
         _logger.warning(
@@ -39,12 +43,18 @@ async def wake_task_manager_for_execution(
             execution.id,
         )
         return False
-    event_title = event.title if event is not None else execution.event_id
+    item_title = execution.task_item_id
+    if task_item_store is not None:
+        item = task_item_store.get_item(execution.task_item_id)
+        if item is not None:
+            item_title = item.title
+    elif event is not None:
+        item_title = event.title
     summary = execution.result_summary or execution.error or ""
     summary_block = f"\n{summary}" if summary else ""
     notice = (
         f"[System: worker execution {execution.id} {execution.status} "
-        f"for event {event_title}]{summary_block}"
+        f"for item {item_title}]{summary_block}"
     )
     return await _wake_parent_for_blocked_child(
         manager_conversation_id,
@@ -88,7 +98,7 @@ def _format_secretary_stall_notice(
     events: list[TaskEvent],
     ranked_candidates: dict[str, list[tuple[Task, float]]],
 ) -> str:
-    lines = [f"[System: {len(events)} task event(s) need routing decisions]"]
+    lines = [f"[System: {len(events)} task event(s) need grouping proposals]"]
     for event in events:
         candidates = ranked_candidates.get(event.id, [])
         candidate_text = ""

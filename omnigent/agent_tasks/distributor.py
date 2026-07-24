@@ -84,7 +84,7 @@ async def distribute_event(
     """
     if not is_distributor_candidate(event_type=event.event_type, task_id=event.task_id):
         return event
-    if event.state in {ROUTED_EVENT_STATE, "routed", "processed"}:
+    if event.state in {ROUTED_EVENT_STATE, "reconciled"}:
         return event
 
     routing = task_event_store.update_event(event.id, state="routing")
@@ -270,7 +270,7 @@ async def _stall(
     stall_state = (
         "awaiting_user_selection"
         if reason == "user_selection"
-        else "awaiting_new_manager_decision"
+        else "awaiting_grouping"
     )
     updated = task_event_store.update_event(event.id, state=stall_state)
     if updated is None:

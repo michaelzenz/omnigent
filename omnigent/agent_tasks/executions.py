@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent, TaskEventExecution
+from omnigent.entities import Task, TaskEventExecution, TaskItem
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.task_event_store import TaskEventStore
 
@@ -16,37 +16,39 @@ def _generate_execution_id() -> str:
     return uuid.uuid4().hex
 
 
-def next_attempt_no(task_event_store: TaskEventStore, event_id: str) -> int:
-    """Return the next monotonic attempt number for an event."""
-    existing = task_event_store.list_executions_for_event(event_id)
+def next_attempt_no(task_event_store: TaskEventStore, task_item_id: str) -> int:
+    """Return the next monotonic attempt number for a task item."""
+    existing = task_event_store.list_executions_for_item(task_item_id)
     if not existing:
         return 1
     return max(row.attempt_no for row in existing) + 1
 
 
-def start_execution(
+def start_execution_for_item(
     *,
     task: Task,
-    event: TaskEvent,
+    item: TaskItem,
     worker_agent_id: str,
     task_event_store: TaskEventStore,
+    event_id: str | None = None,
     conversation_id: str | None = None,
     status: str = "queued",
 ) -> TaskEventExecution:
-    """Record a new worker execution attempt for a task event."""
-    if event.task_id is not None and event.task_id != task.id:
+    """Record a new worker execution attempt for a task item."""
+    if item.task_id != task.id:
         raise OmnigentError(
-            "Event does not belong to task",
+            "Task item does not belong to task",
             code=ErrorCode.INVALID_INPUT,
         )
-    attempt_no = next_attempt_no(task_event_store, event.id)
+    attempt_no = next_attempt_no(task_event_store, item.id)
     now = now_epoch()
     execution = task_event_store.create_execution(
         _generate_execution_id(),
-        event.id,
+        item.id,
         task.id,
         task.manager_agent_id,
         worker_agent_id,
+        event_id=event_id,
         status=status,
         attempt_no=attempt_no,
         conversation_id=conversation_id,

@@ -48,7 +48,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
         event_id=event_id,
         event_type="build.finished",
         title="Build finished",
-        state="awaiting_new_manager_decision",
+        state="awaiting_grouping",
     )
     create_resp = await client.post(
         "/v1/agent-tasks",
@@ -69,7 +69,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     )
     assert resolve_resp.status_code == 200
     resolved = resolve_resp.json()
-    assert resolved["state"] == "awaiting_manager_triage"
+    assert resolved["state"] == "routed"
     assert resolved["task_id"] == task_id
     assert resolved["manager_conversation_id"] is not None
 
@@ -128,7 +128,7 @@ async def test_dismiss_event(
         event_id=event_id,
         event_type="build.failed",
         title="Build failed",
-        state="awaiting_new_manager_decision",
+        state="awaiting_grouping",
     )
     resp = await client.post(f"/v1/task-events/{event_id}/dismiss")
     assert resp.status_code == 200

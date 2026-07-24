@@ -10,7 +10,7 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
-ROUTED_EVENT_STATE = "awaiting_manager_triage"
+ROUTED_EVENT_STATE = "routed"
 
 
 def route_event_to_task(

@@ -30,12 +30,15 @@ from omnigent.entities.policy import Policy
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.entities.task import (
+    GroupingProposal,
     Task,
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
     TaskEventRoutingResolution,
     TaskEventTag,
+    TaskItem,
+    TaskItemEvent,
     TaskSessionBinding,
     TaskTag,
 )
@@ -61,6 +64,7 @@ __all__ = [
     "ErrorData",
     "FunctionCallData",
     "FunctionCallOutputData",
+    "GroupingProposal",
     "ItemData",
     "LoadedAgent",
     "MessageData",
@@ -84,6 +88,8 @@ __all__ = [
     "TaskEventRoutingAttempt",
     "TaskEventRoutingResolution",
     "TaskEventTag",
+    "TaskItem",
+    "TaskItemEvent",
     "TaskSessionBinding",
     "TaskTag",
     "UserSecretaryProfile",

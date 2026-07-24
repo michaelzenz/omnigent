@@ -85,7 +85,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         runner_router=None,
         secretary_profile=profile,
     )
-    assert updated.state == "awaiting_manager_triage"
+    assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]
 
 
@@ -111,17 +111,17 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
         secretary_profile_store=secretary_store,
         owner_user_id="__anonymous__",
     )
-    assert updated.state == "awaiting_new_manager_decision"
+    assert updated.state == "awaiting_grouping"
 
 
 @pytest.mark.asyncio
-async def test_distributor_skips_internal_events(db_uri: str, stores: dict) -> None:
+async def test_distributor_skips_session_internal_events(db_uri: str, stores: dict) -> None:
     event_store: SqlAlchemyTaskEventStore = stores["event_store"]
     event = event_store.create_event(
         _uid("internal_event"),
-        "manager.proposal",
-        "Proposal",
-        task_id=stores["task_id"],
+        "session.adoption",
+        "Adoption proposal",
+        source_session_id=_uid("orphan_session"),
         state="awaiting_user_ack",
     )
     updated = await distribute_event(
@@ -163,7 +163,7 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         runner_router=None,
         secretary_profile=profile,
     )
-    assert updated.state == "awaiting_manager_triage"
+    assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]
     attempts = event_store.list_routing_attempts(event_id)
     assert attempts == []

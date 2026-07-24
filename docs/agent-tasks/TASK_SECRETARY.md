@@ -68,7 +68,7 @@ Use the same confidence language as event routing (scores ≥ `0.6`, margin ≥ 
 | **Reject** | Call reject-adoption; set `omnigent.task.adoption_dismissed=1`; session stays orphan |
 | **Create task** | Create task + bootstrap, then adopt to that task |
 
-On accept, the manager receives `session.adopted` in `awaiting_manager_triage`.
+On accept, the manager receives `session.adopted` in `routed` state.
 
 ---
 

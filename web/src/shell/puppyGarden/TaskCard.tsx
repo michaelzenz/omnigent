@@ -53,7 +53,7 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
           <div className="flex min-w-0 flex-1 flex-col">
             <TaskCardInbox
               taskId={taskId}
-              proposals={dashboard.pending_proposals}
+              inboxItems={dashboard.inbox_items}
               workerGroups={dashboard.workers}
               agents={agents}
               defaultModel={defaultModel}

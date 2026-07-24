@@ -11,12 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
-import { useResolveTaskProposal } from "@/hooks/useAgentTasks";
+import { useResolveTaskItem } from "@/hooks/useAgentTasks";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import {
-  parseEventPayload,
   type DispatchPayload,
-  type TaskEventSummary,
+  type TaskItemSummary,
 } from "@/lib/agentTasksApi";
 import {
   buildWorkerOptions,
@@ -27,60 +26,68 @@ import {
 
 interface TaskCardInboxProps {
   taskId: string;
-  proposals: TaskEventSummary[];
+  inboxItems: TaskItemSummary[];
   workerGroups: { worker_agent_id: string }[];
   agents: AvailableAgent[];
   defaultModel: string;
 }
 
-interface ProposalEditorState {
+interface InboxEditorState {
   workerAgentId: string;
   model: string;
   title: string;
   instructions: string;
 }
 
+function itemDispatchPayload(item: TaskItemSummary): DispatchPayload {
+  return {
+    worker_agent_id: item.worker_agent_id ?? undefined,
+    model: item.model ?? undefined,
+    title: item.title,
+    instructions: item.instructions ?? "",
+  };
+}
+
 function initialEditorState(
-  proposal: TaskEventSummary,
+  item: TaskItemSummary,
   workerOptions: WorkerOption[],
-): ProposalEditorState {
-  const payload = parseEventPayload(proposal.payload);
+): InboxEditorState {
   const workerAgentId =
-    payload.worker_agent_id ?? workerOptions[0]?.workerAgentId ?? "";
+    item.worker_agent_id ?? workerOptions[0]?.workerAgentId ?? "";
   const model =
-    payload.model ??
+    item.model ??
     workerOptions.find((option) => option.workerAgentId === workerAgentId)?.model ??
     workerOptions[0]?.model ??
     "";
   return {
     workerAgentId,
     model,
-    title: payload.title ?? proposal.title,
-    instructions: payload.instructions ?? "",
+    title: item.title,
+    instructions: item.instructions ?? "",
   };
 }
 
-interface ProposalInboxCardProps {
+interface InboxItemCardProps {
   taskId: string;
-  proposal: TaskEventSummary;
+  item: TaskItemSummary;
   workerAgentIds: string[];
   agents: AvailableAgent[];
   defaultModel: string;
 }
 
-function ProposalInboxCard({
+function InboxItemCard({
   taskId,
-  proposal,
+  item,
   workerAgentIds,
   agents,
   defaultModel,
-}: ProposalInboxCardProps) {
-  const resolveProposal = useResolveTaskProposal(taskId);
+}: InboxItemCardProps) {
+  const resolveItem = useResolveTaskItem(taskId);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
 
   const workerOptions = useMemo(
-    () => buildWorkerOptions(workerAgentIds, parseEventPayload(proposal.payload), defaultModel),
-    [workerAgentIds, proposal.payload, defaultModel],
+    () => buildWorkerOptions(workerAgentIds, itemDispatchPayload(item), defaultModel),
+    [workerAgentIds, item, defaultModel],
   );
 
   const agentNameById = useMemo(
@@ -88,15 +95,15 @@ function ProposalInboxCard({
     [agents],
   );
 
-  const [editor, setEditor] = useState(() => initialEditorState(proposal, workerOptions));
+  const [editor, setEditor] = useState(() => initialEditorState(item, workerOptions));
 
   useEffect(() => {
-    setEditor(initialEditorState(proposal, workerOptions));
-  }, [proposal.id, workerOptions]);
+    setEditor(initialEditorState(item, workerOptions));
+  }, [item.id, workerOptions]);
 
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12);
 
-  const baseline = parseEventPayload(proposal.payload);
+  const baseline = itemDispatchPayload(item);
 
   const onWorkerChange = (workerAgentId: string) => {
     const option = workerOptions.find((row) => row.workerAgentId === workerAgentId);
@@ -107,7 +114,7 @@ function ProposalInboxCard({
     }));
   };
 
-  const submit = async (resolution: "accept_proposal" | "edit_and_dispatch" | "reject_proposal") => {
+  const submit = async (resolution: "accept_item" | "edit_and_dispatch" | "reject_item") => {
     const edited =
       resolution === "edit_and_dispatch"
         ? ({
@@ -119,12 +126,12 @@ function ProposalInboxCard({
         : undefined;
 
     const effectiveResolution =
-      resolution === "accept_proposal" && proposalHasEdits(baseline, editor)
+      resolution === "accept_item" && proposalHasEdits(baseline, editor)
         ? "edit_and_dispatch"
         : resolution;
 
-    await resolveProposal.mutateAsync({
-      eventId: proposal.id,
+    await resolveItem.mutateAsync({
+      taskItemId: item.id,
       resolution: effectiveResolution,
       edited_payload: effectiveResolution === "edit_and_dispatch" ? edited : undefined,
     });
@@ -133,7 +140,7 @@ function ProposalInboxCard({
   return (
     <article
       className="rounded-md border border-border bg-background p-3 shadow-sm"
-      data-testid={`inbox-proposal-${proposal.id}`}
+      data-testid={`inbox-item-${item.id}`}
     >
       <div className="space-y-3">
         <div className="space-y-1">
@@ -178,9 +185,9 @@ function ProposalInboxCard({
             type="button"
             variant="outline"
             size="sm"
-            disabled={resolveProposal.isPending}
-            onClick={() => void submit("reject_proposal")}
-            aria-label="Dismiss proposal"
+            disabled={resolveItem.isPending}
+            onClick={() => void submit("reject_item")}
+            aria-label="Dismiss inbox item"
           >
             <XIcon aria-hidden />
             Skip
@@ -188,9 +195,9 @@ function ProposalInboxCard({
           <Button
             type="button"
             size="sm"
-            disabled={resolveProposal.isPending}
-            onClick={() => void submit("accept_proposal")}
-            aria-label="Approve proposal"
+            disabled={resolveItem.isPending}
+            onClick={() => void submit("accept_item")}
+            aria-label="Approve inbox item"
           >
             <CheckIcon aria-hidden />
             Go
@@ -203,7 +210,7 @@ function ProposalInboxCard({
 
 export function TaskCardInbox({
   taskId,
-  proposals,
+  inboxItems,
   workerGroups,
   agents,
   defaultModel,
@@ -217,22 +224,22 @@ export function TaskCardInbox({
     <section className="flex max-h-72 min-h-0 flex-col border-b border-border bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20">
       <h3 className="mb-2 shrink-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
         Inbox
-        {proposals.length > 0 ? (
+        {inboxItems.length > 0 ? (
           <span className="ml-2 font-normal text-muted-foreground normal-case">
-            ({proposals.length})
+            ({inboxItems.length})
           </span>
         ) : null}
       </h3>
 
-      {proposals.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No proposals awaiting approval.</p>
+      {inboxItems.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No items awaiting approval.</p>
       ) : (
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-          {proposals.map((proposal) => (
-            <ProposalInboxCard
-              key={proposal.id}
+          {inboxItems.map((item) => (
+            <InboxItemCard
+              key={item.id}
               taskId={taskId}
-              proposal={proposal}
+              item={item}
               workerAgentIds={workerAgentIds}
               agents={agents}
               defaultModel={defaultModel}

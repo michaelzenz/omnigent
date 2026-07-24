@@ -72,6 +72,7 @@ def test_routing_attempts_and_resolution(store: SqlAlchemyTaskEventStore) -> Non
 def test_execution_lookup_by_conversation_id(store: SqlAlchemyTaskEventStore) -> None:
     event_id = _uid("event_exec")
     execution_id = _uid("exec_1")
+    task_item_id = _uid("item_exec")
     conversation_id = _uid("worker_conv")
     store.create_event(
         event_id=event_id,
@@ -83,6 +84,7 @@ def test_execution_lookup_by_conversation_id(store: SqlAlchemyTaskEventStore) ->
     )
     store.create_execution(
         execution_id=execution_id,
+        task_item_id=task_item_id,
         event_id=event_id,
         task_id=_uid("task_1"),
         manager_agent_id=_uid("mgr_1"),

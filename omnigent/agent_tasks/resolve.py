@@ -21,7 +21,7 @@ _ROUTE_TO_TASK_STATES = frozenset(
     {
         "received",
         "routing",
-        "awaiting_new_manager_decision",
+        "awaiting_grouping",
     }
 )
 _SELECT_ATTEMPT_STATES = frozenset({"awaiting_user_selection"})
@@ -30,7 +30,8 @@ _DISMISSABLE_STATES = frozenset(
         "received",
         "routing",
         "awaiting_user_selection",
-        "awaiting_new_manager_decision",
+        "awaiting_grouping",
+        "grouping_proposed",
     }
 )
 

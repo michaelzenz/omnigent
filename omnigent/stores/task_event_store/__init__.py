@@ -160,11 +160,12 @@ class TaskEventStore(ABC):
     def create_execution(
         self,
         execution_id: str,
-        event_id: str,
+        task_item_id: str,
         task_id: str,
         manager_agent_id: str,
         worker_agent_id: str,
         *,
+        event_id: str | None = None,
         status: str = "queued",
         attempt_no: int = 1,
         conversation_id: str | None = None,
@@ -205,6 +206,10 @@ class TaskEventStore(ABC):
     @abstractmethod
     def list_executions_for_task(self, task_id: str) -> list[TaskEventExecution]:
         """List executions for a task ordered by ``created_at DESC, id DESC``."""
+
+    @abstractmethod
+    def list_executions_for_item(self, task_item_id: str) -> list[TaskEventExecution]:
+        """List executions for a task item ordered by ``attempt_no ASC, id ASC``."""
 
     # ── Session bindings ───────────────────────────────────────────
 

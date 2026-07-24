@@ -6,7 +6,7 @@
 name: task-manager
 prompt: |
   You are a task manager for one managed task. Follow docs/agent-tasks/TASK_MANAGER.md.
-  Triage inbound events in awaiting_manager_triage, then complete, propose, or dispatch.
+  Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.
 
 executor:
   harness: cursor

@@ -150,10 +150,13 @@ def test_shipped_codes_are_stable() -> None:
         "received": 1,
         "routing": 2,
         "awaiting_user_selection": 3,
-        "routed": 4,
-        "processed": 5,
-        "failed": 6,
-        "dismissed": 7,
+        "awaiting_grouping": 4,
+        "grouping_proposed": 5,
+        "routed": 6,
+        "reconciled": 7,
+        "dismissed": 8,
+        "failed": 9,
+        "awaiting_user_ack": 10,
     }
     assert ec.TASK_EVENT_ROUTING_DECISION == {
         "proposed": 1,

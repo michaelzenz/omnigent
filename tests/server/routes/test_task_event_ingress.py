@@ -64,8 +64,8 @@ async def test_ingress_auto_routes_matching_task(
     )
     assert ingress.status_code == 200
     body = ingress.json()
-    assert body["state"] == "awaiting_manager_triage"
-    assert ingress.json()["state"] == "awaiting_manager_triage"
+    assert body["state"] == "routed"
+    assert ingress.json()["state"] == "routed"
     assert body["task_id"] == task_id
 
 
@@ -98,7 +98,7 @@ async def test_ingress_fast_paths_explicit_task_id(
     )
     assert ingress.status_code == 200
     body = ingress.json()
-    assert body["state"] == "awaiting_manager_triage"
+    assert body["state"] == "routed"
     assert body["task_id"] == task_id
 
 
@@ -135,18 +135,18 @@ async def test_ingress_dedupes_by_source(
     assert first.json()["id"] == second.json()["id"]
 
 
-async def test_ingress_rejects_manager_internal_types(client: httpx.AsyncClient) -> None:
+async def test_ingress_rejects_session_internal_types(client: httpx.AsyncClient) -> None:
     resp = await client.post(
         "/v1/task-events",
         json={
-            "event_type": "manager.proposal",
+            "event_type": "session.adoption",
             "title": "Nope",
         },
     )
     assert resp.status_code == 400
 
 
-async def test_complete_requires_manager_triage(
+async def test_complete_requires_routed_state(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
@@ -170,8 +170,8 @@ async def test_complete_requires_manager_triage(
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
-    assert ingress.json()["state"] == "awaiting_manager_triage"
+    assert ingress.json()["state"] == "routed"
     event_id = ingress.json()["id"]
     complete = await client.post(f"/v1/task-events/{event_id}/complete")
     assert complete.status_code == 200
-    assert complete.json()["state"] == "processed"
+    assert complete.json()["state"] == "reconciled"

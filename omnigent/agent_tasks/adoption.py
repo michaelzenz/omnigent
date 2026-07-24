@@ -302,7 +302,7 @@ async def adopt_session(
     if proposal_event is not None:
         updated = task_event_store.update_event(
             proposal_event.id,
-            state="processed",
+            state="reconciled",
             processed_at=now_epoch(),
             task_id=task.id,
         )

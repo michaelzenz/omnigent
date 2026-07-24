@@ -95,6 +95,7 @@ from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
@@ -1099,6 +1100,7 @@ def create_app(
     scheduled_task_store: ScheduledTaskStore | None = None,
     task_store: TaskStore | None = None,
     task_event_store: TaskEventStore | None = None,
+    task_item_store: TaskItemStore | None = None,
     secretary_profile_store: SecretaryProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
@@ -1147,6 +1149,7 @@ def create_app(
     :param task_store: Store for managed agent tasks. When provided with
         ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
     :param task_event_store: Store for task events and execution history.
+    :param task_item_store: Store for task items and grouping proposals.
     :param secretary_profile_store: Per-user secretary profile defaults.
         When provided with task stores, enables secretary profile/session
         routes and resolve-time bootstrap defaults.
@@ -2211,11 +2214,12 @@ def create_app(
             prefix="/v1",
             tags=["comments"],
         )
-    if task_store is not None and task_event_store is not None:
+    if task_store is not None and task_event_store is not None and task_item_store is not None:
         app.include_router(
             create_agent_tasks_router(
                 task_store,
                 task_event_store,
+                task_item_store,
                 agent_store,
                 conversation_store=conversation_store,
                 secretary_profile_store=secretary_profile_store,
@@ -2244,6 +2248,7 @@ def create_app(
             TaskCompletionContext(
                 task_store=task_store,
                 task_event_store=task_event_store,
+                task_item_store=task_item_store,
                 conversation_store=conversation_store,
                 runner_router=runner_router,
             )

@@ -38,6 +38,9 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "task_event_routing_attempts",
         "task_event_routing_resolutions",
         "task_event_executions",
+        "task_items",
+        "task_item_events",
+        "grouping_proposals",
         "user_secretary_profiles",
     } <= tables
 
@@ -74,7 +77,7 @@ def test_task_events_state_check_enforced(db_engine: Engine) -> None:
 
 
 def test_task_events_state_8_allowed(db_engine: Engine) -> None:
-    """The awaiting_new_manager_decision state code is accepted."""
+    """The dismissed state code is accepted."""
     with db_engine.begin() as conn:
         conn.execute(
             sa.text(
@@ -87,26 +90,26 @@ def test_task_events_state_8_allowed(db_engine: Engine) -> None:
 
 
 def test_task_events_state_9_allowed(db_engine: Engine) -> None:
-    """The awaiting_user_ack state code is accepted."""
+    """The failed state code is accepted."""
     with db_engine.begin() as conn:
         conn.execute(
             sa.text(
                 "INSERT INTO task_events "
                 "(workspace_id, id, event_type, title, state, created_at) "
-                "VALUES (0, :id, 'manager.proposal', 'retry', 9, 1)"
+                "VALUES (0, :id, 'build.finished', 'done', 9, 1)"
             ),
             {"id": bytes.fromhex("33333333333333333333333333333333")},
         )
 
 
 def test_task_events_state_10_allowed(db_engine: Engine) -> None:
-    """The awaiting_manager_triage state code is accepted."""
+    """The awaiting_user_ack state code is accepted (session adoption)."""
     with db_engine.begin() as conn:
         conn.execute(
             sa.text(
                 "INSERT INTO task_events "
                 "(workspace_id, id, event_type, title, state, created_at) "
-                "VALUES (0, :id, 'build.finished', 'done', 10, 1)"
+                "VALUES (0, :id, 'session.adoption', 'retry', 10, 1)"
             ),
             {"id": bytes.fromhex("44444444444444444444444444444444")},
         )
@@ -139,13 +142,14 @@ def test_task_event_executions_status_check_enforced(db_engine: Engine) -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO task_event_executions "
-                    "(workspace_id, id, event_id, task_id, manager_agent_id, "
+                    "(workspace_id, id, task_item_id, event_id, task_id, manager_agent_id, "
                     "worker_agent_id, status, attempt_no, assigned_at, created_at) "
-                    "VALUES (0, :id, :event_id, :task_id, :manager_id, :worker_id, "
+                    "VALUES (0, :id, :task_item_id, :event_id, :task_id, :manager_id, :worker_id, "
                     "99, 1, 1, 1)"
                 ),
                 {
                     "id": bytes.fromhex("55555555555555555555555555555555"),
+                    "task_item_id": bytes.fromhex("77777777777777777777777777777777"),
                     "event_id": bytes.fromhex("11111111111111111111111111111111"),
                     "task_id": bytes.fromhex("33333333333333333333333333333333"),
                     "manager_id": bytes.fromhex("44444444444444444444444444444444"),

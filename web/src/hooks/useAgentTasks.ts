@@ -3,9 +3,9 @@ import {
   fetchAgentTasks,
   fetchSecretaryProfile,
   fetchTaskDashboard,
-  resolveTaskEvent,
+  resolveTaskItem,
   type DispatchPayload,
-  type ProposalResolution,
+  type ItemResolution,
 } from "@/lib/agentTasksApi";
 
 export function useAgentTaskList(state = "active") {
@@ -33,19 +33,19 @@ export function useSecretaryProfile() {
   });
 }
 
-export function useResolveTaskProposal(taskId: string) {
+export function useResolveTaskItem(taskId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
-      eventId,
+      taskItemId,
       resolution,
       edited_payload,
     }: {
-      eventId: string;
-      resolution: ProposalResolution;
+      taskItemId: string;
+      resolution: ItemResolution;
       edited_payload?: DispatchPayload;
     }) => {
-      await resolveTaskEvent(eventId, { resolution, edited_payload });
+      await resolveTaskItem(taskItemId, { resolution, edited_payload });
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard", taskId] });

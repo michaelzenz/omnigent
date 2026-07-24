@@ -85,8 +85,8 @@ async def test_session_adoption_flow(
     assert body["binding_kind"] == "ambient"
     assert body["task_id"] == task_id
     assert body["event"]["event_type"] == "session.adopted"
-    assert body["event"]["state"] == "awaiting_manager_triage"
-    assert body["proposal"]["state"] == "processed"
+    assert body["event"]["state"] == "routed"
+    assert body["proposal"]["state"] == "reconciled"
 
     binding = task_event_store.get_binding(conv.id)
     assert binding is not None

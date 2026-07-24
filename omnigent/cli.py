@@ -3163,6 +3163,7 @@ def server(
         SqlAlchemySecretaryProfileStore,
     )
     from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
     from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
     cfg = _load_config(config_path)
@@ -3193,6 +3194,7 @@ def server(
     permission_store = SqlAlchemyPermissionStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     task_event_store = SqlAlchemyTaskEventStore(db_uri)
+    task_item_store = SqlAlchemyTaskItemStore(db_uri)
     secretary_profile_store = SqlAlchemySecretaryProfileStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
@@ -3351,6 +3353,7 @@ def server(
         permission_store=permission_store,
         task_store=task_store,
         task_event_store=task_event_store,
+        task_item_store=task_item_store,
         secretary_profile_store=secretary_profile_store,
         auth_provider=auth_provider,
         host_store=host_store,

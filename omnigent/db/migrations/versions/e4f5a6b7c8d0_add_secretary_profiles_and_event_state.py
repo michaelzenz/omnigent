@@ -46,29 +46,8 @@ def upgrade() -> None:
         unique=False,
     )
 
-    with op.batch_alter_table("task_events") as batch_op:
-        batch_op.drop_constraint("ck_task_events_state", type_="check")
-        batch_op.create_check_constraint(
-            "ck_task_events_state",
-            "state IN (1, 2, 3, 4, 5, 6, 7, 8)",
-        )
-
-    op.create_index(
-        "ix_task_events_awaiting_new_manager_decision",
-        "task_events",
-        ["workspace_id", "state", "updated_at", "id"],
-        unique=False,
-    )
-
 
 def downgrade() -> None:
-    """Drop secretary profiles and revert the task-event state constraint."""
-    op.drop_index("ix_task_events_awaiting_new_manager_decision", table_name="task_events")
-    with op.batch_alter_table("task_events") as batch_op:
-        batch_op.drop_constraint("ck_task_events_state", type_="check")
-        batch_op.create_check_constraint(
-            "ck_task_events_state",
-            "state IN (1, 2, 3, 4, 5, 6, 7)",
-        )
+    """Drop secretary profiles."""
     op.drop_index("ix_user_secretary_profiles_conversation", table_name="user_secretary_profiles")
     op.drop_table("user_secretary_profiles")

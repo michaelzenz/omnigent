@@ -121,13 +121,30 @@ TASK_EVENT_STATE: dict[str, int] = {
     "received": 1,
     "routing": 2,
     "awaiting_user_selection": 3,
-    "routed": 4,
-    "processed": 5,
-    "failed": 6,
-    "dismissed": 7,
-    "awaiting_new_manager_decision": 8,
-    "awaiting_user_ack": 9,
-    "awaiting_manager_triage": 10,
+    "awaiting_grouping": 4,
+    "grouping_proposed": 5,
+    "routed": 6,
+    "reconciled": 7,
+    "dismissed": 8,
+    "failed": 9,
+    # Session adoption proposals only.
+    "awaiting_user_ack": 10,
+}
+
+TASK_ITEM_STATE: dict[str, int] = {
+    "draft": 1,
+    "awaiting_user_ack": 2,
+    "approved": 3,
+    "queued": 4,
+    "running": 5,
+    "done": 6,
+    "cancelled": 7,
+}
+
+GROUPING_PROPOSAL_STATE: dict[str, int] = {
+    "awaiting_user_ack": 1,
+    "accepted": 2,
+    "rejected": 3,
 }
 
 TASK_EVENT_ROUTING_DECISION: dict[str, int] = {
@@ -393,3 +410,23 @@ def decode_task_event_execution_status(code: int) -> str:
         code,
         field="task_event_executions.status",
     )
+
+
+def encode_task_item_state(name: str) -> int:
+    """Encode a ``task_items.state`` name to its int code."""
+    return _encode(TASK_ITEM_STATE, name, field="task_items.state")
+
+
+def decode_task_item_state(code: int) -> str:
+    """Decode a ``task_items.state`` int code to its name."""
+    return _decode(TASK_ITEM_STATE, code, field="task_items.state")
+
+
+def encode_grouping_proposal_state(name: str) -> int:
+    """Encode a ``grouping_proposals.state`` name to its int code."""
+    return _encode(GROUPING_PROPOSAL_STATE, name, field="grouping_proposals.state")
+
+
+def decode_grouping_proposal_state(code: int) -> str:
+    """Decode a ``grouping_proposals.state`` int code to its name."""
+    return _decode(GROUPING_PROPOSAL_STATE, code, field="grouping_proposals.state")

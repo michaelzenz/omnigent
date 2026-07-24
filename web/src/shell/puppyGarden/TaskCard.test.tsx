@@ -8,7 +8,7 @@ import { TaskCardWork } from "./TaskCardWork";
 vi.mock("@/hooks/useAgentTasks", () => ({
   useTaskDashboard: vi.fn(),
   useSecretaryProfile: vi.fn(() => ({ data: { model: "composer-2.5" } })),
-  useResolveTaskProposal: vi.fn(() => ({
+  useResolveTaskItem: vi.fn(() => ({
     mutateAsync: vi.fn(),
     isPending: false,
   })),
@@ -52,7 +52,7 @@ function workItemTitles(workerAgentId: string): string[] {
 }
 
 describe("TaskCard", () => {
-  it("renders inbox proposal and grouped work", () => {
+  it("renders inbox items and grouped work", () => {
     mockedDashboard.mockReturnValue({
       data: {
         task: {
@@ -63,45 +63,42 @@ describe("TaskCard", () => {
           manager_conversation_id: "mgr-session",
         },
         derived: { has_running_workers: true },
-        pending_proposals: [
+        inbox_items: [
           {
-            id: "proposal-1",
-            event_type: "manager.proposal",
+            id: "item-1",
             title: "Retry CI",
-            summary: null,
+            instructions: "Rerun checks",
             state: "awaiting_user_ack",
-            payload: {
-              worker_agent_id: "worker-1",
-              title: "Retry CI",
-              instructions: "Rerun checks",
-              model: "composer-2.5",
-            },
+            worker_agent_id: "worker-1",
+            model: "composer-2.5",
+            host_id: null,
+            workspace: null,
+            harness: null,
             created_at: 1,
             updated_at: null,
           },
           {
-            id: "proposal-2",
-            event_type: "manager.proposal",
+            id: "item-2",
             title: "Update docs",
-            summary: null,
+            instructions: "Refresh README after merge",
             state: "awaiting_user_ack",
-            payload: {
-              worker_agent_id: "worker-1",
-              title: "Update docs",
-              instructions: "Refresh README after merge",
-              model: "composer-2.5",
-            },
+            worker_agent_id: "worker-1",
+            model: "composer-2.5",
+            host_id: null,
+            workspace: null,
+            harness: null,
             created_at: 2,
             updated_at: null,
           },
         ],
-        pending_inbound_events: [],
+        reconcile_queue_count: 0,
         workers: [
           {
             worker_agent_id: "worker-1",
             executions: [
               {
                 id: "exec-1",
+                task_item_id: "item-running",
                 event_id: "evt-1",
                 event_title: "Investigate failure",
                 status: "running",
@@ -125,8 +122,8 @@ describe("TaskCard", () => {
 
     expect(screen.getByText("Land PR #123")).toBeInTheDocument();
     expect(screen.getByText("Inbox")).toBeInTheDocument();
-    expect(screen.getByTestId("inbox-proposal-proposal-1")).toBeInTheDocument();
-    expect(screen.getByTestId("inbox-proposal-proposal-2")).toBeInTheDocument();
+    expect(screen.getByTestId("inbox-item-item-1")).toBeInTheDocument();
+    expect(screen.getByTestId("inbox-item-item-2")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Rerun checks")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Refresh README after merge")).toBeInTheDocument();
     expect(screen.getByText("Work")).toBeInTheDocument();
@@ -151,6 +148,7 @@ describe("TaskCard", () => {
             executions: [
               {
                 id: "e1",
+                task_item_id: "item-1",
                 event_id: "ev1",
                 event_title: "Run checks",
                 status: "running",
@@ -169,6 +167,7 @@ describe("TaskCard", () => {
             executions: [
               {
                 id: "e2",
+                task_item_id: "item-2",
                 event_id: "ev2",
                 event_title: "Review diff",
                 status: "queued",
@@ -187,6 +186,7 @@ describe("TaskCard", () => {
             executions: [
               {
                 id: "e3",
+                task_item_id: "item-3",
                 event_id: "ev3",
                 event_title: "Update docs",
                 status: "succeeded",
@@ -219,6 +219,7 @@ describe("TaskCard", () => {
             executions: [
               {
                 id: "e1",
+                task_item_id: "item-1",
                 event_id: "ev1",
                 event_title: "Investigate failure",
                 status: "running",
@@ -232,6 +233,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "e2",
+                task_item_id: "item-2",
                 event_id: "ev2",
                 event_title: "Rerun upload job",
                 status: "queued",
@@ -245,6 +247,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "e3",
+                task_item_id: "item-3",
                 event_id: "ev3",
                 event_title: "Verify green checks",
                 status: "succeeded",
@@ -277,6 +280,7 @@ describe("TaskCard", () => {
             executions: [
               {
                 id: "d2",
+                task_item_id: "item-d2",
                 event_id: "ev-d2",
                 event_title: "Done second",
                 status: "succeeded",
@@ -290,6 +294,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "q2",
+                task_item_id: "item-q2",
                 event_id: "ev-q2",
                 event_title: "Queue second",
                 status: "queued",
@@ -303,6 +308,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "r2",
+                task_item_id: "item-r2",
                 event_id: "ev-r2",
                 event_title: "Running second",
                 status: "running",
@@ -316,6 +322,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "d1",
+                task_item_id: "item-d1",
                 event_id: "ev-d1",
                 event_title: "Done first",
                 status: "succeeded",
@@ -329,6 +336,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "q1",
+                task_item_id: "item-q1",
                 event_id: "ev-q1",
                 event_title: "Queue first",
                 status: "queued",
@@ -342,6 +350,7 @@ describe("TaskCard", () => {
               },
               {
                 id: "r1",
+                task_item_id: "item-r1",
                 event_id: "ev-r1",
                 event_title: "Running first",
                 status: "running",

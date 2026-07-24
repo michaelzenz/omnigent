@@ -99,6 +99,7 @@ def _resolution_to_entity(row: SqlTaskEventRoutingResolution) -> TaskEventRoutin
 def _execution_to_entity(row: SqlTaskEventExecution) -> TaskEventExecution:
     return TaskEventExecution(
         id=row.id,
+        task_item_id=row.task_item_id,
         event_id=row.event_id,
         task_id=row.task_id,
         manager_agent_id=row.manager_agent_id,
@@ -456,11 +457,12 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
     def create_execution(
         self,
         execution_id: str,
-        event_id: str,
+        task_item_id: str,
         task_id: str,
         manager_agent_id: str,
         worker_agent_id: str,
         *,
+        event_id: str | None = None,
         status: str = "queued",
         attempt_no: int = 1,
         conversation_id: str | None = None,
@@ -469,6 +471,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         now = assigned_at if assigned_at is not None else now_epoch()
         row = SqlTaskEventExecution(
             id=execution_id,
+            task_item_id=task_item_id,
             event_id=event_id,
             task_id=task_id,
             manager_agent_id=manager_agent_id,
@@ -572,6 +575,17 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 .where(SqlTaskEventExecution.workspace_id == current_workspace_id())
                 .where(SqlTaskEventExecution.task_id == task_id)
                 .order_by(desc(SqlTaskEventExecution.created_at), desc(SqlTaskEventExecution.id))
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_execution_to_entity(row) for row in rows]
+
+    def list_executions_for_item(self, task_item_id: str) -> list[TaskEventExecution]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEventExecution)
+                .where(SqlTaskEventExecution.workspace_id == current_workspace_id())
+                .where(SqlTaskEventExecution.task_item_id == task_item_id)
+                .order_by(asc(SqlTaskEventExecution.attempt_no), asc(SqlTaskEventExecution.id))
             )
             rows = session.execute(stmt).scalars().all()
             return [_execution_to_entity(row) for row in rows]

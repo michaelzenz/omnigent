@@ -1,8 +1,8 @@
 """Agent-task entities — persisted task/event routing and execution tables.
 
 A :class:`Task` is a long-lived unit of work owned by one manager agent.
-:class:`TaskEvent` rows are inbound signals (e.g. build finished) that route
-to a task manager, who may dispatch workers recorded in
+:class:`TaskEvent` rows are inbound signals. :class:`TaskItem` rows are
+manager-managed backlog units. Workers run against items via
 :class:`TaskEventExecution`.
 """
 
@@ -186,13 +186,75 @@ class TaskEventRoutingResolution:
 
 
 @dataclass
-class TaskEventExecution:
+class TaskItem:
     """
-    One worker execution attempt for a routed task event.
+    A manager-managed backlog unit on one task.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
-    :param event_id: Event being executed.
-    :param task_id: Task the event was routed to.
+    :param task_id: Parent managed task.
+    :param title: Short label shown in the inbox/work UI.
+    :param state: Lifecycle state (draft through done).
+    :param canonical_key: Optional dedupe key for reconcile upserts.
+    :param instructions: Dispatch instructions for the worker.
+    :param worker_agent_id: Proposed or assigned worker agent.
+    :param model: Model override for dispatch.
+    :param host_id: Host override for dispatch.
+    :param workspace: Workspace override for dispatch.
+    :param harness: Harness override for dispatch.
+    :param priority: Sort priority within a task backlog.
+    :param created_by: ``"manager"``, ``"secretary"``, or ``"user"``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last write, or ``None``.
+    """
+
+    id: str
+    task_id: str
+    title: str
+    state: str
+    created_at: int
+    canonical_key: str | None = None
+    instructions: str | None = None
+    worker_agent_id: str | None = None
+    model: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    priority: int = 0
+    created_by: str = "manager"
+    updated_at: int | None = None
+
+
+@dataclass
+class TaskItemEvent:
+    """Link between a task item and a contributing task event."""
+
+    task_item_id: str
+    event_id: str
+    relation: str
+    created_at: int
+
+
+@dataclass
+class GroupingProposal:
+    """Secretary proposal grouping orphan events into tasks and items."""
+
+    id: str
+    owner_user_id: str
+    state: str
+    payload: str
+    created_at: int
+    resolved_at: int | None = None
+
+
+@dataclass
+class TaskEventExecution:
+    """
+    One worker execution attempt for a task item.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param task_item_id: Backlog item being executed.
+    :param event_id: Optional triggering event, or ``None``.
+    :param task_id: Task the item belongs to.
     :param manager_agent_id: Manager that dispatched the worker.
     :param worker_agent_id: Worker that executed the event.
     :param status: One of ``"queued"``, ``"running"``, ``"succeeded"``,
@@ -210,7 +272,7 @@ class TaskEventExecution:
     """
 
     id: str
-    event_id: str
+    task_item_id: str
     task_id: str
     manager_agent_id: str
     worker_agent_id: str
@@ -218,6 +280,7 @@ class TaskEventExecution:
     attempt_no: int
     assigned_at: int
     created_at: int
+    event_id: str | None = None
     conversation_id: str | None = None
     started_at: int | None = None
     finished_at: int | None = None

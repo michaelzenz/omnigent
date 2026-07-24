@@ -17,6 +17,7 @@ describe("taskCardUtils", () => {
     const sorted = sortExecutions([
       {
         id: "1",
+        task_item_id: "item-1",
         event_id: "e1",
         event_title: "Done item",
         status: "succeeded",
@@ -30,6 +31,7 @@ describe("taskCardUtils", () => {
       },
       {
         id: "2",
+        task_item_id: "item-2",
         event_id: "e2",
         event_title: "Running item",
         status: "running",
@@ -49,6 +51,7 @@ describe("taskCardUtils", () => {
     const sorted = sortExecutions([
       {
         id: "3",
+        task_item_id: "item-3",
         event_id: "e3",
         event_title: "Third queued",
         status: "queued",
@@ -62,6 +65,7 @@ describe("taskCardUtils", () => {
       },
       {
         id: "1",
+        task_item_id: "item-1",
         event_id: "e1",
         event_title: "First queued",
         status: "queued",
@@ -75,6 +79,7 @@ describe("taskCardUtils", () => {
       },
       {
         id: "2",
+        task_item_id: "item-2",
         event_id: "e2",
         event_title: "Second queued",
         status: "queued",
@@ -92,6 +97,7 @@ describe("taskCardUtils", () => {
 
   it("sorts mixed statuses in fifo order within each bucket", () => {
     const base = {
+      task_item_id: "item-base",
       result_summary: null,
       error: null,
       conversation_id: null,

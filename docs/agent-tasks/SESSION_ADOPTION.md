@@ -33,7 +33,7 @@ flowchart TB
   User -->|reject| Orphan[Stays orphan]
   Adopt --> Bind[ambient binding]
   Bind --> Event[session.adopted]
-  Event --> Manager[awaiting_manager_triage]
+  Event --> Manager[routed]
 ```
 
 1. **Detect** orphan (no binding; not task-spawned `manager`/`worker`).
@@ -59,7 +59,7 @@ they do **not** auto-bind sessions.
 ## Event type
 
 `session.adopted` — created only after user accepts. Links via `source_session_id`.
-Lands in `awaiting_manager_triage` for manager review.
+Lands in `routed` for manager reconciliation into task items.
 
 ## Hooks
 

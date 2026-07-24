@@ -1,4 +1,4 @@
-"""Phase 4 route tests: dispatch, proposals, dashboard, completion."""
+"""Phase 4 route tests: task items, dispatch, dashboard, completion."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 
@@ -48,11 +49,11 @@ def _bootstrap_body() -> dict[str, str]:
     }
 
 
-def _dispatch_payload(worker_agent_id: str) -> dict[str, str]:
+def _item_payload(worker_agent_id: str) -> dict[str, str]:
     return {
-        "worker_agent_id": worker_agent_id,
         "title": "Investigate failure",
         "instructions": "Read logs and summarize the root cause.",
+        "worker_agent_id": worker_agent_id,
         **_bootstrap_body(),
     }
 
@@ -89,9 +90,20 @@ async def test_dispatch_and_dashboard(
         state="routed",
     )
 
+    item_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/items",
+        json={
+            **_item_payload(worker_agent_id),
+            "state": "approved",
+            "event_ids": [event_id],
+        },
+    )
+    assert item_resp.status_code == 200
+    item_id = item_resp.json()["id"]
+
     dispatch_resp = await client.post(
-        f"/v1/agent-tasks/{task_id}/dispatch",
-        json={"event_id": event_id, **_dispatch_payload(worker_agent_id)},
+        f"/v1/task-items/{item_id}/dispatch",
+        json=_bootstrap_body(),
     )
     assert dispatch_resp.status_code == 200
     body = dispatch_resp.json()
@@ -104,54 +116,55 @@ async def test_dispatch_and_dashboard(
     assert dashboard["derived"]["has_running_workers"] is True
     assert len(dashboard["workers"]) == 1
     assert dashboard["workers"][0]["worker_agent_id"] == worker_agent_id
+    assert dashboard["workers"][0]["executions"][0]["task_item_id"] == item_id
 
 
-async def test_proposal_accept_dispatches_worker(
+async def test_item_accept_dispatches_worker(
     client: httpx.AsyncClient,
     manager_agent_id: str,
     worker_agent_id: str,
 ) -> None:
-    """User can accept a manager proposal and dispatch a worker."""
+    """User can accept a task item and dispatch a worker."""
     task_id = await _bootstrapped_task(client, manager_agent_id)
-    proposal_resp = await client.post(
-        f"/v1/agent-tasks/{task_id}/events",
+    item_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/items",
         json={
-            "event_type": "manager.proposal",
-            "title": "Retry with backoff",
-            "payload": _dispatch_payload(worker_agent_id),
+            **_item_payload(worker_agent_id),
+            "submit_for_user_ack": True,
         },
     )
-    assert proposal_resp.status_code == 200
-    proposal_id = proposal_resp.json()["id"]
+    assert item_resp.status_code == 200
+    item_id = item_resp.json()["id"]
+    assert item_resp.json()["state"] == "awaiting_user_ack"
 
     resolve_resp = await client.post(
-        f"/v1/task-events/{proposal_id}/resolve",
-        json={"resolution": "accept_proposal"},
+        f"/v1/task-items/{item_id}/resolve",
+        json={"resolution": "accept_item"},
     )
     assert resolve_resp.status_code == 200
     resolved = resolve_resp.json()
-    assert resolved["state"] == "processed"
+    assert resolved["state"] == "running"
     assert resolved["execution_id"] is not None
+    assert resolved["worker_conversation_id"] is not None
 
 
-async def test_proposal_edit_and_dispatch(
+async def test_item_edit_and_dispatch(
     client: httpx.AsyncClient,
     manager_agent_id: str,
     worker_agent_id: str,
 ) -> None:
-    """User-edited proposal payload is used for dispatch."""
+    """User-edited item payload is used for dispatch."""
     task_id = await _bootstrapped_task(client, manager_agent_id)
-    proposal_resp = await client.post(
-        f"/v1/agent-tasks/{task_id}/events",
+    item_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/items",
         json={
-            "event_type": "manager.proposal",
-            "title": "Patch retry logic",
-            "payload": _dispatch_payload(worker_agent_id),
+            **_item_payload(worker_agent_id),
+            "submit_for_user_ack": True,
         },
     )
-    proposal_id = proposal_resp.json()["id"]
+    item_id = item_resp.json()["id"]
     resolve_resp = await client.post(
-        f"/v1/task-events/{proposal_id}/resolve",
+        f"/v1/task-items/{item_id}/resolve",
         json={
             "resolution": "edit_and_dispatch",
             "edited_payload": {
@@ -171,10 +184,12 @@ async def test_worker_completion_hook(
     """Worker idle status completes execution and wakes manager binding."""
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
 
     task_id = _uid("task_complete")
     event_id = _uid("event_complete")
+    task_item_id = _uid("item_complete")
     task_store.create(task_id, manager_agent_id, "Completion task")
     manager_conv = conversation_store.create_conversation(
         title="Manager",
@@ -190,6 +205,13 @@ async def test_worker_completion_hook(
         task_id=task_id,
         state="routed",
     )
+    item_store.create_item(
+        task_item_id,
+        task_id,
+        "Completion item",
+        state="running",
+        worker_agent_id=worker_agent_id,
+    )
     worker_conv = conversation_store.create_conversation(
         kind="sub_agent",
         title="Worker",
@@ -200,10 +222,11 @@ async def test_worker_completion_hook(
     )
     execution = event_store.create_execution(
         _uid("exec_complete"),
-        event_id,
+        task_item_id,
         task_id,
         manager_agent_id,
         worker_agent_id,
+        event_id=event_id,
         status="running",
         conversation_id=worker_conv.id,
     )
@@ -219,6 +242,7 @@ async def test_worker_completion_hook(
         TaskCompletionContext(
             task_store=task_store,
             task_event_store=event_store,
+            task_item_store=item_store,
             conversation_store=conversation_store,
             runner_router=None,
         )
@@ -233,3 +257,7 @@ async def test_worker_completion_hook(
     assert updated is not None
     assert updated.status == "succeeded"
     assert updated.result_summary == "Root cause was a stale credential."
+    assert updated.task_item_id == task_item_id
+    completed_item = item_store.get_item(task_item_id)
+    assert completed_item is not None
+    assert completed_item.state == "done"

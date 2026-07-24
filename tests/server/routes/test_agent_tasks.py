@@ -11,6 +11,7 @@ from omnigent.db.utils import generate_agent_id
 from omnigent.entities import TaskEventTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 
 
 def _uid(seed: str) -> str:
@@ -160,7 +161,9 @@ async def test_list_executions(
     ).json()
     task_id = created["id"]
     event_store = SqlAlchemyTaskEventStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
     event_id = _uid("event_exec")
+    task_item_id = _uid("item_exec")
     event_store.create_event(
         event_id=event_id,
         event_type="build.finished",
@@ -169,9 +172,16 @@ async def test_list_executions(
         manager_agent_id=manager_agent_id,
         tags=[TaskEventTag(event_id=event_id, tag_type="domain", tag="ci")],
     )
+    item_store.create_item(
+        task_item_id,
+        task_id,
+        "Investigate build",
+        state="running",
+    )
     execution_id = _uid("execution_1")
     event_store.create_execution(
         execution_id=execution_id,
+        task_item_id=task_item_id,
         event_id=event_id,
         task_id=task_id,
         manager_agent_id=manager_agent_id,

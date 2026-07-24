@@ -132,9 +132,9 @@ async def test_propose_and_adopt_session(
         params=params,
         proposal_event=proposal,
     )
-    assert processed.state == "processed"
+    assert processed.state == "reconciled"
     assert adopted.event_type == SESSION_ADOPTED
-    assert adopted.state == "awaiting_manager_triage"
+    assert adopted.state == "routed"
     binding = task_event_store.get_binding(conv.id)
     assert binding is not None
     assert binding.binding_kind == "ambient"
