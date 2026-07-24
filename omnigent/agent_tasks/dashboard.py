@@ -83,6 +83,7 @@ def _execution_summary(
         "task_item_id": execution.task_item_id,
         "event_id": execution.event_id,
         "event_title": item.title if item is not None else None,
+        "item": _item_summary(item) if item is not None else None,
         "status": execution.status,
         "result_summary": execution.result_summary,
         "error": execution.error,

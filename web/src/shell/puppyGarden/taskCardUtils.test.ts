@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkerOptions,
   getFoldedExecutions,
+  findExecution,
+  isExecutionEditable,
   proposalHasEdits,
   sortExecutions,
   workStateLabel,
@@ -197,6 +199,39 @@ describe("taskCardUtils", () => {
       },
     ]);
     expect(folded.map((row) => row.id)).toEqual(["2"]);
+  });
+
+  it("finds execution by id across worker groups", () => {
+    const workers = [
+      {
+        worker_agent_id: "w1",
+        executions: [
+          {
+            id: "exec-1",
+            task_item_id: "item-1",
+            event_id: "e1",
+            event_title: "One",
+            item: null,
+            status: "running",
+            result_summary: null,
+            error: null,
+            conversation_id: null,
+            attempt_no: 1,
+            assigned_at: 1,
+            started_at: 1,
+            finished_at: null,
+          },
+        ],
+      },
+    ];
+    expect(findExecution(workers, "exec-1")?.id).toBe("exec-1");
+    expect(findExecution(workers, null)).toBeNull();
+    expect(findExecution(workers, "missing")).toBeNull();
+  });
+
+  it("marks queued executions as editable", () => {
+    expect(isExecutionEditable("queued")).toBe(true);
+    expect(isExecutionEditable("running")).toBe(false);
   });
 
   it("builds worker options from proposal and task history", () => {

@@ -35,6 +35,7 @@ from omnigent.agent_tasks.grouping import (
 )
 from omnigent.agent_tasks.items import (
     create_task_item,
+    patch_task_item,
     reconcile_events,
     resolve_task_item,
     submit_item_for_user_ack,
@@ -220,6 +221,28 @@ class ResolveTaskItemRequest(BaseModel):
 
     resolution: Literal["accept_item", "edit_and_dispatch", "reject_item"]
     edited_payload: dict[str, Any] | None = None
+
+
+class UpdateTaskItemRequest(BaseModel):
+    """Request body for ``PATCH /v1/task-items/{item_id}``."""
+
+    title: str | None = None
+    instructions: str | None = None
+    worker_agent_id: str | None = None
+    model: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must be a non-empty string")
+        return stripped
 
 
 class CreateGroupingProposalRequest(BaseModel):
@@ -819,6 +842,32 @@ def create_agent_tasks_router(
                 response["execution_id"] = execution.id
                 response["worker_conversation_id"] = execution.conversation_id
             return response
+
+        @router.patch("/task-items/{item_id}")
+        async def update_task_item_route(
+            request: Request,
+            item_id: str,
+            body: UpdateTaskItemRequest,
+        ) -> dict[str, Any]:
+            """Update a queued work item before dispatch."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+
+            def _patch() -> TaskItem:
+                return patch_task_item(
+                    item=item,
+                    task_item_store=task_item_store,
+                    title=body.title,
+                    instructions=body.instructions,
+                    worker_agent_id=body.worker_agent_id,
+                    model=body.model,
+                    host_id=body.host_id,
+                    workspace=body.workspace,
+                    harness=body.harness,
+                )
+
+            updated = await asyncio.to_thread(_patch)
+            return _item_to_response(updated)
 
         @router.post("/task-items/{item_id}/dispatch")
         async def dispatch_task_item(

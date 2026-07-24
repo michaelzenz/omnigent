@@ -39,6 +39,7 @@ export interface TaskExecutionSummary {
   task_item_id: string;
   event_id: string;
   event_title: string | null;
+  item?: TaskItemSummary | null;
   status: string;
   result_summary: string | null;
   error: string | null;
@@ -171,4 +172,16 @@ export async function resolveTaskItem(
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}`);
   }
+}
+
+export async function updateTaskItem(
+  taskItemId: string,
+  body: DispatchPayload & { title?: string; instructions?: string },
+): Promise<TaskItemSummary> {
+  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJson<TaskItemSummary>(res);
 }

@@ -8,14 +8,25 @@ import { type RefObject, useLayoutEffect } from "react";
  * would clip the content/placeholder.
  */
 function measureTextarea(ta: HTMLTextAreaElement, maxRows: number): void {
-  ta.style.height = "auto";
-  if (ta.scrollHeight === 0) return;
   const cs = getComputedStyle(ta);
   const lineHeight = parseFloat(cs.lineHeight);
+  if (!Number.isFinite(lineHeight)) return;
   const paddingTop = parseFloat(cs.paddingTop);
   const paddingBottom = parseFloat(cs.paddingBottom);
   const maxHeight = lineHeight * maxRows + paddingTop + paddingBottom;
-  ta.style.height = Math.min(ta.scrollHeight, maxHeight) + "px";
+
+  // Collapse before measuring so scrollHeight reflects wrapped content at the
+  // current width (not the previous inline height from a wider container).
+  ta.style.minHeight = "0";
+  ta.style.height = "0";
+  const contentHeight = ta.scrollHeight;
+  if (contentHeight === 0) {
+    ta.style.height = "auto";
+    ta.style.minHeight = "";
+    return;
+  }
+  ta.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+  ta.style.minHeight = "";
 }
 
 /**
@@ -35,11 +46,19 @@ export function useAutoGrowTextarea(
   ref: RefObject<HTMLTextAreaElement | null>,
   value: string,
   maxRows = 10,
+  /** Re-measure when a container mounts or resizes (e.g. side-panel swap). */
+  layoutKey?: string | number | null,
 ) {
-  // Re-measure on content / maxRows change.
+  // Re-measure on content / maxRows / layout change.
   useLayoutEffect(() => {
-    if (ref.current) measureTextarea(ref.current, maxRows);
-  }, [ref, value, maxRows]);
+    const ta = ref.current;
+    if (!ta) return;
+    const measure = () => measureTextarea(ta, maxRows);
+    measure();
+    // One frame later so width-dependent wrapping has settled (narrow rails).
+    const frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [ref, value, maxRows, layoutKey]);
 
   // Install one observer per element (not per keystroke — value isn't a
   // dep) so the box recovers once layout settles after a 0-height mount.

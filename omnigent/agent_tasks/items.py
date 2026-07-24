@@ -17,6 +17,7 @@ from omnigent.stores.task_item_store import TaskItemStore
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item"]
 _INBOX_STATES = frozenset({"awaiting_user_ack"})
 _OPEN_ITEM_STATES = frozenset({"draft", "awaiting_user_ack", "approved", "queued", "running"})
+_EDITABLE_WORK_ITEM_STATES = frozenset({"queued", "approved"})
 
 
 def _generate_item_id() -> str:
@@ -201,3 +202,38 @@ def reconcile_events(
         if updated is not None:
             reconciled.append(updated)
     return reconciled
+
+
+def patch_task_item(
+    *,
+    item: TaskItem,
+    task_item_store: TaskItemStore,
+    title: str | None = None,
+    instructions: str | None = None,
+    worker_agent_id: str | None = None,
+    model: str | None = None,
+    host_id: str | None = None,
+    workspace: str | None = None,
+    harness: str | None = None,
+) -> TaskItem:
+    """Update a queued work item before it is dispatched."""
+    if item.state not in _EDITABLE_WORK_ITEM_STATES:
+        raise OmnigentError(
+            f"Cannot edit task item in state {item.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+    if title is not None and not title.strip():
+        raise OmnigentError("title must be a non-empty string", code=ErrorCode.INVALID_INPUT)
+    updated = task_item_store.update_item(
+        item.id,
+        title=title.strip() if title is not None else None,
+        instructions=instructions,
+        worker_agent_id=worker_agent_id,
+        model=model,
+        host_id=host_id,
+        workspace=workspace,
+        harness=harness,
+    )
+    if updated is None:
+        raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+    return updated

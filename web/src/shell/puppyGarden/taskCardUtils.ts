@@ -54,6 +54,23 @@ export function getFoldedExecutions(executions: TaskExecutionSummary[]): TaskExe
   return sortExecutions(executions).filter((execution) => execution.status === "running");
 }
 
+export function isExecutionEditable(status: string): boolean {
+  return status === "queued";
+}
+
+export function findExecution(
+  workers: TaskWorkerGroup[],
+  executionId: string | null,
+): TaskExecutionSummary | null {
+  if (executionId == null) return null;
+  for (const group of workers) {
+    for (const execution of group.executions) {
+      if (execution.id === executionId) return execution;
+    }
+  }
+  return null;
+}
+
 export function buildWorkerOptions(
   workerAgentIds: string[],
   proposalPayload: DispatchPayload,

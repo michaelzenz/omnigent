@@ -1,10 +1,12 @@
+import { useMemo, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useSecretaryProfile, useTaskDashboard } from "@/hooks/useAgentTasks";
 import { TaskCardInbox } from "./TaskCardInbox";
-import { TaskCardSessions } from "./TaskCardSessions";
+import { TaskCardSidePanel } from "./TaskCardSidePanel";
 import { TaskCardWork } from "./TaskCardWork";
+import { findExecution } from "./taskCardUtils";
 
 interface TaskCardProps {
   taskId: string;
@@ -18,6 +20,12 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
   const { data: agents = [] } = useAvailableAgents();
   const { data: secretaryProfile } = useSecretaryProfile();
   const defaultModel = secretaryProfile?.model ?? "composer-2.5";
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+
+  const selectedExecution = useMemo(
+    () => (dashboard ? findExecution(dashboard.workers, selectedExecutionId) : null),
+    [dashboard, selectedExecutionId],
+  );
 
   return (
     <article
@@ -58,9 +66,21 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
               agents={agents}
               defaultModel={defaultModel}
             />
-            <TaskCardWork workers={dashboard.workers} agents={agents} />
+            <TaskCardWork
+              workers={dashboard.workers}
+              agents={agents}
+              selectedExecutionId={selectedExecutionId}
+              onSelectExecution={setSelectedExecutionId}
+            />
           </div>
-          <TaskCardSessions dashboard={dashboard} />
+          <TaskCardSidePanel
+            dashboard={dashboard}
+            taskId={taskId}
+            agents={agents}
+            defaultModel={defaultModel}
+            selectedExecution={selectedExecution}
+            onClearSelection={() => setSelectedExecutionId(null)}
+          />
         </div>
       ) : null}
     </article>

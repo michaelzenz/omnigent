@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TaskExecutionSummary, TaskWorkerGroup } from "@/lib/agentTasksApi";
@@ -16,6 +15,8 @@ import {
 interface TaskCardWorkProps {
   workers: TaskWorkerGroup[];
   agents: AvailableAgent[];
+  selectedExecutionId?: string | null;
+  onSelectExecution?: (executionId: string) => void;
 }
 
 function workerDisplayName(workerAgentId: string, agents: AvailableAgent[]): string {
@@ -23,29 +24,41 @@ function workerDisplayName(workerAgentId: string, agents: AvailableAgent[]): str
   return match?.display_name ?? match?.name ?? workerAgentId;
 }
 
-function WorkItemRow({ execution }: { execution: TaskExecutionSummary }) {
+function WorkItemRow({
+  execution,
+  selected,
+  onSelect,
+}: {
+  execution: TaskExecutionSummary;
+  selected: boolean;
+  onSelect: (executionId: string) => void;
+}) {
   const subtitle = executionSubtitle(execution);
-  const content = (
-    <div className="flex items-start justify-between gap-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1">
-      <div className="min-w-0">
-        <p className="truncate text-sm leading-tight font-medium">{execution.event_title ?? "Work item"}</p>
-        {subtitle ? (
-          <p className="mt-px line-clamp-2 text-xs leading-snug text-muted-foreground">{subtitle}</p>
-        ) : null}
-      </div>
-      <WorkStateBadge status={execution.status} />
-    </div>
-  );
-
-  if (!execution.conversation_id) {
-    return <li key={execution.id}>{content}</li>;
-  }
 
   return (
     <li key={execution.id}>
-      <Link to={`/c/${execution.conversation_id}`} className="block hover:opacity-90">
-        {content}
-      </Link>
+      <button
+        type="button"
+        onClick={() => onSelect(execution.id)}
+        className={cn(
+          "flex w-full items-start justify-between gap-2 rounded-md border px-2 py-1 text-left transition-colors",
+          selected
+            ? "border-ring bg-muted/40 ring-2 ring-ring/40"
+            : "border-border/60 bg-muted/20 hover:bg-muted/35",
+        )}
+        data-testid={`work-item-${execution.id}`}
+        aria-pressed={selected}
+      >
+        <div className="min-w-0">
+          <p className="truncate text-sm leading-tight font-medium">
+            {execution.event_title ?? "Work item"}
+          </p>
+          {subtitle ? (
+            <p className="mt-px line-clamp-2 text-xs leading-snug text-muted-foreground">{subtitle}</p>
+          ) : null}
+        </div>
+        <WorkStateBadge status={execution.status} />
+      </button>
     </li>
   );
 }
@@ -53,9 +66,13 @@ function WorkItemRow({ execution }: { execution: TaskExecutionSummary }) {
 function WorkerGroup({
   group,
   agents,
+  selectedExecutionId,
+  onSelectExecution,
 }: {
   group: TaskWorkerGroup;
   agents: AvailableAgent[];
+  selectedExecutionId: string | null;
+  onSelectExecution: (executionId: string) => void;
 }) {
   const executions = sortExecutions(group.executions);
   const [expanded, setExpanded] = useState(false);
@@ -63,8 +80,8 @@ function WorkerGroup({
   if (executions.length === 0) return null;
 
   const foldedExecutions = getFoldedExecutions(executions);
-  const visibleExecutions = expanded ? executions : foldedExecutions;
   const canToggle = executions.length > 1;
+  const visibleExecutions = expanded || !canToggle ? executions : foldedExecutions;
   const hiddenCount = expanded ? 0 : executions.length - visibleExecutions.length;
   const shouldScrollItems = expanded && executions.length > WORK_ITEM_SCROLL_THRESHOLD;
   const workerName = workerDisplayName(group.worker_agent_id, agents);
@@ -115,7 +132,12 @@ function WorkerGroup({
           }
         >
           {visibleExecutions.map((execution) => (
-            <WorkItemRow key={execution.id} execution={execution} />
+            <WorkItemRow
+              key={execution.id}
+              execution={execution}
+              selected={execution.id === selectedExecutionId}
+              onSelect={onSelectExecution}
+            />
           ))}
         </ul>
       )}
@@ -123,7 +145,12 @@ function WorkerGroup({
   );
 }
 
-export function TaskCardWork({ workers, agents }: TaskCardWorkProps) {
+export function TaskCardWork({
+  workers,
+  agents,
+  selectedExecutionId = null,
+  onSelectExecution = () => {},
+}: TaskCardWorkProps) {
   const groups = sortWorkerGroups(workers).filter((group) => group.executions.length > 0);
   const shouldScrollGroups = groups.length > WORKER_GROUP_SCROLL_THRESHOLD;
 
@@ -143,7 +170,13 @@ export function TaskCardWork({ workers, agents }: TaskCardWorkProps) {
           data-testid={shouldScrollGroups ? "task-card-work-scroll" : "task-card-work"}
         >
           {groups.map((group) => (
-            <WorkerGroup key={group.worker_agent_id} group={group} agents={agents} />
+            <WorkerGroup
+              key={group.worker_agent_id}
+              group={group}
+              agents={agents}
+              selectedExecutionId={selectedExecutionId}
+              onSelectExecution={onSelectExecution}
+            />
           ))}
         </div>
       )}

@@ -176,6 +176,36 @@ async def test_item_edit_and_dispatch(
     assert resolve_resp.json()["worker_conversation_id"] is not None
 
 
+async def test_patch_queued_task_item(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+    worker_agent_id: str,
+) -> None:
+    """Queued work items can be edited before dispatch."""
+    task_id = await _bootstrapped_task(client, manager_agent_id)
+    item_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/items",
+        json={
+            **_item_payload(worker_agent_id),
+            "state": "queued",
+        },
+    )
+    assert item_resp.status_code == 200
+    item_id = item_resp.json()["id"]
+
+    patch_resp = await client.patch(
+        f"/v1/task-items/{item_id}",
+        json={
+            "title": "Updated title",
+            "instructions": "Updated instructions",
+        },
+    )
+    assert patch_resp.status_code == 200
+    body = patch_resp.json()
+    assert body["title"] == "Updated title"
+    assert body["instructions"] == "Updated instructions"
+
+
 async def test_worker_completion_hook(
     db_uri: str,
     manager_agent_id: str,

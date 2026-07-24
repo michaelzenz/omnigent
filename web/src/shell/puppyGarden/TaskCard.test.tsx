@@ -12,6 +12,10 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   })),
+  useUpdateTaskItem: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
 }));
 
 vi.mock("@/hooks/useAvailableAgents", () => ({
@@ -23,6 +27,12 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
 
 const mockedDashboard = vi.mocked(useTaskDashboard);
+const noopSelect = vi.fn();
+
+const workListProps = {
+  selectedExecutionId: null,
+  onSelectExecution: noopSelect,
+};
 
 function renderCard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -138,6 +148,77 @@ describe("TaskCard", () => {
     expect(screen.getByText("Manager")).toBeInTheDocument();
   });
 
+  it("replaces the entire side panel when a work item is selected", () => {
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-1",
+          title: "Land PR #123",
+          description: null,
+          state: "active",
+          manager_conversation_id: "mgr-session",
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [],
+        reconcile_queue_count: 0,
+        workers: [
+          {
+            worker_agent_id: "worker-1",
+            executions: [
+              {
+                id: "exec-q",
+                task_item_id: "item-q",
+                event_id: "evt-q",
+                event_title: "Queued task",
+                item: {
+                  id: "item-q",
+                  title: "Queued task",
+                  instructions: "Do the thing",
+                  state: "queued",
+                  worker_agent_id: "worker-1",
+                  model: "composer-2.5",
+                  host_id: null,
+                  workspace: null,
+                  harness: null,
+                  created_at: 1,
+                  updated_at: null,
+                },
+                status: "queued",
+                result_summary: null,
+                error: null,
+                conversation_id: null,
+                attempt_no: 1,
+                assigned_at: 1,
+                started_at: null,
+                finished_at: null,
+              },
+            ],
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
+    renderCard();
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Assets")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("work-item-exec-q"));
+
+    expect(screen.getByTestId("task-item-detail")).toBeInTheDocument();
+    expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
+    expect(screen.queryByText("Assets")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Queued task")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Do the thing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Assets")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-item-detail")).not.toBeInTheDocument();
+  });
+
   it("scrolls work when more than two worker groups are present", () => {
     render(
       <TaskCardWork
@@ -205,6 +286,7 @@ describe("TaskCard", () => {
             ],
           },
         ]}
+        {...workListProps}
       />,
     );
 
@@ -266,6 +348,7 @@ describe("TaskCard", () => {
             ],
           },
         ]}
+        {...workListProps}
       />,
     );
 
@@ -314,6 +397,7 @@ describe("TaskCard", () => {
             ],
           },
         ]}
+        {...workListProps}
       />,
     );
 
@@ -421,6 +505,7 @@ describe("TaskCard", () => {
             ],
           },
         ]}
+        {...workListProps}
       />,
     );
 
