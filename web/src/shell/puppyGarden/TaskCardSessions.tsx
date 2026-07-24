@@ -44,21 +44,21 @@ export function TaskCardSessions({ dashboard }: TaskCardSessionsProps) {
 
   return (
     <aside className="flex min-h-0 w-[260px] shrink-0 flex-col border-l border-border bg-muted/20">
-      <div className="border-b border-border px-3 py-2">
+      <div className="border-b border-border px-2.5 py-1.5">
         <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
           Sessions
         </h3>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {sessions.length === 0 ? (
           <p className="px-1 text-xs text-muted-foreground">No sessions yet.</p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {sessions.map((session) => (
               <li key={session.id}>
                 <Link
                   to={`/c/${session.id}`}
-                  className="block rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                  className="block rounded-md px-1.5 py-1 text-sm hover:bg-muted"
                 >
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className="shrink-0 text-[10px]">
@@ -72,11 +72,11 @@ export function TaskCardSessions({ dashboard }: TaskCardSessionsProps) {
           </ul>
         )}
       </div>
-      <div className="border-t border-border px-3 py-2">
+      <div className="border-t border-border px-2.5 py-1.5">
         <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
           Assets
         </h3>
-        <p className="mt-1 text-xs text-muted-foreground">PRs and notebooks coming soon.</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">PRs and notebooks coming soon.</p>
       </div>
     </aside>
   );

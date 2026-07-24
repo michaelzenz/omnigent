@@ -24,11 +24,11 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
       className="flex min-h-[280px] flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm"
       data-testid={`task-card-${taskId}`}
     >
-      <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+      <header className="flex items-start justify-between gap-2 border-b border-border px-3 py-2">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold">{title}</h2>
+          <h2 className="truncate text-base leading-tight font-semibold">{title}</h2>
           {description ? (
-            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{description}</p>
+            <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-muted-foreground">{description}</p>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">

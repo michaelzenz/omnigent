@@ -139,14 +139,14 @@ function InboxItemCard({
 
   return (
     <article
-      className="rounded-md border border-border bg-background p-3 shadow-sm"
+      className="rounded-md border border-border bg-background p-2 shadow-sm"
       data-testid={`inbox-item-${item.id}`}
     >
-      <div className="space-y-3">
-        <div className="space-y-1">
-          <span className="text-xs text-muted-foreground">Worker</span>
+      <div className="space-y-1.5">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs leading-none text-muted-foreground">Worker</span>
           <Select value={editor.workerAgentId} onValueChange={onWorkerChange}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="h-7 w-full" size="sm">
               <SelectValue placeholder="Select worker" />
             </SelectTrigger>
             <SelectContent>
@@ -159,16 +159,17 @@ function InboxItemCard({
           </Select>
         </div>
 
-        <div className="space-y-1">
-          <span className="text-xs text-muted-foreground">Title</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs leading-none text-muted-foreground">Title</span>
           <Input
+            className="h-7 py-1"
             value={editor.title}
             onChange={(event) => setEditor((prev) => ({ ...prev, title: event.target.value }))}
           />
         </div>
 
-        <div className="space-y-1">
-          <span className="text-xs text-muted-foreground">Instructions</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs leading-none text-muted-foreground">Instructions</span>
           <Textarea
             ref={instructionsRef}
             rows={1}
@@ -176,11 +177,11 @@ function InboxItemCard({
             onChange={(event) =>
               setEditor((prev) => ({ ...prev, instructions: event.target.value }))
             }
-            className="min-h-8 resize-none overflow-y-auto py-1.5"
+            className="min-h-7 resize-none overflow-y-auto py-1"
           />
         </div>
 
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-1.5 pt-0.5">
           <Button
             type="button"
             variant="outline"
@@ -221,8 +222,8 @@ export function TaskCardInbox({
   );
 
   return (
-    <section className="flex max-h-72 min-h-0 flex-col border-b border-border bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20">
-      <h3 className="mb-2 shrink-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+    <section className="flex max-h-72 min-h-0 flex-col border-b border-border bg-amber-50/60 px-3 py-2 dark:bg-amber-950/20">
+      <h3 className="mb-1 shrink-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
         Inbox
         {inboxItems.length > 0 ? (
           <span className="ml-2 font-normal text-muted-foreground normal-case">
@@ -234,7 +235,7 @@ export function TaskCardInbox({
       {inboxItems.length === 0 ? (
         <p className="text-sm text-muted-foreground">No items awaiting approval.</p>
       ) : (
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
           {inboxItems.map((item) => (
             <InboxItemCard
               key={item.id}
