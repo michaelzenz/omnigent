@@ -443,7 +443,8 @@ def _make_managed_mint_factory(
         only credential), presented to the mint endpoint.
     :returns: A sync callable returning a fresh owner JWT, or ``None`` only
         when the server *definitively* will not mint for this runner (HTTP
-        400 no-auth/header mode, or 404 older server without the endpoint) —
+        400 no-auth/header mode, 401 unrecognized/non-managed runner, or 404
+        older server without the endpoint) —
         the runner then sends unauthenticated requests, as it did before this
         fallback existed. A *transient* probe failure still installs the
         factory, which re-mints on the next callback (so a blip at boot does
@@ -519,7 +520,10 @@ class _ManagedMintTokenFactory:
                 self._mint_url, self._server_url, self._binding_token
             )
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in (400, 404):
+            # 400/404: server will never mint (no-auth/header mode, old server).
+            # 401: binding token is valid but this runner is not a managed
+            # sandbox (typical host-launched runner) — bare requests are correct.
+            if exc.response.status_code in (400, 401, 404):
                 self.declined = True
                 return None
             return self._still_valid_cached_token(now)

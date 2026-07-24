@@ -1,0 +1,10 @@
+# Generic task worker — executes one approved task item.
+
+name: task-worker
+prompt: |
+  You are a task worker. Follow docs/agent-tasks/TASK_WORKER.md.
+  Execute the assigned task item instructions, report progress, and finish when done.
+
+executor:
+  harness: cursor-native
+  model: composer-2.5

@@ -458,6 +458,7 @@ def _ensure_default_agents(
     _ensure_default_kimi_native_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
+    _ensure_default_task_agents(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
 
 
@@ -772,6 +773,37 @@ def _ensure_default_kiro_agent(
         name=_KIRO_NATIVE_AGENT_NAME,
         bundle_bytes=_build_kiro_native_bundle(),
     )
+
+
+def _build_task_agent_bundle(agent_name: str) -> bytes:
+    """Build a gzipped tarball of a packaged task-role agent spec."""
+    import tempfile
+
+    from omnigent.agent_tasks.agent_builtins import task_agent_spec_path
+    from omnigent.spec import materialize_bundle
+
+    spec_path = task_agent_spec_path(agent_name)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_task_agents(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh all packaged managed-task role agents."""
+    from omnigent.agent_tasks.agent_builtins import TASK_BUILTIN_AGENT_NAMES
+
+    for agent_name in TASK_BUILTIN_AGENT_NAMES:
+        _ensure_builtin_agent(
+            agent_store,
+            artifact_store,
+            agent_cache,
+            name=agent_name,
+            bundle_bytes=_build_task_agent_bundle(agent_name),
+        )
 
 
 def _build_goose_native_bundle() -> bytes:
@@ -2223,6 +2255,7 @@ def create_app(
                 agent_store,
                 conversation_store=conversation_store,
                 secretary_profile_store=secretary_profile_store,
+                host_store=host_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
             ),
@@ -2234,6 +2267,7 @@ def create_app(
                 task_store,
                 task_event_store,
                 conversation_store,
+                agent_store,
                 secretary_profile_store=secretary_profile_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,

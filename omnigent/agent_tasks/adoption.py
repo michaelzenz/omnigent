@@ -26,6 +26,7 @@ from omnigent.entities.conversation import Conversation
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
@@ -40,6 +41,14 @@ SESSION_ADOPTED = "session.adopted"
 _PENDING_BY_USER: dict[str, list[str]] = {}
 _DEBOUNCE_HANDLES: dict[str, Any] = {}
 _DEBOUNCE_SECONDS = 2.0
+
+# Orphan adoption on import/session-create is off until secretary UX is ready.
+_ORPHAN_SESSION_ADOPTION_ENABLED = False
+
+
+def orphan_session_adoption_enabled() -> bool:
+    """Return whether import/create hooks enqueue sessions for adoption."""
+    return _ORPHAN_SESSION_ADOPTION_ENABLED
 
 
 @dataclass
@@ -108,6 +117,8 @@ async def notify_new_session(
     host_id: str | None = None,
 ) -> bool:
     """Enqueue a newly created or imported session for adoption routing."""
+    if not _ORPHAN_SESSION_ADOPTION_ENABLED:
+        return False
     if _context is None:
         return False
     owner_user_id = resolve_owner_user_id(
@@ -255,6 +266,7 @@ async def adopt_session(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     runner_router: RunnerRouter | None,
     params: BootstrapParams,
     proposal_event: TaskEvent | None = None,
@@ -296,6 +308,7 @@ async def adopt_session(
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
         params=params,
     )
     processed_proposal = proposal_event

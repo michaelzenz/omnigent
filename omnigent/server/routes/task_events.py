@@ -23,6 +23,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
@@ -174,6 +175,7 @@ def create_task_events_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     secretary_profile_store: SecretaryProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
@@ -283,6 +285,7 @@ def create_task_events_router(
             task_store=task_store,
             task_event_store=task_event_store,
             conversation_store=conversation_store,
+            agent_store=agent_store,
             runner_router=_runner_router(request),
             secretary_profile_store=secretary_profile_store,
             secretary_profile=profile,
@@ -361,6 +364,7 @@ def create_task_events_router(
             task_store=task_store,
             task_event_store=task_event_store,
             conversation_store=conversation_store,
+            agent_store=agent_store,
             runner_router=_runner_router(request),
             task=task,
             routing_attempt_id=body.routing_attempt_id,

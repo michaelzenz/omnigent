@@ -32,6 +32,7 @@ def manager_agent_id(db_uri: str) -> str:
 
 @pytest.fixture
 def stores(db_uri: str, manager_agent_id: str) -> dict:
+    agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
@@ -45,6 +46,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
     return {
+        "agent_store": agent_store,
         "task_store": task_store,
         "event_store": event_store,
         "conversation_store": conversation_store,
@@ -82,6 +84,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         task_store=stores["task_store"],
         task_event_store=event_store,
         conversation_store=stores["conversation_store"],
+        agent_store=stores["agent_store"],
         runner_router=None,
         secretary_profile=profile,
     )
@@ -95,6 +98,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
     task_store = SqlAlchemyTaskStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
+    agent_store = SqlAlchemyAgentStore(db_uri)
     event_id = _uid("stall_event")
     event = event_store.create_event(
         event_id,
@@ -107,6 +111,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
         task_store=task_store,
         task_event_store=event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
         runner_router=None,
         secretary_profile_store=secretary_store,
         owner_user_id="__anonymous__",
@@ -129,6 +134,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         task_store=stores["task_store"],
         task_event_store=event_store,
         conversation_store=stores["conversation_store"],
+        agent_store=stores["agent_store"],
         runner_router=None,
     )
     assert updated.state == "awaiting_user_ack"
@@ -160,6 +166,7 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         task_store=stores["task_store"],
         task_event_store=event_store,
         conversation_store=stores["conversation_store"],
+        agent_store=stores["agent_store"],
         runner_router=None,
         secretary_profile=profile,
     )

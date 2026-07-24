@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { useNavigate } from "@/lib/routing";
 import { useConversations } from "@/hooks/useConversations";
+import { useSecretaryProfile } from "@/hooks/useAgentTasks";
+import { withoutSecretaryConversation } from "@/lib/secretarySession";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Command,
@@ -116,6 +118,9 @@ export function CommandPalette({
     return () => clearTimeout(timer);
   }, [query]);
 
+  const { data: secretaryProfile } = useSecretaryProfile();
+  const secretaryConversationId = secretaryProfile?.conversation_id ?? null;
+
   const close = (): void => onOpenChange(false);
 
   const actions = useMemo<ActionCommand[]>(
@@ -190,12 +195,13 @@ export function CommandPalette({
         });
       }
     }
+    const filtered = withoutSecretaryConversation(out, secretaryConversationId);
     // With no query the palette shows the full session page, which pushes the
     // Actions group below the fold. Cap the idle list to the few most-recent
     // sessions so both groups fit without scrolling; once the user types, show
     // every match (finding a specific session is then the point).
-    return debouncedQuery ? out : out.slice(0, IDLE_SESSION_LIMIT);
-  }, [data, debouncedQuery]);
+    return debouncedQuery ? filtered : filtered.slice(0, IDLE_SESSION_LIMIT);
+  }, [data, debouncedQuery, secretaryConversationId]);
 
   const runAction = (action: ActionCommand): void => {
     close();

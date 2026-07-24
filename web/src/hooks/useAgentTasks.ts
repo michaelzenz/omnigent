@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ensureSecretarySession,
   fetchAgentTasks,
   fetchSecretaryProfile,
   fetchTaskDashboard,
+  resetSecretarySession,
   resolveTaskItem,
   updateTaskItem,
   type DispatchPayload,
   type ItemResolution,
 } from "@/lib/agentTasksApi";
+import { useChatStore } from "@/store/chatStore";
 
 export function useAgentTaskList(state = "active") {
   return useQuery({
@@ -31,6 +34,28 @@ export function useSecretaryProfile() {
     queryFn: fetchSecretaryProfile,
     staleTime: 60_000,
     retry: false,
+  });
+}
+
+export function useSecretarySession() {
+  return useQuery({
+    queryKey: ["agent-task-secretary-session"],
+    queryFn: ensureSecretarySession,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function useResetSecretarySession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: resetSecretarySession,
+    onSuccess: async (session) => {
+      await queryClient.invalidateQueries({ queryKey: ["agent-task-secretary-profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-task-secretary-session"] });
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void useChatStore.getState().switchTo(session.conversation_id);
+    },
   });
 }
 

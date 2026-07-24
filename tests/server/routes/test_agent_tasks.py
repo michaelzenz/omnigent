@@ -7,7 +7,10 @@ import uuid
 import httpx
 import pytest_asyncio
 
+from omnigent.agent_tasks.secretary_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
+from omnigent.server.auth import RESERVED_USER_LOCAL
+from omnigent.stores.host_store import HostStore
 from omnigent.entities import TaskEventTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -242,3 +245,103 @@ async def test_secretary_profile_and_bootstrap(
     bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
     assert bootstrap_resp.status_code == 200
     assert bootstrap_resp.json()["manager_conversation_id"] is not None
+
+
+async def _put_secretary_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
+    profile_resp = await client.put(
+        "/v1/agent-tasks/secretary/profile",
+        json={
+            "agent_id": manager_agent_id,
+            "host_id": _uid("secretary_host"),
+            "workspace": "/tmp/secretary",
+            "harness": "cursor",
+            "model": "composer-2.5",
+        },
+    )
+    assert profile_resp.status_code == 200
+
+
+async def test_ensure_secretary_session_seeds_manual(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+) -> None:
+    await _put_secretary_profile(client, manager_agent_id)
+
+    ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
+    assert ensure_resp.status_code == 200
+    body = ensure_resp.json()
+    assert body["created"] is True
+    conversation_id = body["conversation_id"]
+
+    items_resp = await client.get(f"/v1/sessions/{conversation_id}/items")
+    assert items_resp.status_code == 200
+    items = items_resp.json()["data"]
+    assert len(items) == 1
+    assert items[0]["role"] == "user"
+    assert items[0].get("is_meta") is True
+    assert "[Task Secretary manual]" in items_resp.text
+    assert "Orphan session routing" in items_resp.text
+
+    profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
+    assert profile_resp.json()["conversation_id"] == conversation_id
+
+    ensure_again = await client.post("/v1/agent-tasks/secretary/session")
+    assert ensure_again.status_code == 200
+    assert ensure_again.json()["created"] is False
+    assert ensure_again.json()["conversation_id"] == conversation_id
+
+
+async def test_reset_secretary_session_reseeds_manual(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+) -> None:
+    await _put_secretary_profile(client, manager_agent_id)
+    first = await client.post("/v1/agent-tasks/secretary/session")
+    first_id = first.json()["conversation_id"]
+
+    reset_resp = await client.post("/v1/agent-tasks/secretary/session/reset")
+    assert reset_resp.status_code == 200
+    reset_body = reset_resp.json()
+    assert reset_body["created"] is True
+    assert reset_body["conversation_id"] != first_id
+
+    deleted = await client.get(f"/v1/sessions/{first_id}")
+    assert deleted.status_code == 404
+
+    items_resp = await client.get(f"/v1/sessions/{reset_body['conversation_id']}/items")
+    items = items_resp.json()["data"]
+    assert len(items) == 1
+    assert items[0].get("is_meta") is True
+    assert "[Task Secretary manual]" in items_resp.text
+
+    profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
+    assert profile_resp.json()["conversation_id"] == reset_body["conversation_id"]
+
+
+async def test_ensure_secretary_session_auto_provisions_profile(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """First ensure creates the profile and session without a prior PUT."""
+    host_id = _uid("auto_secretary_host")
+    HostStore(db_uri).upsert_on_connect(host_id, "auto-secretary-host", RESERVED_USER_LOCAL)
+
+    ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
+    assert ensure_resp.status_code == 200
+    body = ensure_resp.json()
+    assert body["created"] is True
+
+    profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
+    assert profile_resp.status_code == 200
+    profile = profile_resp.json()
+    assert profile["host_id"] == host_id
+    assert profile["conversation_id"] == body["conversation_id"]
+
+
+async def test_ensure_secretary_session_fails_when_no_host_available(
+    client: httpx.AsyncClient,
+) -> None:
+    """Auto-provision refuses to create a profile when no live host exists."""
+    ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
+    assert ensure_resp.status_code == 400
+    assert ensure_resp.json()["error"]["message"] == NO_HOST_AVAILABLE_MESSAGE

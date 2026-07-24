@@ -317,10 +317,11 @@ def test_managed_mint_factory_serves_cached_token_when_refresh_fails(
 def test_managed_mint_factory_no_factory_when_server_definitively_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A definitive no-mint (HTTP 400/404) installs no factory → bare requests.
+    """A definitive no-mint (HTTP 400/401/404) installs no factory → bare requests.
 
-    HTTP 400 (no auth provider / header mode) and 404 (an older server
-    without the endpoint) mean the server will never mint for this runner,
+    HTTP 400 (no auth provider / header mode), 401 (host-launched runner that
+    is not a managed sandbox), and 404 (an older server without the endpoint)
+    mean the server will never mint for this runner,
     so the runner must fall back to unauthenticated requests — correct on a
     no-auth server. No factory is installed.
 
@@ -336,6 +337,31 @@ def test_managed_mint_factory_no_factory_when_server_definitively_refuses(
         )
 
     monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _refuses)
+
+    assert _make_managed_mint_factory("https://s.example.com", "btok") is None
+
+
+def test_managed_mint_factory_no_factory_when_host_runner_gets_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP 401 at probe time means this is not a managed sandbox → no factory.
+
+    Host-launched runners hold a tunnel binding token but are not registered
+    as managed sandboxes, so the mint endpoint returns 401. The runner must
+    fall back to bare requests (correct on a local single-user server).
+
+    :param monkeypatch: Pytest environment patch fixture.
+    :returns: None.
+    """
+
+    def _unauthorized(mint_url: str, server_url: str, binding_token: str) -> tuple[str, float]:
+        """Reject the mint the way a host-launched runner does (401)."""
+        request = httpx.Request("POST", mint_url)
+        raise httpx.HTTPStatusError(
+            "unauthenticated", request=request, response=httpx.Response(401, request=request)
+        )
+
+    monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _unauthorized)
 
     assert _make_managed_mint_factory("https://s.example.com", "btok") is None
 

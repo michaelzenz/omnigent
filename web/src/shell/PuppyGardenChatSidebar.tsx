@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2Icon } from "lucide-react";
+import { Loader2Icon, RotateCcwIcon } from "lucide-react";
 import { buildBubbles, createBubbleCache, type Bubble } from "@/lib/renderItems";
 import { getCurrentAuthorId } from "@/lib/identity";
 import {
@@ -8,8 +8,9 @@ import {
 } from "@/components/CostRoutingControl";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { type Agent, useAgents, useSessionAgent } from "@/hooks/useAgents";
+import { useResetSecretarySession, useSecretaryProfile, useSecretarySession } from "@/hooks/useAgentTasks";
 import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRefresh";
-import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
+import { useSessionRunnerOnline, useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import {
   livenessRowFromSession,
   useSessionLiveness,
@@ -19,7 +20,6 @@ import {
   buildPendingBubbles,
   computeIsWorking,
   computeShowsWorking,
-  dispatchInitialPrompt,
   effortLevelsForConv,
   MainAgentSurface,
   mergePendingBubbles,
@@ -27,41 +27,31 @@ import {
   readOnlyReasonForSessionLabels,
   reorderCommittedRequestElicitations,
   shouldQueueSend,
-  shouldSendInitialPrompt,
   shouldShowCodexGoalControl,
   shouldShowCodexPlanModeControl,
   shouldShowEffortPicker,
   subAgentComposerLabel,
 } from "@/pages/ChatPage";
-import {
-  consumePendingInitialPrompt,
-  useChatStore,
-  type PendingInitialPrompt,
-} from "@/store/chatStore";
+import { useChatStore } from "@/store/chatStore";
 import {
   TerminalFirstContextProvider,
-  terminalFirstContextForEmbeddedSession,
+  useEmbeddedTerminalFirstContext,
 } from "./TerminalFirstContext";
-import { NewChatComposer } from "./NewChatDialog";
-
-const PUPPY_GARDEN_SESSION_KEY = "omnigent:puppy-garden-session-id";
-
-function readStoredSessionId(): string | null {
-  if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem(PUPPY_GARDEN_SESSION_KEY);
-}
-
-function clearStoredSessionId() {
-  if (typeof localStorage !== "undefined") {
-    localStorage.removeItem(PUPPY_GARDEN_SESSION_KEY);
-  }
-}
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface PuppyGardenSessionViewProps {
   sessionId: string;
-  /** Prompt to auto-send once the session stream is ready, or null if loading from history. */
-  pendingPrompt: PendingInitialPrompt | null;
+  onReload: () => void;
   onReset: () => void;
+  resetPending: boolean;
 }
 
 /**
@@ -69,11 +59,21 @@ interface PuppyGardenSessionViewProps {
  * cursor-native elicitation cards, send queueing, and composer props match
  * the main chat page.
  */
-function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGardenSessionViewProps) {
+function PuppyGardenSessionView({
+  sessionId,
+  onReload: _onReload,
+  onReset,
+  resetPending,
+}: PuppyGardenSessionViewProps) {
   const { data: agents, isLoading: agentsLoading, error: agentsError, refetch: refetchAgents } =
     useAgents();
   const { data: boundAgentBySession } = useSessionAgent(sessionId);
   const { session: activeSession, isLoading: sessionLoading } = useSession(sessionId);
+  const runnerHealthSessions = useMemo(() => [{ id: sessionId }], [sessionId]);
+  // Secretary sessions are hidden from the sidebar, so register for the
+  // app-wide /health poll — otherwise runner liveness stays unknown and
+  // ConnectionIndicator loops on "Connecting…".
+  useRunnerHealthRegistration(runnerHealthSessions);
   const runnerOnline = useSessionRunnerOnline(sessionId);
   useRefreshSessionStateOnRunnerOnline(sessionId, runnerOnline);
 
@@ -82,7 +82,6 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
   const activeResponse = useChatStore((s) => s.activeResponse);
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);
   const loadingConversation = useChatStore((s) => s.loadingConversation);
-  const conversationLoadError = useChatStore((s) => s.conversationLoadError);
   const boundAgentId = useChatStore((s) => s.boundAgentId);
   const boundAgentName = useChatStore((s) => s.boundAgentName);
   const status = useChatStore((s) => s.status);
@@ -97,15 +96,10 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const bubbleCacheRef = useRef(createBubbleCache());
-  const initialPromptSentRef = useRef<string | null>(null);
 
   useEffect(() => {
     void useChatStore.getState().switchTo(sessionId);
   }, [sessionId]);
-
-  useEffect(() => {
-    if (conversationLoadError) onReset();
-  }, [conversationLoadError, onReset]);
 
   const agentId = selectedAgentId ?? boundAgentId ?? agents?.[0]?.id ?? null;
 
@@ -116,25 +110,6 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
       void refetchAgents();
     }
   }, [boundAgentId, agents, refetchAgents]);
-
-  useEffect(() => {
-    if (
-      !shouldSendInitialPrompt({
-        initialPrompt: pendingPrompt?.text ?? null,
-        promptConversationId: sessionId,
-        sentForConversationId: initialPromptSentRef.current,
-        conversationId: sessionId,
-        loadingConversation,
-        agentId,
-      })
-    ) {
-      return;
-    }
-    if (!pendingPrompt || !agentId) return;
-    initialPromptSentRef.current = sessionId;
-    const { send, sendSlashCommand } = useChatStore.getState();
-    dispatchInitialPrompt(pendingPrompt, agentId, send, sendSlashCommand);
-  }, [pendingPrompt, sessionId, loadingConversation, agentId]);
 
   const hasPendingElicitation = useMemo(
     () => blocks.some((b) => b.type === "elicitation" && b.status === "pending"),
@@ -225,9 +200,10 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
         : agents?.filter((a) => a.id === boundAgentId)
     : agents;
 
-  const terminalFirstContextValue = useMemo(
-    () => terminalFirstContextForEmbeddedSession(activeSessionLabels),
-    [activeSessionLabels],
+  const terminalFirstContextValue = useEmbeddedTerminalFirstContext(
+    sessionId,
+    activeSessionLabels,
+    liveness,
   );
 
   if (loadingConversation) {
@@ -241,91 +217,170 @@ function PuppyGardenSessionView({ sessionId, pendingPrompt, onReset }: PuppyGard
 
   return (
     <TerminalFirstContextProvider value={terminalFirstContextValue}>
-      <MainAgentSurface
-        conversationId={sessionId}
-        bubbles={bubbles}
-        status={status}
-        isWorking={isWorking}
-        showsWorking={showsWorking}
-        runnerOnline={runnerOnline}
-        liveness={liveness}
-        agentsError={agentsError}
-        disabled={!agentId || agentsError !== null}
-        onSend={onSend}
-        onSendSlashCommand={onSendSlashCommand}
-        onStop={onStop}
-        onShowReconnectHelp={() => {}}
-        agents={visibleAgents}
-        agentsLoading={agentsLoading}
-        selectedAgentId={agentId}
-        onSelectAgent={setSelectedAgentId}
-        hasMoreHistory={hasMoreHistory}
-        loadingMoreHistory={loadingMoreHistory}
-        permissionLevel={permissionLevel}
-        readOnlyReason={readOnlyReason}
-        effortLevels={effortLevels}
-        showEffort={showEffort}
-        showModels={modelPickerKind !== null}
-        modelPickerKind={modelPickerKind}
-        codexModelOptions={codexModelOptions}
-        showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
-        showCodexGoal={shouldShowCodexGoalControl(capabilitySource)}
-        costRoutingVerdict={costRoutingVerdict}
-        costRoutingEligible={costRoutingEligible}
-        subAgentLabel={subAgentLabel}
-      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center justify-between border-border border-b px-2 py-1.5">
+          <span className="font-medium text-sm">Task secretary</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-muted-foreground"
+            onClick={onReset}
+            disabled={resetPending}
+            data-testid="puppy-garden-secretary-reset"
+          >
+            {resetPending ? (
+              <Loader2Icon className="size-3.5 animate-spin" />
+            ) : (
+              <RotateCcwIcon className="size-3.5" />
+            )}
+            Reset
+          </Button>
+        </div>
+        <MainAgentSurface
+          conversationId={sessionId}
+          bubbles={bubbles}
+          status={status}
+          isWorking={isWorking}
+          showsWorking={showsWorking}
+          runnerOnline={runnerOnline}
+          liveness={liveness}
+          agentsError={agentsError}
+          disabled={!agentId || agentsError !== null}
+          onSend={onSend}
+          onSendSlashCommand={onSendSlashCommand}
+          onStop={onStop}
+          onShowReconnectHelp={() => {}}
+          agents={visibleAgents}
+          agentsLoading={agentsLoading}
+          selectedAgentId={agentId}
+          onSelectAgent={setSelectedAgentId}
+          hasMoreHistory={hasMoreHistory}
+          loadingMoreHistory={loadingMoreHistory}
+          permissionLevel={permissionLevel}
+          readOnlyReason={readOnlyReason}
+          effortLevels={effortLevels}
+          showEffort={showEffort}
+          showModels={modelPickerKind !== null}
+          modelPickerKind={modelPickerKind}
+          codexModelOptions={codexModelOptions}
+          showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
+          showCodexGoal={shouldShowCodexGoalControl(capabilitySource)}
+          costRoutingVerdict={costRoutingVerdict}
+          costRoutingEligible={costRoutingEligible}
+          subAgentLabel={subAgentLabel}
+        />
+      </div>
     </TerminalFirstContextProvider>
   );
 }
 
 /**
- * Right-hand chat rail on the PuppyGarden board. Shows the landing composer
- * until a session is created; then renders the full session (transcript +
- * composer). If the session is later deleted, the rail resets to the landing.
+ * Right-hand chat rail on the PuppyGarden board. Boots the per-user task
+ * secretary session via the server and keeps it out of the main sidebar list.
  */
 export function PuppyGardenChatSidebar() {
-  const [session, setSession] = useState<{
-    id: string;
-    pendingPrompt: PendingInitialPrompt | null;
-  } | null>(() => {
-    const id = readStoredSessionId();
-    return id ? { id, pendingPrompt: null } : null;
-  });
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    isError: profileError,
+    error: profileErrorDetail,
+    refetch: reloadProfile,
+  } = useSecretaryProfile();
+  const {
+    data: session,
+    isLoading: sessionLoading,
+    isError: sessionError,
+    error: sessionErrorDetail,
+    refetch: reloadSession,
+  } = useSecretarySession();
+  const resetSession = useResetSecretarySession();
+  const [resetOpen, setResetOpen] = useState(false);
 
-  const handleSessionCreated = useCallback((id: string) => {
-    const pendingPrompt = consumePendingInitialPrompt(id);
-    localStorage.setItem(PUPPY_GARDEN_SESSION_KEY, id);
-    setSession({ id, pendingPrompt });
-  }, []);
+  const sessionId = session?.conversation_id ?? profile?.conversation_id ?? null;
+  const bootstrapError =
+    profileError && profileErrorDetail instanceof Error
+      ? profileErrorDetail.message
+      : sessionError && sessionErrorDetail instanceof Error
+        ? sessionErrorDetail.message
+        : null;
+
+  const handleReload = useCallback(() => {
+    void reloadProfile();
+    void reloadSession();
+  }, [reloadProfile, reloadSession]);
 
   const handleReset = useCallback(() => {
-    clearStoredSessionId();
-    setSession(null);
-  }, []);
+    resetSession.mutate(undefined, {
+      onSuccess: () => setResetOpen(false),
+    });
+  }, [resetSession]);
 
   return (
     <aside
       className="relative z-10 flex h-full min-h-0 min-w-[300px] flex-col border-border border-l bg-background"
       data-testid="puppy-garden-chat-sidebar"
     >
-      {session ? (
-        <PuppyGardenSessionView
-          sessionId={session.id}
-          pendingPrompt={session.pendingPrompt}
-          onReset={handleReset}
-        />
-      ) : (
-        <div
-          className="flex h-full min-h-0 flex-col p-2"
-          data-testid="puppy-garden-chat-composer"
-        >
-          <NewChatComposer
-            navigateOnCreate={false}
-            onSessionCreated={handleSessionCreated}
-            autoFocus={false}
-            compactFooter
-          />
+      {profileLoading || sessionLoading ? (
+        <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm">
+          <Loader2Icon className="size-4 animate-spin" />
+          Loading secretary…
         </div>
+      ) : bootstrapError ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-sm">
+          <p>{bootstrapError}</p>
+          <Button type="button" variant="outline" size="sm" onClick={handleReload}>
+            Retry
+          </Button>
+        </div>
+      ) : sessionId == null ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-sm">
+          <p>Could not load the task secretary session.</p>
+          <Button type="button" variant="outline" size="sm" onClick={handleReload}>
+            Retry
+          </Button>
+        </div>
+      ) : (
+        <>
+          <PuppyGardenSessionView
+            sessionId={sessionId}
+            onReload={handleReload}
+            onReset={() => setResetOpen(true)}
+            resetPending={resetSession.isPending}
+          />
+          <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+            <DialogContent aria-describedby="puppy-garden-reset-description">
+              <DialogHeader>
+                <DialogTitle>Reset task secretary?</DialogTitle>
+                <DialogDescription id="puppy-garden-reset-description">
+                  This deletes the current secretary chat and starts a fresh session seeded with
+                  the secretary manual.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setResetOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleReset}
+                  disabled={resetSession.isPending}
+                  data-testid="puppy-garden-secretary-reset-confirm"
+                >
+                  {resetSession.isPending ? (
+                    <>
+                      <Loader2Icon className="size-4 animate-spin" />
+                      Resetting…
+                    </>
+                  ) : (
+                    "Reset session"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
       )}
     </aside>
   );

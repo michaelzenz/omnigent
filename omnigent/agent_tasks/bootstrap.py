@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL
+from omnigent.agent_tasks.agent_builtins import (
+    TASK_MANAGER_AGENT_NAME,
+    resolve_task_agent_id,
+)
+from omnigent.agent_tasks.constants import (
+    DEFAULT_TASK_HARNESS,
+    DEFAULT_TASK_MODEL,
+    DEFAULT_TASK_WORKSPACE,
+    resolve_task_harness,
+)
 from omnigent.entities import Task
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
@@ -33,9 +43,15 @@ def resolve_bootstrap_params(
 ) -> BootstrapParams:
     """Merge explicit bootstrap inputs with secretary profile defaults."""
     resolved_host_id = host_id or (secretary_profile.host_id if secretary_profile else None)
-    resolved_workspace = workspace or (secretary_profile.workspace if secretary_profile else None)
-    resolved_harness = harness or (
-        secretary_profile.harness if secretary_profile else DEFAULT_TASK_HARNESS
+    resolved_workspace = (
+        workspace
+        or (secretary_profile.workspace if secretary_profile else None)
+        or DEFAULT_TASK_WORKSPACE
+    )
+    resolved_harness = resolve_task_harness(
+        harness
+        or (secretary_profile.harness if secretary_profile else None)
+        or DEFAULT_TASK_HARNESS
     )
     resolved_model = model or (secretary_profile.model if secretary_profile else DEFAULT_TASK_MODEL)
     if not resolved_host_id or not resolved_workspace:
@@ -57,6 +73,7 @@ def bootstrap_task_manager(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     params: BootstrapParams,
 ) -> Task:
     """
@@ -74,9 +91,15 @@ def bootstrap_task_manager(
             )
         return task
 
+    manager_agent_id = resolve_task_agent_id(
+        agent_store,
+        TASK_MANAGER_AGENT_NAME,
+        fallback_agent_id=task.manager_agent_id,
+    )
+
     conversation = conversation_store.create_conversation(
         title=f"Task manager: {task.title}",
-        agent_id=task.manager_agent_id,
+        agent_id=manager_agent_id,
         host_id=params.host_id,
         workspace=params.workspace,
     )
@@ -94,7 +117,7 @@ def bootstrap_task_manager(
     task_event_store.upsert_binding(
         conversation.id,
         task.id,
-        task.manager_agent_id,
+        manager_agent_id,
         "manager",
         manager_conversation_id=conversation.id,
     )

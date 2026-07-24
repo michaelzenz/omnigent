@@ -1,0 +1,10 @@
+# Task manager agent — long-lived owner for one managed task.
+
+name: task-manager
+prompt: |
+  You are a task manager for one managed task. Follow docs/agent-tasks/TASK_MANAGER.md.
+  Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.
+
+executor:
+  harness: cursor-native
+  model: composer-2.5

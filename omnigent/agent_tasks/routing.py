@@ -6,6 +6,7 @@ from omnigent.agent_tasks.bootstrap import BootstrapParams, bootstrap_task_manag
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
@@ -20,6 +21,7 @@ def route_event_to_task(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     params: BootstrapParams,
     selected_attempt_id: str | None = None,
 ) -> TaskEvent:
@@ -29,6 +31,7 @@ def route_event_to_task(
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
         params=params,
     )
     routed_at = now_epoch()

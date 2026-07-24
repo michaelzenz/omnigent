@@ -23,7 +23,7 @@ from omnigent.agent_tasks.adoption import (
     reject_session_adoption,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
-from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL
+from omnigent.agent_tasks.constants import DEFAULT_TASK_HARNESS, DEFAULT_TASK_MODEL, DEFAULT_TASK_WORKSPACE
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
@@ -32,6 +32,10 @@ from omnigent.agent_tasks.dispatch import (
 from omnigent.agent_tasks.grouping import (
     create_grouping_proposal,
     resolve_grouping_proposal,
+)
+from omnigent.agent_tasks.secretary_session import (
+    bootstrap_secretary_conversation,
+    get_or_create_secretary_profile,
 )
 from omnigent.agent_tasks.items import (
     create_task_item,
@@ -49,6 +53,7 @@ from omnigent.server.routes._auth_helpers import get_user_id, require_access, re
 from omnigent.server.routes.task_events import _event_to_response
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -153,7 +158,7 @@ class PutSecretaryProfileRequest(BaseModel):
     harness: str = DEFAULT_TASK_HARNESS
     model: str = DEFAULT_TASK_MODEL
     host_id: str | None = None
-    workspace: str | None = None
+    workspace: str = DEFAULT_TASK_WORKSPACE
 
 
 class BootstrapTaskManagerRequest(BaseModel):
@@ -378,6 +383,7 @@ def create_agent_tasks_router(
     agent_store: AgentStore,
     conversation_store: ConversationStore | None = None,
     secretary_profile_store: SecretaryProfileStore | None = None,
+    host_store: HostStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
 ) -> APIRouter:
@@ -389,6 +395,7 @@ def create_agent_tasks_router(
     :param agent_store: Used to validate ``manager_agent_id`` references.
     :param conversation_store: Used for manager/secretary session bootstrap.
     :param secretary_profile_store: Per-user secretary defaults for bootstrap.
+    :param host_store: Used to auto-provision secretary profiles with a default host.
     :param auth_provider: Auth provider for owner attribution and access
         checks. ``None`` disables auth enforcement.
     :param permission_store: Used to let admins list/view any task.
@@ -495,18 +502,33 @@ def create_agent_tasks_router(
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
 
-    if secretary_profile_store is not None:
-
-        @router.get("/agent-tasks/secretary/profile")
-        async def get_secretary_profile(request: Request) -> dict[str, Any]:
-            """Return the caller's secretary profile."""
-            user_id = require_user(request, auth_provider)
+    async def _load_secretary_profile(user_id: str | None) -> UserSecretaryProfile:
+        if secretary_profile_store is None:
+            raise OmnigentError("Secretary profile not found", code=ErrorCode.NOT_FOUND)
+        if host_store is None or agent_store is None:
             profile = await asyncio.to_thread(
                 secretary_profile_store.get,
                 _effective_user_id(user_id),
             )
             if profile is None:
                 raise OmnigentError("Secretary profile not found", code=ErrorCode.NOT_FOUND)
+            return profile
+        return await asyncio.to_thread(
+            get_or_create_secretary_profile,
+            profile_user_id=_effective_user_id(user_id),
+            auth_user_id=user_id,
+            secretary_profile_store=secretary_profile_store,
+            host_store=host_store,
+            agent_store=agent_store,
+        )
+
+    if secretary_profile_store is not None:
+
+        @router.get("/agent-tasks/secretary/profile")
+        async def get_secretary_profile(request: Request) -> dict[str, Any]:
+            """Return the caller's secretary profile."""
+            user_id = require_user(request, auth_provider)
+            profile = await _load_secretary_profile(user_id)
             return _secretary_profile_to_response(profile)
 
         @router.put("/agent-tasks/secretary/profile")
@@ -535,9 +557,8 @@ def create_agent_tasks_router(
                 """Ensure the caller has a live secretary session."""
                 user_id = require_user(request, auth_provider)
                 effective_user_id = _effective_user_id(user_id)
-                profile = await asyncio.to_thread(secretary_profile_store.get, effective_user_id)
-                if profile is None:
-                    raise OmnigentError("Secretary profile not found", code=ErrorCode.NOT_FOUND)
+                profile = await _load_secretary_profile(user_id)
+                existing = None
                 if profile.conversation_id is not None:
                     existing = await asyncio.to_thread(
                         conversation_store.get_conversation,
@@ -550,35 +571,56 @@ def create_agent_tasks_router(
                         "conversation_id": existing.id,
                         "created": False,
                     }
-                params = resolve_bootstrap_params(
-                    host_id=profile.host_id,
-                    workspace=profile.workspace,
-                    harness=profile.harness,
-                    model=profile.model,
-                    secretary_profile=profile,
-                )
-                conversation = await asyncio.to_thread(
-                    conversation_store.create_conversation,
-                    title="Task secretary",
-                    agent_id=profile.agent_id,
-                    host_id=params.host_id,
-                    workspace=params.workspace,
-                )
-                await asyncio.to_thread(
-                    conversation_store.update_conversation,
-                    conversation.id,
-                    harness_override=params.harness,
-                    model_override=params.model,
+                conversation_id = await asyncio.to_thread(
+                    bootstrap_secretary_conversation,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    profile=profile,
+                    seed_manual=True,
                 )
                 await asyncio.to_thread(
                     secretary_profile_store.upsert,
                     effective_user_id,
-                    conversation_id=conversation.id,
+                    conversation_id=conversation_id,
                 )
                 await flush_pending_orphan_sessions(effective_user_id)
                 return {
                     "object": "agent.task.secretary_session",
-                    "conversation_id": conversation.id,
+                    "conversation_id": conversation_id,
+                    "created": True,
+                }
+
+            @router.post("/agent-tasks/secretary/session/reset")
+            async def reset_secretary_session(request: Request) -> dict[str, Any]:
+                """Delete the current secretary session and create a fresh one."""
+                user_id = require_user(request, auth_provider)
+                effective_user_id = _effective_user_id(user_id)
+                profile = await _load_secretary_profile(user_id)
+                if profile.conversation_id is not None:
+                    await conversation_store.delete_conversation(profile.conversation_id)
+                await asyncio.to_thread(
+                    secretary_profile_store.upsert,
+                    effective_user_id,
+                    clear_conversation_id=True,
+                )
+                profile = await asyncio.to_thread(secretary_profile_store.get, effective_user_id)
+                assert profile is not None
+                conversation_id = await asyncio.to_thread(
+                    bootstrap_secretary_conversation,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    profile=profile,
+                    seed_manual=True,
+                )
+                await asyncio.to_thread(
+                    secretary_profile_store.upsert,
+                    effective_user_id,
+                    conversation_id=conversation_id,
+                )
+                await flush_pending_orphan_sessions(effective_user_id)
+                return {
+                    "object": "agent.task.secretary_session",
+                    "conversation_id": conversation_id,
                     "created": True,
                 }
 
@@ -693,6 +735,7 @@ def create_agent_tasks_router(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 params=params,
             )
             tags = await asyncio.to_thread(task_store.get_tags, task_id)
@@ -988,6 +1031,7 @@ def create_agent_tasks_router(
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 secretary_profile=profile,
             )
             return _grouping_proposal_to_response(updated)
@@ -1057,6 +1101,7 @@ def create_agent_tasks_router(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 runner_router=runner_router,
                 params=params,
                 proposal_event=proposal,

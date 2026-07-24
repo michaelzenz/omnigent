@@ -36,7 +36,7 @@ from omnigent.runtime import init as init_runtime
 from omnigent.runtime import pending_elicitations
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server import _elicitation_registry, presence
-from omnigent.server.app import create_app
+from omnigent.server.app import create_app, _ensure_default_task_agents
 from omnigent.server.routes import sessions as sessions_routes
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
@@ -45,6 +45,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -586,6 +587,11 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
     """
     artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
     agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_cache = AgentCache(
+        artifact_store=artifact_store,
+        cache_dir=tmp_path / "cache",
+    )
+    _ensure_default_task_agents(agent_store, artifact_store, agent_cache)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     file_store = SqlAlchemyFileStore(db_uri)
     return create_app(
@@ -593,15 +599,13 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         file_store=file_store,
         conversation_store=conversation_store,
         artifact_store=artifact_store,
-        agent_cache=AgentCache(
-            artifact_store=artifact_store,
-            cache_dir=tmp_path / "cache",
-        ),
+        agent_cache=agent_cache,
         comment_store=SqlAlchemyCommentStore(db_uri),
         task_store=SqlAlchemyTaskStore(db_uri),
         task_event_store=SqlAlchemyTaskEventStore(db_uri),
         task_item_store=SqlAlchemyTaskItemStore(db_uri),
         secretary_profile_store=SqlAlchemySecretaryProfileStore(db_uri),
+        host_store=HostStore(db_uri),
     )
 
 

@@ -92,6 +92,13 @@ vi.mock("@/hooks/useConversations", () => ({
 // test scoped to the conversation list + funnel.
 vi.mock("@/components/PermissionsModal", () => ({ PermissionsModal: () => null }));
 
+const secretaryProfileMock = vi.hoisted(() => ({
+  current: null as { conversation_id: string | null } | null,
+}));
+vi.mock("@/hooks/useAgentTasks", () => ({
+  useSecretaryProfile: () => ({ data: secretaryProfileMock.current }),
+}));
+
 // The "Shared with me" tab only renders on a multi-user (non-local) server.
 // jsdom's default origin is loopback, which would read as single-user and hide
 // the tabs; force multi-user so the tab-based tests exercise the split. The
@@ -207,6 +214,7 @@ beforeEach(() => {
   fetchProjectSessionIdsMock.mockReset();
   fetchProjectSessionIdsMock.mockResolvedValue([]);
   projectSessionsMock.current = {};
+  secretaryProfileMock.current = null;
   // Default to a multi-user server so the tab-based tests see the tabs.
   isServerLocalMock.mockReturnValue(false);
 });
@@ -311,6 +319,19 @@ describe("Sidebar session list", () => {
     expect(within(recentSection).getByText("conv_active")).toBeInTheDocument();
     // The footer Settings link points at the settings page.
     expect(screen.getByTestId("settings-button")).toHaveAttribute("href", "/settings");
+  });
+
+  it("hides the task secretary session from the sidebar list", () => {
+    secretaryProfileMock.current = { conversation_id: "conv_secretary" };
+    mockConversations([
+      conv("conv_secretary", "task-secretary"),
+      conv("conv_regular", "Claude Code"),
+    ]);
+    renderSidebar();
+
+    expect(screen.queryByRole("link", { name: /conv_secretary/ })).toBeNull();
+    const recentSection = screen.getByText("Sessions").closest("section")!;
+    expect(within(recentSection).getByText("conv_regular")).toBeInTheDocument();
   });
 
   it("renders sessions in one flat list with no connection grouping", () => {

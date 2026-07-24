@@ -118,6 +118,7 @@ import { SessionStateBadge } from "@/components/SessionStateBadge";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useActiveRootSessionId } from "@/hooks/useSession";
 import { useCommentInbox } from "@/hooks/useCommentInbox";
+import { useSecretaryProfile } from "@/hooks/useAgentTasks";
 import { sumPendingApprovals } from "@/lib/inbox";
 import { isSessionStoppable } from "@/lib/sessionStop";
 import { isOwnerLevel } from "@/lib/permissionsApi";
@@ -137,6 +138,7 @@ import { usePinnedSessionHotkeys } from "@/hooks/usePinnedSessionHotkeys";
 import { absoluteTime, relativeTime } from "@/lib/relativeTime";
 import { MOD_KEY } from "@/components/KeyboardShortcutsDialog";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
+import { withoutSecretaryConversation } from "@/lib/secretarySession";
 import { SettingsSidebarBody, useSettingsRoute, useTrackSettingsReturn } from "./settingsNav";
 import {
   type ActiveChatOverride,
@@ -969,6 +971,8 @@ function ConversationList({
 
   // Project names for grouping sessions by their reserved project label.
   const { data: projectNames = [] } = useProjects();
+  const { data: secretaryProfile } = useSecretaryProfile();
+  const secretaryConversationId = secretaryProfile?.conversation_id ?? null;
 
   // Each ProjectFolder registers its actually-rendered conversation IDs here
   // (synchronously during render) so shift-select ranges use the real rendered
@@ -997,7 +1001,10 @@ function ConversationList({
   const sections = useMemo(() => {
     // Dedupe by id: the pinned-backfill can return a session already present in
     // the paginated list, and merging both would render the row twice.
-    const allWithBackfill = dedupeConversationsById([...allConversations, ...pinnedBackfill]);
+    const allWithBackfill = withoutSecretaryConversation(
+      dedupeConversationsById([...allConversations, ...pinnedBackfill]),
+      secretaryConversationId,
+    );
     const notArchived = allWithBackfill.filter((c) => c.archived !== true);
     // Each tab shows a disjoint slice — "mine" is the sessions the viewer owns,
     // "shared" is the ones others shared with them. The Pinned / Projects /
@@ -1060,6 +1067,7 @@ function ConversationList({
     activeOverride,
     projectNames,
     activeTab,
+    secretaryConversationId,
   ]);
 
   // Collapsed section titles — persisted like pins so the preference

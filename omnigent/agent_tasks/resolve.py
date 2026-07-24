@@ -13,6 +13,7 @@ from omnigent.entities import Task, TaskEvent
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
@@ -64,6 +65,7 @@ async def resolve_task_event(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     runner_router: RunnerRouter | None,
     task: Task | None = None,
     routing_attempt_id: str | None = None,
@@ -143,6 +145,7 @@ async def resolve_task_event(
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
         params=params,
         selected_attempt_id=selected_attempt_id,
     )

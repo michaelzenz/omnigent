@@ -83,10 +83,16 @@ export interface DispatchPayload {
 
 export interface SecretaryProfile {
   agent_id: string;
+  conversation_id: string | null;
   model: string;
   harness: string;
   host_id: string;
   workspace: string;
+}
+
+export interface SecretarySession {
+  conversation_id: string;
+  created: boolean;
 }
 
 export function parseEventPayload(
@@ -111,6 +117,22 @@ async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function readJsonOrApiError<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error?.message) {
+        message = body.error.message;
+      }
+    } catch {
+      // Keep the status-line fallback when the body is not JSON.
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as T;
+}
+
 export async function fetchAgentTasks(state = "active"): Promise<AgentTaskSummary[]> {
   const res = await authenticatedFetch(
     `/v1/agent-tasks?state=${encodeURIComponent(state)}&limit=100`,
@@ -124,10 +146,23 @@ export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard>
   return readJson<TaskDashboard>(res);
 }
 
-export async function fetchSecretaryProfile(): Promise<SecretaryProfile | null> {
+export async function fetchSecretaryProfile(): Promise<SecretaryProfile> {
   const res = await authenticatedFetch("/v1/agent-tasks/secretary/profile");
-  if (res.status === 404) return null;
-  return readJson<SecretaryProfile>(res);
+  return readJsonOrApiError<SecretaryProfile>(res);
+}
+
+export async function ensureSecretarySession(): Promise<SecretarySession> {
+  const res = await authenticatedFetch("/v1/agent-tasks/secretary/session", {
+    method: "POST",
+  });
+  return readJsonOrApiError<SecretarySession>(res);
+}
+
+export async function resetSecretarySession(): Promise<SecretarySession> {
+  const res = await authenticatedFetch("/v1/agent-tasks/secretary/session/reset", {
+    method: "POST",
+  });
+  return readJsonOrApiError<SecretarySession>(res);
 }
 
 export type EventResolution = "route_to_task" | "select_attempt";

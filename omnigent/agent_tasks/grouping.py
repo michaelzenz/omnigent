@@ -12,6 +12,7 @@ from omnigent.db.utils import now_epoch
 from omnigent.entities import GroupingProposal, Task
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -66,6 +67,7 @@ def resolve_grouping_proposal(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     secretary_profile: UserSecretaryProfile | None = None,
 ) -> GroupingProposal:
     """Accept or reject a secretary grouping proposal."""
@@ -118,6 +120,7 @@ def resolve_grouping_proposal(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 params=params,
             )
         else:

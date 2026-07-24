@@ -23,6 +23,7 @@ from omnigent.entities import Task, TaskEvent
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -72,6 +73,7 @@ async def distribute_event(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     runner_router: RunnerRouter | None,
     secretary_profile_store: SecretaryProfileStore | None = None,
     secretary_profile: UserSecretaryProfile | None = None,
@@ -102,6 +104,7 @@ async def distribute_event(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 runner_router=runner_router,
                 params=params,
                 secretary_profile_store=secretary_profile_store,
@@ -130,6 +133,7 @@ async def distribute_event(
                     task_store=task_store,
                     task_event_store=task_event_store,
                     conversation_store=conversation_store,
+                    agent_store=agent_store,
                     runner_router=runner_router,
                     params=params,
                     secretary_profile_store=secretary_profile_store,
@@ -172,6 +176,7 @@ async def distribute_event(
             task_store=task_store,
             task_event_store=task_event_store,
             conversation_store=conversation_store,
+            agent_store=agent_store,
             runner_router=runner_router,
             params=params,
             secretary_profile_store=secretary_profile_store,
@@ -210,6 +215,7 @@ async def _finish_route(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     runner_router: RunnerRouter | None,
     params: BootstrapParams,
     secretary_profile_store: SecretaryProfileStore | None = None,
@@ -223,6 +229,7 @@ async def _finish_route(
             task_store=task_store,
             task_event_store=task_event_store,
             conversation_store=conversation_store,
+            agent_store=agent_store,
             params=params,
             selected_attempt_id=selected_attempt_id,
         )

@@ -36,6 +36,7 @@ def stores(db_uri: str) -> tuple[
     SqlAlchemyConversationStore,
     SqlAlchemyTaskStore,
     SqlAlchemyTaskEventStore,
+    SqlAlchemyAgentStore,
     str,
 ]:
     agent_store = SqlAlchemyAgentStore(db_uri)
@@ -45,6 +46,7 @@ def stores(db_uri: str) -> tuple[
         SqlAlchemyConversationStore(db_uri),
         SqlAlchemyTaskStore(db_uri),
         SqlAlchemyTaskEventStore(db_uri),
+        agent_store,
         manager_agent_id,
     )
 
@@ -54,10 +56,11 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
         SqlAlchemyConversationStore,
         SqlAlchemyTaskStore,
         SqlAlchemyTaskEventStore,
+        SqlAlchemyAgentStore,
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, manager_agent_id = stores
+    conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
     conv = conversation_store.create_conversation(title="Orphan", agent_id=manager_agent_id)
     assert is_orphan_candidate(conv, task_event_store=task_event_store) is True
 
@@ -76,10 +79,11 @@ def test_propose_session_adoption_requires_routing_text(
         SqlAlchemyConversationStore,
         SqlAlchemyTaskStore,
         SqlAlchemyTaskEventStore,
+        SqlAlchemyAgentStore,
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, manager_agent_id = stores
+    conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
     conv = conversation_store.create_conversation(title="Needs text", agent_id=manager_agent_id)
     with pytest.raises(OmnigentError):
         propose_session_adoption(
@@ -95,10 +99,11 @@ async def test_propose_and_adopt_session(
         SqlAlchemyConversationStore,
         SqlAlchemyTaskStore,
         SqlAlchemyTaskEventStore,
+        SqlAlchemyAgentStore,
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, manager_agent_id = stores
+    conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
     conv = conversation_store.create_conversation(title="Upload retries", agent_id=manager_agent_id)
     conversation_store.set_labels(
         conv.id,
@@ -128,6 +133,7 @@ async def test_propose_and_adopt_session(
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
         runner_router=None,
         params=params,
         proposal_event=proposal,
@@ -146,10 +152,11 @@ def test_reject_session_adoption_sets_dismiss_label(
         SqlAlchemyConversationStore,
         SqlAlchemyTaskStore,
         SqlAlchemyTaskEventStore,
+        SqlAlchemyAgentStore,
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, manager_agent_id = stores
+    conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
     conv = conversation_store.create_conversation(title="Stay orphan", agent_id=manager_agent_id)
     conversation_store.set_labels(conv.id, {ROUTING_SEARCH_TEXT_LABEL: "misc work"})
     proposal = propose_session_adoption(
