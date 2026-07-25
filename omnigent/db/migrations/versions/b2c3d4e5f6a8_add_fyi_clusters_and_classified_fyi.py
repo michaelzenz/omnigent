@@ -24,7 +24,7 @@ def upgrade() -> None:
         batch_op.drop_constraint("ck_task_events_state", type_="check")
         batch_op.create_check_constraint(
             "ck_task_events_state",
-            "state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)",
+            "state IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12)",
         )
 
     op.create_table(
@@ -74,5 +74,5 @@ def downgrade() -> None:
         batch_op.drop_constraint("ck_task_events_state", type_="check")
         batch_op.create_check_constraint(
             "ck_task_events_state",
-            "state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)",
+            "state IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 11)",
         )

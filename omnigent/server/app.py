@@ -1181,7 +1181,7 @@ def create_app(
     :param task_store: Store for managed agent tasks. When provided with
         ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
     :param task_event_store: Store for task events and execution history.
-    :param task_item_store: Store for task items and grouping proposals.
+    :param task_item_store: Store for task items and routing proposals.
     :param secretary_profile_store: Per-user secretary profile defaults.
         When provided with task stores, enables secretary profile/session
         routes and resolve-time bootstrap defaults.

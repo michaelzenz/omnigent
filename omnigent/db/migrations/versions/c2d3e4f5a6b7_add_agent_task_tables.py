@@ -93,7 +93,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.Integer(), nullable=True),
         sa.Column("routed_at", sa.Integer(), nullable=True),
         sa.Column("processed_at", sa.Integer(), nullable=True),
-        sa.CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)", name="ck_task_events_state"),
+        sa.CheckConstraint("state IN (1, 2, 3, 4, 6, 7, 8, 9, 10)", name="ck_task_events_state"),
         sa.PrimaryKeyConstraint("workspace_id", "id"),
     )
     op.create_index(
@@ -309,39 +309,9 @@ def upgrade() -> None:
         unique=False,
     )
 
-    op.create_table(
-        "grouping_proposals",
-        sa.Column("workspace_id", sa.BigInteger(), nullable=False, server_default="0"),
-        sa.Column("id", Uuid16(), nullable=False),
-        sa.Column("owner_user_id", sa.String(128), nullable=False),
-        sa.Column("state", sa.SmallInteger(), nullable=False, server_default="1"),
-        sa.Column("payload", sa.LargeBinary(), nullable=False),
-        sa.Column("created_at", sa.Integer(), nullable=False),
-        sa.Column("resolved_at", sa.Integer(), nullable=True),
-        sa.CheckConstraint("state IN (1, 2, 3)", name="ck_grouping_proposals_state"),
-        sa.PrimaryKeyConstraint("workspace_id", "id"),
-    )
-    op.create_index(
-        "ix_grouping_proposals_owner_state",
-        "grouping_proposals",
-        ["workspace_id", "owner_user_id", "state", "id"],
-        unique=False,
-    )
-
-    op.create_table(
-        "grouping_proposal_events",
-        sa.Column("workspace_id", sa.BigInteger(), nullable=False, server_default="0"),
-        sa.Column("proposal_id", Uuid16(), nullable=False),
-        sa.Column("event_id", Uuid16(), nullable=False),
-        sa.PrimaryKeyConstraint("workspace_id", "proposal_id", "event_id"),
-    )
-
 
 def downgrade() -> None:
     """Drop task routing and execution tables."""
-    op.drop_table("grouping_proposal_events")
-    op.drop_index("ix_grouping_proposals_owner_state", table_name="grouping_proposals")
-    op.drop_table("grouping_proposals")
     op.drop_index("ix_task_item_events_event", table_name="task_item_events")
     op.drop_table("task_item_events")
     op.drop_index("ix_task_items_task_canonical_key", table_name="task_items")

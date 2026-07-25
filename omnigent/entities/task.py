@@ -236,18 +236,6 @@ class TaskItemEvent:
 
 
 @dataclass
-class GroupingProposal:
-    """Secretary proposal grouping orphan events into tasks and items."""
-
-    id: str
-    owner_user_id: str
-    state: str
-    payload: str
-    created_at: int
-    resolved_at: int | None = None
-
-
-@dataclass
 class FyiCluster:
     """Secretary cluster of informational orphan events."""
 

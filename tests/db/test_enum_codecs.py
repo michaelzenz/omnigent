@@ -151,7 +151,6 @@ def test_shipped_codes_are_stable() -> None:
         "routing": 2,
         "awaiting_user_selection": 3,
         "awaiting_grouping": 4,
-        "grouping_proposed": 5,
         "routed": 6,
         "reconciled": 7,
         "dismissed": 8,

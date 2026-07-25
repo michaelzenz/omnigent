@@ -122,7 +122,6 @@ TASK_EVENT_STATE: dict[str, int] = {
     "routing": 2,
     "awaiting_user_selection": 3,
     "awaiting_grouping": 4,
-    "grouping_proposed": 5,
     "routed": 6,
     "reconciled": 7,
     "dismissed": 8,
@@ -150,12 +149,6 @@ TASK_ITEM_STATE: dict[str, int] = {
     "cancelled": 7,
     # Secretary item awaiting user task-routing decision.
     "routing_proposed": 8,
-}
-
-GROUPING_PROPOSAL_STATE: dict[str, int] = {
-    "awaiting_user_ack": 1,
-    "accepted": 2,
-    "rejected": 3,
 }
 
 TASK_EVENT_ROUTING_DECISION: dict[str, int] = {
@@ -431,16 +424,6 @@ def encode_task_item_state(name: str) -> int:
 def decode_task_item_state(code: int) -> str:
     """Decode a ``task_items.state`` int code to its name."""
     return _decode(TASK_ITEM_STATE, code, field="task_items.state")
-
-
-def encode_grouping_proposal_state(name: str) -> int:
-    """Encode a ``grouping_proposals.state`` name to its int code."""
-    return _encode(GROUPING_PROPOSAL_STATE, name, field="grouping_proposals.state")
-
-
-def decode_grouping_proposal_state(code: int) -> str:
-    """Decode a ``grouping_proposals.state`` int code to its name."""
-    return _decode(GROUPING_PROPOSAL_STATE, code, field="grouping_proposals.state")
 
 
 def encode_fyi_cluster_state(name: str) -> int:

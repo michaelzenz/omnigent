@@ -1525,7 +1525,7 @@ class SqlTaskEvent(OmnigentBase):
 
     __table_args__ = (
         CheckConstraint(
-            "state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)",
+            "state IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12)",
             name="ck_task_events_state",
         ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
@@ -1622,53 +1622,6 @@ class SqlTaskItemEvent(OmnigentBase):
             "task_item_id",
         ),
     )
-
-
-class SqlGroupingProposal(OmnigentBase):
-    """SQLAlchemy model for the ``grouping_proposals`` table."""
-
-    __tablename__ = "grouping_proposals"
-
-    workspace_id: Mapped[int] = mapped_column(
-        BigInteger,
-        primary_key=True,
-        nullable=False,
-        server_default="0",
-        default=current_workspace_id,
-    )
-    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
-    payload: Mapped[str] = mapped_column(CompressedText, nullable=False)
-    created_at: Mapped[int] = mapped_column(Integer)
-    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3)", name="ck_grouping_proposals_state"),
-        Index(
-            "ix_grouping_proposals_owner_state",
-            "workspace_id",
-            "owner_user_id",
-            "state",
-            "id",
-        ),
-    )
-
-
-class SqlGroupingProposalEvent(OmnigentBase):
-    """SQLAlchemy model for the ``grouping_proposal_events`` table."""
-
-    __tablename__ = "grouping_proposal_events"
-
-    workspace_id: Mapped[int] = mapped_column(
-        BigInteger,
-        primary_key=True,
-        nullable=False,
-        server_default="0",
-        default=current_workspace_id,
-    )
-    proposal_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
 
 
 class SqlFyiCluster(OmnigentBase):

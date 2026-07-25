@@ -1,17 +1,17 @@
-"""Task item and grouping proposal persistence."""
+"""Task item and FYI cluster persistence."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
 
-from omnigent.entities import FyiCluster, GroupingProposal, TaskItem, TaskItemEvent
+from omnigent.entities import FyiCluster, TaskItem, TaskItemEvent
 
 _UNSET: Any = object()
 
 
 class TaskItemStore(ABC):
-    """Abstract base for task-item and grouping-proposal persistence."""
+    """Abstract base for task-item and FYI-cluster persistence."""
 
     def __init__(self, storage_location: str) -> None:
         self.storage_location = storage_location
@@ -111,49 +111,6 @@ class TaskItemStore(ABC):
     @abstractmethod
     def list_events_for_item(self, task_item_id: str) -> list[TaskItemEvent]:
         """List event links for one task item."""
-
-    @abstractmethod
-    def create_grouping_proposal(
-        self,
-        proposal_id: str,
-        owner_user_id: str,
-        payload: str,
-        *,
-        state: str = "awaiting_user_ack",
-    ) -> GroupingProposal:
-        """Insert a secretary grouping proposal."""
-
-    @abstractmethod
-    def get_grouping_proposal(self, proposal_id: str) -> GroupingProposal | None:
-        """Return one grouping proposal."""
-
-    @abstractmethod
-    def list_grouping_proposals(
-        self,
-        *,
-        owner_user_id: str | None = None,
-        state: str | None = None,
-    ) -> list[GroupingProposal]:
-        """List grouping proposals newest first."""
-
-    @abstractmethod
-    def update_grouping_proposal(
-        self,
-        proposal_id: str,
-        *,
-        state: str | None = None,
-        payload: str | None = None,
-        resolved_at: int | None = None,
-    ) -> GroupingProposal | None:
-        """Update a grouping proposal."""
-
-    @abstractmethod
-    def link_proposal_event(self, proposal_id: str, event_id: str) -> None:
-        """Attach an event to a grouping proposal."""
-
-    @abstractmethod
-    def list_proposal_event_ids(self, proposal_id: str) -> list[str]:
-        """Return event ids included in a grouping proposal."""
 
     @abstractmethod
     def create_fyi_cluster(

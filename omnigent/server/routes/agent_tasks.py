@@ -43,10 +43,6 @@ from omnigent.agent_tasks.routing_proposals import (
     resolve_routing_proposal,
     upsert_routing_proposal,
 )
-from omnigent.agent_tasks.grouping import (
-    create_grouping_proposal,
-    resolve_grouping_proposal,
-)
 from omnigent.agent_tasks.secretary_session import (
     bootstrap_secretary_conversation,
     get_or_create_secretary_profile,
@@ -59,7 +55,7 @@ from omnigent.agent_tasks.items import (
     submit_item_for_user_ack,
 )
 from omnigent.db.enum_codecs import TASK_STATE
-from omnigent.entities import FyiCluster, GroupingProposal, Task, TaskEventExecution, TaskItem, TaskTag
+from omnigent.entities import FyiCluster, Task, TaskEventExecution, TaskItem, TaskTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
@@ -264,27 +260,6 @@ class UpdateTaskItemRequest(BaseModel):
         return stripped
 
 
-class CreateGroupingProposalRequest(BaseModel):
-    """Request body for ``POST /v1/grouping-proposals``."""
-
-    event_ids: list[str] = Field(min_length=1)
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("event_ids")
-    @classmethod
-    def _non_empty_ids(cls, value: list[str]) -> list[str]:
-        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
-        if not cleaned:
-            raise ValueError("event_ids must contain at least one id")
-        return cleaned
-
-
-class ResolveGroupingProposalRequest(BaseModel):
-    """Request body for ``POST /v1/grouping-proposals/{proposal_id}/resolve``."""
-
-    resolution: Literal["accept_grouping", "reject_grouping"]
-
-
 class CreateRoutingProposalRequest(BaseModel):
     """Request body for ``POST /v1/task-items/routing-proposals``."""
 
@@ -472,18 +447,6 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
     }
 
 
-def _grouping_proposal_to_response(proposal: GroupingProposal) -> dict[str, Any]:
-    return {
-        "id": proposal.id,
-        "object": "agent.task.grouping_proposal",
-        "owner_user_id": proposal.owner_user_id,
-        "state": proposal.state,
-        "payload": proposal.payload,
-        "created_at": proposal.created_at,
-        "resolved_at": proposal.resolved_at,
-    }
-
-
 def create_agent_tasks_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
@@ -499,7 +462,7 @@ def create_agent_tasks_router(
 
     :param task_store: Store for task CRUD and tags.
     :param task_event_store: Store for execution history reads.
-    :param task_item_store: Store for task items and grouping proposals.
+    :param task_item_store: Store for task items and routing proposals.
     :param agent_store: Used to validate ``manager_agent_id`` references.
     :param conversation_store: Used for manager/secretary session bootstrap.
     :param secretary_profile_store: Per-user secretary defaults for bootstrap.
@@ -1258,75 +1221,6 @@ def create_agent_tasks_router(
             if routing_item is not None:
                 response["routing_item_id"] = routing_item.id
             return response
-
-        @router.get("/grouping-proposals")
-        async def list_grouping_proposals(
-            request: Request,
-            state: str | None = None,
-        ) -> dict[str, Any]:
-            """List grouping proposals for the caller."""
-            user_id = require_user(request, auth_provider)
-            proposals = await asyncio.to_thread(
-                task_item_store.list_grouping_proposals,
-                owner_user_id=_effective_user_id(user_id),
-                state=state,
-            )
-            return {
-                "object": "list",
-                "data": [_grouping_proposal_to_response(proposal) for proposal in proposals],
-            }
-
-        @router.post("/grouping-proposals")
-        async def create_grouping_proposal_route(
-            request: Request,
-            body: CreateGroupingProposalRequest,
-        ) -> dict[str, Any]:
-            """Create a secretary grouping proposal over orphan events."""
-            user_id = require_user(request, auth_provider)
-            created = await asyncio.to_thread(
-                create_grouping_proposal,
-                owner_user_id=_effective_user_id(user_id),
-                payload=body.payload,
-                event_ids=body.event_ids,
-                task_item_store=task_item_store,
-                task_event_store=task_event_store,
-            )
-            return _grouping_proposal_to_response(created)
-
-        @router.post("/grouping-proposals/{proposal_id}/resolve")
-        async def resolve_grouping_proposal_route(
-            request: Request,
-            proposal_id: str,
-            body: ResolveGroupingProposalRequest,
-        ) -> dict[str, Any]:
-            """Accept or reject a secretary grouping proposal."""
-            user_id = require_user(request, auth_provider)
-            proposal = await asyncio.to_thread(
-                task_item_store.get_grouping_proposal,
-                proposal_id,
-            )
-            if proposal is None:
-                raise OmnigentError("Grouping proposal not found", code=ErrorCode.NOT_FOUND)
-            if proposal.owner_user_id != _effective_user_id(user_id) and not _is_admin(user_id):
-                raise OmnigentError("Grouping proposal not found", code=ErrorCode.NOT_FOUND)
-            profile = None
-            if secretary_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    secretary_profile_store.get,
-                    _effective_user_id(user_id),
-                )
-            updated = await asyncio.to_thread(
-                resolve_grouping_proposal,
-                proposal=proposal,
-                resolution=body.resolution,
-                task_store=task_store,
-                task_item_store=task_item_store,
-                task_event_store=task_event_store,
-                conversation_store=conversation_store,
-                agent_store=agent_store,
-                secretary_profile=profile,
-            )
-            return _grouping_proposal_to_response(updated)
 
         async def _require_session_or_404(session_id: str, user_id: str | None) -> None:
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)

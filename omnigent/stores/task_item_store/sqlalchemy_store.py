@@ -9,22 +9,18 @@ from sqlalchemy import asc, desc, select
 from omnigent.db.db_models import (
     SqlFyiCluster,
     SqlFyiClusterEvent,
-    SqlGroupingProposal,
-    SqlGroupingProposalEvent,
     SqlTaskItem,
     SqlTaskItemEvent,
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import (
     decode_fyi_cluster_state,
-    decode_grouping_proposal_state,
     decode_task_item_state,
     encode_fyi_cluster_state,
-    encode_grouping_proposal_state,
     encode_task_item_state,
 )
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
-from omnigent.entities import FyiCluster, GroupingProposal, TaskItem, TaskItemEvent
+from omnigent.entities import FyiCluster, TaskItem, TaskItemEvent
 from omnigent.stores.task_item_store import TaskItemStore
 
 _UNSET: Any = object()
@@ -58,17 +54,6 @@ def _item_event_to_entity(row: SqlTaskItemEvent) -> TaskItemEvent:
         event_id=row.event_id,
         relation=row.relation,
         created_at=row.created_at,
-    )
-
-
-def _proposal_to_entity(row: SqlGroupingProposal) -> GroupingProposal:
-    return GroupingProposal(
-        id=row.id,
-        owner_user_id=row.owner_user_id,
-        state=decode_grouping_proposal_state(row.state),
-        payload=row.payload,
-        created_at=row.created_at,
-        resolved_at=row.resolved_at,
     )
 
 
@@ -319,90 +304,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             )
             rows = session.execute(stmt).scalars().all()
             return [_item_event_to_entity(row) for row in rows]
-
-    def create_grouping_proposal(
-        self,
-        proposal_id: str,
-        owner_user_id: str,
-        payload: str,
-        *,
-        state: str = "awaiting_user_ack",
-    ) -> GroupingProposal:
-        row = SqlGroupingProposal(
-            id=proposal_id,
-            owner_user_id=owner_user_id,
-            state=encode_grouping_proposal_state(state),
-            payload=payload,
-            created_at=now_epoch(),
-            resolved_at=None,
-        )
-        with self._session() as session:
-            session.add(row)
-            session.flush()
-            return _proposal_to_entity(row)
-
-    def get_grouping_proposal(self, proposal_id: str) -> GroupingProposal | None:
-        with self._session() as session:
-            row = session.get(SqlGroupingProposal, (current_workspace_id(), proposal_id))
-            if row is None:
-                return None
-            return _proposal_to_entity(row)
-
-    def list_grouping_proposals(
-        self,
-        *,
-        owner_user_id: str | None = None,
-        state: str | None = None,
-    ) -> list[GroupingProposal]:
-        with self._session() as session:
-            stmt = select(SqlGroupingProposal).where(
-                SqlGroupingProposal.workspace_id == current_workspace_id()
-            )
-            if owner_user_id is not None:
-                stmt = stmt.where(SqlGroupingProposal.owner_user_id == owner_user_id)
-            if state is not None:
-                stmt = stmt.where(
-                    SqlGroupingProposal.state == encode_grouping_proposal_state(state)
-                )
-            stmt = stmt.order_by(desc(SqlGroupingProposal.created_at), desc(SqlGroupingProposal.id))
-            rows = session.execute(stmt).scalars().all()
-            return [_proposal_to_entity(row) for row in rows]
-
-    def update_grouping_proposal(
-        self,
-        proposal_id: str,
-        *,
-        state: str | None = None,
-        payload: str | None = None,
-        resolved_at: int | None = None,
-    ) -> GroupingProposal | None:
-        with self._session() as session:
-            row = session.get(SqlGroupingProposal, (current_workspace_id(), proposal_id))
-            if row is None:
-                return None
-            if state is not None:
-                row.state = encode_grouping_proposal_state(state)
-            if payload is not None:
-                row.payload = payload
-            if resolved_at is not None:
-                row.resolved_at = resolved_at
-            session.flush()
-            return _proposal_to_entity(row)
-
-    def link_proposal_event(self, proposal_id: str, event_id: str) -> None:
-        row = SqlGroupingProposalEvent(proposal_id=proposal_id, event_id=event_id)
-        with self._session() as session:
-            session.merge(row)
-
-    def list_proposal_event_ids(self, proposal_id: str) -> list[str]:
-        with self._session() as session:
-            stmt = (
-                select(SqlGroupingProposalEvent.event_id)
-                .where(SqlGroupingProposalEvent.workspace_id == current_workspace_id())
-                .where(SqlGroupingProposalEvent.proposal_id == proposal_id)
-                .order_by(asc(SqlGroupingProposalEvent.event_id))
-            )
-            return list(session.execute(stmt).scalars().all())
 
     def create_fyi_cluster(
         self,

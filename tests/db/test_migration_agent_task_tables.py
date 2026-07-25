@@ -40,7 +40,6 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "task_event_executions",
         "task_items",
         "task_item_events",
-        "grouping_proposals",
         "user_secretary_profiles",
     } <= tables
 
