@@ -158,6 +158,7 @@ def test_shipped_codes_are_stable() -> None:
         "failed": 9,
         "awaiting_user_ack": 10,
         "routing_proposed": 11,
+        "classified_fyi": 12,
     }
     assert ec.TASK_ITEM_STATE == {
         "draft": 1,

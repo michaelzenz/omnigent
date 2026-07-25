@@ -1,6 +1,7 @@
 import { Loader2Icon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
 import { BoardDecisionStream } from "./BoardDecisionStream";
+import { BoardFyiStream } from "./BoardFyiStream";
 import { TaskCard } from "./TaskCard";
 
 export function PuppyGardenBoard() {
@@ -35,6 +36,7 @@ export function PuppyGardenBoard() {
     <div className="h-full overflow-y-auto p-4">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
         <BoardDecisionStream />
+        <BoardFyiStream />
         {tasks.map((task) => (
           <TaskCard
             key={task.id}

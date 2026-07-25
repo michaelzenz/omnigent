@@ -121,24 +121,48 @@ def _create_routing_card(
     task_id: str,
     task_title: str,
     score: float,
+    recommend_new_task: bool = False,
+    proposed_task_title: str | None = None,
+    proposed_task_charter: str | None = None,
 ) -> None:
-    item = _request(
+    body: dict = {
+        "canonical_key": canonical_key,
+        "title": title,
+        "event_ids": event_ids,
+        "recommended_task_id": task_id,
+        "instructions": instructions,
+        "rationale": rationale,
+        "candidates": [
+            {"task_id": task_id, "title": task_title, "score": score},
+        ],
+        **DISPATCH,
+    }
+    if recommend_new_task:
+        body["recommend_new_task"] = True
+        body["proposed_task_title"] = proposed_task_title or f"New: {title}"
+        body["proposed_task_charter"] = proposed_task_charter or title
+    item = _request("POST", "/v1/task-items/routing-proposals", body=body)
+    print(f"  routing card {title!r} → {item['id'][:8]}…")
+
+
+def _create_fyi_cluster(
+    *,
+    canonical_key: str,
+    headline: str,
+    rationale: str,
+    event_ids: list[str],
+) -> None:
+    cluster = _request(
         "POST",
-        "/v1/task-items/routing-proposals",
+        "/v1/task-events/fyi-clusters",
         body={
             "canonical_key": canonical_key,
-            "title": title,
-            "event_ids": event_ids,
-            "recommended_task_id": task_id,
-            "instructions": instructions,
+            "headline": headline,
             "rationale": rationale,
-            "candidates": [
-                {"task_id": task_id, "title": task_title, "score": score},
-            ],
-            **DISPATCH,
+            "event_ids": event_ids,
         },
     )
-    print(f"  routing card {title!r} → {item['id'][:8]}…")
+    print(f"  fyi cluster {headline!r} → {cluster['id'][:8]}…")
 
 
 def _create_inbox_item(task_id: str, title: str, instructions: str) -> None:
@@ -207,6 +231,28 @@ def main() -> int:
         task_title="poll plugins",
         score=0.76,
     )
+    _create_routing_card(
+        canonical_key=f"pr:other-repo#12-{offset_base}",
+        title="Investigate unrelated repo alert",
+        instructions="Triage the alert and decide whether omnigent-fork needs changes.",
+        rationale="No strong match to existing tasks; secretary recommends a new task.",
+        event_ids=_create_events(host_header, repo="other-repo", pr=12, offset_base=offset_base + 30),
+        task_id=ci_task,
+        task_title="omnigent-fork CI",
+        score=0.22,
+        recommend_new_task=True,
+        proposed_task_title="other-repo triage",
+        proposed_task_charter="repo:other-repo\nalerts\nunrelated",
+    )
+
+    print("Creating FYI clusters…")
+    fyi_events = _create_events(host_header, repo="dependabot-fork", pr=44, offset_base=offset_base + 40)
+    _create_fyi_cluster(
+        canonical_key=f"pr:dependabot-fork#44-{offset_base}",
+        headline="Dependabot PR checks passed (unrelated repo)",
+        rationale="Informational only — different repo, not tagged for you.",
+        event_ids=fyi_events,
+    )
 
     print("Creating inbox task items (#3 dispatch approval)…")
     _create_inbox_item(
@@ -231,9 +277,13 @@ def main() -> int:
     )
 
     board = _request("GET", "/v1/agent-tasks/board/decisions")
-    pending = board.get("data", [])
-    print(f"\nBoard routing cards: {len(pending)}")
-    for card in pending:
+    decisions = board.get("decisions", board.get("data", []))
+    fyi = board.get("fyi", [])
+    print(f"\nBoard routing cards: {len(decisions)}")
+    for card in decisions:
+        print(f"  - {card.get('headline')}")
+    print(f"Board FYI clusters: {len(fyi)}")
+    for card in fyi:
         print(f"  - {card.get('headline')}")
 
     for task_id, label in [
@@ -246,7 +296,7 @@ def main() -> int:
         workers = sum(len(g.get("executions", [])) for g in dash.get("workers", []))
         print(f"  {label}: {inbox} inbox, {workers} work rows")
 
-    print("\nDone — scroll to **Decisions** above task cards in Puppy Garden.")
+    print("\nDone — see **Decisions** and **FYI** above task cards in Puppy Garden.")
     return 0
 
 

@@ -37,6 +37,10 @@ def _generate_item_id() -> str:
     return uuid.uuid4().hex
 
 
+def _generate_task_id() -> str:
+    return uuid.uuid4().hex
+
+
 @dataclass(frozen=True)
 class RoutingCandidate:
     """One scored destination task for a routing proposal."""
@@ -142,14 +146,16 @@ def _build_routing_proposal_json(
     recommended_task_id: str,
     candidates: list[dict[str, Any]],
     rationale: str | None,
+    proposed_task: dict[str, Any],
 ) -> str:
     return json.dumps(
         {
-            "version": 1,
+            "version": 2,
             "owner_user_id": owner_user_id,
             "recommended_task_id": recommended_task_id,
             "candidates": candidates,
             "rationale": rationale,
+            "proposed_task": proposed_task,
         },
     )
 
@@ -176,6 +182,8 @@ def _claimable_events(
     for event_id in event_ids:
         if task_item_store.get_routing_item_for_event(event_id) is not None:
             continue
+        if task_item_store.get_fyi_cluster_for_event(event_id) is not None:
+            continue
         event = task_event_store.get_event(event_id)
         if event is None:
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
@@ -183,6 +191,90 @@ def _claimable_events(
             continue
         claimed.append(event)
     return claimed
+
+
+def _ensure_proposed_task(
+    *,
+    task_store: TaskStore,
+    anchor_task: Task,
+    title: str,
+    proposed_task_id: str | None = None,
+    proposed_title: str | None = None,
+    proposed_charter: str | None = None,
+    proposed_description: str | None = None,
+    manager_agent_id: str | None = None,
+    owner_user_id: str | None = None,
+) -> dict[str, Any]:
+    """Return proposed_task metadata, creating a paused task when needed."""
+    manager = manager_agent_id or anchor_task.manager_agent_id
+    task_id = proposed_task_id or _generate_task_id()
+    existing = task_store.get(task_id)
+    display_title = proposed_title or f"New: {title}"
+    charter = proposed_charter or anchor_task.charter
+    if existing is None:
+        task_store.create(
+            task_id,
+            manager,
+            display_title,
+            owner_user_id=owner_user_id or anchor_task.owner_user_id,
+            description=proposed_description,
+            charter=charter,
+            state="paused",
+        )
+    elif existing.state == "paused":
+        task_store.update(
+            task_id,
+            title=display_title,
+            charter=charter,
+            description=proposed_description,
+        )
+    return {
+        "task_id": task_id,
+        "title": display_title,
+        "charter": charter,
+        "description": proposed_description,
+        "manager_agent_id": manager,
+        "is_new": True,
+    }
+
+
+def _archive_task_if_paused(task_store: TaskStore, task_id: str) -> None:
+    task = task_store.get(task_id)
+    if task is not None and task.state == "paused":
+        task_store.update(task_id, state="archived")
+
+
+def _activate_task_if_paused(
+    task_store: TaskStore,
+    task_id: str,
+    *,
+    title: str | None = None,
+    charter: str | None = None,
+    description: str | None = None,
+) -> Task:
+    task = task_store.get(task_id)
+    if task is None:
+        raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+    if task.state == "paused":
+        updated = task_store.update(
+            task_id,
+            state="active",
+            title=title,
+            charter=charter,
+            description=description,
+        )
+        assert updated is not None
+        return updated
+    if title is not None or charter is not None or description is not None:
+        updated = task_store.update(
+            task_id,
+            title=title,
+            charter=charter,
+            description=description,
+        )
+        if updated is not None:
+            return updated
+    return task
 
 
 def upsert_routing_proposal(
@@ -203,6 +295,12 @@ def upsert_routing_proposal(
     harness: str | None = None,
     rationale: str | None = None,
     candidates: list[dict[str, Any]] | None = None,
+    recommend_new_task: bool = False,
+    proposed_task_id: str | None = None,
+    proposed_task_title: str | None = None,
+    proposed_task_charter: str | None = None,
+    proposed_task_description: str | None = None,
+    proposed_task_manager_agent_id: str | None = None,
 ) -> TaskItem | None:
     """Create or extend a secretary routing proposal for orphan events."""
     events = _claimable_events(
@@ -213,9 +311,21 @@ def upsert_routing_proposal(
     if not events:
         return None
 
-    task = task_store.get(recommended_task_id)
-    if task is None:
+    anchor_task = task_store.get(recommended_task_id)
+    if anchor_task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+
+    proposed_task = _ensure_proposed_task(
+        task_store=task_store,
+        anchor_task=anchor_task,
+        title=title,
+        proposed_task_id=proposed_task_id,
+        proposed_title=proposed_task_title,
+        proposed_charter=proposed_task_charter,
+        proposed_description=proposed_task_description,
+        manager_agent_id=proposed_task_manager_agent_id,
+        owner_user_id=owner_user_id,
+    )
 
     if candidates is None:
         cluster_search = "\n".join(event.search_text for event in events)
@@ -225,23 +335,24 @@ def upsert_routing_proposal(
         )
         auto_recommended, candidates = _candidate_payload(ranked)
         if recommended_task_id not in {row["task_id"] for row in candidates}:
-            task = task_store.get(recommended_task_id)
-            if task is not None:
-                candidates.insert(
-                    0,
-                    {"task_id": task.id, "title": task.title, "score": 0.0},
-                )
-        else:
+            candidates.insert(
+                0,
+                {"task_id": anchor_task.id, "title": anchor_task.title, "score": 0.0},
+            )
+        elif not recommend_new_task:
             recommended_task_id = auto_recommended or recommended_task_id
-        task = task_store.get(recommended_task_id)
-        if task is None:
-            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+
+    if recommend_new_task:
+        recommended_task_id = str(proposed_task["task_id"])
+
+    item_task_id = recommended_task_id
 
     proposal_json = _build_routing_proposal_json(
         owner_user_id=owner_user_id,
         recommended_task_id=recommended_task_id,
         candidates=candidates,
         rationale=rationale,
+        proposed_task=proposed_task,
     )
 
     existing = task_item_store.get_open_routing_item_by_canonical_key(canonical_key)
@@ -255,7 +366,7 @@ def upsert_routing_proposal(
             host_id=host_id,
             workspace=workspace,
             harness=harness,
-            task_id=recommended_task_id,
+            task_id=item_task_id,
             routing_proposal=proposal_json,
         )
         assert updated is not None
@@ -263,7 +374,7 @@ def upsert_routing_proposal(
     else:
         item = task_item_store.create_item(
             _generate_item_id(),
-            recommended_task_id,
+            item_task_id,
             title,
             state=ROUTING_PROPOSED_ITEM_STATE,
             canonical_key=canonical_key,
@@ -293,6 +404,8 @@ def build_orphan_inbox(
     orphans = []
     for event in task_event_store.list_events(state="awaiting_grouping"):
         if task_item_store.get_routing_item_for_event(event.id) is not None:
+            continue
+        if task_item_store.get_fyi_cluster_for_event(event.id) is not None:
             continue
         orphans.append(event)
 
@@ -355,6 +468,32 @@ def list_routing_decision_cards(
     return cards
 
 
+def list_board_triage(
+    *,
+    owner_user_id: str | None,
+    task_item_store: TaskItemStore,
+    task_event_store: TaskEventStore,
+    task_store: TaskStore,
+) -> dict[str, Any]:
+    """Return routing decision cards and FYI clusters for the board."""
+    from omnigent.agent_tasks.fyi_clusters import list_fyi_board_cards
+
+    return {
+        "object": "agent.task.board",
+        "decisions": list_routing_decision_cards(
+            owner_user_id=owner_user_id,
+            task_item_store=task_item_store,
+            task_event_store=task_event_store,
+            task_store=task_store,
+        ),
+        "fyi": list_fyi_board_cards(
+            owner_user_id=owner_user_id,
+            task_item_store=task_item_store,
+            task_event_store=task_event_store,
+        ),
+    }
+
+
 def _routing_card_payload(
     *,
     item: TaskItem,
@@ -371,11 +510,16 @@ def _routing_card_payload(
             events.append(_event_summary(event))
 
     recommended_task_id = str(proposal.get("recommended_task_id") or item.task_id)
+    proposed_task = proposal.get("proposed_task") or {}
     candidates = []
+    seen_ids: set[str] = set()
     for row in proposal.get("candidates", []):
         if not isinstance(row, dict):
             continue
         task_id = str(row.get("task_id", ""))
+        if not task_id or task_id in seen_ids:
+            continue
+        seen_ids.add(task_id)
         task = task_store.get(task_id)
         candidates.append(
             {
@@ -383,6 +527,20 @@ def _routing_card_payload(
                 "task_title": task.title if task is not None else task_id,
                 "score": row.get("score"),
                 "recommended": task_id == recommended_task_id,
+                "is_new": False,
+            },
+        )
+
+    proposed_task_id = str(proposed_task.get("task_id", ""))
+    if proposed_task_id and proposed_task_id not in seen_ids:
+        proposed_title = str(proposed_task.get("title") or "Create new task")
+        candidates.append(
+            {
+                "task_id": proposed_task_id,
+                "task_title": proposed_title,
+                "score": None,
+                "recommended": proposed_task_id == recommended_task_id,
+                "is_new": True,
             },
         )
 
@@ -399,6 +557,7 @@ def _routing_card_payload(
             "instructions": item.instructions,
             "canonical_key": item.canonical_key,
             "recommended_task_id": recommended_task_id,
+            "proposed_task": proposed_task,
             "events": events,
             "candidates": candidates,
             "worker_agent_id": item.worker_agent_id,
@@ -429,6 +588,9 @@ async def resolve_routing_proposal(
     resolution: RoutingResolution,
     selected_task_id: str | None,
     instructions: str | None = None,
+    proposed_task_title: str | None = None,
+    proposed_task_charter: str | None = None,
+    proposed_task_description: str | None = None,
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
@@ -443,11 +605,17 @@ async def resolve_routing_proposal(
             code=ErrorCode.CONFLICT,
         )
 
+    proposal = _parse_routing_proposal(item.routing_proposal)
+    proposed_task = proposal.get("proposed_task") or {}
+    proposed_task_id = str(proposed_task.get("task_id", ""))
+
     if resolution == "reject_routing":
         for link in task_item_store.list_events_for_item(item.id):
             event = task_event_store.get_event(link.event_id)
             if event is not None and event.state == ROUTING_PROPOSED_EVENT_STATE:
                 task_event_store.update_event(event.id, state="awaiting_grouping")
+        if proposed_task_id:
+            _archive_task_if_paused(task_store, proposed_task_id)
         updated = task_item_store.update_item(item.id, state="cancelled")
         assert updated is not None
         return updated, None
@@ -455,9 +623,21 @@ async def resolve_routing_proposal(
     if selected_task_id is None:
         raise OmnigentError("selected_task_id is required", code=ErrorCode.INVALID_INPUT)
 
-    task = task_store.get(selected_task_id)
-    if task is None:
-        raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+    if proposed_task_id and selected_task_id != proposed_task_id:
+        _archive_task_if_paused(task_store, proposed_task_id)
+
+    if proposed_task_id and selected_task_id == proposed_task_id:
+        task = _activate_task_if_paused(
+            task_store,
+            selected_task_id,
+            title=proposed_task_title or proposed_task.get("title"),
+            charter=proposed_task_charter or proposed_task.get("charter"),
+            description=proposed_task_description or proposed_task.get("description"),
+        )
+    else:
+        task = task_store.get(selected_task_id)
+        if task is None:
+            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
 
     params = resolve_bootstrap_params(
         host_id=item.host_id,

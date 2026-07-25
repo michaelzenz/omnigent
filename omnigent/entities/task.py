@@ -248,6 +248,20 @@ class GroupingProposal:
 
 
 @dataclass
+class FyiCluster:
+    """Secretary cluster of informational orphan events."""
+
+    id: str
+    owner_user_id: str
+    canonical_key: str | None
+    headline: str
+    rationale: str | None
+    state: str
+    created_at: int
+    resolved_at: int | None = None
+
+
+@dataclass
 class TaskEventExecution:
     """
     One worker execution attempt for a task item.

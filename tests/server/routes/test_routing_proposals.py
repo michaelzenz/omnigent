@@ -87,7 +87,8 @@ async def test_routing_proposal_board_and_accept(
 
     board = await client.get("/v1/agent-tasks/board/decisions")
     assert board.status_code == 200
-    cards = board.json()["data"]
+    board_body = board.json()
+    cards = board_body.get("decisions", board_body.get("data", []))
     assert any(card["id"] == item_id for card in cards)
 
     accepted = await client.post(

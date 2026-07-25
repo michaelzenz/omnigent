@@ -1525,7 +1525,7 @@ class SqlTaskEvent(OmnigentBase):
 
     __table_args__ = (
         CheckConstraint(
-            "state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)",
+            "state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)",
             name="ck_task_events_state",
         ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
@@ -1668,6 +1668,61 @@ class SqlGroupingProposalEvent(OmnigentBase):
         default=current_workspace_id,
     )
     proposal_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+
+
+class SqlFyiCluster(OmnigentBase):
+    """SQLAlchemy model for secretary FYI signal clusters."""
+
+    __tablename__ = "fyi_clusters"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    headline: Mapped[str] = mapped_column(String(512), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer)
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2)", name="ck_fyi_clusters_state"),
+        Index(
+            "ix_fyi_clusters_owner_state",
+            "workspace_id",
+            "owner_user_id",
+            "state",
+            "id",
+        ),
+        Index(
+            "ix_fyi_clusters_canonical",
+            "workspace_id",
+            "canonical_key",
+            "state",
+        ),
+    )
+
+
+class SqlFyiClusterEvent(OmnigentBase):
+    """SQLAlchemy model for the ``fyi_cluster_events`` link table."""
+
+    __tablename__ = "fyi_cluster_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    cluster_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
 
 

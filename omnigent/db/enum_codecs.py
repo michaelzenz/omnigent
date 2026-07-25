@@ -131,6 +131,13 @@ TASK_EVENT_STATE: dict[str, int] = {
     "awaiting_user_ack": 10,
     # Linked to a secretary routing-proposed task item.
     "routing_proposed": 11,
+    # Classified as informational by the secretary; shown in the FYI bucket.
+    "classified_fyi": 12,
+}
+
+FYI_CLUSTER_STATE: dict[str, int] = {
+    "awaiting_user_ack": 1,
+    "dismissed": 2,
 }
 
 TASK_ITEM_STATE: dict[str, int] = {
@@ -434,3 +441,13 @@ def encode_grouping_proposal_state(name: str) -> int:
 def decode_grouping_proposal_state(code: int) -> str:
     """Decode a ``grouping_proposals.state`` int code to its name."""
     return _decode(GROUPING_PROPOSAL_STATE, code, field="grouping_proposals.state")
+
+
+def encode_fyi_cluster_state(name: str) -> int:
+    """Encode a ``fyi_clusters.state`` name to its int code."""
+    return _encode(FYI_CLUSTER_STATE, name, field="fyi_clusters.state")
+
+
+def decode_fyi_cluster_state(code: int) -> str:
+    """Decode a ``fyi_clusters.state`` int code to its name."""
+    return _decode(FYI_CLUSTER_STATE, code, field="fyi_clusters.state")

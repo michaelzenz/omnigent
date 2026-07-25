@@ -30,6 +30,7 @@ from omnigent.entities.policy import Policy
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.entities.task import (
+    FyiCluster,
     GroupingProposal,
     Task,
     TaskEvent,
@@ -64,6 +65,7 @@ __all__ = [
     "ErrorData",
     "FunctionCallData",
     "FunctionCallOutputData",
+    "FyiCluster",
     "GroupingProposal",
     "ItemData",
     "LoadedAgent",

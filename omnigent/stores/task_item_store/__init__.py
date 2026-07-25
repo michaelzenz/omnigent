@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from omnigent.entities import GroupingProposal, TaskItem, TaskItemEvent
+from omnigent.entities import FyiCluster, GroupingProposal, TaskItem, TaskItemEvent
 
 _UNSET: Any = object()
 
@@ -154,3 +154,60 @@ class TaskItemStore(ABC):
     @abstractmethod
     def list_proposal_event_ids(self, proposal_id: str) -> list[str]:
         """Return event ids included in a grouping proposal."""
+
+    @abstractmethod
+    def create_fyi_cluster(
+        self,
+        cluster_id: str,
+        owner_user_id: str,
+        headline: str,
+        *,
+        canonical_key: str | None = None,
+        rationale: str | None = None,
+        state: str = "awaiting_user_ack",
+    ) -> FyiCluster:
+        """Insert a secretary FYI cluster."""
+
+    @abstractmethod
+    def get_fyi_cluster(self, cluster_id: str) -> FyiCluster | None:
+        """Return one FYI cluster by id."""
+
+    @abstractmethod
+    def get_open_fyi_cluster_by_canonical_key(
+        self,
+        canonical_key: str,
+    ) -> FyiCluster | None:
+        """Return the open FYI cluster for a canonical key."""
+
+    @abstractmethod
+    def get_fyi_cluster_for_event(self, event_id: str) -> FyiCluster | None:
+        """Return an open FYI cluster linked to an event, if any."""
+
+    @abstractmethod
+    def list_fyi_clusters(
+        self,
+        *,
+        owner_user_id: str | None = None,
+        state: str | None = None,
+    ) -> list[FyiCluster]:
+        """List FYI clusters newest first."""
+
+    @abstractmethod
+    def update_fyi_cluster(
+        self,
+        cluster_id: str,
+        *,
+        state: str | None = None,
+        headline: str | None = None,
+        rationale: str | None = None,
+        resolved_at: int | None = None,
+    ) -> FyiCluster | None:
+        """Update an FYI cluster."""
+
+    @abstractmethod
+    def link_fyi_cluster_event(self, cluster_id: str, event_id: str) -> None:
+        """Attach an event to an FYI cluster."""
+
+    @abstractmethod
+    def list_fyi_cluster_event_ids(self, cluster_id: str) -> list[str]:
+        """Return event ids included in an FYI cluster."""

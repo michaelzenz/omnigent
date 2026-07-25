@@ -1,9 +1,10 @@
 import { Loader2Icon } from "lucide-react";
-import { useBoardDecisions } from "@/hooks/useBoardDecisions";
+import { useBoardTriage } from "@/hooks/useBoardDecisions";
 import { TaskItemRoutingCard } from "./TaskItemRoutingCard";
 
 export function BoardDecisionStream() {
-  const { data: cards, isLoading, error } = useBoardDecisions();
+  const { data: triage, isLoading, error } = useBoardTriage();
+  const cards = triage?.decisions;
 
   if (isLoading) {
     return (

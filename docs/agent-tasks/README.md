@@ -30,7 +30,7 @@ Otherwise the event stalls for secretary/user resolution.
 ## Event states (routing)
 
 `received` → `routing` → `awaiting_user_selection` | `awaiting_grouping` →
-`grouping_proposed` → `routed` → `reconciled` | `dismissed` | `failed`
+`routing_proposed` | `classified_fyi` → `routed` → `reconciled` | `dismissed` | `failed`
 
 Session adoption uses `awaiting_user_ack` (separate lane).
 

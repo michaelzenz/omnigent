@@ -33,9 +33,13 @@ from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
 )
+from omnigent.agent_tasks.fyi_clusters import (
+    resolve_fyi_cluster,
+    upsert_fyi_cluster,
+)
 from omnigent.agent_tasks.routing_proposals import (
     build_orphan_inbox,
-    list_routing_decision_cards,
+    list_board_triage,
     resolve_routing_proposal,
     upsert_routing_proposal,
 )
@@ -55,7 +59,7 @@ from omnigent.agent_tasks.items import (
     submit_item_for_user_ack,
 )
 from omnigent.db.enum_codecs import TASK_STATE
-from omnigent.entities import GroupingProposal, Task, TaskEventExecution, TaskItem, TaskTag
+from omnigent.entities import FyiCluster, GroupingProposal, Task, TaskEventExecution, TaskItem, TaskTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
@@ -296,6 +300,12 @@ class CreateRoutingProposalRequest(BaseModel):
     harness: str | None = None
     rationale: str | None = None
     candidates: list[dict[str, Any]] | None = None
+    recommend_new_task: bool = False
+    proposed_task_id: str | None = None
+    proposed_task_title: str | None = None
+    proposed_task_charter: str | None = None
+    proposed_task_description: str | None = None
+    proposed_task_manager_agent_id: str | None = None
 
     @field_validator("canonical_key", "title", "recommended_task_id")
     @classmethod
@@ -320,6 +330,52 @@ class ResolveRoutingProposalRequest(BaseModel):
     resolution: Literal["accept_routing", "reject_routing"]
     selected_task_id: str | None = None
     instructions: str | None = None
+    proposed_task_title: str | None = None
+    proposed_task_charter: str | None = None
+    proposed_task_description: str | None = None
+
+
+class CreateFyiClusterRequest(BaseModel):
+    """Request body for ``POST /v1/task-events/fyi-clusters``."""
+
+    canonical_key: str
+    headline: str
+    event_ids: list[str] = Field(min_length=1)
+    rationale: str | None = None
+
+    @field_validator("canonical_key", "headline")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must be a non-empty string")
+        return stripped
+
+    @field_validator("event_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        return cleaned
+
+
+class ResolveFyiClusterRequest(BaseModel):
+    """Request body for ``POST /v1/fyi-clusters/{cluster_id}/resolve``."""
+
+    resolution: Literal["dismiss_fyi", "promote_to_routing"]
+    routing_title: str | None = None
+    routing_instructions: str | None = None
+    recommended_task_id: str | None = None
+    recommend_new_task: bool = False
+    proposed_task_title: str | None = None
+    proposed_task_charter: str | None = None
+    worker_agent_id: str | None = None
+    model: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    manager_agent_id: str | None = None
 
 
 class AdoptSessionRequest(BaseModel):
@@ -1058,6 +1114,12 @@ def create_agent_tasks_router(
                     harness=body.harness,
                     rationale=body.rationale,
                     candidates=body.candidates,
+                    recommend_new_task=body.recommend_new_task,
+                    proposed_task_id=body.proposed_task_id,
+                    proposed_task_title=body.proposed_task_title,
+                    proposed_task_charter=body.proposed_task_charter,
+                    proposed_task_description=body.proposed_task_description,
+                    proposed_task_manager_agent_id=body.proposed_task_manager_agent_id,
                 )
 
             created = await asyncio.to_thread(_create)
@@ -1070,19 +1132,15 @@ def create_agent_tasks_router(
 
         @router.get("/agent-tasks/board/decisions")
         async def list_board_decisions(request: Request) -> dict[str, Any]:
-            """List pending board-level decision cards."""
+            """List pending board-level routing decisions and FYI clusters."""
             user_id = require_user(request, auth_provider)
-            cards = await asyncio.to_thread(
-                list_routing_decision_cards,
+            return await asyncio.to_thread(
+                list_board_triage,
                 owner_user_id=_effective_user_id(user_id),
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
                 task_store=task_store,
             )
-            return {
-                "object": "agent.task.board_decision.list",
-                "data": cards,
-            }
 
         @router.post("/task-items/{item_id}/resolve-routing")
         async def resolve_routing_proposal_route(
@@ -1105,6 +1163,9 @@ def create_agent_tasks_router(
                 resolution=body.resolution,
                 selected_task_id=body.selected_task_id,
                 instructions=body.instructions,
+                proposed_task_title=body.proposed_task_title,
+                proposed_task_charter=body.proposed_task_charter,
+                proposed_task_description=body.proposed_task_description,
                 task_store=task_store,
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
@@ -1116,6 +1177,86 @@ def create_agent_tasks_router(
             if execution is not None:
                 response["execution_id"] = execution.id
                 response["worker_conversation_id"] = execution.conversation_id
+            return response
+
+        @router.post("/task-events/fyi-clusters")
+        async def create_fyi_cluster_route(
+            request: Request,
+            body: CreateFyiClusterRequest,
+        ) -> dict[str, Any]:
+            """Create or extend a secretary FYI cluster over orphan events."""
+            user_id = require_user(request, auth_provider)
+
+            def _create() -> FyiCluster | None:
+                return upsert_fyi_cluster(
+                    owner_user_id=_effective_user_id(user_id),
+                    canonical_key=body.canonical_key,
+                    headline=body.headline,
+                    event_ids=body.event_ids,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    rationale=body.rationale,
+                )
+
+            created = await asyncio.to_thread(_create)
+            if created is None:
+                raise OmnigentError(
+                    "No claimable orphan events for FYI cluster",
+                    code=ErrorCode.CONFLICT,
+                )
+            return {
+                "object": "agent.task.fyi_cluster",
+                "id": created.id,
+                "headline": created.headline,
+                "rationale": created.rationale,
+                "state": created.state,
+                "created_at": created.created_at,
+            }
+
+        @router.post("/fyi-clusters/{cluster_id}/resolve")
+        async def resolve_fyi_cluster_route(
+            request: Request,
+            cluster_id: str,
+            body: ResolveFyiClusterRequest,
+        ) -> dict[str, Any]:
+            """Dismiss or promote an FYI cluster to a routing decision."""
+            user_id = require_user(request, auth_provider)
+            cluster = await asyncio.to_thread(task_item_store.get_fyi_cluster, cluster_id)
+            if cluster is None or (
+                cluster.owner_user_id != _effective_user_id(user_id)
+                and not _is_admin(user_id)
+            ):
+                raise OmnigentError("FYI cluster not found", code=ErrorCode.NOT_FOUND)
+
+            updated, routing_item = await asyncio.to_thread(
+                resolve_fyi_cluster,
+                cluster=cluster,
+                resolution=body.resolution,
+                owner_user_id=_effective_user_id(user_id),
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                routing_title=body.routing_title,
+                routing_instructions=body.routing_instructions,
+                recommended_task_id=body.recommended_task_id,
+                worker_agent_id=body.worker_agent_id,
+                model=body.model,
+                host_id=body.host_id,
+                workspace=body.workspace,
+                harness=body.harness,
+                manager_agent_id=body.manager_agent_id,
+                proposed_task_title=body.proposed_task_title,
+                proposed_task_charter=body.proposed_task_charter,
+                recommend_new_task=body.recommend_new_task,
+            )
+            response: dict[str, Any] = {
+                "object": "agent.task.fyi_cluster",
+                "id": updated.id,
+                "state": updated.state,
+                "resolved_at": updated.resolved_at,
+            }
+            if routing_item is not None:
+                response["routing_item_id"] = routing_item.id
             return response
 
         @router.get("/grouping-proposals")

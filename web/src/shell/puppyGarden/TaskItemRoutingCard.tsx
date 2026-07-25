@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoardDecisionCard } from "@/lib/agentTasksApi";
@@ -16,10 +17,21 @@ export function TaskItemRoutingCard({ card }: TaskItemRoutingCardProps) {
     card.body.recommended_task_id,
   );
   const [instructions, setInstructions] = useState(card.body.instructions ?? "");
+  const [proposedTaskTitle, setProposedTaskTitle] = useState(
+    card.body.proposed_task?.title ?? "",
+  );
+  const [proposedTaskCharter, setProposedTaskCharter] = useState(
+    card.body.proposed_task?.charter ?? "",
+  );
   const [showEvents, setShowEvents] = useState(false);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
 
   useAutoGrowTextarea(instructionsRef, instructions, 12, card.id);
+
+  const selectedCandidate = card.body.candidates.find(
+    (candidate) => candidate.task_id === selectedTaskId,
+  );
+  const isNewTaskSelected = selectedCandidate?.is_new === true;
 
   const signalLabel = useMemo(() => {
     const count = card.body.events.length;
@@ -36,11 +48,25 @@ export function TaskItemRoutingCard({ card }: TaskItemRoutingCardProps) {
 
   const onAccept = async () => {
     const baseline = card.body.instructions ?? "";
+    const baselineTitle = card.body.proposed_task?.title ?? "";
+    const baselineCharter = card.body.proposed_task?.charter ?? "";
     await resolveRouting.mutateAsync({
       itemId: card.id,
       resolution: "accept_routing",
       selectedTaskId,
       instructions: instructions !== baseline ? instructions : undefined,
+      proposedTaskTitle:
+        isNewTaskSelected && proposedTaskTitle !== baselineTitle
+          ? proposedTaskTitle
+          : isNewTaskSelected
+            ? proposedTaskTitle
+            : undefined,
+      proposedTaskCharter:
+        isNewTaskSelected && proposedTaskCharter !== baselineCharter
+          ? proposedTaskCharter
+          : isNewTaskSelected
+            ? proposedTaskCharter
+            : undefined,
     });
   };
 
@@ -117,15 +143,43 @@ export function TaskItemRoutingCard({ card }: TaskItemRoutingCardProps) {
                 onChange={() => setSelectedTaskId(candidate.task_id)}
                 className="size-3.5"
               />
-              <span className="truncate">{candidate.task_title}</span>
+              <span className="truncate">
+                {candidate.is_new ? `Create new task: ${candidate.task_title}` : candidate.task_title}
+              </span>
             </span>
             <span className="shrink-0 text-xs text-muted-foreground">
-              {candidate.score != null ? candidate.score.toFixed(2) : ""}
+              {candidate.is_new
+                ? "new"
+                : candidate.score != null
+                  ? candidate.score.toFixed(2)
+                  : ""}
               {candidate.recommended ? " ★" : ""}
             </span>
           </label>
         ))}
       </div>
+
+      {isNewTaskSelected ? (
+        <div className="mb-2 space-y-1.5">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs leading-none text-muted-foreground">New task title</span>
+            <Input
+              className="h-7 py-1"
+              value={proposedTaskTitle}
+              onChange={(event) => setProposedTaskTitle(event.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs leading-none text-muted-foreground">Charter</span>
+            <Textarea
+              rows={2}
+              value={proposedTaskCharter}
+              onChange={(event) => setProposedTaskCharter(event.target.value)}
+              className="min-h-14 resize-y py-1 text-sm"
+            />
+          </div>
+        </div>
+      ) : null}
 
       {workerLine ? (
         <p className="mb-2 text-xs text-muted-foreground">{workerLine}</p>

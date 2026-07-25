@@ -74,16 +74,19 @@ On accept, the manager receives `session.adopted` in `routed` state.
 
 ## 2. Stalled event routing
 
-Wake notice: `[System: N task event(s) need grouping proposals]`
+Wake notice: `[System: N task event(s) need routing decisions]`
 
 1. `GET /v1/task-events/orphan-inbox` — suggested event clusters and task scores
-2. For each cluster with a matching active task, `POST /v1/task-items/routing-proposals`
-   — creates or extends one `routing_proposed` task item (same `canonical_key` appends)
-3. User resolves on the Puppy Garden board card (`POST /v1/task-items/{id}/resolve-routing`)
+2. For each cluster:
+   - **Actionable** → `POST /v1/task-items/routing-proposals` (creates or extends one
+     `routing_proposed` task item; always pre-creates a paused “new task” option)
+   - **FYI only** → `POST /v1/task-events/fyi-clusters`
+3. User resolves on the Puppy Garden board (`Decisions` + `FYI` sections)
 
-Use secretary profile defaults for worker dispatch fields on the proposal.
+Use secretary profile defaults for worker dispatch fields on routing proposals.
 
-For events with no matching task, use grouping proposals (`POST /v1/grouping-proposals`) instead.
+Set `recommend_new_task: true` when no active task is a good fit; the board always
+shows a pre-created new-task option alongside scored existing tasks.
 
 ---
 

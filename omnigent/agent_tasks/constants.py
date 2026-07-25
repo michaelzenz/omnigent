@@ -21,6 +21,8 @@ GROUPING_EVENT_STATES = frozenset({"awaiting_grouping", "grouping_proposed"})
 ORPHAN_EVENT_STATES = frozenset({"awaiting_grouping"})
 ROUTING_PROPOSED_EVENT_STATE = "routing_proposed"
 ROUTING_PROPOSED_ITEM_STATE = "routing_proposed"
+CLASSIFIED_FYI_EVENT_STATE = "classified_fyi"
+FYI_CLUSTER_OPEN_STATE = "awaiting_user_ack"
 DISPATCHABLE_ITEM_STATES = frozenset({"awaiting_user_ack", "approved"})
 
 

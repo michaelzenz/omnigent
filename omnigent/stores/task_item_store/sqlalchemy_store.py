@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy import asc, desc, select
 
 from omnigent.db.db_models import (
+    SqlFyiCluster,
+    SqlFyiClusterEvent,
     SqlGroupingProposal,
     SqlGroupingProposalEvent,
     SqlTaskItem,
@@ -14,13 +16,15 @@ from omnigent.db.db_models import (
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import (
+    decode_fyi_cluster_state,
     decode_grouping_proposal_state,
     decode_task_item_state,
+    encode_fyi_cluster_state,
     encode_grouping_proposal_state,
     encode_task_item_state,
 )
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
-from omnigent.entities import GroupingProposal, TaskItem, TaskItemEvent
+from omnigent.entities import FyiCluster, GroupingProposal, TaskItem, TaskItemEvent
 from omnigent.stores.task_item_store import TaskItemStore
 
 _UNSET: Any = object()
@@ -63,6 +67,19 @@ def _proposal_to_entity(row: SqlGroupingProposal) -> GroupingProposal:
         owner_user_id=row.owner_user_id,
         state=decode_grouping_proposal_state(row.state),
         payload=row.payload,
+        created_at=row.created_at,
+        resolved_at=row.resolved_at,
+    )
+
+
+def _fyi_cluster_to_entity(row: SqlFyiCluster) -> FyiCluster:
+    return FyiCluster(
+        id=row.id,
+        owner_user_id=row.owner_user_id,
+        canonical_key=row.canonical_key,
+        headline=row.headline,
+        rationale=row.rationale,
+        state=decode_fyi_cluster_state(row.state),
         created_at=row.created_at,
         resolved_at=row.resolved_at,
     )
@@ -384,5 +401,136 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 .where(SqlGroupingProposalEvent.workspace_id == current_workspace_id())
                 .where(SqlGroupingProposalEvent.proposal_id == proposal_id)
                 .order_by(asc(SqlGroupingProposalEvent.event_id))
+            )
+            return list(session.execute(stmt).scalars().all())
+
+    def create_fyi_cluster(
+        self,
+        cluster_id: str,
+        owner_user_id: str,
+        headline: str,
+        *,
+        canonical_key: str | None = None,
+        rationale: str | None = None,
+        state: str = "awaiting_user_ack",
+    ) -> FyiCluster:
+        row = SqlFyiCluster(
+            id=cluster_id,
+            owner_user_id=owner_user_id,
+            canonical_key=canonical_key,
+            headline=headline,
+            rationale=rationale,
+            state=encode_fyi_cluster_state(state),
+            created_at=now_epoch(),
+            resolved_at=None,
+        )
+        with self._session() as session:
+            session.add(row)
+            session.flush()
+            return _fyi_cluster_to_entity(row)
+
+    def get_fyi_cluster(self, cluster_id: str) -> FyiCluster | None:
+        with self._session() as session:
+            row = session.get(SqlFyiCluster, (current_workspace_id(), cluster_id))
+            if row is None:
+                return None
+            return _fyi_cluster_to_entity(row)
+
+    def get_open_fyi_cluster_by_canonical_key(
+        self,
+        canonical_key: str,
+    ) -> FyiCluster | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlFyiCluster)
+                .where(SqlFyiCluster.workspace_id == current_workspace_id())
+                .where(SqlFyiCluster.canonical_key == canonical_key)
+                .where(
+                    SqlFyiCluster.state == encode_fyi_cluster_state("awaiting_user_ack"),
+                )
+                .order_by(desc(SqlFyiCluster.created_at), desc(SqlFyiCluster.id))
+                .limit(1)
+            )
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            return _fyi_cluster_to_entity(row)
+
+    def get_fyi_cluster_for_event(self, event_id: str) -> FyiCluster | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlFyiCluster)
+                .join(
+                    SqlFyiClusterEvent,
+                    (SqlFyiClusterEvent.workspace_id == SqlFyiCluster.workspace_id)
+                    & (SqlFyiClusterEvent.cluster_id == SqlFyiCluster.id),
+                )
+                .where(SqlFyiClusterEvent.workspace_id == current_workspace_id())
+                .where(SqlFyiClusterEvent.event_id == event_id)
+                .where(
+                    SqlFyiCluster.state == encode_fyi_cluster_state("awaiting_user_ack"),
+                )
+                .order_by(desc(SqlFyiCluster.created_at), desc(SqlFyiCluster.id))
+                .limit(1)
+            )
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            return _fyi_cluster_to_entity(row)
+
+    def list_fyi_clusters(
+        self,
+        *,
+        owner_user_id: str | None = None,
+        state: str | None = None,
+    ) -> list[FyiCluster]:
+        with self._session() as session:
+            stmt = select(SqlFyiCluster).where(
+                SqlFyiCluster.workspace_id == current_workspace_id(),
+            )
+            if owner_user_id is not None:
+                stmt = stmt.where(SqlFyiCluster.owner_user_id == owner_user_id)
+            if state is not None:
+                stmt = stmt.where(SqlFyiCluster.state == encode_fyi_cluster_state(state))
+            stmt = stmt.order_by(desc(SqlFyiCluster.created_at), desc(SqlFyiCluster.id))
+            rows = session.execute(stmt).scalars().all()
+            return [_fyi_cluster_to_entity(row) for row in rows]
+
+    def update_fyi_cluster(
+        self,
+        cluster_id: str,
+        *,
+        state: str | None = None,
+        headline: str | None = None,
+        rationale: str | None = None,
+        resolved_at: int | None = None,
+    ) -> FyiCluster | None:
+        with self._session() as session:
+            row = session.get(SqlFyiCluster, (current_workspace_id(), cluster_id))
+            if row is None:
+                return None
+            if state is not None:
+                row.state = encode_fyi_cluster_state(state)
+            if headline is not None:
+                row.headline = headline
+            if rationale is not None:
+                row.rationale = rationale
+            if resolved_at is not None:
+                row.resolved_at = resolved_at
+            session.flush()
+            return _fyi_cluster_to_entity(row)
+
+    def link_fyi_cluster_event(self, cluster_id: str, event_id: str) -> None:
+        row = SqlFyiClusterEvent(cluster_id=cluster_id, event_id=event_id)
+        with self._session() as session:
+            session.merge(row)
+
+    def list_fyi_cluster_event_ids(self, cluster_id: str) -> list[str]:
+        with self._session() as session:
+            stmt = (
+                select(SqlFyiClusterEvent.event_id)
+                .where(SqlFyiClusterEvent.workspace_id == current_workspace_id())
+                .where(SqlFyiClusterEvent.cluster_id == cluster_id)
+                .order_by(asc(SqlFyiClusterEvent.event_id))
             )
             return list(session.execute(stmt).scalars().all())

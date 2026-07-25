@@ -34,6 +34,7 @@ _DISMISSABLE_STATES = frozenset(
         "awaiting_grouping",
         "grouping_proposed",
         "routing_proposed",
+        "classified_fyi",
     }
 )
 
