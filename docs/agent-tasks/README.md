@@ -20,17 +20,19 @@ and are reconciled into **task items** (the manager backlog and Puppy Garden inb
 
 ## Routing thresholds
 
-Auto-route when **both** hold:
+The **distributor** auto-routes when **both** hold:
 
 - Top task confidence ≥ `0.6`
 - Margin over second place ≥ `0.15`
 
-Otherwise the event stalls for secretary/user resolution.
+Otherwise the event stalls for the **task secretary**. The secretary routes
+confident matches to a task manager via resolve; only uncertain cases become
+**Decisions** board cards for the user.
 
 ## Event states (routing)
 
 `received` → `routing` → `awaiting_grouping` →
-`routing_proposed` | `classified_fyi` → `routed` → `reconciled` | `dismissed` | `failed`
+`routed` | `routing_proposed` | `classified_fyi` → `reconciled` | `dismissed` | `failed`
 
 Session adoption uses `awaiting_user_ack` (separate lane).
 

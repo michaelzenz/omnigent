@@ -95,7 +95,10 @@ async def wake_task_manager_for_event(
 
 
 def _format_secretary_stall_notice(events: list[TaskEvent]) -> str:
-    lines = ["[System: task event(s) need routing decisions]"]
+    lines = [
+        "[System: task event(s) need routing — resolve or escalate]",
+        "List ambiguous inbox, route confident matches via resolve, else board card.",
+    ]
     for event in events:
         lines.append(f"- {event.event_type}: {event.title!r} ({event.state})")
     return "\n".join(lines)
