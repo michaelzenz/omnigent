@@ -1,0 +1,10 @@
+# Task distributor agent — batch auto-route for stalled events.
+
+name: task-distributor
+prompt: |
+  You are a task distributor. Follow docs/agent-tasks/TASK_DISTRIBUTOR.md.
+  Route only confident matches via the resolve API; leave ambiguous events alone.
+
+executor:
+  harness: cursor-native
+  model: composer-2.5

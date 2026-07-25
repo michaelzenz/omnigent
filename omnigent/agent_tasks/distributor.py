@@ -7,7 +7,8 @@ import uuid
 from typing import Literal
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
-from omnigent.agent_tasks.constants import AUTO_ROUTE_MIN_CONFIDENCE
+from omnigent.agent_tasks.constants import AUTO_ROUTE_MIN_CONFIDENCE, distributor_agent_enabled
+from omnigent.agent_tasks.distributor_queue import enqueue_distributor_event
 from omnigent.agent_tasks.event_types import is_distributor_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
 from omnigent.agent_tasks.scoring import (
@@ -38,6 +39,8 @@ def _bootstrap_params(secretary_profile: UserSecretaryProfile | None) -> Bootstr
     return resolve_bootstrap_params(
         host_id=secretary_profile.host_id if secretary_profile else None,
         workspace=secretary_profile.workspace if secretary_profile else None,
+        harness=secretary_profile.harness if secretary_profile else None,
+        model=secretary_profile.model if secretary_profile else None,
         secretary_profile=secretary_profile,
     )
 
@@ -165,6 +168,18 @@ async def distribute_event(
     ranked = rank_tasks_for_event(event_search_text=event.search_text, tasks=prefiltered)
     _record_routing_attempts(event_id=event.id, ranked=ranked, task_event_store=task_event_store)
 
+    if distributor_agent_enabled():
+        return await _stall(
+            event=event,
+            reason="new_manager_decision",
+            ranked=ranked,
+            task_event_store=task_event_store,
+            secretary_profile_store=secretary_profile_store,
+            conversation_store=conversation_store,
+            runner_router=runner_router,
+            owner_user_id=owner_user_id,
+        )
+
     auto_task = pick_auto_route(ranked)
     if auto_task is not None:
         params = _bootstrap_params(secretary_profile)
@@ -272,14 +287,19 @@ async def _stall(
     runner_router: RunnerRouter | None,
     owner_user_id: str | None,
 ) -> TaskEvent:
-    stall_state = (
-        "awaiting_user_selection"
-        if reason == "user_selection"
-        else "awaiting_grouping"
-    )
+    stall_state = "awaiting_grouping"
+    if not distributor_agent_enabled() and reason == "user_selection":
+        stall_state = "awaiting_user_selection"
     updated = task_event_store.update_event(event.id, state=stall_state)
     if updated is None:
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+    if distributor_agent_enabled():
+        await enqueue_distributor_event(
+            event_id=updated.id,
+            owner_user_id=owner_user_id if owner_user_id is not None else "__anonymous__",
+            ranked=ranked,
+        )
+        return updated
     if secretary_profile_store is not None:
         await wake_secretary_for_stalled_events(
             user_id=owner_user_id if owner_user_id is not None else "__anonymous__",

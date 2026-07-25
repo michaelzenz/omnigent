@@ -16,6 +16,11 @@ AUTO_ROUTE_MIN_CONFIDENCE = 0.6
 AUTO_ROUTE_MIN_MARGIN = 0.15
 AUTO_ROUTE_MAX_CANDIDATES = 10
 
+DISTRIBUTOR_AGENT_ENABLED_ENV = "DISTRIBUTOR_AGENT_ENABLED"
+DISTRIBUTOR_BATCH_DEBOUNCE_SECONDS = 2.0
+DISTRIBUTOR_BATCH_MAX_SIZE = 10
+DISTRIBUTOR_ESCALATION_SECONDS = 60.0
+
 UNRECONCILED_EVENT_STATES = frozenset({"routed"})
 ORPHAN_EVENT_STATES = frozenset({"awaiting_grouping"})
 ROUTING_PROPOSED_EVENT_STATE = "routing_proposed"
@@ -30,3 +35,10 @@ def resolve_task_harness(harness: str) -> str:
     if harness == "cursor":
         return "cursor-native"
     return harness
+
+
+def distributor_agent_enabled() -> bool:
+    """Return whether stalled events enqueue for the task-distributor agent."""
+    from omnigent.server.auth import env_var_is_truthy
+
+    return env_var_is_truthy(DISTRIBUTOR_AGENT_ENABLED_ENV, default=False)

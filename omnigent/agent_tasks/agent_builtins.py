@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from omnigent.stores.agent_store import AgentStore
 
 TASK_SECRETARY_AGENT_NAME = "task-secretary"
+TASK_DISTRIBUTOR_AGENT_NAME = "task-distributor"
 TASK_MANAGER_AGENT_NAME = "task-manager"
 TASK_WORKER_AGENT_NAME = "task-worker"
 TASK_REVIEWER_AGENT_NAME = "task-reviewer"
@@ -16,6 +17,7 @@ TASK_DOCS_AGENT_NAME = "task-docs"
 
 TASK_BUILTIN_AGENT_NAMES: tuple[str, ...] = (
     TASK_SECRETARY_AGENT_NAME,
+    TASK_DISTRIBUTOR_AGENT_NAME,
     TASK_MANAGER_AGENT_NAME,
     TASK_WORKER_AGENT_NAME,
     TASK_REVIEWER_AGENT_NAME,
