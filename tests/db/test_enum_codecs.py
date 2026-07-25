@@ -157,6 +157,17 @@ def test_shipped_codes_are_stable() -> None:
         "dismissed": 8,
         "failed": 9,
         "awaiting_user_ack": 10,
+        "routing_proposed": 11,
+    }
+    assert ec.TASK_ITEM_STATE == {
+        "draft": 1,
+        "awaiting_user_ack": 2,
+        "approved": 3,
+        "queued": 4,
+        "running": 5,
+        "done": 6,
+        "cancelled": 7,
+        "routing_proposed": 8,
     }
     assert ec.TASK_EVENT_ROUTING_DECISION == {
         "proposed": 1,

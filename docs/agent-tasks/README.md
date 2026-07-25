@@ -36,6 +36,8 @@ Session adoption uses `awaiting_user_ack` (separate lane).
 
 ## Task item states
 
+`draft` → `routing_proposed` (secretary routing card) → `running` / `cancelled`
+
 `draft` → `awaiting_user_ack` (inbox) → `approved` → `queued` / `running` / `done` / `cancelled`
 
 ## API

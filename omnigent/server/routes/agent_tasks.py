@@ -33,6 +33,12 @@ from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
 )
+from omnigent.agent_tasks.routing_proposals import (
+    build_orphan_inbox,
+    list_routing_decision_cards,
+    resolve_routing_proposal,
+    upsert_routing_proposal,
+)
 from omnigent.agent_tasks.grouping import (
     create_grouping_proposal,
     resolve_grouping_proposal,
@@ -275,6 +281,47 @@ class ResolveGroupingProposalRequest(BaseModel):
     resolution: Literal["accept_grouping", "reject_grouping"]
 
 
+class CreateRoutingProposalRequest(BaseModel):
+    """Request body for ``POST /v1/task-items/routing-proposals``."""
+
+    canonical_key: str
+    title: str
+    event_ids: list[str] = Field(min_length=1)
+    recommended_task_id: str
+    instructions: str | None = None
+    worker_agent_id: str | None = None
+    model: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    rationale: str | None = None
+    candidates: list[dict[str, Any]] | None = None
+
+    @field_validator("canonical_key", "title", "recommended_task_id")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must be a non-empty string")
+        return stripped
+
+    @field_validator("event_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        return cleaned
+
+
+class ResolveRoutingProposalRequest(BaseModel):
+    """Request body for ``POST /v1/task-items/{item_id}/resolve-routing``."""
+
+    resolution: Literal["accept_routing", "reject_routing"]
+    selected_task_id: str | None = None
+    instructions: str | None = None
+
+
 class AdoptSessionRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
 
@@ -363,6 +410,7 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
         "harness": item.harness,
         "priority": item.priority,
         "created_by": item.created_by,
+        "routing_proposal": item.routing_proposal,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -972,6 +1020,103 @@ def create_agent_tasks_router(
                 "conversation_id": worker_conversation_id,
                 "status": execution.status,
             }
+
+        @router.get("/task-events/orphan-inbox")
+        async def get_orphan_inbox(request: Request) -> dict[str, Any]:
+            """Return orphan events and suggested clusters for secretary reconcile."""
+            require_user(request, auth_provider)
+            return await asyncio.to_thread(
+                build_orphan_inbox,
+                task_event_store=task_event_store,
+                task_item_store=task_item_store,
+                task_store=task_store,
+            )
+
+        @router.post("/task-items/routing-proposals")
+        async def create_routing_proposal_route(
+            request: Request,
+            body: CreateRoutingProposalRequest,
+        ) -> dict[str, Any]:
+            """Create or extend a secretary routing proposal over orphan events."""
+            user_id = require_user(request, auth_provider)
+
+            def _create() -> TaskItem | None:
+                return upsert_routing_proposal(
+                    owner_user_id=_effective_user_id(user_id),
+                    canonical_key=body.canonical_key,
+                    title=body.title,
+                    event_ids=body.event_ids,
+                    recommended_task_id=body.recommended_task_id,
+                    task_store=task_store,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    instructions=body.instructions,
+                    worker_agent_id=body.worker_agent_id,
+                    model=body.model,
+                    host_id=body.host_id,
+                    workspace=body.workspace,
+                    harness=body.harness,
+                    rationale=body.rationale,
+                    candidates=body.candidates,
+                )
+
+            created = await asyncio.to_thread(_create)
+            if created is None:
+                raise OmnigentError(
+                    "No claimable orphan events for routing proposal",
+                    code=ErrorCode.CONFLICT,
+                )
+            return _item_to_response(created)
+
+        @router.get("/agent-tasks/board/decisions")
+        async def list_board_decisions(request: Request) -> dict[str, Any]:
+            """List pending board-level decision cards."""
+            user_id = require_user(request, auth_provider)
+            cards = await asyncio.to_thread(
+                list_routing_decision_cards,
+                owner_user_id=_effective_user_id(user_id),
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                task_store=task_store,
+            )
+            return {
+                "object": "agent.task.board_decision.list",
+                "data": cards,
+            }
+
+        @router.post("/task-items/{item_id}/resolve-routing")
+        async def resolve_routing_proposal_route(
+            request: Request,
+            item_id: str,
+            body: ResolveRoutingProposalRequest,
+        ) -> dict[str, Any]:
+            """Accept or reject a secretary task-item routing proposal."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            profile = None
+            if secretary_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    secretary_profile_store.get,
+                    _effective_user_id(user_id),
+                )
+
+            updated, execution = await resolve_routing_proposal(
+                item=item,
+                resolution=body.resolution,
+                selected_task_id=body.selected_task_id,
+                instructions=body.instructions,
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                agent_store=agent_store,
+                secretary_profile=profile,
+            )
+            response = _item_to_response(updated)
+            if execution is not None:
+                response["execution_id"] = execution.id
+                response["worker_conversation_id"] = execution.conversation_id
+            return response
 
         @router.get("/grouping-proposals")
         async def list_grouping_proposals(

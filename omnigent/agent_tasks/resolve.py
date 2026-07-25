@@ -33,6 +33,7 @@ _DISMISSABLE_STATES = frozenset(
         "awaiting_user_selection",
         "awaiting_grouping",
         "grouping_proposed",
+        "routing_proposed",
     }
 )
 

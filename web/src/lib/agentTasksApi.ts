@@ -220,3 +220,64 @@ export async function updateTaskItem(
   });
   return readJson<TaskItemSummary>(res);
 }
+
+export interface RoutingCandidateSummary {
+  task_id: string;
+  task_title: string;
+  score: number | null;
+  recommended: boolean;
+}
+
+export interface TaskItemRoutingBody {
+  title: string;
+  instructions: string | null;
+  canonical_key: string | null;
+  recommended_task_id: string;
+  events: TaskEventSummary[];
+  candidates: RoutingCandidateSummary[];
+  worker_agent_id: string | null;
+  model: string | null;
+  harness: string | null;
+  host_id: string | null;
+  workspace: string | null;
+}
+
+export interface BoardDecisionCard {
+  id: string;
+  kind: "task_item_routing";
+  state: "pending";
+  created_at: number;
+  resolved_at: number | null;
+  headline: string;
+  rationale: string | null;
+  body: TaskItemRoutingBody;
+}
+
+export type RoutingResolution = "accept_routing" | "reject_routing";
+
+export async function fetchBoardDecisions(): Promise<BoardDecisionCard[]> {
+  const res = await authenticatedFetch("/v1/agent-tasks/board/decisions");
+  const body = await readJson<{ data: BoardDecisionCard[] }>(res);
+  return body.data;
+}
+
+export async function resolveRoutingProposal(
+  itemId: string,
+  body: {
+    resolution: RoutingResolution;
+    selected_task_id?: string;
+    instructions?: string;
+  },
+): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/task-items/${encodeURIComponent(itemId)}/resolve-routing`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}

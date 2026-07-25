@@ -18,6 +18,9 @@ AUTO_ROUTE_MAX_CANDIDATES = 10
 
 UNRECONCILED_EVENT_STATES = frozenset({"routed"})
 GROUPING_EVENT_STATES = frozenset({"awaiting_grouping", "grouping_proposed"})
+ORPHAN_EVENT_STATES = frozenset({"awaiting_grouping"})
+ROUTING_PROPOSED_EVENT_STATE = "routing_proposed"
+ROUTING_PROPOSED_ITEM_STATE = "routing_proposed"
 DISPATCHABLE_ITEM_STATES = frozenset({"awaiting_user_ack", "approved"})
 
 

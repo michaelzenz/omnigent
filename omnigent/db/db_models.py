@@ -1524,7 +1524,10 @@ class SqlTaskEvent(OmnigentBase):
     processed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)", name="ck_task_events_state"),
+        CheckConstraint(
+            "state IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)",
+            name="ck_task_events_state",
+        ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
         Index("ix_task_events_state_created", "workspace_id", "state", "created_at", "id"),
         Index("ix_task_events_event_type", "workspace_id", "event_type", "created_at", "id"),
@@ -1577,13 +1580,20 @@ class SqlTaskItem(OmnigentBase):
     harness: Mapped[str | None] = mapped_column(String(64), nullable=True)
     priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
     created_by: Mapped[str] = mapped_column(String(32), nullable=False, server_default="manager")
+    routing_proposal: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7)", name="ck_task_items_state"),
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_task_items_state"),
         Index("ix_task_items_task_state", "workspace_id", "task_id", "state", "id"),
         Index("ix_task_items_task_canonical_key", "workspace_id", "task_id", "canonical_key"),
+        Index(
+            "ix_task_items_routing_canonical",
+            "workspace_id",
+            "canonical_key",
+            "state",
+        ),
     )
 
 

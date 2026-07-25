@@ -129,6 +129,8 @@ TASK_EVENT_STATE: dict[str, int] = {
     "failed": 9,
     # Session adoption proposals only.
     "awaiting_user_ack": 10,
+    # Linked to a secretary routing-proposed task item.
+    "routing_proposed": 11,
 }
 
 TASK_ITEM_STATE: dict[str, int] = {
@@ -139,6 +141,8 @@ TASK_ITEM_STATE: dict[str, int] = {
     "running": 5,
     "done": 6,
     "cancelled": 7,
+    # Secretary item awaiting user task-routing decision.
+    "routing_proposed": 8,
 }
 
 GROUPING_PROPOSAL_STATE: dict[str, int] = {

@@ -33,12 +33,33 @@ class TaskItemStore(ABC):
         harness: str | None = None,
         priority: int = 0,
         created_by: str = "manager",
+        routing_proposal: str | None = None,
     ) -> TaskItem:
         """Insert a new task item."""
 
     @abstractmethod
     def get_item(self, item_id: str) -> TaskItem | None:
         """Return one task item by id."""
+
+    @abstractmethod
+    def get_open_routing_item_by_canonical_key(
+        self,
+        canonical_key: str,
+    ) -> TaskItem | None:
+        """Return the open secretary routing proposal for a canonical key."""
+
+    @abstractmethod
+    def list_items_by_state(
+        self,
+        state: str,
+        *,
+        created_by: str | None = None,
+    ) -> list[TaskItem]:
+        """List task items in one state, newest first."""
+
+    @abstractmethod
+    def get_routing_item_for_event(self, event_id: str) -> TaskItem | None:
+        """Return an open routing-proposed item linked to an event, if any."""
 
     @abstractmethod
     def get_item_by_canonical_key(
@@ -72,6 +93,8 @@ class TaskItemStore(ABC):
         workspace: str | None = _UNSET,
         harness: str | None = _UNSET,
         priority: int | None = None,
+        task_id: str | None = None,
+        routing_proposal: str | None = _UNSET,
     ) -> TaskItem | None:
         """Update mutable task-item fields."""
 

@@ -44,6 +44,7 @@ def _item_to_entity(row: SqlTaskItem) -> TaskItem:
         priority=row.priority,
         created_by=row.created_by,
         updated_at=row.updated_at,
+        routing_proposal=row.routing_proposal,
     )
 
 
@@ -91,6 +92,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         harness: str | None = None,
         priority: int = 0,
         created_by: str = "manager",
+        routing_proposal: str | None = None,
     ) -> TaskItem:
         row = SqlTaskItem(
             id=item_id,
@@ -106,6 +108,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             harness=harness,
             priority=priority,
             created_by=created_by,
+            routing_proposal=routing_proposal,
             created_at=now_epoch(),
             updated_at=None,
         )
@@ -139,6 +142,66 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 if decode_task_item_state(row.state) in _OPEN_ITEM_STATES:
                     return _item_to_entity(row)
             return None
+
+    def get_open_routing_item_by_canonical_key(
+        self,
+        canonical_key: str,
+    ) -> TaskItem | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskItem)
+                .where(SqlTaskItem.workspace_id == current_workspace_id())
+                .where(SqlTaskItem.canonical_key == canonical_key)
+                .where(
+                    SqlTaskItem.state == encode_task_item_state("routing_proposed"),
+                )
+                .where(SqlTaskItem.created_by == "secretary")
+                .order_by(desc(SqlTaskItem.created_at), desc(SqlTaskItem.id))
+                .limit(1)
+            )
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            return _item_to_entity(row)
+
+    def list_items_by_state(
+        self,
+        state: str,
+        *,
+        created_by: str | None = None,
+    ) -> list[TaskItem]:
+        with self._session() as session:
+            stmt = select(SqlTaskItem).where(
+                SqlTaskItem.workspace_id == current_workspace_id(),
+            )
+            stmt = stmt.where(SqlTaskItem.state == encode_task_item_state(state))
+            if created_by is not None:
+                stmt = stmt.where(SqlTaskItem.created_by == created_by)
+            stmt = stmt.order_by(desc(SqlTaskItem.created_at), desc(SqlTaskItem.id))
+            rows = session.execute(stmt).scalars().all()
+            return [_item_to_entity(row) for row in rows]
+
+    def get_routing_item_for_event(self, event_id: str) -> TaskItem | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskItem)
+                .join(
+                    SqlTaskItemEvent,
+                    (SqlTaskItemEvent.workspace_id == SqlTaskItem.workspace_id)
+                    & (SqlTaskItemEvent.task_item_id == SqlTaskItem.id),
+                )
+                .where(SqlTaskItemEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskItemEvent.event_id == event_id)
+                .where(
+                    SqlTaskItem.state == encode_task_item_state("routing_proposed"),
+                )
+                .order_by(desc(SqlTaskItem.created_at), desc(SqlTaskItem.id))
+                .limit(1)
+            )
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            return _item_to_entity(row)
 
     def list_items_for_task(
         self,
@@ -176,6 +239,8 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         workspace: str | None = _UNSET,
         harness: str | None = _UNSET,
         priority: int | None = None,
+        task_id: str | None = None,
+        routing_proposal: str | None = _UNSET,
     ) -> TaskItem | None:
         with self._session() as session:
             row = session.get(SqlTaskItem, (current_workspace_id(), item_id))
@@ -185,6 +250,8 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 row.title = title
             if state is not None:
                 row.state = encode_task_item_state(state)
+            if task_id is not None:
+                row.task_id = task_id
             if canonical_key is not _UNSET:
                 row.canonical_key = canonical_key
             if instructions is not _UNSET:
@@ -199,6 +266,8 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 row.workspace = workspace
             if harness is not _UNSET:
                 row.harness = harness
+            if routing_proposal is not _UNSET:
+                row.routing_proposal = routing_proposal
             if priority is not None:
                 row.priority = priority
             row.updated_at = now_epoch()
