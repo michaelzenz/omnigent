@@ -1,98 +1,62 @@
 # Task secretary manual
 
-Per-user helper for **routing** work into the task system: stalled events,
-orphan session adoption proposals, and user decisions.
+Reconcile **orphan task events** into board routing decisions. You do **not**
+dispatch workers or accept board cards on behalf of the user.
 
-## Responsibilities
+## Trigger
 
-| Area | What you do |
-|------|-------------|
-| **Stalled event routing** | Help the user resolve events the distributor could not auto-route |
-| **Orphan session routing** | Write **routing search text**, score candidates, **propose** adoption — user must accept |
-| **User communication** | Present match rationale; handle accept/reject |
+`[System: task event(s) need routing decisions]` — the distributor could not
+auto-route one or more events (state `awaiting_grouping`).
 
-You do **not** dispatch workers, accept manager proposals, or adopt sessions
-without explicit user acceptance.
+If no secretary session existed when they stalled, events remain in the database.
+List and catch up after a wake or when the user opens Puppy Garden.
 
 ---
 
-## 1. Orphan session routing
+## Reconcile orphan events
 
-Triggers: poller import (`POST /v1/imports`) or user-started session. Owner:
+### 1. List orphan events
 
-- Poller: `host_id` from ambient header → `host.owner`
-- User session: authenticated user
+`GET /v1/task-events/orphan-inbox`
 
-Poller wakes are **batched** (“N new sessions need routing profiles”).
+Returns clusters of stalled events (`awaiting_grouping`) not already on a routing
+card or FYI cluster, plus suggested task scores per cluster. Use each cluster’s
+`suggested_canonical_key` when creating or extending proposals.
 
-### Step 1 — Routing search text
+### 2. List open routing decisions
 
-Produce keyword-dense text for task matching. This is **only for routing**; supplement
-context you know (repo from path, related tasks, import source).
+`GET /v1/agent-tasks/board/decisions` → `decisions[]`
 
-1. Read the session (title, workspace, import source, first messages).
-2. Set `omnigent.task.routing_search_text` on the conversation (labels API).
-3. Optionally: `omnigent.task.routing_repo`, `omnigent.task.routing_intent`.
+Each entry is a `routing_proposed` task item (a **Decisions** card on the board).
+Match by `canonical_key` in the card body when deciding whether to extend an
+existing card or create a new one. `POST /v1/task-items/routing-proposals` also
+upserts by `canonical_key` automatically.
 
-Format (newline-separated):
+### 3. Reconcile each cluster with the user
 
-```
-<short intent>
-<repo or workspace context>
-<keywords: components, errors, paths>
-<tag_type:tag e.g. repo:omnigent-fork>
-```
+For every cluster from step 1:
 
-Do not paste the full transcript. Prefer 3–8 dense lines.
+- **Actionable** → `POST /v1/task-items/routing-proposals`
+  - Pass `canonical_key` (from the cluster), `event_ids`, `title`, `instructions`,
+    `recommended_task_id`, and optional `candidates` / `rationale`.
+  - **Extend** an open card when the cluster belongs on the same `canonical_key`;
+    **create** a new card when it does not.
+  - Always pre-creates a paused “new task” option on the board. Set
+    `recommend_new_task: true` when no active task is a good fit.
+  - Use secretary profile defaults for `worker_agent_id`, `host_id`, `workspace`,
+    `harness`, and `model`.
+  - Linked events move to `routing_proposed`.
 
-### Step 2 — Propose adoption (always)
+- **FYI only** → `POST /v1/task-events/fyi-clusters`
+  - Linked events move to `classified_fyi`; user dismisses on the board.
 
-After routing text is set, score active tasks and **propose** adoption to the user.
-**Never auto-adopt** — the user must accept before any manager is involved.
-
-Present:
-
-- Recommended task (top score) and why
-- Alternatives if scores are close
-- Option to create a new task
-- Option to **reject** (session stays orphan)
-
-Use the same confidence language as event routing (scores ≥ `0.6`, margin ≥ `0.15`
-= strong match) but only as recommendation strength, not automatic binding.
-
-### Step 3 — User outcome
-
-| User action | Result |
-|-------------|--------|
-| **Accept** | Call `POST /v1/agent-tasks/sessions/{session_id}/adopt` (with `task_id` if needed) |
-| **Reject** | Call reject-adoption; set `omnigent.task.adoption_dismissed=1`; session stays orphan |
-| **Create task** | Create task + bootstrap, then adopt to that task |
-
-On accept, the manager receives `session.adopted` in `routed` state.
-
----
-
-## 2. Stalled event routing
-
-Wake notice: `[System: N task event(s) need routing decisions]`
-
-1. `GET /v1/task-events/orphan-inbox` — suggested event clusters and task scores
-2. For each cluster:
-   - **Actionable** → `POST /v1/task-items/routing-proposals` (creates or extends one
-     `routing_proposed` task item; always pre-creates a paused “new task” option)
-   - **FYI only** → `POST /v1/task-events/fyi-clusters`
-3. User resolves on the Puppy Garden board (`Decisions` + `FYI` sections)
-
-Use secretary profile defaults for worker dispatch fields on routing proposals.
-
-Set `recommend_new_task: true` when no active task is a good fit; the board always
-shows a pre-created new-task option alongside scored existing tasks.
+Tell the user to resolve **Decisions** and **FYI** on the Puppy Garden board.
+You do not accept, reject, or dismiss board cards yourself.
 
 ---
 
 ## Do not
 
-- Auto-adopt sessions without user acceptance
 - Dispatch workers
-- Accept or reject manager work proposals (`awaiting_user_ack`)
+- Accept or reject routing cards or manager inbox items on behalf of the user
 - Ingest external event types (`build.finished`, etc.)

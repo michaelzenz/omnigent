@@ -98,7 +98,7 @@ def _format_secretary_stall_notice(
     events: list[TaskEvent],
     ranked_candidates: dict[str, list[tuple[Task, float]]],
 ) -> str:
-    lines = [f"[System: {len(events)} task event(s) need routing decisions]"]
+    lines = ["[System: task event(s) need routing decisions]"]
     for event in events:
         candidates = ranked_candidates.get(event.id, [])
         candidate_text = ""

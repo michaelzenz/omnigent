@@ -9,7 +9,7 @@ Wake notices:
 
 - `[System: task event … routed to this manager]`
 - `[System: worker execution … for item …]`
-- `[System: N task event(s) need routing decisions]` (secretary lane)
+- `[System: task event(s) need routing decisions]` (secretary lane)
 
 ## Reconcile routed events
 
