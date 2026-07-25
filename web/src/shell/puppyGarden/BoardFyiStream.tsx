@@ -27,9 +27,9 @@ export function BoardFyiStream() {
 
   return (
     <section className="space-y-3" data-testid="board-fyi-stream">
-      <h2 className="text-sm font-medium text-foreground">
+      <h2 className="text-sm font-semibold text-foreground">
         FYI
-        <span className="ml-2 text-muted-foreground">
+        <span className="ml-2 font-medium text-foreground/65">
           ({signalCount} signal{signalCount === 1 ? "" : "s"})
         </span>
       </h2>
