@@ -95,11 +95,3 @@ def pick_auto_route(
         return None
     return top_task
 
-
-def candidates_above_threshold(
-    ranked: list[tuple[Task, float]],
-    *,
-    min_confidence: float = AUTO_ROUTE_MIN_CONFIDENCE,
-) -> list[tuple[Task, float]]:
-    """Return ranked tasks whose confidence meets the auto-route floor."""
-    return [(task, score) for task, score in ranked if score >= min_confidence]

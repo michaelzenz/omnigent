@@ -99,9 +99,7 @@ class CreateIngressTaskEventRequest(BaseModel):
 class ResolveTaskEventRequest(BaseModel):
     """Request body for ``POST /v1/task-events/{event_id}/resolve``."""
 
-    resolution: Literal["route_to_task", "select_attempt"]
-    task_id: str | None = None
-    routing_attempt_id: str | None = None
+    task_id: str
     host_id: str | None = None
     workspace: str | None = None
     harness: str | None = None
@@ -350,24 +348,18 @@ def create_task_events_router(
         event = await _get_event_or_404(event_id)
         profile = await _load_secretary_profile(user_id)
 
-        task: Task | None = None
-        if body.resolution == "route_to_task":
-            if body.task_id is None:
-                raise OmnigentError("task_id is required", code=ErrorCode.INVALID_INPUT)
-            task = await asyncio.to_thread(task_store.get, body.task_id)
-            if task is None:
-                raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-            _require_task_access(task, user_id)
+        task = await asyncio.to_thread(task_store.get, body.task_id)
+        if task is None:
+            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+        _require_task_access(task, user_id)
         updated = await resolve_task_event(
             event=event,
-            resolution=body.resolution,
             task_store=task_store,
             task_event_store=task_event_store,
             conversation_store=conversation_store,
             agent_store=agent_store,
             runner_router=_runner_router(request),
             task=task,
-            routing_attempt_id=body.routing_attempt_id,
             resolved_by_user_id=user_id,
             host_id=body.host_id,
             workspace=body.workspace,
@@ -418,10 +410,10 @@ def create_task_events_router(
             event = await _get_event_or_404(event_id)
             updated = await resolve_task_event(
                 event=event,
-                resolution="route_to_task",
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 runner_router=runner_router,
                 task=task,
                 resolved_by_user_id=user_id,

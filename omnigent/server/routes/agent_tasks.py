@@ -38,7 +38,7 @@ from omnigent.agent_tasks.fyi_clusters import (
     upsert_fyi_cluster,
 )
 from omnigent.agent_tasks.routing_proposals import (
-    build_orphan_inbox,
+    build_ambiguous_inbox,
     list_board_triage,
     resolve_routing_proposal,
     upsert_routing_proposal,
@@ -266,7 +266,7 @@ class CreateRoutingProposalRequest(BaseModel):
     canonical_key: str
     title: str
     event_ids: list[str] = Field(min_length=1)
-    recommended_task_id: str
+    suggested_task_id: str | None = None
     instructions: str | None = None
     worker_agent_id: str | None = None
     model: str | None = None
@@ -275,14 +275,13 @@ class CreateRoutingProposalRequest(BaseModel):
     harness: str | None = None
     rationale: str | None = None
     candidates: list[dict[str, Any]] | None = None
-    recommend_new_task: bool = False
     proposed_task_id: str | None = None
     proposed_task_title: str | None = None
     proposed_task_charter: str | None = None
     proposed_task_description: str | None = None
     proposed_task_manager_agent_id: str | None = None
 
-    @field_validator("canonical_key", "title", "recommended_task_id")
+    @field_validator("canonical_key", "title")
     @classmethod
     def _non_empty(cls, value: str) -> str:
         stripped = value.strip()
@@ -341,8 +340,7 @@ class ResolveFyiClusterRequest(BaseModel):
     resolution: Literal["dismiss_fyi", "promote_to_routing"]
     routing_title: str | None = None
     routing_instructions: str | None = None
-    recommended_task_id: str | None = None
-    recommend_new_task: bool = False
+    suggested_task_id: str | None = None
     proposed_task_title: str | None = None
     proposed_task_charter: str | None = None
     worker_agent_id: str | None = None
@@ -1040,12 +1038,12 @@ def create_agent_tasks_router(
                 "status": execution.status,
             }
 
-        @router.get("/task-events/orphan-inbox")
-        async def get_orphan_inbox(request: Request) -> dict[str, Any]:
-            """Return orphan events and suggested clusters for secretary reconcile."""
+        @router.get("/task-events/ambiguous-inbox")
+        async def get_ambiguous_inbox(request: Request) -> dict[str, Any]:
+            """Return ambiguous events and suggested clusters for secretary reconcile."""
             require_user(request, auth_provider)
             return await asyncio.to_thread(
-                build_orphan_inbox,
+                build_ambiguous_inbox,
                 task_event_store=task_event_store,
                 task_item_store=task_item_store,
                 task_store=task_store,
@@ -1056,7 +1054,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateRoutingProposalRequest,
         ) -> dict[str, Any]:
-            """Create or extend a secretary routing proposal over orphan events."""
+            """Create or extend a secretary routing proposal over ambiguous events."""
             user_id = require_user(request, auth_provider)
 
             def _create() -> TaskItem | None:
@@ -1065,7 +1063,7 @@ def create_agent_tasks_router(
                     canonical_key=body.canonical_key,
                     title=body.title,
                     event_ids=body.event_ids,
-                    recommended_task_id=body.recommended_task_id,
+                    suggested_task_id=body.suggested_task_id,
                     task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
@@ -1077,7 +1075,6 @@ def create_agent_tasks_router(
                     harness=body.harness,
                     rationale=body.rationale,
                     candidates=body.candidates,
-                    recommend_new_task=body.recommend_new_task,
                     proposed_task_id=body.proposed_task_id,
                     proposed_task_title=body.proposed_task_title,
                     proposed_task_charter=body.proposed_task_charter,
@@ -1088,7 +1085,7 @@ def create_agent_tasks_router(
             created = await asyncio.to_thread(_create)
             if created is None:
                 raise OmnigentError(
-                    "No claimable orphan events for routing proposal",
+                    "No claimable ambiguous events for routing proposal",
                     code=ErrorCode.CONFLICT,
                 )
             return _item_to_response(created)
@@ -1147,7 +1144,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateFyiClusterRequest,
         ) -> dict[str, Any]:
-            """Create or extend a secretary FYI cluster over orphan events."""
+            """Create or extend a secretary FYI cluster over ambiguous events."""
             user_id = require_user(request, auth_provider)
 
             def _create() -> FyiCluster | None:
@@ -1164,7 +1161,7 @@ def create_agent_tasks_router(
             created = await asyncio.to_thread(_create)
             if created is None:
                 raise OmnigentError(
-                    "No claimable orphan events for FYI cluster",
+                    "No claimable ambiguous events for FYI cluster",
                     code=ErrorCode.CONFLICT,
                 )
             return {
@@ -1201,7 +1198,7 @@ def create_agent_tasks_router(
                 task_event_store=task_event_store,
                 routing_title=body.routing_title,
                 routing_instructions=body.routing_instructions,
-                recommended_task_id=body.recommended_task_id,
+                suggested_task_id=body.suggested_task_id,
                 worker_agent_id=body.worker_agent_id,
                 model=body.model,
                 host_id=body.host_id,
@@ -1210,7 +1207,6 @@ def create_agent_tasks_router(
                 manager_agent_id=body.manager_agent_id,
                 proposed_task_title=body.proposed_task_title,
                 proposed_task_charter=body.proposed_task_charter,
-                recommend_new_task=body.recommend_new_task,
             )
             response: dict[str, Any] = {
                 "object": "agent.task.fyi_cluster",

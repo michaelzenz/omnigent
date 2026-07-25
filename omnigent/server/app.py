@@ -1358,12 +1358,14 @@ def create_app(
 
         set_runner_router(runner_router)
 
-        from omnigent.agent_tasks.distributor_queue import (
-            start_distributor_consumer,
-            stop_distributor_consumer,
+        from omnigent.agent_tasks.secretary_queue import (
+            SecretaryQueueContext,
+            configure_secretary_queue,
+            start_secretary_consumer,
+            stop_secretary_consumer,
         )
 
-        await start_distributor_consumer()
+        await start_secretary_consumer()
 
         # Wake a blocked sub-agent's immediate parent: hooks
         # ``pending_elicitations.record_publish`` to post a ``[System: …]``
@@ -1475,7 +1477,7 @@ def create_app(
             from omnigent.server.routes.sessions import cancel_managed_launch_tasks
 
             await cancel_managed_launch_tasks()
-            await stop_distributor_consumer()
+            await stop_secretary_consumer()
             _uninstall_subagent_block_notifier()
             set_resource_registry(None)
             set_runner_ws_factory(None)
@@ -2285,9 +2287,9 @@ def create_app(
         )
         from omnigent.agent_tasks.completion import TaskCompletionContext, configure_task_completion
         from omnigent.agent_tasks.adoption import SessionAdoptionContext, configure_session_adoption
-        from omnigent.agent_tasks.distributor_queue import (
-            DistributorQueueContext,
-            configure_distributor_queue,
+        from omnigent.agent_tasks.secretary_queue import (
+            SecretaryQueueContext,
+            configure_secretary_queue,
         )
 
         configure_task_completion(
@@ -2310,18 +2312,16 @@ def create_app(
             )
         )
         if secretary_profile_store is not None:
-            configure_distributor_queue(
-                DistributorQueueContext(
-                    task_store=task_store,
+            configure_secretary_queue(
+                SecretaryQueueContext(
                     task_event_store=task_event_store,
                     conversation_store=conversation_store,
-                    agent_store=agent_store,
                     secretary_profile_store=secretary_profile_store,
                     runner_router=runner_router,
                 )
             )
         else:
-            configure_distributor_queue(None)
+            configure_secretary_queue(None)
     if policy_store is not None:
         app.include_router(
             create_session_policies_router(

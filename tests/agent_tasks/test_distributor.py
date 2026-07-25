@@ -90,6 +90,10 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
     )
     assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]
+    attempts = event_store.list_routing_attempts(event_id)
+    assert len(attempts) == 1
+    assert attempts[0].decision == "selected"
+    assert attempts[0].candidate_task_id == stores["task_id"]
 
 
 @pytest.mark.asyncio

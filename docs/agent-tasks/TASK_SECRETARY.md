@@ -1,6 +1,6 @@
 # Task secretary manual
 
-Reconcile **orphan task events** into board routing decisions. You do **not**
+Reconcile **ambiguous task events** into board routing decisions. You do **not**
 dispatch workers or accept board cards on behalf of the user.
 
 ## Trigger
@@ -13,11 +13,11 @@ List and catch up after a wake or when the user opens Puppy Garden.
 
 ---
 
-## Reconcile orphan events
+## Reconcile ambiguous events
 
-### 1. List orphan events
+### 1. List ambiguous events
 
-`GET /v1/task-events/orphan-inbox`
+`GET /v1/task-events/ambiguous-inbox`
 
 Returns clusters of stalled events (`awaiting_grouping`) not already on a routing
 card or FYI cluster, plus suggested task scores per cluster. Use each cluster’s
@@ -38,11 +38,13 @@ For every cluster from step 1:
 
 - **Actionable** → `POST /v1/task-items/routing-proposals`
   - Pass `canonical_key` (from the cluster), `event_ids`, `title`, `instructions`,
-    `recommended_task_id`, and optional `candidates` / `rationale`.
+    optional `suggested_task_id`, and optional `candidates` / `rationale`.
   - **Extend** an open card when the cluster belongs on the same `canonical_key`;
     **create** a new card when it does not.
-  - Always pre-creates a paused “new task” option on the board. Set
-    `recommend_new_task: true` when no active task is a good fit.
+  - A paused “new task” option is always included on the board. Set
+    `suggested_task_id` to an existing task id to pre-select it; omit it (or pass
+    `null`) to pre-select the new-task option.
+  - Include `suggested_candidates` from ambiguous inbox when scores are useful.
   - Use secretary profile defaults for `worker_agent_id`, `host_id`, `workspace`,
     `harness`, and `model`.
   - Linked events move to `routing_proposed`.

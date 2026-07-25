@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from omnigent.agent_tasks.routing_proposals import (
-    cluster_orphan_events,
+    cluster_ambiguous_events,
     derive_cluster_key,
     upsert_routing_proposal,
 )
@@ -52,7 +52,7 @@ def test_derive_cluster_key_from_tags() -> None:
     assert derive_cluster_key(event, tags) == "pr:org/repo#891"
 
 
-def test_cluster_orphan_events_groups_by_pr(stores) -> None:
+def test_cluster_ambiguous_events_groups_by_pr(stores) -> None:
     event_store = stores["event"]
     e1 = event_store.create_event(
         _uid("e1"),
@@ -82,7 +82,7 @@ def test_cluster_orphan_events_groups_by_pr(stores) -> None:
         e1.id: event_store.get_event_tags(e1.id),
         e2.id: event_store.get_event_tags(e2.id),
     }
-    clusters = cluster_orphan_events([e1, e2], tags_by_event_id=tags_by_id)
+    clusters = cluster_ambiguous_events([e1, e2], tags_by_event_id=tags_by_id)
     assert len(clusters) == 1
     assert len(clusters[0].events) == 2
     assert clusters[0].suggested_canonical_key == "pr:org/repo#891"
@@ -120,7 +120,7 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
         canonical_key="pr:org/repo#891",
         title="Fix PR 891",
         event_ids=[e1.id],
-        recommended_task_id=task_id,
+        suggested_task_id=task_id,
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
@@ -152,7 +152,7 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
         canonical_key="pr:org/repo#891",
         title="Fix PR 891",
         event_ids=[e2.id],
-        recommended_task_id=task_id,
+        suggested_task_id=task_id,
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,

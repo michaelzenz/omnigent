@@ -4,22 +4,13 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Literal
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
-from omnigent.agent_tasks.constants import AUTO_ROUTE_MIN_CONFIDENCE, distributor_agent_enabled
-from omnigent.agent_tasks.distributor_queue import enqueue_distributor_event
 from omnigent.agent_tasks.event_types import is_distributor_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
-from omnigent.agent_tasks.scoring import (
-    candidates_above_threshold,
-    pick_auto_route,
-    rank_tasks_for_event,
-)
-from omnigent.agent_tasks.wake import (
-    wake_secretary_for_stalled_events,
-    wake_task_manager_for_event,
-)
+from omnigent.agent_tasks.scoring import pick_auto_route, rank_tasks_for_event
+from omnigent.agent_tasks.secretary_queue import enqueue_secretary_event
+from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -31,8 +22,6 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
-
-StallReason = Literal["user_selection", "new_manager_decision"]
 
 
 def _bootstrap_params(secretary_profile: UserSecretaryProfile | None) -> BootstrapParams:
@@ -49,23 +38,24 @@ def _generate_attempt_id() -> str:
     return uuid.uuid4().hex
 
 
-def _record_routing_attempts(
+def _record_auto_route_attempt(
     *,
     event_id: str,
-    ranked: list[tuple[Task, float]],
+    task: Task,
+    rank: int,
+    score: float,
     task_event_store: TaskEventStore,
 ) -> None:
-    for rank, (task, score) in enumerate(ranked, start=1):
-        decision = "accepted" if score >= AUTO_ROUTE_MIN_CONFIDENCE else "proposed"
-        task_event_store.create_routing_attempt(
-            _generate_attempt_id(),
-            event_id,
-            task.id,
-            task.manager_agent_id,
-            rank,
-            score=score,
-            decision=decision,
-        )
+    """Persist the winning auto-route choice for monitoring."""
+    task_event_store.create_routing_attempt(
+        _generate_attempt_id(),
+        event_id,
+        task.id,
+        task.manager_agent_id,
+        rank,
+        score=score,
+        decision="selected",
+    )
 
 
 async def distribute_event(
@@ -113,12 +103,7 @@ async def distribute_event(
             )
         return await _stall(
             event=event,
-            reason="new_manager_decision",
-            ranked=[],
             task_event_store=task_event_store,
-            secretary_profile_store=secretary_profile_store,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
             owner_user_id=owner_user_id,
         )
 
@@ -145,12 +130,7 @@ async def distribute_event(
     if not active_tasks:
         return await _stall(
             event=event,
-            reason="new_manager_decision",
-            ranked=[],
             task_event_store=task_event_store,
-            secretary_profile_store=secretary_profile_store,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
             owner_user_id=owner_user_id,
         )
 
@@ -166,22 +146,22 @@ async def distribute_event(
             seen_ids.add(task.id)
 
     ranked = rank_tasks_for_event(event_search_text=event.search_text, tasks=prefiltered)
-    _record_routing_attempts(event_id=event.id, ranked=ranked, task_event_store=task_event_store)
-
-    if distributor_agent_enabled():
-        return await _stall(
-            event=event,
-            reason="new_manager_decision",
-            ranked=ranked,
-            task_event_store=task_event_store,
-            secretary_profile_store=secretary_profile_store,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
-            owner_user_id=owner_user_id,
-        )
-
     auto_task = pick_auto_route(ranked)
     if auto_task is not None:
+        auto_rank = 1
+        auto_score = 0.0
+        for rank, (task, score) in enumerate(ranked, start=1):
+            if task.id == auto_task.id:
+                auto_rank = rank
+                auto_score = score
+                break
+        _record_auto_route_attempt(
+            event_id=event.id,
+            task=auto_task,
+            rank=auto_rank,
+            score=auto_score,
+            task_event_store=task_event_store,
+        )
         params = _bootstrap_params(secretary_profile)
         return await _finish_route(
             event=event,
@@ -196,27 +176,9 @@ async def distribute_event(
             owner_user_id=owner_user_id,
         )
 
-    above = candidates_above_threshold(ranked)
-    if above:
-        return await _stall(
-            event=event,
-            reason="user_selection",
-            ranked=above,
-            task_event_store=task_event_store,
-            secretary_profile_store=secretary_profile_store,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
-            owner_user_id=owner_user_id,
-        )
-
     return await _stall(
         event=event,
-        reason="new_manager_decision",
-        ranked=ranked,
         task_event_store=task_event_store,
-        secretary_profile_store=secretary_profile_store,
-        conversation_store=conversation_store,
-        runner_router=runner_router,
         owner_user_id=owner_user_id,
     )
 
@@ -257,12 +219,7 @@ async def _finish_route(
         )
         return await _stall(
             event=event,
-            reason="new_manager_decision",
-            ranked=[(task, 1.0)],
             task_event_store=task_event_store,
-            secretary_profile_store=secretary_profile_store,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
             owner_user_id=owner_user_id,
         )
 
@@ -279,34 +236,14 @@ async def _finish_route(
 async def _stall(
     *,
     event: TaskEvent,
-    reason: StallReason,
-    ranked: list[tuple[Task, float]],
     task_event_store: TaskEventStore,
-    secretary_profile_store: SecretaryProfileStore | None,
-    conversation_store: ConversationStore,
-    runner_router: RunnerRouter | None,
     owner_user_id: str | None,
 ) -> TaskEvent:
-    stall_state = "awaiting_grouping"
-    if not distributor_agent_enabled() and reason == "user_selection":
-        stall_state = "awaiting_user_selection"
-    updated = task_event_store.update_event(event.id, state=stall_state)
+    updated = task_event_store.update_event(event.id, state="awaiting_grouping")
     if updated is None:
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-    if distributor_agent_enabled():
-        await enqueue_distributor_event(
-            event_id=updated.id,
-            owner_user_id=owner_user_id if owner_user_id is not None else "__anonymous__",
-            ranked=ranked,
-        )
-        return updated
-    if secretary_profile_store is not None:
-        await wake_secretary_for_stalled_events(
-            user_id=owner_user_id if owner_user_id is not None else "__anonymous__",
-            events=[updated],
-            ranked_candidates={updated.id: ranked},
-            secretary_profile_store=secretary_profile_store,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
-        )
+    await enqueue_secretary_event(
+        event_id=updated.id,
+        owner_user_id=owner_user_id if owner_user_id is not None else "__anonymous__",
+    )
     return updated

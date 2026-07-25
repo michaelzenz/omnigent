@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from omnigent.entities import Task, TaskEvent, TaskEventExecution
+from omnigent.entities import TaskEvent, TaskEventExecution
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
 from omnigent.stores.conversation_store import ConversationStore
@@ -94,77 +94,17 @@ async def wake_task_manager_for_event(
     )
 
 
-def _format_secretary_stall_notice(
-    events: list[TaskEvent],
-    ranked_candidates: dict[str, list[tuple[Task, float]]],
-) -> str:
+def _format_secretary_stall_notice(events: list[TaskEvent]) -> str:
     lines = ["[System: task event(s) need routing decisions]"]
     for event in events:
-        candidates = ranked_candidates.get(event.id, [])
-        candidate_text = ""
-        if candidates:
-            rendered = ", ".join(
-                f"{task.title} ({score:.2f})" for task, score in candidates[:3]
-            )
-            candidate_text = f" — candidates: {rendered}"
-        lines.append(f"- {event.event_type}: {event.title!r} ({event.state}){candidate_text}")
+        lines.append(f"- {event.event_type}: {event.title!r} ({event.state})")
     return "\n".join(lines)
-
-
-def _format_distributor_batch_notice(
-    events: list[TaskEvent],
-    ranked_candidates: dict[str, list[tuple[Task, float]]],
-) -> str:
-    lines = ["[System: distributor batch — route confident matches]"]
-    for event in events:
-        summary = event.summary or ""
-        summary_block = f"\n  summary: {summary}" if summary else ""
-        lines.append(f"- event {event.id} ({event.event_type}): {event.title!r}{summary_block}")
-        candidates = ranked_candidates.get(event.id, [])
-        if candidates:
-            rendered = ", ".join(
-                f"{task.id} {task.title!r} ({score:.2f})"
-                for task, score in candidates[:10]
-            )
-            lines.append(f"  candidates: {rendered}")
-        else:
-            lines.append("  candidates: (none)")
-    return "\n".join(lines)
-
-
-async def wake_distributor_for_batch(
-    *,
-    distributor_conversation_id: str,
-    events: list[TaskEvent],
-    ranked_candidates: dict[str, list[tuple[Task, float]]],
-    conversation_store: ConversationStore,
-    runner_router: RunnerRouter | None,
-) -> bool:
-    """Wake the task distributor with a batch of stalled events."""
-    if not events:
-        return False
-    conv = conversation_store.get_conversation(distributor_conversation_id)
-    if conv is None:
-        _logger.warning(
-            "distributor wake skipped: conversation %s missing",
-            distributor_conversation_id,
-        )
-        return False
-    notice = _format_distributor_batch_notice(events, ranked_candidates)
-    return await _wake_parent_for_blocked_child(
-        distributor_conversation_id,
-        conv,
-        notice,
-        conversation_store=conversation_store,
-        runner_router=runner_router,
-    )
 
 
 async def wake_secretary_for_stalled_events(
     *,
     user_id: str,
     events: list[TaskEvent],
-    ranked_candidates: dict[str, list[tuple[Task, float]]],
     secretary_profile_store: SecretaryProfileStore,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
@@ -187,7 +127,7 @@ async def wake_secretary_for_stalled_events(
             profile.conversation_id,
         )
         return False
-    notice = _format_secretary_stall_notice(events, ranked_candidates)
+    notice = _format_secretary_stall_notice(events)
     return await _wake_parent_for_blocked_child(
         profile.conversation_id,
         conv,

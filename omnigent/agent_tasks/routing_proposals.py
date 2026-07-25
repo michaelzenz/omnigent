@@ -1,4 +1,4 @@
-"""Secretary task-item routing proposals for orphan task events."""
+"""Secretary task-item routing proposals for ambiguous task events."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
-    ORPHAN_EVENT_STATES,
+    AMBIGUOUS_EVENT_STATES,
     ROUTING_PROPOSED_EVENT_STATE,
     ROUTING_PROPOSED_ITEM_STATE,
 )
@@ -30,7 +30,7 @@ from omnigent.stores.task_store import TaskStore
 RoutingResolution = Literal["accept_routing", "reject_routing"]
 
 _TOKEN_RE = re.compile(r"(?:^|\s)(pr|repo|thread):([^\s]+)", re.IGNORECASE)
-_CLAIMABLE_EVENT_STATES = frozenset(ORPHAN_EVENT_STATES)
+_CLAIMABLE_EVENT_STATES = frozenset(AMBIGUOUS_EVENT_STATES)
 
 
 def _generate_item_id() -> str:
@@ -52,8 +52,8 @@ class RoutingCandidate:
 
 
 @dataclass(frozen=True)
-class OrphanEventCluster:
-    """Suggested orphan events bundled for one routing proposal."""
+class AmbiguousEventCluster:
+    """Suggested ambiguous events bundled for one routing proposal."""
 
     suggested_canonical_key: str
     events: list[TaskEvent]
@@ -63,7 +63,7 @@ def derive_cluster_key(
     event: TaskEvent,
     tags: list[TaskEventTag] | None = None,
 ) -> str | None:
-    """Return a deterministic cluster key for an orphan event."""
+    """Return a deterministic cluster key for an ambiguous event."""
     tag_map: dict[str, str] = {}
     if tags:
         for tag in tags:
@@ -96,12 +96,12 @@ def derive_cluster_key(
     return None
 
 
-def cluster_orphan_events(
+def cluster_ambiguous_events(
     events: list[TaskEvent],
     *,
     tags_by_event_id: dict[str, list[TaskEventTag]],
-) -> list[OrphanEventCluster]:
-    """Group orphan events by deterministic cluster keys."""
+) -> list[AmbiguousEventCluster]:
+    """Group ambiguous events by deterministic cluster keys."""
     buckets: dict[str, list[TaskEvent]] = {}
     singletons: list[TaskEvent] = []
     for event in events:
@@ -112,12 +112,12 @@ def cluster_orphan_events(
             buckets.setdefault(key, []).append(event)
 
     clusters = [
-        OrphanEventCluster(suggested_canonical_key=key, events=rows)
+        AmbiguousEventCluster(suggested_canonical_key=key, events=rows)
         for key, rows in sorted(buckets.items())
     ]
     for event in singletons:
         clusters.append(
-            OrphanEventCluster(
+            AmbiguousEventCluster(
                 suggested_canonical_key=f"event:{event.id}",
                 events=[event],
             ),
@@ -125,10 +125,8 @@ def cluster_orphan_events(
     return clusters
 
 
-def _candidate_payload(
-    ranked: list[tuple[Task, float]],
-) -> tuple[str, list[dict[str, Any]]]:
-    candidates = [
+def _candidate_payload(ranked: list[tuple[Task, float]]) -> list[dict[str, Any]]:
+    return [
         {
             "task_id": task.id,
             "title": task.title,
@@ -136,23 +134,45 @@ def _candidate_payload(
         }
         for task, score in ranked[:5]
     ]
-    recommended_task_id = candidates[0]["task_id"] if candidates else ""
-    return recommended_task_id, candidates
+
+
+def _resolve_anchor_task_id(
+    *,
+    suggested_task_id: str | None,
+    candidates: list[dict[str, Any]] | None,
+    task_store: TaskStore,
+) -> str:
+    """Pick an existing task to anchor proposed-task bootstrap metadata."""
+    if suggested_task_id is not None:
+        if task_store.get(suggested_task_id) is None:
+            raise OmnigentError("Suggested task not found", code=ErrorCode.NOT_FOUND)
+        return suggested_task_id
+    if candidates:
+        for row in candidates:
+            task_id = str(row.get("task_id", ""))
+            if task_id and task_store.get(task_id) is not None:
+                return task_id
+    active = task_store.list(state="active")
+    if not active:
+        raise OmnigentError(
+            "No active task available to anchor routing proposal",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    return active[0].id
 
 
 def _build_routing_proposal_json(
     *,
     owner_user_id: str,
-    recommended_task_id: str,
+    suggested_task_id: str | None,
     candidates: list[dict[str, Any]],
     rationale: str | None,
     proposed_task: dict[str, Any],
 ) -> str:
     return json.dumps(
         {
-            "version": 2,
             "owner_user_id": owner_user_id,
-            "recommended_task_id": recommended_task_id,
+            "suggested_task_id": suggested_task_id,
             "candidates": candidates,
             "rationale": rationale,
             "proposed_task": proposed_task,
@@ -283,10 +303,10 @@ def upsert_routing_proposal(
     canonical_key: str,
     title: str,
     event_ids: list[str],
-    recommended_task_id: str,
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    suggested_task_id: str | None = None,
     instructions: str | None = None,
     worker_agent_id: str | None = None,
     model: str | None = None,
@@ -295,14 +315,13 @@ def upsert_routing_proposal(
     harness: str | None = None,
     rationale: str | None = None,
     candidates: list[dict[str, Any]] | None = None,
-    recommend_new_task: bool = False,
     proposed_task_id: str | None = None,
     proposed_task_title: str | None = None,
     proposed_task_charter: str | None = None,
     proposed_task_description: str | None = None,
     proposed_task_manager_agent_id: str | None = None,
 ) -> TaskItem | None:
-    """Create or extend a secretary routing proposal for orphan events."""
+    """Create or extend a secretary routing proposal for ambiguous events."""
     events = _claimable_events(
         event_ids,
         task_event_store=task_event_store,
@@ -311,9 +330,21 @@ def upsert_routing_proposal(
     if not events:
         return None
 
-    anchor_task = task_store.get(recommended_task_id)
-    if anchor_task is None:
-        raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+    if candidates is None:
+        cluster_search = "\n".join(event.search_text for event in events)
+        ranked = rank_tasks_for_event(
+            event_search_text=cluster_search,
+            tasks=task_store.list(state="active"),
+        )
+        candidates = _candidate_payload(ranked)
+
+    anchor_task_id = _resolve_anchor_task_id(
+        suggested_task_id=suggested_task_id,
+        candidates=candidates,
+        task_store=task_store,
+    )
+    anchor_task = task_store.get(anchor_task_id)
+    assert anchor_task is not None
 
     proposed_task = _ensure_proposed_task(
         task_store=task_store,
@@ -327,29 +358,15 @@ def upsert_routing_proposal(
         owner_user_id=owner_user_id,
     )
 
-    if candidates is None:
-        cluster_search = "\n".join(event.search_text for event in events)
-        ranked = rank_tasks_for_event(
-            event_search_text=cluster_search,
-            tasks=task_store.list(state="active"),
-        )
-        auto_recommended, candidates = _candidate_payload(ranked)
-        if recommended_task_id not in {row["task_id"] for row in candidates}:
-            candidates.insert(
-                0,
-                {"task_id": anchor_task.id, "title": anchor_task.title, "score": 0.0},
-            )
-        elif not recommend_new_task:
-            recommended_task_id = auto_recommended or recommended_task_id
-
-    if recommend_new_task:
-        recommended_task_id = str(proposed_task["task_id"])
-
-    item_task_id = recommended_task_id
+    item_task_id = (
+        suggested_task_id
+        if suggested_task_id is not None
+        else str(proposed_task["task_id"])
+    )
 
     proposal_json = _build_routing_proposal_json(
         owner_user_id=owner_user_id,
-        recommended_task_id=recommended_task_id,
+        suggested_task_id=suggested_task_id,
         candidates=candidates,
         rationale=rationale,
         proposed_task=proposed_task,
@@ -394,32 +411,32 @@ def upsert_routing_proposal(
     return item
 
 
-def build_orphan_inbox(
+def build_ambiguous_inbox(
     *,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
     task_store: TaskStore,
 ) -> dict[str, Any]:
-    """Return orphan events and suggested clusters for secretary reconcile."""
-    orphans = []
+    """Return ambiguous events and suggested clusters for secretary reconcile."""
+    ambiguous_events = []
     for event in task_event_store.list_events(state="awaiting_grouping"):
         if task_item_store.get_routing_item_for_event(event.id) is not None:
             continue
         if task_item_store.get_fyi_cluster_for_event(event.id) is not None:
             continue
-        orphans.append(event)
+        ambiguous_events.append(event)
 
     tags_by_event_id: dict[str, list[TaskEventTag]] = {}
-    for event in orphans:
+    for event in ambiguous_events:
         tags_by_event_id[event.id] = task_event_store.get_event_tags(event.id)
 
-    clusters = cluster_orphan_events(orphans, tags_by_event_id=tags_by_event_id)
+    clusters = cluster_ambiguous_events(ambiguous_events, tags_by_event_id=tags_by_event_id)
     active_tasks = task_store.list(state="active")
     rendered_clusters: list[dict[str, Any]] = []
     for cluster in clusters:
         cluster_search = "\n".join(event.search_text for event in cluster.events)
         ranked = rank_tasks_for_event(event_search_text=cluster_search, tasks=active_tasks)
-        _, candidate_payload = _candidate_payload(ranked)
+        candidate_payload = _candidate_payload(ranked)
         rendered_clusters.append(
             {
                 "suggested_canonical_key": cluster.suggested_canonical_key,
@@ -429,7 +446,7 @@ def build_orphan_inbox(
         )
 
     return {
-        "object": "agent.task.orphan_inbox",
+        "object": "agent.task.ambiguous_inbox",
         "clusters": rendered_clusters,
         "unclustered_count": 0,
     }
@@ -509,8 +526,14 @@ def _routing_card_payload(
         if event is not None:
             events.append(_event_summary(event))
 
-    recommended_task_id = str(proposal.get("recommended_task_id") or item.task_id)
+    suggested_task_id = proposal.get("suggested_task_id")
     proposed_task = proposal.get("proposed_task") or {}
+    proposed_task_id = str(proposed_task.get("task_id", ""))
+    default_task_id = (
+        suggested_task_id
+        if suggested_task_id is not None
+        else proposed_task_id
+    )
     candidates = []
     seen_ids: set[str] = set()
     for row in proposal.get("candidates", []):
@@ -526,12 +549,11 @@ def _routing_card_payload(
                 "task_id": task_id,
                 "task_title": task.title if task is not None else task_id,
                 "score": row.get("score"),
-                "recommended": task_id == recommended_task_id,
+                "recommended": task_id == default_task_id,
                 "is_new": False,
             },
         )
 
-    proposed_task_id = str(proposed_task.get("task_id", ""))
     if proposed_task_id and proposed_task_id not in seen_ids:
         proposed_title = str(proposed_task.get("title") or "Create new task")
         candidates.append(
@@ -539,7 +561,7 @@ def _routing_card_payload(
                 "task_id": proposed_task_id,
                 "task_title": proposed_title,
                 "score": None,
-                "recommended": proposed_task_id == recommended_task_id,
+                "recommended": proposed_task_id == default_task_id,
                 "is_new": True,
             },
         )
@@ -556,7 +578,7 @@ def _routing_card_payload(
             "title": item.title,
             "instructions": item.instructions,
             "canonical_key": item.canonical_key,
-            "recommended_task_id": recommended_task_id,
+            "suggested_task_id": suggested_task_id,
             "proposed_task": proposed_task,
             "events": events,
             "candidates": candidates,

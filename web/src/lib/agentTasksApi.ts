@@ -165,14 +165,10 @@ export async function resetSecretarySession(): Promise<SecretarySession> {
   return readJsonOrApiError<SecretarySession>(res);
 }
 
-export type EventResolution = "route_to_task" | "select_attempt";
-
 export async function resolveTaskEvent(
   eventId: string,
   body: {
-    resolution: EventResolution;
-    task_id?: string;
-    routing_attempt_id?: string;
+    task_id: string;
     host_id?: string;
     workspace?: string;
     harness?: string;
@@ -242,7 +238,7 @@ export interface TaskItemRoutingBody {
   title: string;
   instructions: string | null;
   canonical_key: string | null;
-  recommended_task_id: string;
+  suggested_task_id: string | null;
   proposed_task: ProposedTaskSummary | null;
   events: TaskEventSummary[];
   candidates: RoutingCandidateSummary[];
@@ -336,8 +332,7 @@ export async function resolveFyiCluster(
     resolution: FyiResolution;
     routing_title?: string;
     routing_instructions?: string;
-    recommended_task_id?: string;
-    recommend_new_task?: boolean;
+    suggested_task_id?: string | null;
     proposed_task_title?: string;
     proposed_task_charter?: string;
   },

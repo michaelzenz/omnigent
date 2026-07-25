@@ -121,7 +121,7 @@ def _create_routing_card(
     task_id: str,
     task_title: str,
     score: float,
-    recommend_new_task: bool = False,
+    suggested_task_id: str | None = None,
     proposed_task_title: str | None = None,
     proposed_task_charter: str | None = None,
 ) -> None:
@@ -129,7 +129,6 @@ def _create_routing_card(
         "canonical_key": canonical_key,
         "title": title,
         "event_ids": event_ids,
-        "recommended_task_id": task_id,
         "instructions": instructions,
         "rationale": rationale,
         "candidates": [
@@ -137,10 +136,12 @@ def _create_routing_card(
         ],
         **DISPATCH,
     }
-    if recommend_new_task:
-        body["recommend_new_task"] = True
-        body["proposed_task_title"] = proposed_task_title or f"New: {title}"
-        body["proposed_task_charter"] = proposed_task_charter or title
+    if suggested_task_id is not None:
+        body["suggested_task_id"] = suggested_task_id
+    if proposed_task_title is not None:
+        body["proposed_task_title"] = proposed_task_title
+    if proposed_task_charter is not None:
+        body["proposed_task_charter"] = proposed_task_charter
     item = _request("POST", "/v1/task-items/routing-proposals", body=body)
     print(f"  routing card {title!r} → {item['id'][:8]}…")
 
@@ -240,7 +241,6 @@ def main() -> int:
         task_id=ci_task,
         task_title="omnigent-fork CI",
         score=0.22,
-        recommend_new_task=True,
         proposed_task_title="other-repo triage",
         proposed_task_charter="repo:other-repo\nalerts\nunrelated",
     )

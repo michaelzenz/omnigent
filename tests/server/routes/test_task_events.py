@@ -62,7 +62,6 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     resolve_resp = await client.post(
         f"/v1/task-events/{event_id}/resolve",
         json={
-            "resolution": "route_to_task",
             "task_id": task_id,
             **_bootstrap_body(),
         },
@@ -75,48 +74,6 @@ async def test_resolve_routes_event_and_bootstraps_manager(
 
     task_resp = await client.get(f"/v1/agent-tasks/{task_id}")
     assert task_resp.json()["manager_conversation_id"] == resolved["manager_conversation_id"]
-
-
-async def test_select_attempt_resolution(
-    client: httpx.AsyncClient,
-    manager_agent_id: str,
-    task_event_store: SqlAlchemyTaskEventStore,
-) -> None:
-    create_resp = await client.post(
-        "/v1/agent-tasks",
-        json={
-            "manager_agent_id": manager_agent_id,
-            "title": "Notes task",
-        },
-    )
-    created_task_id = create_resp.json()["id"]
-    event_id = _uid("event_select")
-    attempt_id = _uid("attempt_select")
-    task_event_store.create_event(
-        event_id=event_id,
-        event_type="note.added",
-        title="New note",
-        state="awaiting_user_selection",
-    )
-    task_event_store.create_routing_attempt(
-        attempt_id=attempt_id,
-        event_id=event_id,
-        candidate_task_id=created_task_id,
-        candidate_manager_agent_id=manager_agent_id,
-        rank=1,
-        decision="accepted",
-    )
-
-    resolve_resp = await client.post(
-        f"/v1/task-events/{event_id}/resolve",
-        json={
-            "resolution": "select_attempt",
-            "routing_attempt_id": attempt_id,
-            **_bootstrap_body(),
-        },
-    )
-    assert resolve_resp.status_code == 200
-    assert resolve_resp.json()["selected_routing_attempt_id"] == attempt_id
 
 
 async def test_dismiss_event(

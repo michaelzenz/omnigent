@@ -8,7 +8,7 @@ from typing import Any, Literal
 from omnigent.agent_tasks.constants import (
     CLASSIFIED_FYI_EVENT_STATE,
     FYI_CLUSTER_OPEN_STATE,
-    ORPHAN_EVENT_STATES,
+    AMBIGUOUS_EVENT_STATES,
 )
 from omnigent.agent_tasks.routing_proposals import _event_summary, upsert_routing_proposal
 from omnigent.db.utils import now_epoch
@@ -40,7 +40,7 @@ def _claimable_fyi_events(
         event = task_event_store.get_event(event_id)
         if event is None:
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-        if event.state not in ORPHAN_EVENT_STATES:
+        if event.state not in AMBIGUOUS_EVENT_STATES:
             continue
         claimed.append(event_id)
     return claimed
@@ -140,7 +140,7 @@ def resolve_fyi_cluster(
     task_event_store: TaskEventStore,
     routing_title: str | None = None,
     routing_instructions: str | None = None,
-    recommended_task_id: str | None = None,
+    suggested_task_id: str | None = None,
     worker_agent_id: str | None = None,
     model: str | None = None,
     host_id: str | None = None,
@@ -149,7 +149,6 @@ def resolve_fyi_cluster(
     manager_agent_id: str | None = None,
     proposed_task_title: str | None = None,
     proposed_task_charter: str | None = None,
-    recommend_new_task: bool = False,
 ) -> tuple[FyiCluster, TaskItem | None]:
     """Dismiss or promote an FYI cluster."""
     if cluster.state != FYI_CLUSTER_OPEN_STATE:
@@ -181,21 +180,13 @@ def resolve_fyi_cluster(
 
     title = routing_title or cluster.headline
     canonical_key = cluster.canonical_key or f"fyi:{cluster.id}"
-    if recommended_task_id is None:
-        active = task_store.list(state="active")
-        if not active:
-            raise OmnigentError(
-                "recommended_task_id is required when no active tasks exist",
-                code=ErrorCode.INVALID_INPUT,
-            )
-        recommended_task_id = active[0].id
 
     item = upsert_routing_proposal(
         owner_user_id=owner_user_id,
         canonical_key=canonical_key,
         title=title,
         event_ids=event_ids,
-        recommended_task_id=recommended_task_id,
+        suggested_task_id=suggested_task_id,
         task_store=task_store,
         task_item_store=task_item_store,
         task_event_store=task_event_store,
@@ -206,7 +197,6 @@ def resolve_fyi_cluster(
         workspace=workspace,
         harness=harness,
         rationale=cluster.rationale,
-        recommend_new_task=recommend_new_task,
         proposed_task_manager_agent_id=manager_agent_id,
         proposed_task_title=proposed_task_title,
         proposed_task_charter=proposed_task_charter,

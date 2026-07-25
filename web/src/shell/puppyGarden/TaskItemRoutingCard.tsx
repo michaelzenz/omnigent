@@ -14,7 +14,7 @@ interface TaskItemRoutingCardProps {
 export function TaskItemRoutingCard({ card }: TaskItemRoutingCardProps) {
   const resolveRouting = useResolveRoutingProposal();
   const [selectedTaskId, setSelectedTaskId] = useState(
-    card.body.recommended_task_id,
+    card.body.suggested_task_id ?? card.body.proposed_task?.task_id ?? "",
   );
   const [instructions, setInstructions] = useState(card.body.instructions ?? "");
   const [proposedTaskTitle, setProposedTaskTitle] = useState(
