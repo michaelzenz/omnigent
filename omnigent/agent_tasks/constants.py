@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-# Headless Claude SDK: honors the task-secretary YAML prompt as system_prompt.
-DEFAULT_SECRETARY_HARNESS = "claude-sdk"
+# Claude-native TUI: Bash for task APIs; ``permission_mode: auto`` in the YAML.
+DEFAULT_SECRETARY_HARNESS = "claude-native"
 # Claude Code picker label "Sonnet 4.6" — use the ``sonnet`` alias, not ``claude-sonnet-4-6``.
 DEFAULT_SECRETARY_MODEL = "sonnet"
 
@@ -32,4 +32,6 @@ def resolve_task_harness(harness: str) -> str:
     """Return a runnable harness id for managed task agents."""
     if harness == "cursor":
         return "cursor-native"
+    if harness == "claude":
+        return "claude-native"
     return harness

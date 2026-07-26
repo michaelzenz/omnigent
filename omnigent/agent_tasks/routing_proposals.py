@@ -8,6 +8,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from omnigent.agent_tasks.agent_builtins import (
+    TASK_MANAGER_AGENT_NAME,
+    resolve_task_agent_id,
+)
 from omnigent.agent_tasks.bootstrap import BootstrapParams, bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
     AMBIGUOUS_EVENT_STATES,
@@ -136,29 +140,69 @@ def _candidate_payload(ranked: list[tuple[Task, float]]) -> list[dict[str, Any]]
     ]
 
 
-def _resolve_anchor_task_id(
+@dataclass(frozen=True)
+class _ProposalContext:
+    """Bootstrap metadata for a routing proposal when no anchor task exists."""
+
+    manager_agent_id: str
+    owner_user_id: str
+    charter: str | None
+
+
+def _charter_from_canonical_key(canonical_key: str) -> str | None:
+    """Derive a task charter hint from a routing canonical key."""
+    if canonical_key.startswith("pr:"):
+        repo_pr = canonical_key.removeprefix("pr:")
+        if "#" in repo_pr:
+            repo, _pr = repo_pr.rsplit("#", 1)
+            return f"repo:{repo}"
+    if canonical_key.startswith("thread:"):
+        return canonical_key
+    return None
+
+
+def _resolve_proposal_context(
     *,
+    owner_user_id: str,
+    canonical_key: str,
     suggested_task_id: str | None,
     candidates: list[dict[str, Any]] | None,
+    proposed_task_manager_agent_id: str | None,
+    proposed_task_charter: str | None,
     task_store: TaskStore,
-) -> str:
-    """Pick an existing task to anchor proposed-task bootstrap metadata."""
+    agent_store: AgentStore,
+) -> _ProposalContext:
+    """Resolve manager/owner/charter defaults for a routing proposal."""
+    anchor: Task | None = None
     if suggested_task_id is not None:
-        if task_store.get(suggested_task_id) is None:
+        anchor = task_store.get(suggested_task_id)
+        if anchor is None:
             raise OmnigentError("Suggested task not found", code=ErrorCode.NOT_FOUND)
-        return suggested_task_id
-    if candidates:
+    elif candidates:
         for row in candidates:
             task_id = str(row.get("task_id", ""))
-            if task_id and task_store.get(task_id) is not None:
-                return task_id
-    active = task_store.list(state="active")
-    if not active:
-        raise OmnigentError(
-            "No active task available to anchor routing proposal",
-            code=ErrorCode.INVALID_INPUT,
+            if not task_id:
+                continue
+            anchor = task_store.get(task_id)
+            if anchor is not None:
+                break
+
+    if anchor is not None:
+        return _ProposalContext(
+            manager_agent_id=anchor.manager_agent_id,
+            owner_user_id=anchor.owner_user_id or owner_user_id,
+            charter=proposed_task_charter or anchor.charter,
         )
-    return active[0].id
+
+    manager_agent_id = proposed_task_manager_agent_id
+    if not manager_agent_id:
+        manager_agent_id = resolve_task_agent_id(agent_store, TASK_MANAGER_AGENT_NAME)
+
+    return _ProposalContext(
+        manager_agent_id=manager_agent_id,
+        owner_user_id=owner_user_id,
+        charter=proposed_task_charter or _charter_from_canonical_key(canonical_key),
+    )
 
 
 def _build_routing_proposal_json(
@@ -216,44 +260,43 @@ def _claimable_events(
 def _ensure_proposed_task(
     *,
     task_store: TaskStore,
-    anchor_task: Task,
+    manager_agent_id: str,
+    owner_user_id: str,
+    charter: str | None,
     title: str,
     proposed_task_id: str | None = None,
     proposed_title: str | None = None,
     proposed_charter: str | None = None,
     proposed_description: str | None = None,
-    manager_agent_id: str | None = None,
-    owner_user_id: str | None = None,
 ) -> dict[str, Any]:
     """Return proposed_task metadata, creating a paused task when needed."""
-    manager = manager_agent_id or anchor_task.manager_agent_id
     task_id = proposed_task_id or _generate_task_id()
     existing = task_store.get(task_id)
     display_title = proposed_title or f"New: {title}"
-    charter = proposed_charter or anchor_task.charter
+    resolved_charter = proposed_charter or charter
     if existing is None:
         task_store.create(
             task_id,
-            manager,
+            manager_agent_id,
             display_title,
-            owner_user_id=owner_user_id or anchor_task.owner_user_id,
+            owner_user_id=owner_user_id,
             description=proposed_description,
-            charter=charter,
+            charter=resolved_charter,
             state="paused",
         )
     elif existing.state == "paused":
         task_store.update(
             task_id,
             title=display_title,
-            charter=charter,
+            charter=resolved_charter,
             description=proposed_description,
         )
     return {
         "task_id": task_id,
         "title": display_title,
-        "charter": charter,
+        "charter": resolved_charter,
         "description": proposed_description,
-        "manager_agent_id": manager,
+        "manager_agent_id": manager_agent_id,
         "is_new": True,
     }
 
@@ -306,6 +349,7 @@ def upsert_routing_proposal(
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    agent_store: AgentStore,
     suggested_task_id: str | None = None,
     instructions: str | None = None,
     worker_agent_id: str | None = None,
@@ -338,24 +382,27 @@ def upsert_routing_proposal(
         )
         candidates = _candidate_payload(ranked)
 
-    anchor_task_id = _resolve_anchor_task_id(
+    proposal_context = _resolve_proposal_context(
+        owner_user_id=owner_user_id,
+        canonical_key=canonical_key,
         suggested_task_id=suggested_task_id,
         candidates=candidates,
+        proposed_task_manager_agent_id=proposed_task_manager_agent_id,
+        proposed_task_charter=proposed_task_charter,
         task_store=task_store,
+        agent_store=agent_store,
     )
-    anchor_task = task_store.get(anchor_task_id)
-    assert anchor_task is not None
 
     proposed_task = _ensure_proposed_task(
         task_store=task_store,
-        anchor_task=anchor_task,
+        manager_agent_id=proposal_context.manager_agent_id,
+        owner_user_id=proposal_context.owner_user_id,
+        charter=proposal_context.charter,
         title=title,
         proposed_task_id=proposed_task_id,
         proposed_title=proposed_task_title,
         proposed_charter=proposed_task_charter,
         proposed_description=proposed_task_description,
-        manager_agent_id=proposed_task_manager_agent_id,
-        owner_user_id=owner_user_id,
     )
 
     item_task_id = (

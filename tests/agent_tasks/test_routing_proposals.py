@@ -124,6 +124,7 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        agent_store=agent_store,
         instructions="Fix lint",
         worker_agent_id=worker_id,
         model="composer-2.5",
@@ -156,6 +157,7 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        agent_store=agent_store,
         instructions="Fix lint and address comment",
         worker_agent_id=worker_id,
         model="composer-2.5",
@@ -167,3 +169,57 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
     assert second.id == first.id
     linked = item_store.list_events_for_item(first.id)
     assert len(linked) == 2
+
+
+def test_upsert_creates_new_task_proposal_without_active_tasks(stores) -> None:
+    """Scenario 1: routing proposals work when no managed tasks exist yet."""
+    task_store = stores["task"]
+    event_store = stores["event"]
+    item_store = stores["item"]
+    agent_store = stores["agent"]
+
+    manager_id = generate_agent_id()
+    worker_id = generate_agent_id()
+    agent_store.create(manager_id, name="task-manager", bundle_location="test:///bundle")
+    agent_store.create(worker_id, name="task-worker", bundle_location="test:///bundle")
+
+    event = event_store.create_event(
+        _uid("scenario1-ev1"),
+        "github.pr.checks_failed",
+        "PR #123 checks failed",
+        state="awaiting_grouping",
+        source="test:scenario-1",
+        source_key="acme/widgets#123",
+        summary="repo:acme/widgets pr:123",
+        tags=[
+            TaskEventTag(event_id=_uid("scenario1-ev1"), tag_type="repo", tag="acme/widgets"),
+            TaskEventTag(event_id=_uid("scenario1-ev1"), tag_type="pr", tag="123"),
+        ],
+    )
+
+    item = upsert_routing_proposal(
+        owner_user_id="local",
+        canonical_key="pr:acme/widgets#123",
+        title="CI failure on PR #123",
+        event_ids=[event.id],
+        task_store=task_store,
+        task_item_store=item_store,
+        task_event_store=event_store,
+        agent_store=agent_store,
+        instructions="Investigate CI failure",
+        worker_agent_id=worker_id,
+        host_id="host1",
+        workspace="/tmp/ws",
+        harness="claude-native",
+        model="sonnet",
+        rationale="No existing task matches this incident",
+    )
+    assert item is not None
+    assert item.state == "routing_proposed"
+    assert task_store.list(state="active") == []
+    paused = task_store.list(state="paused")
+    assert len(paused) == 1
+    assert paused[0].charter == "repo:acme/widgets"
+    updated_event = event_store.get_event(event.id)
+    assert updated_event is not None
+    assert updated_event.state == "routing_proposed"

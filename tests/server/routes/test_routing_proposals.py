@@ -33,6 +33,51 @@ async def worker_agent_id(db_uri: str) -> str:
     return agent_id
 
 
+async def test_routing_proposal_without_existing_task(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+    worker_agent_id: str,
+    db_uri: str,
+) -> None:
+    """Create a new-task routing card when the board has no active tasks."""
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+
+    event_id = _uid("routing-event-empty-db")
+    event_store.create_event(
+        event_id,
+        "github.pr.checks_failed",
+        "PR checks failed",
+        state="awaiting_grouping",
+        summary="repo:acme/widgets pr:123",
+    )
+
+    created = await client.post(
+        "/v1/task-items/routing-proposals",
+        json={
+            "canonical_key": "pr:acme/widgets#123",
+            "title": "CI failure on PR #123",
+            "event_ids": [event_id],
+            "instructions": "Investigate CI failure",
+            "worker_agent_id": worker_agent_id,
+            "host_id": _uid("host-empty"),
+            "workspace": "/tmp/omnigent-task-test",
+            "harness": "claude-native",
+            "model": "sonnet",
+            "proposed_task_manager_agent_id": manager_agent_id,
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["state"] == "routing_proposed"
+
+    board = await client.get("/v1/agent-tasks/board/decisions")
+    assert board.status_code == 200
+    cards = board.json().get("decisions", board.json().get("data", []))
+    assert len(cards) == 1
+    assert cards[0]["body"]["suggested_task_id"] is None
+
+
 async def test_routing_proposal_board_and_accept(
     client: httpx.AsyncClient,
     manager_agent_id: str,

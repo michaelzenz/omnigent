@@ -14,6 +14,7 @@ from omnigent.agent_tasks.routing_proposals import _event_summary, upsert_routin
 from omnigent.db.utils import now_epoch
 from omnigent.entities import FyiCluster, TaskItem
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
@@ -138,6 +139,7 @@ def resolve_fyi_cluster(
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    agent_store: AgentStore,
     routing_title: str | None = None,
     routing_instructions: str | None = None,
     suggested_task_id: str | None = None,
@@ -190,6 +192,7 @@ def resolve_fyi_cluster(
         task_store=task_store,
         task_item_store=task_item_store,
         task_event_store=task_event_store,
+        agent_store=agent_store,
         instructions=routing_instructions,
         worker_agent_id=worker_agent_id,
         model=model,

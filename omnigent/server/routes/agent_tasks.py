@@ -22,6 +22,7 @@ from omnigent.agent_tasks.adoption import (
     propose_session_adoption,
     reject_session_adoption,
 )
+from omnigent.agent_tasks.agent_builtins import TASK_WORKER_AGENT_NAME, resolve_task_agent_id
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
     DEFAULT_SECRETARY_HARNESS,
@@ -1115,8 +1116,29 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Create or extend a secretary routing proposal over ambiguous events."""
             user_id = require_user(request, auth_provider)
+            profile = None
+            if secretary_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    secretary_profile_store.get,
+                    _effective_user_id(user_id),
+                )
 
             def _create() -> TaskItem | None:
+                host_id = body.host_id
+                workspace = body.workspace
+                harness = body.harness
+                model = body.model
+                worker_agent_id = body.worker_agent_id
+                if profile is not None:
+                    host_id = host_id or profile.host_id
+                    workspace = workspace or profile.workspace
+                    harness = harness or profile.harness
+                    model = model or profile.model
+                if worker_agent_id is None:
+                    worker_agent_id = resolve_task_agent_id(
+                        agent_store,
+                        TASK_WORKER_AGENT_NAME,
+                    )
                 return upsert_routing_proposal(
                     owner_user_id=_effective_user_id(user_id),
                     canonical_key=body.canonical_key,
@@ -1126,12 +1148,13 @@ def create_agent_tasks_router(
                     task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
+                    agent_store=agent_store,
                     instructions=body.instructions,
-                    worker_agent_id=body.worker_agent_id,
-                    model=body.model,
-                    host_id=body.host_id,
-                    workspace=body.workspace,
-                    harness=body.harness,
+                    worker_agent_id=worker_agent_id,
+                    model=model,
+                    host_id=host_id,
+                    workspace=workspace,
+                    harness=harness,
                     rationale=body.rationale,
                     candidates=body.candidates,
                     proposed_task_id=body.proposed_task_id,
@@ -1255,6 +1278,7 @@ def create_agent_tasks_router(
                 task_store=task_store,
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
+                agent_store=agent_store,
                 routing_title=body.routing_title,
                 routing_instructions=body.routing_instructions,
                 suggested_task_id=body.suggested_task_id,

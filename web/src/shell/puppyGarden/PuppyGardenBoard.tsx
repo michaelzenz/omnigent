@@ -24,28 +24,24 @@ export function PuppyGardenBoard() {
     );
   }
 
-  if (!tasks?.length) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-        No active tasks yet.
-      </div>
-    );
-  }
-
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
         <BoardDecisionStream />
         <BoardFyiStream />
-        {tasks.map((task) => (
-          <TaskCard
-            key={task.id}
-            taskId={task.id}
-            title={task.title}
-            description={task.description}
-            state={task.state}
-          />
-        ))}
+        {tasks?.length ? (
+          tasks.map((task) => (
+            <TaskCard
+              key={task.id}
+              taskId={task.id}
+              title={task.title}
+              description={task.description}
+              state={task.state}
+            />
+          ))
+        ) : (
+          <p className="text-sm text-muted-foreground">No active tasks yet.</p>
+        )}
       </div>
     </div>
   );

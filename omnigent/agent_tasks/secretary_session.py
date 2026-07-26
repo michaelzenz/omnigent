@@ -16,13 +16,9 @@ from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_WORKSPACE,
     resolve_task_harness,
 )
-from omnigent._wrapper_labels import (
-    CURSOR_NATIVE_WRAPPER_VALUE,
-    UI_MODE_LABEL_KEY,
-    UI_MODE_TERMINAL_VALUE,
-    WRAPPER_LABEL_KEY,
-)
 from omnigent.agent_tasks.session_labels import SECRETARY_ROLE_LABEL, SECRETARY_ROLE_VALUE
+from omnigent.native_coding_agents import native_coding_agent_for_harness
+from omnigent.runtime import get_agent_cache
 from omnigent.db.utils import generate_task_id, now_epoch
 from omnigent.entities import MessageData, NewConversationItem
 from omnigent.entities.secretary import UserSecretaryProfile
@@ -125,10 +121,34 @@ def apply_secretary_session_labels(
     harness: str,
 ) -> None:
     labels = {SECRETARY_ROLE_LABEL: SECRETARY_ROLE_VALUE}
-    if harness == "cursor-native":
-        labels[UI_MODE_LABEL_KEY] = UI_MODE_TERMINAL_VALUE
-        labels[WRAPPER_LABEL_KEY] = CURSOR_NATIVE_WRAPPER_VALUE
+    native_agent = native_coding_agent_for_harness(resolve_task_harness(harness))
+    if native_agent is not None:
+        labels.update(native_agent.presentation_labels)
     conversation_store.set_labels(conversation_id, labels)
+
+
+def _secretary_terminal_launch_args(
+    agent_store: AgentStore,
+    agent_id: str,
+    *,
+    harness: str,
+) -> list[str] | None:
+    """Derive native-terminal launch args from the packaged secretary spec."""
+    from omnigent.server.routes.sessions import _derive_terminal_launch_args_from_spec
+
+    agent = agent_store.get(agent_id)
+    if agent is None:
+        return None
+    loaded = get_agent_cache().load(
+        agent.id,
+        agent.bundle_location,
+        expand_env=agent.session_id is None,
+    )
+    if loaded.spec is not None:
+        return _derive_terminal_launch_args_from_spec(loaded.spec)
+    if resolve_task_harness(harness) == "claude-native":
+        return ["--permission-mode", "auto"]
+    return None
 
 
 def bootstrap_secretary_conversation(
@@ -147,11 +167,17 @@ def bootstrap_secretary_conversation(
         secretary_profile=profile,
     )
     agent_id = resolve_secretary_agent_id(agent_store, profile)
+    terminal_launch_args = _secretary_terminal_launch_args(
+        agent_store,
+        agent_id,
+        harness=params.harness,
+    )
     conversation = conversation_store.create_conversation(
         title="Task secretary",
         agent_id=agent_id,
         host_id=params.host_id,
         workspace=params.workspace,
+        terminal_launch_args=terminal_launch_args,
     )
     conversation_store.update_conversation(
         conversation.id,
