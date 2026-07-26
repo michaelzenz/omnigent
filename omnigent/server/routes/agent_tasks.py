@@ -361,6 +361,50 @@ class AdoptSessionRequest(BaseModel):
     model: str | None = None
 
 
+async def _best_effort_ensure_secretary_runner(
+    request: Request,
+    conversation_id: str,
+    conversation_store: ConversationStore,
+) -> None:
+    """Launch or reconnect the secretary session's runner when possible."""
+    from omnigent.server.routes.sessions import (
+        ServerRunnerInfrastructure,
+        _ensure_runner_session_initialized,
+        _server_runner_router,
+        ensure_session_runner_client,
+    )
+
+    conv = await asyncio.to_thread(conversation_store.get_conversation, conversation_id)
+    if conv is None:
+        return
+    infrastructure = ServerRunnerInfrastructure(
+        host_registry=getattr(request.app.state, "host_registry", None),
+        tunnel_registry=getattr(request.app.state, "tunnel_registry", None),
+        runner_exit_reports=getattr(request.app.state, "runner_exit_reports", None),
+    )
+    runner_client, needs_session_init = await ensure_session_runner_client(
+        conversation_id,
+        conv,
+        conversation_store=conversation_store,
+        runner_router=_server_runner_router,
+        infrastructure=infrastructure,
+    )
+    if runner_client is None:
+        return
+    if needs_session_init:
+        refreshed = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            conversation_id,
+        )
+        if refreshed is not None:
+            await _ensure_runner_session_initialized(
+                conversation_id,
+                refreshed,
+                runner_client,
+                conversation_store,
+            )
+
+
 def _tag_to_response(tag: TaskTag) -> dict[str, str]:
     return {"tag_type": tag.tag_type, "tag": tag.tag}
 
@@ -634,6 +678,11 @@ def create_agent_tasks_router(
                         profile.conversation_id,
                     )
                 if existing is not None:
+                    await _best_effort_ensure_secretary_runner(
+                        request,
+                        existing.id,
+                        conversation_store,
+                    )
                     await flush_pending_orphan_sessions(effective_user_id)
                     return {
                         "object": "agent.task.secretary_session",
@@ -651,6 +700,11 @@ def create_agent_tasks_router(
                     secretary_profile_store.upsert,
                     effective_user_id,
                     conversation_id=conversation_id,
+                )
+                await _best_effort_ensure_secretary_runner(
+                    request,
+                    conversation_id,
+                    conversation_store,
                 )
                 await flush_pending_orphan_sessions(effective_user_id)
                 return {
@@ -687,6 +741,11 @@ def create_agent_tasks_router(
                     secretary_profile_store.upsert,
                     effective_user_id,
                     conversation_id=conversation_id,
+                )
+                await _best_effort_ensure_secretary_runner(
+                    request,
+                    conversation_id,
+                    conversation_store,
                 )
                 await flush_pending_orphan_sessions(effective_user_id)
                 return {

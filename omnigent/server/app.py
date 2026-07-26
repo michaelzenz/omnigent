@@ -76,6 +76,8 @@ from omnigent.server.routes.sessions import (
     announce_hosts_changed,
     create_sessions_router,
     set_server_runner_router,
+    set_server_runner_infrastructure,
+    ServerRunnerInfrastructure,
 )
 from omnigent.server.routes.sharing import create_sharing_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
@@ -1592,6 +1594,13 @@ def create_app(
     # request/route closure) the runner router so it can reach the bound
     # runner.
     set_server_runner_router(runner_router)
+    set_server_runner_infrastructure(
+        ServerRunnerInfrastructure(
+            host_registry=host_registry,
+            tunnel_registry=tunnel_registry,
+            runner_exit_reports=runner_exit_reports,
+        )
+    )
 
     @app.middleware("http")
     async def _record_server_metrics(

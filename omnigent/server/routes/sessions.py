@@ -12012,6 +12012,16 @@ async def _evaluate_output_policy(
 # a parked-gate background task that carries no FastAPI request / route
 # closure, so it reads the router from this module-level global.
 _server_runner_router: RunnerRouter | None = None
+_server_runner_infrastructure: ServerRunnerInfrastructure | None = None
+
+
+@dataclass(frozen=True)
+class ServerRunnerInfrastructure:
+    """Host/tunnel registries used to launch runners outside request scope."""
+
+    host_registry: HostRegistry | None = None
+    tunnel_registry: TunnelRegistry | None = None
+    runner_exit_reports: RunnerExitReports | None = None
 
 
 def set_server_runner_router(runner_router: RunnerRouter | None) -> None:
@@ -12029,6 +12039,127 @@ def set_server_runner_router(runner_router: RunnerRouter | None) -> None:
     """
     global _server_runner_router
     _server_runner_router = runner_router
+
+
+def set_server_runner_infrastructure(
+    infrastructure: ServerRunnerInfrastructure | None,
+) -> None:
+    """
+    Stash host/tunnel registries for background runner launch paths.
+
+    Called once from ``create_app`` so secretary wakes and other
+    best-effort ensure paths can relaunch a host-bound runner without a
+    FastAPI request closure.
+
+    :param infrastructure: Live server registries, or ``None`` in tests.
+    :returns: None.
+    """
+    global _server_runner_infrastructure
+    _server_runner_infrastructure = infrastructure
+
+
+async def ensure_session_runner_client(
+    session_id: str,
+    conv: Conversation,
+    *,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+    infrastructure: ServerRunnerInfrastructure | None = None,
+) -> tuple[httpx.AsyncClient | None, bool]:
+    """
+    Resolve a connected runner client, launching one when needed.
+
+    Idempotent: returns an existing connected client without spawning a
+    duplicate runner. For host-bound sessions, mirrors the relaunch path
+    used by ``POST /v1/sessions/{id}/events``.
+
+    :param session_id: Session/conversation identifier.
+    :param conv: Conversation row for *session_id*.
+    :param conversation_store: Store used to rotate ``runner_id``.
+    :param runner_router: Router for resolving a connected runner.
+    :param infrastructure: Host/tunnel registries. Defaults to the module
+        global set by :func:`set_server_runner_infrastructure`.
+    :returns: ``(client, needs_session_init)`` — ``needs_session_init`` is
+        ``True`` when a runner was launched during this call and the caller
+        should run :func:`_ensure_runner_session_initialized` before
+        forwarding an event.
+    """
+    infra = infrastructure if infrastructure is not None else _server_runner_infrastructure
+
+    runner_client = await _get_runner_client(session_id, runner_router)
+    if runner_client is not None:
+        return runner_client, False
+
+    if conv.host_id is None:
+        return None, False
+
+    tunnel_registry = infra.tunnel_registry if infra is not None else None
+    runner_exit_reports = infra.runner_exit_reports if infra is not None else None
+    host_registry = infra.host_registry if infra is not None else None
+
+    if conv.runner_id is not None and _HOST_BOUND_RUNNER_CONNECT_GRACE_S > 0:
+        grace_host_conn = host_registry.get(conv.host_id) if host_registry is not None else None
+        if grace_host_conn is not None:
+            runner_client = await _wait_for_host_bound_runner_client(
+                session_id,
+                runner_router,
+                tunnel_registry,
+                runner_id=conv.runner_id,
+                timeout_s=_HOST_BOUND_RUNNER_CONNECT_GRACE_S,
+                runner_exit_reports=runner_exit_reports,
+                host_conn=grace_host_conn,
+                host_registry=host_registry,
+            )
+        else:
+            runner_client = await _wait_for_runner_client(
+                session_id,
+                runner_router,
+                tunnel_registry,
+                runner_id=conv.runner_id,
+                timeout_s=_HOST_BOUND_RUNNER_CONNECT_GRACE_S,
+                runner_exit_reports=runner_exit_reports,
+            )
+        if runner_client is not None:
+            return runner_client, False
+
+    launched_runner_id: str | None = None
+    if host_registry is not None:
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is not None:
+            launch_attempt = await _launch_runner_on_host(
+                conv,
+                conversation_store,
+                host_registry,
+                host_conn,
+            )
+            if launch_attempt.error_code == _HARNESS_NOT_CONFIGURED_ERROR_CODE:
+                _logger.warning(
+                    "ensure_session_runner_client: harness not configured for session %s",
+                    session_id,
+                )
+                return None, False
+            launched_runner_id = launch_attempt.runner_id
+
+    if launched_runner_id is None:
+        return None, False
+
+    _logger.info(
+        "Waiting up to %.0fs for host %s to spawn a runner for session %s",
+        _HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+        conv.host_id,
+        session_id,
+    )
+    runner_client = await _wait_for_runner_client(
+        session_id,
+        runner_router,
+        tunnel_registry,
+        runner_id=launched_runner_id,
+        timeout_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+        runner_exit_reports=runner_exit_reports,
+    )
+    if runner_client is None:
+        return None, False
+    return runner_client, True
 
 
 async def _wake_parent_for_blocked_child(
@@ -12073,7 +12204,13 @@ async def _wake_parent_for_blocked_child(
             child.id,
         )
         return False
-    runner_client = await _get_runner_client(parent_id, runner_router)
+    effective_router = runner_router if runner_router is not None else _server_runner_router
+    runner_client, needs_session_init = await ensure_session_runner_client(
+        parent_id,
+        parent_conv,
+        conversation_store=conversation_store,
+        runner_router=effective_router,
+    )
     if runner_client is None:
         # WARNING (not DEBUG): an unbound parent is the transient-miss case the
         # notifier retries — surface it rather than burying it as routine.
@@ -12083,6 +12220,16 @@ async def _wake_parent_for_blocked_child(
             child.id,
         )
         return False
+    if needs_session_init:
+        parent_conv = await asyncio.to_thread(conversation_store.get_conversation, parent_id)
+        if parent_conv is None:
+            return False
+        await _ensure_runner_session_initialized(
+            parent_id,
+            parent_conv,
+            runner_client,
+            conversation_store,
+        )
     # Ensure the parent's SSE relay is live so the wake turn's output is
     # persisted (parity with post_event).
     _ensure_runner_relay(
