@@ -42,7 +42,6 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | GET | `/v1/agent-tasks/{id}/reconcile-queue` |
 | POST | `/v1/agent-tasks/{id}/reconcile` |
 | POST | `/v1/agent-tasks/{id}/reconcile-events` |
-| POST | `/v1/agent-tasks/{id}/accept-package` |
 | POST | `/v1/agent-tasks/{id}/reject-package` |
 
 ## Task items

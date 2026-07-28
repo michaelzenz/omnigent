@@ -240,12 +240,13 @@ def main() -> int:
         "Write a unit test ensuring duplicate check events do not create extra task events.",
     )
 
-    board = _request("GET", "/v1/agent-tasks/board/pending")
-    pending = board.get("pending", [])
-    fyi = board.get("fyi", [])
-    print(f"\nBoard pending packages: {len(pending)}")
-    for card in pending:
-        print(f"  - {card.get('headline')}")
+    paused = _request("GET", "/v1/agent-tasks?state=paused&limit=100")
+    fyi_board = _request("GET", "/v1/agent-tasks/board/pending")
+    paused_tasks = paused.get("data", [])
+    fyi = fyi_board.get("fyi", [])
+    print(f"\nPaused packages: {len(paused_tasks)}")
+    for task in paused_tasks:
+        print(f"  - {task.get('title')}")
     print(f"Board FYI clusters: {len(fyi)}")
     for card in fyi:
         print(f"  - {card.get('headline')}")
@@ -260,7 +261,7 @@ def main() -> int:
         workers = sum(len(g.get("executions", [])) for g in dash.get("workers", []))
         print(f"  {label}: {inbox} inbox, {workers} work rows")
 
-    print("\nDone — see **Pending** and **FYI** above task cards in Puppy Garden.")
+    print("\nDone — see **New packages** and **FYI** above task cards in Puppy Garden.")
     return 0
 
 

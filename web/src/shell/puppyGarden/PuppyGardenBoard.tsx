@@ -1,11 +1,16 @@
 import { Loader2Icon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
-import { BoardPendingStream } from "./BoardPendingStream";
 import { BoardFyiStream } from "./BoardFyiStream";
 import { TaskCard } from "./TaskCard";
 
 export function PuppyGardenBoard() {
-  const { data: tasks, isLoading, error } = useAgentTaskList("active");
+  const { data: pausedTasks, isLoading: pausedLoading, error: pausedError } =
+    useAgentTaskList("paused");
+  const { data: activeTasks, isLoading: activeLoading, error: activeError } =
+    useAgentTaskList("active");
+
+  const isLoading = pausedLoading || activeLoading;
+  const error = pausedError ?? activeError;
 
   if (isLoading) {
     return (
@@ -24,13 +29,29 @@ export function PuppyGardenBoard() {
     );
   }
 
+  const hasPaused = (pausedTasks?.length ?? 0) > 0;
+  const hasActive = (activeTasks?.length ?? 0) > 0;
+
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
-        <BoardPendingStream />
         <BoardFyiStream />
-        {tasks?.length ? (
-          tasks.map((task) => (
+        {hasPaused ? (
+          <section className="space-y-3" data-testid="board-paused-tasks">
+            <h2 className="text-sm font-semibold text-foreground">New packages</h2>
+            {pausedTasks?.map((task) => (
+              <TaskCard
+                key={task.id}
+                taskId={task.id}
+                title={task.title}
+                description={task.description}
+                state={task.state}
+              />
+            ))}
+          </section>
+        ) : null}
+        {hasActive ? (
+          activeTasks?.map((task) => (
             <TaskCard
               key={task.id}
               taskId={task.id}
@@ -39,9 +60,9 @@ export function PuppyGardenBoard() {
               state={task.state}
             />
           ))
-        ) : (
+        ) : !hasPaused ? (
           <p className="text-sm text-muted-foreground">No active tasks yet.</p>
-        )}
+        ) : null}
       </div>
     </div>
   );

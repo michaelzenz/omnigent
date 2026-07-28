@@ -50,9 +50,7 @@ from omnigent.agent_tasks.task_match import (
 )
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
-    accept_task_package,
     create_task_package,
-    list_pending_packages,
     reconcile_events_to_task,
     reject_task_package,
     resolve_manager_agent_id,
@@ -356,15 +354,6 @@ class ReconcileEventsRequest(BaseModel):
         return cleaned
 
 
-class AcceptTaskPackageRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/accept-package``."""
-
-    host_id: str | None = None
-    workspace: str | None = None
-    harness: str | None = None
-    model: str | None = None
-
-
 class CreateFyiClusterRequest(BaseModel):
     """Request body for ``POST /v1/task-events/fyi-clusters``."""
 
@@ -417,12 +406,12 @@ class AdoptSessionRequest(BaseModel):
     model: str | None = None
 
 
-async def _best_effort_ensure_secretary_runner(
+async def _best_effort_ensure_conversation_runner(
     request: Request,
     conversation_id: str,
     conversation_store: ConversationStore,
 ) -> None:
-    """Launch or reconnect the secretary session's runner when possible."""
+    """Launch or reconnect a session runner when possible."""
     from omnigent.server.routes.sessions import (
         ServerRunnerInfrastructure,
         _ensure_runner_session_initialized,
@@ -732,7 +721,7 @@ def create_agent_tasks_router(
                         profile.conversation_id,
                     )
                 if existing is not None:
-                    await _best_effort_ensure_secretary_runner(
+                    await _best_effort_ensure_conversation_runner(
                         request,
                         existing.id,
                         conversation_store,
@@ -755,7 +744,7 @@ def create_agent_tasks_router(
                     effective_user_id,
                     conversation_id=conversation_id,
                 )
-                await _best_effort_ensure_secretary_runner(
+                await _best_effort_ensure_conversation_runner(
                     request,
                     conversation_id,
                     conversation_store,
@@ -796,7 +785,7 @@ def create_agent_tasks_router(
                     effective_user_id,
                     conversation_id=conversation_id,
                 )
-                await _best_effort_ensure_secretary_runner(
+                await _best_effort_ensure_conversation_runner(
                     request,
                     conversation_id,
                     conversation_store,
@@ -1055,14 +1044,31 @@ def create_agent_tasks_router(
                     item=item,
                     resolution=body.resolution,
                     task=task,
+                    task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
                     conversation_store=conversation_store,
+                    agent_store=agent_store,
                     edited_payload=body.edited_payload,
                     secretary_profile=profile,
                 )
 
             updated, execution = await asyncio.to_thread(_resolve)
+            if (
+                body.resolution != "reject_item"
+                and execution is not None
+                and updated.state == "running"
+            ):
+                refreshed_task = await asyncio.to_thread(task_store.get, task.id)
+                if (
+                    refreshed_task is not None
+                    and refreshed_task.manager_conversation_id is not None
+                ):
+                    await _best_effort_ensure_conversation_runner(
+                        request,
+                        refreshed_task.manager_conversation_id,
+                        conversation_store,
+                    )
             response = _item_to_response(updated)
             if execution is not None:
                 response["execution_id"] = execution.id
@@ -1259,14 +1265,8 @@ def create_agent_tasks_router(
 
         @router.get("/agent-tasks/board/pending")
         async def list_board_pending(request: Request) -> dict[str, Any]:
-            """List paused task packages awaiting user acknowledgment."""
+            """List board FYI clusters awaiting user acknowledgment."""
             user_id = require_user(request, auth_provider)
-            packages = await asyncio.to_thread(
-                list_pending_packages,
-                owner_user_id=_effective_user_id(user_id),
-                task_store=task_store,
-                task_item_store=task_item_store,
-            )
             fyi = await asyncio.to_thread(
                 list_fyi_board_cards,
                 owner_user_id=_effective_user_id(user_id),
@@ -1275,41 +1275,8 @@ def create_agent_tasks_router(
             )
             return {
                 "object": "agent.task.board",
-                "pending": packages,
                 "fyi": fyi,
             }
-
-        @router.post("/agent-tasks/{task_id}/accept-package")
-        async def accept_task_package_route(
-            request: Request,
-            task_id: str,
-            body: AcceptTaskPackageRequest,
-        ) -> dict[str, Any]:
-            """Activate a paused task package and approve its inbox items."""
-            user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(task_id, user_id)
-            profile = None
-            if secretary_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    secretary_profile_store.get,
-                    _effective_user_id(user_id),
-                )
-            activated = await asyncio.to_thread(
-                accept_task_package,
-                task=task,
-                task_store=task_store,
-                task_item_store=task_item_store,
-                task_event_store=task_event_store,
-                conversation_store=conversation_store,
-                agent_store=agent_store,
-                host_id=body.host_id,
-                workspace=body.workspace,
-                harness=body.harness,
-                model=body.model,
-                secretary_profile=profile,
-            )
-            tags = await asyncio.to_thread(task_store.get_tags, task_id)
-            return _task_to_response(activated, tags=tags)
 
         @router.post("/agent-tasks/{task_id}/reject-package")
         async def reject_task_package_route(

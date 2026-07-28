@@ -1,11 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  acceptTaskPackage,
-  fetchBoardTriage,
-  rejectTaskPackage,
-  resolveFyiCluster,
-  type FyiResolution,
-} from "@/lib/agentTasksApi";
+import { fetchBoardTriage, resolveFyiCluster, type FyiResolution } from "@/lib/agentTasksApi";
 
 const BOARD_TRIAGE_KEY = ["agent-task-board-triage"] as const;
 
@@ -21,30 +15,6 @@ async function invalidateBoard(queryClient: ReturnType<typeof useQueryClient>) {
   await queryClient.invalidateQueries({ queryKey: BOARD_TRIAGE_KEY });
   await queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
   await queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard"] });
-}
-
-export function useAcceptTaskPackage() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (taskId: string) => {
-      await acceptTaskPackage(taskId);
-    },
-    onSuccess: async () => {
-      await invalidateBoard(queryClient);
-    },
-  });
-}
-
-export function useRejectTaskPackage() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (taskId: string) => {
-      await rejectTaskPackage(taskId);
-    },
-    onSuccess: async () => {
-      await invalidateBoard(queryClient);
-    },
-  });
 }
 
 export function useResolveFyiCluster() {

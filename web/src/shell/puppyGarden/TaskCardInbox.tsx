@@ -216,10 +216,11 @@ export function TaskCardInbox({
   agents,
   defaultModel,
 }: TaskCardInboxProps) {
-  const workerAgentIds = useMemo(
-    () => workerGroups.map((group) => group.worker_agent_id),
-    [workerGroups],
-  );
+  const workerAgentIds = useMemo(() => {
+    const fromGroups = workerGroups.map((group) => group.worker_agent_id);
+    if (fromGroups.length > 0) return fromGroups;
+    return agents.map((agent) => agent.id);
+  }, [workerGroups, agents]);
 
   return (
     <section className="flex max-h-72 min-h-0 flex-col border-b border-border bg-amber-50/60 px-3 py-2 dark:bg-amber-950/20">

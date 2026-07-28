@@ -88,16 +88,20 @@ X-Omnigent-Host-Id: HOST_ID
 - [ ] Event 1 state is `reconciled` on a paused package item, not `routed`.
 - [ ] Event 2 is `reconciled` on the **same** package item (or secretary clearly linked both before user acts).
 - [ ] Secretary received a stall wake (check secretary session or server log).
-- [ ] `GET /v1/agent-tasks/board/pending` shows one actionable package with both events (preferred) or two packages the user can tell belong together.
+- [ ] `GET /v1/agent-tasks?state=paused` shows one paused task with both events on inbox items (preferred) or two packages the user can tell belong together.
 - [ ] Package task state is `paused` with `awaiting_user_ack` inbox items.
 - [ ] Secretary did **not** bootstrap a manager session yet.
 
-**After user accepts the package**
+**After user Go on an inbox item**
 
-- [ ] Exactly **one** active task exists for the incident.
+- [ ] Exactly **one** active task exists for the incident (first Go activates the package).
 - [ ] Both events remain `reconciled` on that task.
-- [ ] Inbox items are `approved` (manager can dispatch after user Go).
-- [ ] Manager session is bootstrapped; no worker dispatched without approval.
+- [ ] Go dispatches a worker for that item; remaining inbox items stay until the user acts.
+- [ ] Manager session is bootstrapped on first Go; no worker dispatched without user Go.
+
+**After user skips every inbox item**
+
+- [ ] Paused task remains on the board (no auto-archive).
 
 ### Failure modes to watch
 
@@ -105,16 +109,16 @@ X-Omnigent-Host-Id: HOST_ID
 - Secretary auto-resolves to a non-existent or wrong active task instead of opening a package.
 - Two unrelated packages with no link between PR #123 CI failure and PR #456 Slack follow-up.
 - Secretary marks Slack message as FYI only and drops the follow-up signal.
-- Duplicate tasks created when user accepts.
+- Duplicate tasks created when user Go on multiple items without reconciling first.
 - Manager auto-dispatches workers without user Go on inbox items.
 
 ### Verify
 
 ```http
 GET /v1/task-events/ambiguous-inbox
-GET /v1/agent-tasks/board/pending
+GET /v1/agent-tasks?state=paused
 GET /v1/agent-tasks/{task_id}/reconcile-queue
 ```
 
 Check event `state`, `task_id`, and board cards after ingest, after secretary
-triage, and after user accepts.
+triage, and after user Go or Skip on inbox items.

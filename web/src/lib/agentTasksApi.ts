@@ -196,37 +196,6 @@ export async function updateTaskItem(
   return readJson<TaskItemSummary>(res);
 }
 
-export interface TaskPackageTaskSummary {
-  id: string;
-  title: string;
-  description: string | null;
-  charter: string | null;
-  state: string;
-  tags: Array<{ tag_type: string; tag: string }>;
-}
-
-export interface TaskPackageInboxItem {
-  id: string;
-  title: string;
-  instructions: string | null;
-  state: string;
-  created_at: number;
-}
-
-export interface PendingTaskPackageCard {
-  id: string;
-  kind: "task_package";
-  state: "pending";
-  created_at: number;
-  resolved_at: number | null;
-  headline: string;
-  rationale: string | null;
-  body: {
-    task: TaskPackageTaskSummary;
-    inbox_items: TaskPackageInboxItem[];
-  };
-}
-
 export interface FyiClusterCard {
   id: string;
   kind: "fyi_cluster";
@@ -241,7 +210,6 @@ export interface FyiClusterCard {
 }
 
 export interface BoardTriage {
-  pending: PendingTaskPackageCard[];
   fyi: FyiClusterCard[];
 }
 
@@ -250,38 +218,6 @@ export type FyiResolution = "dismiss_fyi" | "promote_to_routing";
 export async function fetchBoardTriage(): Promise<BoardTriage> {
   const res = await authenticatedFetch("/v1/agent-tasks/board/pending");
   return readJson<BoardTriage>(res);
-}
-
-export async function acceptTaskPackage(
-  taskId: string,
-  body: {
-    host_id?: string;
-    workspace?: string;
-    harness?: string;
-    model?: string;
-  } = {},
-): Promise<void> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/accept-package`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
-  }
-}
-
-export async function rejectTaskPackage(taskId: string): Promise<void> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/reject-package`,
-    { method: "POST" },
-  );
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
-  }
 }
 
 export async function resolveFyiCluster(

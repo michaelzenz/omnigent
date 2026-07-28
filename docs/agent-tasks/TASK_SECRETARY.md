@@ -42,13 +42,16 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/match-tasks" \
   -d '{"event_ids":["<id1>","<id2>"]}'
 ```
 
-### 2. List pending task packages (when escalating)
+### 2. List paused task packages (when escalating)
 
 ```bash
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/board/pending"
+curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=paused&limit=100"
 ```
 
-Each `pending` entry is a **paused** task with inbox items awaiting user acknowledgment.
+Each paused task has inbox items in `awaiting_user_ack`. The user reviews them on
+the board and hits **Go** on each item (`POST /v1/task-items/{id}/resolve`) to
+activate the task, bootstrap the manager, and dispatch a worker. **Skip** leaves
+the item cancelled; if the user skips every item the paused task stays on the board.
 To add more events to an existing package, call
 `POST /v1/agent-tasks/{task_id}/reconcile-events` with `item_id` to extend an item.
 
@@ -80,7 +83,7 @@ are hints only — use title, summary, charter fit, and your judgment.
     }'
   ```
   - Events move to `reconciled`; items stay in `awaiting_user_ack` until the user
-    accepts the package on the board.
+    hits **Go** on the inbox item on the board.
 
 - **Not confident** (weak/ambiguous match, multiple plausible tasks, or needs a
   new task) → create a paused task package:
@@ -111,13 +114,13 @@ are hints only — use title, summary, charter fit, and your judgment.
   - Pass `cluster_id` to attach more events to an open FYI card.
   - Linked events move to `classified_fyi`; user dismisses on the board.
 
-Tell the user about any **pending packages** or **FYI** cards you created. You do not
-accept, reject, or dismiss board cards yourself.
+Tell the user about any **paused packages** or **FYI** cards you created. You do not
+approve inbox items, reject packages, or dismiss FYI cards yourself.
 
 ---
 
 ## Do not
 
 - Dispatch workers
-- Accept or reject task packages or manager inbox items on behalf of the user
+- Approve inbox items or dismiss FYI cards on behalf of the user
 - Ingest external event types (`build.finished`, etc.)

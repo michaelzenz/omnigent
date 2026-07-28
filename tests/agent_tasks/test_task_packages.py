@@ -8,9 +8,9 @@ import pytest
 
 from omnigent.agent_tasks.secretary_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
+from omnigent.agent_tasks.items import resolve_task_item
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
-    accept_task_package,
     create_task_package,
     reconcile_events_to_task,
     reject_task_package,
@@ -170,15 +170,17 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
     assert {link.event_id for link in links} == {e1, e2}
 
 
-def test_accept_and_reject_task_package(stores) -> None:
+def test_resolve_inbox_item_activates_paused_package(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
     agent_store = stores["agent"]
     conversation_store = stores["conversation"]
     manager_id = generate_agent_id()
+    worker_id = generate_agent_id()
     agent_store.create(manager_id, name="manager", bundle_location="test:///bundle")
-    event_id = _uid("accept-event")
+    agent_store.create(worker_id, name="worker", bundle_location="test:///bundle")
+    event_id = _uid("resolve-event")
     event_store.create_event(
         event_id,
         "github.pr.checks_failed",
@@ -188,26 +190,92 @@ def test_accept_and_reject_task_package(stores) -> None:
     task = create_task_package(
         owner_user_id=_uid("owner"),
         manager_agent_id=manager_id,
-        title="Package to accept",
-        items=[PackageItemSpec(title="Do work", event_ids=[event_id])],
+        title="Package to activate",
+        items=[PackageItemSpec(title="Do work", event_ids=[event_id], instructions="Do the work")],
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
     )
-    activated = accept_task_package(
+    item = item_store.list_items_for_task(task.id, state="awaiting_user_ack")[0]
+    updated, execution = resolve_task_item(
+        item=item,
+        resolution="edit_and_dispatch",
         task=task,
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
-        host_id=_uid("host"),
-        workspace="/tmp/omnigent-task-test",
+        edited_payload={
+            "worker_agent_id": worker_id,
+            "host_id": _uid("host"),
+            "workspace": "/tmp/omnigent-task-test",
+            "harness": "cursor",
+            "model": "composer-2.5",
+        },
     )
+    assert updated.state == "running"
+    assert execution is not None
+    activated = task_store.get(task.id)
+    assert activated is not None
     assert activated.state == "active"
-    items = item_store.list_items_for_task(task.id, state="approved")
-    assert len(items) == 1
+    assert activated.manager_conversation_id is not None
 
+
+def test_skip_inbox_items_keeps_paused_task(stores) -> None:
+    task_store = stores["task"]
+    event_store = stores["event"]
+    item_store = stores["item"]
+    agent_store = stores["agent"]
+    conversation_store = stores["conversation"]
+    manager_id = generate_agent_id()
+    agent_store.create(manager_id, name="manager", bundle_location="test:///bundle")
+    event_ids = [_uid("skip-e1"), _uid("skip-e2")]
+    for event_id in event_ids:
+        event_store.create_event(
+            event_id,
+            "github.pr.checks_failed",
+            "PR checks failed",
+            state="awaiting_grouping",
+        )
+    task = create_task_package(
+        owner_user_id=_uid("owner"),
+        manager_agent_id=manager_id,
+        title="Package to skip",
+        items=[
+            PackageItemSpec(title="Skip me", event_ids=[event_ids[0]]),
+            PackageItemSpec(title="Skip me too", event_ids=[event_ids[1]]),
+        ],
+        task_store=task_store,
+        task_item_store=item_store,
+        task_event_store=event_store,
+    )
+    for item in item_store.list_items_for_task(task.id, state="awaiting_user_ack"):
+        updated, execution = resolve_task_item(
+            item=item,
+            resolution="reject_item",
+            task=task,
+            task_store=task_store,
+            task_item_store=item_store,
+            task_event_store=event_store,
+            conversation_store=conversation_store,
+            agent_store=agent_store,
+        )
+        assert updated.state == "cancelled"
+        assert execution is None
+
+    unchanged = task_store.get(task.id)
+    assert unchanged is not None
+    assert unchanged.state == "paused"
+
+
+def test_reject_task_package(stores) -> None:
+    task_store = stores["task"]
+    event_store = stores["event"]
+    item_store = stores["item"]
+    agent_store = stores["agent"]
+    manager_id = generate_agent_id()
+    agent_store.create(manager_id, name="manager", bundle_location="test:///bundle")
     reject_event_id = _uid("reject-event")
     event_store.create_event(
         reject_event_id,

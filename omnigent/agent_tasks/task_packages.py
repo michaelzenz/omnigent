@@ -1,4 +1,4 @@
-"""Paused task packages — secretary reconcile and user accept/reject."""
+"""Paused task packages — secretary reconcile and user inbox ack."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
-from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.task_match import (
@@ -17,10 +16,8 @@ from omnigent.agent_tasks.task_match import (
 )
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskItem, TaskTag
-from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_store import AgentStore
-from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
@@ -176,115 +173,6 @@ def create_task_package(
                 code=ErrorCode.CONFLICT,
             )
     return task_store.get(resolved_task_id) or task
-
-
-def list_pending_packages(
-    *,
-    owner_user_id: str | None,
-    task_store: TaskStore,
-    task_item_store: TaskItemStore,
-) -> list[dict[str, Any]]:
-    """Build pending paused-task packages for the board."""
-    packages: list[dict[str, Any]] = []
-    for task in task_store.list(state="paused"):
-        if (
-            owner_user_id is not None
-            and task.owner_user_id not in {owner_user_id, "__anonymous__", None}
-        ):
-            continue
-        inbox_items = task_item_store.list_items_for_task(
-            task.id,
-            state="awaiting_user_ack",
-        )
-        if not inbox_items:
-            continue
-        tags = task_store.get_tags(task.id)
-        packages.append(
-            {
-                "id": task.id,
-                "kind": "task_package",
-                "state": "pending",
-                "created_at": task.created_at,
-                "resolved_at": None,
-                "headline": task.title,
-                "rationale": None,
-                "body": {
-                    "task": {
-                        "id": task.id,
-                        "title": task.title,
-                        "description": task.description,
-                        "charter": task.charter,
-                        "state": task.state,
-                        "tags": [
-                            {"tag_type": tag.tag_type, "tag": tag.tag} for tag in tags
-                        ],
-                    },
-                    "inbox_items": [_package_item_summary(item) for item in inbox_items],
-                },
-            },
-        )
-    return packages
-
-
-def _package_item_summary(item: TaskItem) -> dict[str, Any]:
-    return {
-        "id": item.id,
-        "title": item.title,
-        "instructions": item.instructions,
-        "state": item.state,
-        "created_at": item.created_at,
-    }
-
-
-def accept_task_package(
-    *,
-    task: Task,
-    task_store: TaskStore,
-    task_item_store: TaskItemStore,
-    task_event_store: TaskEventStore,
-    conversation_store: ConversationStore,
-    agent_store: AgentStore,
-    host_id: str | None = None,
-    workspace: str | None = None,
-    harness: str | None = None,
-    model: str | None = None,
-    secretary_profile: UserSecretaryProfile | None = None,
-) -> Task:
-    """Activate a paused package and approve its inbox items."""
-    _require_paused_package_task(task)
-    inbox_items = task_item_store.list_items_for_task(
-        task.id,
-        state="awaiting_user_ack",
-    )
-    if not inbox_items:
-        raise OmnigentError(
-            "Task package has no inbox items awaiting acknowledgment",
-            code=ErrorCode.CONFLICT,
-        )
-
-    params = resolve_bootstrap_params(
-        host_id=host_id,
-        workspace=workspace,
-        harness=harness,
-        model=model,
-        secretary_profile=secretary_profile,
-    )
-    bootstrapped = bootstrap_task_manager(
-        task=task,
-        task_store=task_store,
-        task_event_store=task_event_store,
-        conversation_store=conversation_store,
-        agent_store=agent_store,
-        params=params,
-    )
-    activated = task_store.update(bootstrapped.id, state="active")
-    assert activated is not None
-
-    for item in inbox_items:
-        updated = task_item_store.update_item(item.id, state="approved")
-        assert updated is not None
-
-    return activated
 
 
 def reject_task_package(

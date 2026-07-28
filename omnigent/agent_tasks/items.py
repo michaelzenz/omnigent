@@ -5,7 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal
 
+from omnigent.agent_tasks.bootstrap import (
+    bootstrap_task_manager,
+    resolve_bootstrap_params,
+)
 from omnigent.agent_tasks.dispatch import dispatch_worker_for_item, resolve_dispatch_params
+from omnigent.stores.agent_store import AgentStore
+from omnigent.stores.task_store import TaskStore
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
 from omnigent.entities.secretary import UserSecretaryProfile
@@ -85,6 +91,43 @@ def create_task_item(
     return item
 
 
+def ensure_task_manager_for_dispatch(
+    *,
+    task: Task,
+    task_store: TaskStore,
+    task_event_store: TaskEventStore,
+    conversation_store: ConversationStore,
+    agent_store: AgentStore,
+    secretary_profile: UserSecretaryProfile | None = None,
+    host_id: str | None = None,
+    workspace: str | None = None,
+    harness: str | None = None,
+    model: str | None = None,
+) -> Task:
+    """Activate paused packages and ensure a manager session exists before dispatch."""
+    if task.state == "paused":
+        activated = task_store.update(task.id, state="active")
+        if activated is None:
+            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+        task = activated
+
+    params = resolve_bootstrap_params(
+        host_id=host_id,
+        workspace=workspace,
+        harness=harness,
+        model=model,
+        secretary_profile=secretary_profile,
+    )
+    return bootstrap_task_manager(
+        task=task,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        params=params,
+    )
+
+
 def submit_item_for_user_ack(task_item_store: TaskItemStore, item_id: str) -> TaskItem:
     """Move a draft item into the user inbox."""
     updated = task_item_store.update_item(item_id, state="awaiting_user_ack")
@@ -98,9 +141,11 @@ def resolve_task_item(
     item: TaskItem,
     resolution: ItemResolution,
     task: Task,
+    task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     edited_payload: dict[str, Any] | None = None,
     secretary_profile: UserSecretaryProfile | None = None,
 ) -> tuple[TaskItem, TaskEventExecution | None]:
@@ -117,6 +162,18 @@ def resolve_task_item(
         return updated, None
 
     payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
+    task = ensure_task_manager_for_dispatch(
+        task=task,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        secretary_profile=secretary_profile,
+        host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
+        workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
+        harness=str(payload.get("harness")) if payload.get("harness") is not None else None,
+        model=str(payload.get("model")) if payload.get("model") is not None else None,
+    )
     if resolution == "edit_and_dispatch":
         task_item_store.update_item(
             item.id,
