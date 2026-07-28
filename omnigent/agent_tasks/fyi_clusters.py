@@ -10,7 +10,7 @@ from omnigent.agent_tasks.constants import (
     FYI_CLUSTER_OPEN_STATE,
     AMBIGUOUS_EVENT_STATES,
 )
-from omnigent.agent_tasks.routing_proposals import _event_summary, upsert_routing_proposal
+from omnigent.agent_tasks.routing_proposals import _event_summary, create_routing_proposal
 from omnigent.db.utils import now_epoch
 from omnigent.entities import FyiCluster, TaskItem
 from omnigent.errors import ErrorCode, OmnigentError
@@ -47,14 +47,14 @@ def _claimable_fyi_events(
     return claimed
 
 
-def upsert_fyi_cluster(
+def create_fyi_cluster(
     *,
     owner_user_id: str,
-    canonical_key: str,
     headline: str,
     event_ids: list[str],
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    cluster_id: str | None = None,
     rationale: str | None = None,
 ) -> FyiCluster | None:
     """Create or extend a secretary FYI cluster over orphan events."""
@@ -66,9 +66,15 @@ def upsert_fyi_cluster(
     if not claimed_ids:
         return None
 
-    existing = task_item_store.get_open_fyi_cluster_by_canonical_key(canonical_key)
-    if existing is not None:
-        cluster = existing
+    if cluster_id is not None:
+        cluster = task_item_store.get_fyi_cluster(cluster_id)
+        if cluster is None:
+            raise OmnigentError("FYI cluster not found", code=ErrorCode.NOT_FOUND)
+        if cluster.state != FYI_CLUSTER_OPEN_STATE:
+            raise OmnigentError(
+                f"Cannot extend FYI cluster in state {cluster.state!r}",
+                code=ErrorCode.CONFLICT,
+            )
         if headline != cluster.headline or rationale != cluster.rationale:
             updated = task_item_store.update_fyi_cluster(
                 cluster.id,
@@ -82,7 +88,6 @@ def upsert_fyi_cluster(
             _generate_cluster_id(),
             owner_user_id,
             headline,
-            canonical_key=canonical_key,
             rationale=rationale,
         )
 
@@ -123,7 +128,6 @@ def list_fyi_board_cards(
                 "headline": cluster.headline,
                 "rationale": cluster.rationale,
                 "body": {
-                    "canonical_key": cluster.canonical_key,
                     "events": events,
                 },
             },
@@ -181,11 +185,9 @@ def resolve_fyi_cluster(
     assert updated is not None
 
     title = routing_title or cluster.headline
-    canonical_key = cluster.canonical_key or f"fyi:{cluster.id}"
 
-    item = upsert_routing_proposal(
+    item = create_routing_proposal(
         owner_user_id=owner_user_id,
-        canonical_key=canonical_key,
         title=title,
         event_ids=event_ids,
         suggested_task_id=suggested_task_id,

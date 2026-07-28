@@ -194,7 +194,6 @@ class TaskItem:
     :param task_id: Parent managed task.
     :param title: Short label shown in the inbox/work UI.
     :param state: Lifecycle state (draft through done).
-    :param canonical_key: Optional dedupe key for reconcile upserts.
     :param instructions: Dispatch instructions for the worker.
     :param worker_agent_id: Proposed or assigned worker agent.
     :param model: Model override for dispatch.
@@ -212,7 +211,6 @@ class TaskItem:
     title: str
     state: str
     created_at: int
-    canonical_key: str | None = None
     instructions: str | None = None
     worker_agent_id: str | None = None
     model: str | None = None
@@ -241,7 +239,6 @@ class FyiCluster:
 
     id: str
     owner_user_id: str
-    canonical_key: str | None
     headline: str
     rationale: str | None
     state: str

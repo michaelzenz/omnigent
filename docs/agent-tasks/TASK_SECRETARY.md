@@ -30,8 +30,8 @@ into spcific taskItem as execution unit
 curl -sS "$RUNNER_SERVER_URL/v1/task-events/ambiguous-inbox"
 ```
 
-Returns clusters of stalled events (`awaiting_grouping`)
-Use each cluster’s `suggested_canonical_key` when creating board proposals.
+Returns clusters of stalled events (`awaiting_grouping`) grouped by shared event tags.
+Use each cluster’s `tags` and `suggested_candidates` when deciding how to route.
 
 ### 2. List open routing decisions (when escalating)
 
@@ -40,8 +40,8 @@ curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/board/decisions"
 ```
 
 Each entry is a `routing_proposed` task item (a **Decisions** card on the board).
-Match by `canonical_key` when deciding whether to extend an existing card or create
-a new one. `POST /v1/task-items/routing-proposals` also upserts by `canonical_key`.
+To add more events to an existing card, pass its `id` as `item_id` on
+`POST /v1/task-items/routing-proposals`.
 
 ### 3. Decide each cluster
 
@@ -65,15 +65,16 @@ are hints only — use title, summary, charter fit, and your judgment.
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-items/routing-proposals" \
     -H 'Content-Type: application/json' \
     -d '{
-      "canonical_key":"<key>",
       "event_ids":["<id>"],
       "title":"<title>",
       "instructions":"<instructions>",
+      "item_id":"<optional-existing-card-id>",
       "suggested_task_id":"<optional-task-id>"
     }'
   ```
   - Omit `suggested_task_id` (or pass `null`) to pre-select the paused new-task
     option. Works even when no managed tasks exist yet.
+  - Pass `item_id` to attach more events to an open Decisions card.
   - Use secretary profile defaults for `worker_agent_id`, `host_id`, `workspace`,
     `harness`, and `model` when omitted.
   - Linked events move to `routing_proposed`.
@@ -82,8 +83,9 @@ are hints only — use title, summary, charter fit, and your judgment.
   ```bash
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/fyi-clusters" \
     -H 'Content-Type: application/json' \
-    -d '{"event_ids":["<id>"],"title":"<title>","summary":"<summary>"}'
+    -d '{"event_ids":["<id>"],"headline":"<headline>","cluster_id":"<optional-existing-cluster-id>"}'
   ```
+  - Pass `cluster_id` to attach more events to an open FYI card.
   - Linked events move to `classified_fyi`; user dismisses on the board.
 
 Tell the user about any **Decisions** or **FYI** cards you created. You do not

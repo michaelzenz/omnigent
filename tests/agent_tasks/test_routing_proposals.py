@@ -8,11 +8,10 @@ import pytest
 
 from omnigent.agent_tasks.routing_proposals import (
     cluster_ambiguous_events,
-    derive_cluster_key,
-    upsert_routing_proposal,
+    create_routing_proposal,
 )
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import TaskEvent, TaskEventTag
+from omnigent.entities import TaskEventTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -33,26 +32,7 @@ def stores(db_uri: str):
     }
 
 
-def test_derive_cluster_key_from_tags() -> None:
-    event = TaskEvent(
-        id="e1",
-        event_type="github.pr.checks_failed",
-        title="PR failed",
-        search_text="github.pr.checks_failed\nPR failed",
-        state="awaiting_grouping",
-        priority=0,
-        created_at=1,
-        source="poll_plugin:github_pr",
-        source_key="org/repo#891",
-    )
-    tags = [
-        TaskEventTag(event_id="e1", tag_type="repo", tag="org/repo"),
-        TaskEventTag(event_id="e1", tag_type="pr", tag="891"),
-    ]
-    assert derive_cluster_key(event, tags) == "pr:org/repo#891"
-
-
-def test_cluster_ambiguous_events_groups_by_pr(stores) -> None:
+def test_cluster_ambiguous_events_groups_by_tags(stores) -> None:
     event_store = stores["event"]
     e1 = event_store.create_event(
         _uid("e1"),
@@ -85,10 +65,13 @@ def test_cluster_ambiguous_events_groups_by_pr(stores) -> None:
     clusters = cluster_ambiguous_events([e1, e2], tags_by_event_id=tags_by_id)
     assert len(clusters) == 1
     assert len(clusters[0].events) == 2
-    assert clusters[0].suggested_canonical_key == "pr:org/repo#891"
+    assert clusters[0].tags == [
+        {"tag_type": "pr", "tag": "891"},
+        {"tag_type": "repo", "tag": "org/repo"},
+    ]
 
 
-def test_upsert_appends_to_open_proposal(stores) -> None:
+def test_extend_routing_proposal_by_item_id(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
@@ -115,9 +98,8 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
             TaskEventTag(event_id=_uid("ev1"), tag_type="pr", tag="891"),
         ],
     )
-    first = upsert_routing_proposal(
+    first = create_routing_proposal(
         owner_user_id="user1",
-        canonical_key="pr:org/repo#891",
         title="Fix PR 891",
         event_ids=[e1.id],
         suggested_task_id=task_id,
@@ -148,11 +130,11 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
             TaskEventTag(event_id=_uid("ev2"), tag_type="pr", tag="891"),
         ],
     )
-    second = upsert_routing_proposal(
+    second = create_routing_proposal(
         owner_user_id="user1",
-        canonical_key="pr:org/repo#891",
         title="Fix PR 891",
         event_ids=[e2.id],
+        item_id=first.id,
         suggested_task_id=task_id,
         task_store=task_store,
         task_item_store=item_store,
@@ -171,7 +153,7 @@ def test_upsert_appends_to_open_proposal(stores) -> None:
     assert len(linked) == 2
 
 
-def test_upsert_creates_new_task_proposal_without_active_tasks(stores) -> None:
+def test_create_routing_proposal_without_active_tasks(stores) -> None:
     """Scenario 1: routing proposals work when no managed tasks exist yet."""
     task_store = stores["task"]
     event_store = stores["event"]
@@ -197,9 +179,8 @@ def test_upsert_creates_new_task_proposal_without_active_tasks(stores) -> None:
         ],
     )
 
-    item = upsert_routing_proposal(
+    item = create_routing_proposal(
         owner_user_id="local",
-        canonical_key="pr:acme/widgets#123",
         title="CI failure on PR #123",
         event_ids=[event.id],
         task_store=task_store,

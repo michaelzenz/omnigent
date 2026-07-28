@@ -56,7 +56,6 @@ async def test_routing_proposal_without_existing_task(
     created = await client.post(
         "/v1/task-items/routing-proposals",
         json={
-            "canonical_key": "pr:acme/widgets#123",
             "title": "CI failure on PR #123",
             "event_ids": [event_id],
             "instructions": "Investigate CI failure",
@@ -113,7 +112,6 @@ async def test_routing_proposal_board_and_accept(
     created = await client.post(
         "/v1/task-items/routing-proposals",
         json={
-            "canonical_key": "pr:omnigent-fork#891",
             "title": "Fix PR 891",
             "event_ids": [event_id],
             "suggested_task_id": task_id,
@@ -187,7 +185,6 @@ async def test_routing_proposal_accept_with_edited_instructions(
     created = await client.post(
         "/v1/task-items/routing-proposals",
         json={
-            "canonical_key": "pr:omnigent-fork#902",
             "title": "Fix PR 902",
             "event_ids": [event_id],
             "suggested_task_id": task_id,

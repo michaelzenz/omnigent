@@ -113,7 +113,6 @@ def _create_events(
 
 def _create_routing_card(
     *,
-    canonical_key: str,
     title: str,
     instructions: str,
     rationale: str,
@@ -126,7 +125,6 @@ def _create_routing_card(
     proposed_task_charter: str | None = None,
 ) -> None:
     body: dict = {
-        "canonical_key": canonical_key,
         "title": title,
         "event_ids": event_ids,
         "instructions": instructions,
@@ -148,7 +146,6 @@ def _create_routing_card(
 
 def _create_fyi_cluster(
     *,
-    canonical_key: str,
     headline: str,
     rationale: str,
     event_ids: list[str],
@@ -157,7 +154,6 @@ def _create_fyi_cluster(
         "POST",
         "/v1/task-events/fyi-clusters",
         body={
-            "canonical_key": canonical_key,
             "headline": headline,
             "rationale": rationale,
             "event_ids": event_ids,
@@ -203,7 +199,6 @@ def main() -> int:
 
     print("Creating board routing cards…")
     _create_routing_card(
-        canonical_key=f"pr:omnigent-fork#891-{offset_base}",
         title="Fix CI on PR #891",
         instructions="Investigate lint failure and address review feedback on PR #891.",
         rationale="Same PR thread; matches omnigent-fork CI charter.",
@@ -213,7 +208,6 @@ def main() -> int:
         score=0.84,
     )
     _create_routing_card(
-        canonical_key=f"pr:omnigent-fork#902-{offset_base}",
         title="Update API docs for task routing",
         instructions="Refresh TASK_SECRETARY.md and API_REFERENCE after routing cards shipped.",
         rationale="Docs-oriented signals fit the docs refresh task.",
@@ -223,7 +217,6 @@ def main() -> int:
         score=0.79,
     )
     _create_routing_card(
-        canonical_key=f"pr:omnigent-fork#915-{offset_base}",
         title="Fix github_pr poll plugin flake",
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
         rationale="Poll plugin events match poll plugins task charter.",
@@ -233,7 +226,6 @@ def main() -> int:
         score=0.76,
     )
     _create_routing_card(
-        canonical_key=f"pr:other-repo#12-{offset_base}",
         title="Investigate unrelated repo alert",
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
         rationale="No strong match to existing tasks; secretary recommends a new task.",
@@ -248,7 +240,6 @@ def main() -> int:
     print("Creating FYI clusters…")
     fyi_events = _create_events(host_header, repo="dependabot-fork", pr=44, offset_base=offset_base + 40)
     _create_fyi_cluster(
-        canonical_key=f"pr:dependabot-fork#44-{offset_base}",
         headline="Dependabot PR checks passed (unrelated repo)",
         rationale="Informational only — different repo, not tagged for you.",
         event_ids=fyi_events,

@@ -24,7 +24,6 @@ from omnigent.entities import FyiCluster, TaskItem, TaskItemEvent
 from omnigent.stores.task_item_store import TaskItemStore
 
 _UNSET: Any = object()
-_OPEN_ITEM_STATES = frozenset({"draft", "awaiting_user_ack", "approved", "queued", "running"})
 
 
 def _item_to_entity(row: SqlTaskItem) -> TaskItem:
@@ -34,7 +33,6 @@ def _item_to_entity(row: SqlTaskItem) -> TaskItem:
         title=row.title,
         state=decode_task_item_state(row.state),
         created_at=row.created_at,
-        canonical_key=row.canonical_key,
         instructions=row.instructions,
         worker_agent_id=row.worker_agent_id,
         model=row.model,
@@ -61,7 +59,6 @@ def _fyi_cluster_to_entity(row: SqlFyiCluster) -> FyiCluster:
     return FyiCluster(
         id=row.id,
         owner_user_id=row.owner_user_id,
-        canonical_key=row.canonical_key,
         headline=row.headline,
         rationale=row.rationale,
         state=decode_fyi_cluster_state(row.state),
@@ -85,7 +82,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         title: str,
         *,
         state: str = "draft",
-        canonical_key: str | None = None,
         instructions: str | None = None,
         worker_agent_id: str | None = None,
         model: str | None = None,
@@ -101,7 +97,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             task_id=task_id,
             title=title,
             state=encode_task_item_state(state),
-            canonical_key=canonical_key,
             instructions=instructions,
             worker_agent_id=worker_agent_id,
             model=model,
@@ -122,46 +117,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
     def get_item(self, item_id: str) -> TaskItem | None:
         with self._session() as session:
             row = session.get(SqlTaskItem, (current_workspace_id(), item_id))
-            if row is None:
-                return None
-            return _item_to_entity(row)
-
-    def get_item_by_canonical_key(
-        self,
-        task_id: str,
-        canonical_key: str,
-    ) -> TaskItem | None:
-        with self._session() as session:
-            stmt = (
-                select(SqlTaskItem)
-                .where(SqlTaskItem.workspace_id == current_workspace_id())
-                .where(SqlTaskItem.task_id == task_id)
-                .where(SqlTaskItem.canonical_key == canonical_key)
-                .order_by(desc(SqlTaskItem.created_at), desc(SqlTaskItem.id))
-            )
-            rows = session.execute(stmt).scalars().all()
-            for row in rows:
-                if decode_task_item_state(row.state) in _OPEN_ITEM_STATES:
-                    return _item_to_entity(row)
-            return None
-
-    def get_open_routing_item_by_canonical_key(
-        self,
-        canonical_key: str,
-    ) -> TaskItem | None:
-        with self._session() as session:
-            stmt = (
-                select(SqlTaskItem)
-                .where(SqlTaskItem.workspace_id == current_workspace_id())
-                .where(SqlTaskItem.canonical_key == canonical_key)
-                .where(
-                    SqlTaskItem.state == encode_task_item_state("routing_proposed"),
-                )
-                .where(SqlTaskItem.created_by == "secretary")
-                .order_by(desc(SqlTaskItem.created_at), desc(SqlTaskItem.id))
-                .limit(1)
-            )
-            row = session.execute(stmt).scalars().first()
             if row is None:
                 return None
             return _item_to_entity(row)
@@ -233,7 +188,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         *,
         title: str | None = None,
         state: str | None = None,
-        canonical_key: str | None = _UNSET,
         instructions: str | None = _UNSET,
         worker_agent_id: str | None = _UNSET,
         model: str | None = _UNSET,
@@ -254,8 +208,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 row.state = encode_task_item_state(state)
             if task_id is not None:
                 row.task_id = task_id
-            if canonical_key is not _UNSET:
-                row.canonical_key = canonical_key
             if instructions is not _UNSET:
                 row.instructions = instructions
             if worker_agent_id is not _UNSET:
@@ -311,14 +263,12 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         owner_user_id: str,
         headline: str,
         *,
-        canonical_key: str | None = None,
         rationale: str | None = None,
         state: str = "awaiting_user_ack",
     ) -> FyiCluster:
         row = SqlFyiCluster(
             id=cluster_id,
             owner_user_id=owner_user_id,
-            canonical_key=canonical_key,
             headline=headline,
             rationale=rationale,
             state=encode_fyi_cluster_state(state),
@@ -333,26 +283,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
     def get_fyi_cluster(self, cluster_id: str) -> FyiCluster | None:
         with self._session() as session:
             row = session.get(SqlFyiCluster, (current_workspace_id(), cluster_id))
-            if row is None:
-                return None
-            return _fyi_cluster_to_entity(row)
-
-    def get_open_fyi_cluster_by_canonical_key(
-        self,
-        canonical_key: str,
-    ) -> FyiCluster | None:
-        with self._session() as session:
-            stmt = (
-                select(SqlFyiCluster)
-                .where(SqlFyiCluster.workspace_id == current_workspace_id())
-                .where(SqlFyiCluster.canonical_key == canonical_key)
-                .where(
-                    SqlFyiCluster.state == encode_fyi_cluster_state("awaiting_user_ack"),
-                )
-                .order_by(desc(SqlFyiCluster.created_at), desc(SqlFyiCluster.id))
-                .limit(1)
-            )
-            row = session.execute(stmt).scalars().first()
             if row is None:
                 return None
             return _fyi_cluster_to_entity(row)

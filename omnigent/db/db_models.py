@@ -1569,7 +1569,6 @@ class SqlTaskItem(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
-    canonical_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     instructions: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
@@ -1587,13 +1586,6 @@ class SqlTaskItem(OmnigentBase):
     __table_args__ = (
         CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_task_items_state"),
         Index("ix_task_items_task_state", "workspace_id", "task_id", "state", "id"),
-        Index("ix_task_items_task_canonical_key", "workspace_id", "task_id", "canonical_key"),
-        Index(
-            "ix_task_items_routing_canonical",
-            "workspace_id",
-            "canonical_key",
-            "state",
-        ),
     )
 
 
@@ -1638,7 +1630,6 @@ class SqlFyiCluster(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    canonical_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
     headline: Mapped[str] = mapped_column(String(512), nullable=False)
     rationale: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
@@ -1653,12 +1644,6 @@ class SqlFyiCluster(OmnigentBase):
             "owner_user_id",
             "state",
             "id",
-        ),
-        Index(
-            "ix_fyi_clusters_canonical",
-            "workspace_id",
-            "canonical_key",
-            "state",
         ),
     )
 

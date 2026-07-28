@@ -216,7 +216,6 @@ export interface ProposedTaskSummary {
 export interface TaskItemRoutingBody {
   title: string;
   instructions: string | null;
-  canonical_key: string | null;
   suggested_task_id: string | null;
   proposed_task: ProposedTaskSummary | null;
   events: TaskEventSummary[];
@@ -248,7 +247,6 @@ export interface FyiClusterCard {
   headline: string;
   rationale: string | null;
   body: {
-    canonical_key: string | null;
     events: TaskEventSummary[];
   };
 }

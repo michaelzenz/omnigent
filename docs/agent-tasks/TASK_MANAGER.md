@@ -15,7 +15,7 @@ Wake notices:
 When events reach `routed`, reconcile them into **task items**:
 
 1. `GET /v1/agent-tasks/{id}/reconcile-queue` — events awaiting reconciliation
-2. `POST /v1/agent-tasks/{id}/reconcile` — merge by `canonical_key` or create items
+2. `POST /v1/agent-tasks/{id}/reconcile` — mark routed events reconciled, or create items
 3. Or create items directly: `POST /v1/agent-tasks/{id}/items`
 
 Task items are the user-facing backlog unit (Puppy Garden INBOX).

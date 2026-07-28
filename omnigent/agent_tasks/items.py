@@ -16,7 +16,6 @@ from omnigent.stores.task_item_store import TaskItemStore
 
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item"]
 _INBOX_STATES = frozenset({"awaiting_user_ack"})
-_OPEN_ITEM_STATES = frozenset({"draft", "awaiting_user_ack", "approved", "queued", "running"})
 _EDITABLE_WORK_ITEM_STATES = frozenset({"queued", "approved"})
 
 
@@ -49,7 +48,6 @@ def create_task_item(
     task_item_store: TaskItemStore,
     title: str,
     state: str = "draft",
-    canonical_key: str | None = None,
     instructions: str | None = None,
     worker_agent_id: str | None = None,
     model: str | None = None,
@@ -62,38 +60,11 @@ def create_task_item(
     task_event_store: TaskEventStore | None = None,
 ) -> TaskItem:
     """Create a task item and optionally link contributing events."""
-    if canonical_key:
-        existing = task_item_store.get_item_by_canonical_key(task.id, canonical_key)
-        if existing is not None and existing.state in _OPEN_ITEM_STATES:
-            updated = task_item_store.update_item(
-                existing.id,
-                title=title,
-                instructions=instructions,
-                worker_agent_id=worker_agent_id,
-                model=model,
-                host_id=host_id,
-                workspace=workspace,
-                harness=harness,
-                priority=priority,
-                state=state,
-            )
-            item = updated if updated is not None else existing
-            if event_ids and task_event_store is not None:
-                for event_id in event_ids:
-                    task_item_store.link_event(item.id, event_id)
-                    task_event_store.update_event(
-                        event_id,
-                        state="reconciled",
-                        processed_at=now_epoch(),
-                    )
-            return item
-
     item = task_item_store.create_item(
         _generate_item_id(),
         task.id,
         title,
         state=state,
-        canonical_key=canonical_key,
         instructions=instructions,
         worker_agent_id=worker_agent_id,
         model=model,

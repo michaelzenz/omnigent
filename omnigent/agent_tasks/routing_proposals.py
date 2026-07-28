@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -33,7 +32,6 @@ from omnigent.stores.task_store import TaskStore
 
 RoutingResolution = Literal["accept_routing", "reject_routing"]
 
-_TOKEN_RE = re.compile(r"(?:^|\s)(pr|repo|thread):([^\s]+)", re.IGNORECASE)
 _CLAIMABLE_EVENT_STATES = frozenset(AMBIGUOUS_EVENT_STATES)
 
 
@@ -59,45 +57,16 @@ class RoutingCandidate:
 class AmbiguousEventCluster:
     """Suggested ambiguous events bundled for one routing proposal."""
 
-    suggested_canonical_key: str
+    tags: list[dict[str, str]]
     events: list[TaskEvent]
 
 
-def derive_cluster_key(
-    event: TaskEvent,
-    tags: list[TaskEventTag] | None = None,
-) -> str | None:
-    """Return a deterministic cluster key for an ambiguous event."""
-    tag_map: dict[str, str] = {}
-    if tags:
-        for tag in tags:
-            tag_map[tag.tag_type] = tag.tag
+def _tag_fingerprint(tags: list[TaskEventTag]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((tag.tag_type, tag.tag) for tag in tags))
 
-    repo = tag_map.get("repo")
-    pr = tag_map.get("pr")
-    if repo and pr:
-        return f"pr:{repo}#{pr}"
-    thread = tag_map.get("thread")
-    if thread:
-        return f"thread:{thread}"
-    if event.source and event.source_key:
-        return f"source:{event.source}:{event.source_key}"
 
-    haystack = "\n".join(
-        part for part in (event.summary, event.search_text) if part
-    )
-    for match in _TOKEN_RE.finditer(haystack):
-        kind = match.group(1).lower()
-        value = match.group(2)
-        if kind == "pr" and repo:
-            return f"pr:{repo}#{value}"
-        if kind == "repo":
-            repo = value
-        if kind == "thread":
-            return f"thread:{value}"
-    if repo and pr:
-        return f"pr:{repo}#{pr}"
-    return None
+def _tags_to_payload(tags: list[TaskEventTag]) -> list[dict[str, str]]:
+    return [{"tag_type": tag.tag_type, "tag": tag.tag} for tag in tags]
 
 
 def cluster_ambiguous_events(
@@ -105,27 +74,29 @@ def cluster_ambiguous_events(
     *,
     tags_by_event_id: dict[str, list[TaskEventTag]],
 ) -> list[AmbiguousEventCluster]:
-    """Group ambiguous events by deterministic cluster keys."""
-    buckets: dict[str, list[TaskEvent]] = {}
+    """Group ambiguous events that share the same event tags."""
+    buckets: dict[tuple[tuple[str, str], ...], list[TaskEvent]] = {}
     singletons: list[TaskEvent] = []
     for event in events:
-        key = derive_cluster_key(event, tags_by_event_id.get(event.id))
-        if key is None:
+        tags = tags_by_event_id.get(event.id, [])
+        if not tags:
             singletons.append(event)
-        else:
-            buckets.setdefault(key, []).append(event)
+            continue
+        fingerprint = _tag_fingerprint(tags)
+        buckets.setdefault(fingerprint, []).append(event)
 
     clusters = [
-        AmbiguousEventCluster(suggested_canonical_key=key, events=rows)
-        for key, rows in sorted(buckets.items())
-    ]
-    for event in singletons:
-        clusters.append(
-            AmbiguousEventCluster(
-                suggested_canonical_key=f"event:{event.id}",
-                events=[event],
+        AmbiguousEventCluster(
+            tags=_tags_to_payload(
+                tags_by_event_id[rows[0].id],
             ),
+            events=rows,
         )
+        for rows in buckets.values()
+    ]
+    clusters.extend(
+        AmbiguousEventCluster(tags=[], events=[event]) for event in singletons
+    )
     return clusters
 
 
@@ -149,26 +120,21 @@ class _ProposalContext:
     charter: str | None
 
 
-def _charter_from_canonical_key(canonical_key: str) -> str | None:
-    """Derive a task charter hint from a routing canonical key."""
-    if canonical_key.startswith("pr:"):
-        repo_pr = canonical_key.removeprefix("pr:")
-        if "#" in repo_pr:
-            repo, _pr = repo_pr.rsplit("#", 1)
-            return f"repo:{repo}"
-    if canonical_key.startswith("thread:"):
-        return canonical_key
+def _charter_from_tags(tags: list[TaskEventTag]) -> str | None:
+    for tag in tags:
+        if tag.tag_type == "repo":
+            return f"repo:{tag.tag}"
     return None
 
 
 def _resolve_proposal_context(
     *,
     owner_user_id: str,
-    canonical_key: str,
     suggested_task_id: str | None,
     candidates: list[dict[str, Any]] | None,
     proposed_task_manager_agent_id: str | None,
     proposed_task_charter: str | None,
+    charter_hint: str | None,
     task_store: TaskStore,
     agent_store: AgentStore,
 ) -> _ProposalContext:
@@ -201,7 +167,7 @@ def _resolve_proposal_context(
     return _ProposalContext(
         manager_agent_id=manager_agent_id,
         owner_user_id=owner_user_id,
-        charter=proposed_task_charter or _charter_from_canonical_key(canonical_key),
+        charter=proposed_task_charter or charter_hint,
     )
 
 
@@ -340,16 +306,16 @@ def _activate_task_if_paused(
     return task
 
 
-def upsert_routing_proposal(
+def create_routing_proposal(
     *,
     owner_user_id: str,
-    canonical_key: str,
     title: str,
     event_ids: list[str],
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
     agent_store: AgentStore,
+    item_id: str | None = None,
     suggested_task_id: str | None = None,
     instructions: str | None = None,
     worker_agent_id: str | None = None,
@@ -374,6 +340,10 @@ def upsert_routing_proposal(
     if not events:
         return None
 
+    event_tags: list[TaskEventTag] = []
+    for event in events:
+        event_tags.extend(task_event_store.get_event_tags(event.id))
+
     if candidates is None:
         cluster_search = "\n".join(event.search_text for event in events)
         ranked = rank_tasks_for_event(
@@ -384,11 +354,11 @@ def upsert_routing_proposal(
 
     proposal_context = _resolve_proposal_context(
         owner_user_id=owner_user_id,
-        canonical_key=canonical_key,
         suggested_task_id=suggested_task_id,
         candidates=candidates,
         proposed_task_manager_agent_id=proposed_task_manager_agent_id,
         proposed_task_charter=proposed_task_charter,
+        charter_hint=_charter_from_tags(event_tags),
         task_store=task_store,
         agent_store=agent_store,
     )
@@ -419,10 +389,17 @@ def upsert_routing_proposal(
         proposed_task=proposed_task,
     )
 
-    existing = task_item_store.get_open_routing_item_by_canonical_key(canonical_key)
-    if existing is not None:
+    if item_id is not None:
+        existing = task_item_store.get_item(item_id)
+        if existing is None:
+            raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+        if existing.state != ROUTING_PROPOSED_ITEM_STATE:
+            raise OmnigentError(
+                f"Cannot extend item in state {existing.state!r}",
+                code=ErrorCode.CONFLICT,
+            )
         updated = task_item_store.update_item(
-            existing.id,
+            item_id,
             title=title,
             instructions=instructions,
             worker_agent_id=worker_agent_id,
@@ -441,7 +418,6 @@ def upsert_routing_proposal(
             item_task_id,
             title,
             state=ROUTING_PROPOSED_ITEM_STATE,
-            canonical_key=canonical_key,
             instructions=instructions,
             worker_agent_id=worker_agent_id,
             model=model,
@@ -486,7 +462,7 @@ def build_ambiguous_inbox(
         candidate_payload = _candidate_payload(ranked)
         rendered_clusters.append(
             {
-                "suggested_canonical_key": cluster.suggested_canonical_key,
+                "tags": cluster.tags,
                 "events": [_event_summary(event) for event in cluster.events],
                 "suggested_candidates": candidate_payload,
             },
@@ -624,7 +600,6 @@ def _routing_card_payload(
         "body": {
             "title": item.title,
             "instructions": item.instructions,
-            "canonical_key": item.canonical_key,
             "suggested_task_id": suggested_task_id,
             "proposed_task": proposed_task,
             "events": events,

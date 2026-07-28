@@ -35,14 +35,14 @@ from omnigent.agent_tasks.dispatch import (
     resolve_dispatch_params,
 )
 from omnigent.agent_tasks.fyi_clusters import (
+    create_fyi_cluster,
     resolve_fyi_cluster,
-    upsert_fyi_cluster,
 )
 from omnigent.agent_tasks.routing_proposals import (
     build_ambiguous_inbox,
+    create_routing_proposal,
     list_board_triage,
     resolve_routing_proposal,
-    upsert_routing_proposal,
 )
 from omnigent.agent_tasks.secretary_session import (
     bootstrap_secretary_conversation,
@@ -193,7 +193,6 @@ class CreateTaskItemRequest(BaseModel):
     harness: str | None = None
     priority: int = 0
     state: str = "draft"
-    canonical_key: str | None = None
     event_ids: list[str] = Field(default_factory=list)
     submit_for_user_ack: bool = False
 
@@ -264,9 +263,9 @@ class UpdateTaskItemRequest(BaseModel):
 class CreateRoutingProposalRequest(BaseModel):
     """Request body for ``POST /v1/task-items/routing-proposals``."""
 
-    canonical_key: str
     title: str
     event_ids: list[str] = Field(min_length=1)
+    item_id: str | None = None
     suggested_task_id: str | None = None
     instructions: str | None = None
     worker_agent_id: str | None = None
@@ -282,7 +281,7 @@ class CreateRoutingProposalRequest(BaseModel):
     proposed_task_description: str | None = None
     proposed_task_manager_agent_id: str | None = None
 
-    @field_validator("canonical_key", "title")
+    @field_validator("title")
     @classmethod
     def _non_empty(cls, value: str) -> str:
         stripped = value.strip()
@@ -313,12 +312,12 @@ class ResolveRoutingProposalRequest(BaseModel):
 class CreateFyiClusterRequest(BaseModel):
     """Request body for ``POST /v1/task-events/fyi-clusters``."""
 
-    canonical_key: str
     headline: str
     event_ids: list[str] = Field(min_length=1)
+    cluster_id: str | None = None
     rationale: str | None = None
 
-    @field_validator("canonical_key", "headline")
+    @field_validator("headline")
     @classmethod
     def _non_empty(cls, value: str) -> str:
         stripped = value.strip()
@@ -475,7 +474,6 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
         "task_id": item.task_id,
         "title": item.title,
         "state": item.state,
-        "canonical_key": item.canonical_key,
         "instructions": item.instructions,
         "worker_agent_id": item.worker_agent_id,
         "model": item.model,
@@ -920,7 +918,6 @@ def create_agent_tasks_router(
                     task_event_store=task_event_store,
                     title=body.title,
                     state=body.state,
-                    canonical_key=body.canonical_key,
                     instructions=body.instructions,
                     worker_agent_id=body.worker_agent_id,
                     model=body.model,
@@ -1139,11 +1136,11 @@ def create_agent_tasks_router(
                         agent_store,
                         TASK_WORKER_AGENT_NAME,
                     )
-                return upsert_routing_proposal(
+                return create_routing_proposal(
                     owner_user_id=_effective_user_id(user_id),
-                    canonical_key=body.canonical_key,
                     title=body.title,
                     event_ids=body.event_ids,
+                    item_id=body.item_id,
                     suggested_task_id=body.suggested_task_id,
                     task_store=task_store,
                     task_item_store=task_item_store,
@@ -1230,11 +1227,11 @@ def create_agent_tasks_router(
             user_id = require_user(request, auth_provider)
 
             def _create() -> FyiCluster | None:
-                return upsert_fyi_cluster(
+                return create_fyi_cluster(
                     owner_user_id=_effective_user_id(user_id),
-                    canonical_key=body.canonical_key,
                     headline=body.headline,
                     event_ids=body.event_ids,
+                    cluster_id=body.cluster_id,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
                     rationale=body.rationale,
