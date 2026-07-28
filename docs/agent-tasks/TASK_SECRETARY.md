@@ -1,14 +1,10 @@
 # Task secretary manual
 
-Triage **ambiguous task events** the distributor could not auto-route. Route
-confident matches to a task manager; escalate the rest to board routing cards.
-You do **not** dispatch workers or accept board cards on behalf of the user.
 
 ## API access
 
-The secretary runs on **claude-native** with Bash. Call the Omnigent task APIs
-with `curl` from the runner workspace. The runner sets `RUNNER_SERVER_URL` to
-the server base URL (for example `http://127.0.0.1:6767`).
+Call the Omnigent task APIs with `curl` from the runner workspace. 
+The runner sets `RUNNER_SERVER_URL` to the server base URL (for example `http://127.0.0.1:6767`).
 
 ```bash
 curl -sS "$RUNNER_SERVER_URL/v1/task-events/ambiguous-inbox"
@@ -21,12 +17,12 @@ Use Bash for every endpoint below. Do not use browser tools for routing work.
 `[System: task event(s) need routing — resolve or escalate]` — one or more events
 are in `awaiting_grouping`.
 
-If no secretary session existed when they stalled, events remain in the database.
-List and catch up after a wake or when the user opens Puppy Garden.
-
 ---
 
 ## Reconcile ambiguous events
+
+We want to avoid user make decisions on too many things, so we should reconcile TaskEvents(rawEvents)
+into spcific taskItem as execution unit
 
 ### 1. List ambiguous events
 
@@ -34,8 +30,7 @@ List and catch up after a wake or when the user opens Puppy Garden.
 curl -sS "$RUNNER_SERVER_URL/v1/task-events/ambiguous-inbox"
 ```
 
-Returns clusters of stalled events (`awaiting_grouping`) not already on a routing
-card or FYI cluster, plus `suggested_candidates` (scored active tasks) per cluster.
+Returns clusters of stalled events (`awaiting_grouping`)
 Use each cluster’s `suggested_canonical_key` when creating board proposals.
 
 ### 2. List open routing decisions (when escalating)
@@ -54,19 +49,13 @@ For every cluster from step 1, review events and `suggested_candidates`. Scores
 are hints only — use title, summary, charter fit, and your judgment.
 
 - **Confident existing-task match** → route to that task’s manager (no worker
-  dispatch):
-  - One event:
-    ```bash
-    curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/{event_id}/resolve" \
-      -H 'Content-Type: application/json' \
-      -d '{"task_id":"<id>"}'
-    ```
-  - Several events, same task:
-    ```bash
-    curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/batch-resolve" \
-      -H 'Content-Type: application/json' \
-      -d '{"event_ids":["<id1>","<id2>"],"task_id":"<id>"}'
-    ```
+  dispatch) with `POST /v1/task-events/batch-resolve` (use one or more
+  `event_ids`):
+  ```bash
+  curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/batch-resolve" \
+    -H 'Content-Type: application/json' \
+    -d '{"event_ids":["<id1>","<id2>"],"task_id":"<id>"}'
+  ```
   - Event state becomes `routed`; the task manager is woken to reconcile into
     task items. You do not dispatch workers.
 

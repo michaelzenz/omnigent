@@ -1,6 +1,8 @@
 # Agent tasks API reference
 
-## Ingress (Phase 5)
+All paths are under `/v1`. Auth: logged-in user unless noted.
+
+## Ingress
 
 `POST /v1/task-events` — ingest an external event. Auth: logged-in user or host
 poller (`X-Omnigent-Host-Ambient-Id`).
@@ -14,22 +16,60 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | GET | `/v1/task-events` |
 | GET | `/v1/task-events/{id}` |
 | POST | `/v1/task-events` |
-| POST | `/v1/task-events/{id}/resolve` |
 | POST | `/v1/task-events/{id}/complete` |
 | POST | `/v1/task-events/{id}/dismiss` |
 | POST | `/v1/task-events/batch-resolve` |
+| GET | `/v1/task-events/ambiguous-inbox` |
+| POST | `/v1/task-events/fyi-clusters` |
 
-## Agent tasks
+## Tasks
 
 | Method | Path |
 |--------|------|
 | POST | `/v1/agent-tasks` |
-| GET | `/v1/agent-tasks/{id}/dashboard` |
+| GET | `/v1/agent-tasks` |
+| GET | `/v1/agent-tasks/{id}` |
+| PATCH | `/v1/agent-tasks/{id}` |
+| DELETE | `/v1/agent-tasks/{id}` |
+| PUT | `/v1/agent-tasks/{id}/tags` |
+| GET | `/v1/agent-tasks/{id}/executions` |
 | POST | `/v1/agent-tasks/{id}/bootstrap` |
-| POST | `/v1/agent-tasks/{id}/events` |
-| POST | `/v1/agent-tasks/{id}/dispatch` |
+| GET | `/v1/agent-tasks/{id}/dashboard` |
+| GET | `/v1/agent-tasks/{id}/items` |
+| POST | `/v1/agent-tasks/{id}/items` |
+| GET | `/v1/agent-tasks/{id}/reconcile-queue` |
+| POST | `/v1/agent-tasks/{id}/reconcile` |
+
+## Task items
+
+| Method | Path |
+|--------|------|
+| POST | `/v1/task-items/{id}/resolve` |
+| PATCH | `/v1/task-items/{id}` |
+| POST | `/v1/task-items/{id}/dispatch` |
+| POST | `/v1/task-items/routing-proposals` |
+| POST | `/v1/task-items/{id}/resolve-routing` |
+
+## Board triage
+
+| Method | Path |
+|--------|------|
+| GET | `/v1/agent-tasks/board/decisions` |
+| POST | `/v1/fyi-clusters/{id}/resolve` |
+
+## Secretary
+
+| Method | Path |
+|--------|------|
+| GET | `/v1/agent-tasks/secretary/profile` |
 | PUT | `/v1/agent-tasks/secretary/profile` |
 | POST | `/v1/agent-tasks/secretary/session` |
+| POST | `/v1/agent-tasks/secretary/session/reset` |
+
+## Session adoption
+
+| Method | Path |
+|--------|------|
 | POST | `/v1/agent-tasks/sessions/{session_id}/propose-adoption` |
 | POST | `/v1/agent-tasks/sessions/{session_id}/adopt` |
 | POST | `/v1/agent-tasks/sessions/{session_id}/reject-adoption` |

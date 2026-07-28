@@ -96,16 +96,6 @@ class CreateIngressTaskEventRequest(BaseModel):
         return stripped or None
 
 
-class ResolveTaskEventRequest(BaseModel):
-    """Request body for ``POST /v1/task-events/{event_id}/resolve``."""
-
-    task_id: str
-    host_id: str | None = None
-    workspace: str | None = None
-    harness: str | None = None
-    model: str | None = None
-
-
 class BatchResolveTaskEventsRequest(BaseModel):
     """Request body for ``POST /v1/task-events/batch-resolve``."""
 
@@ -336,38 +326,6 @@ def create_task_events_router(
             for tag in tags
         ]
         return payload
-
-    @router.post("/task-events/{event_id}/resolve")
-    async def resolve_event(
-        request: Request,
-        event_id: str,
-        body: ResolveTaskEventRequest,
-    ) -> dict[str, Any]:
-        """Route a stalled event to a task manager."""
-        user_id = require_user(request, auth_provider)
-        event = await _get_event_or_404(event_id)
-        profile = await _load_secretary_profile(user_id)
-
-        task = await asyncio.to_thread(task_store.get, body.task_id)
-        if task is None:
-            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-        _require_task_access(task, user_id)
-        updated = await resolve_task_event(
-            event=event,
-            task_store=task_store,
-            task_event_store=task_event_store,
-            conversation_store=conversation_store,
-            agent_store=agent_store,
-            runner_router=_runner_router(request),
-            task=task,
-            resolved_by_user_id=user_id,
-            host_id=body.host_id,
-            workspace=body.workspace,
-            harness=body.harness,
-            model=body.model,
-            secretary_profile=profile,
-        )
-        return _event_to_response(updated)
 
     @router.post("/task-events/{event_id}/complete")
     async def complete_task_event(request: Request, event_id: str) -> dict[str, Any]:

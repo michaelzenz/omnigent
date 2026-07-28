@@ -24,7 +24,7 @@ For each event in the batch:
 
 1. Read `event_id`, title, summary, and candidate task scores from ambiguous inbox.
 2. When one active task is a clear match, call
-   `POST /v1/task-events/{event_id}/resolve` with `{"task_id": "<id>"}`.
+   `POST /v1/task-events/batch-resolve` with `{"event_ids": ["<id>"], "task_id": "<id>"}`.
 3. When no task is a confident fit, do **nothing** for that event.
 
 Unresolved events escalate to the task secretary.

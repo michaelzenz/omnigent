@@ -60,14 +60,15 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     task_id = create_resp.json()["id"]
 
     resolve_resp = await client.post(
-        f"/v1/task-events/{event_id}/resolve",
+        "/v1/task-events/batch-resolve",
         json={
+            "event_ids": [event_id],
             "task_id": task_id,
             **_bootstrap_body(),
         },
     )
     assert resolve_resp.status_code == 200
-    resolved = resolve_resp.json()
+    resolved = resolve_resp.json()["data"][0]
     assert resolved["state"] == "routed"
     assert resolved["task_id"] == task_id
     assert resolved["manager_conversation_id"] is not None

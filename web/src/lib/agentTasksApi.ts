@@ -165,27 +165,6 @@ export async function resetSecretarySession(): Promise<SecretarySession> {
   return readJsonOrApiError<SecretarySession>(res);
 }
 
-export async function resolveTaskEvent(
-  eventId: string,
-  body: {
-    task_id: string;
-    host_id?: string;
-    workspace?: string;
-    harness?: string;
-    model?: string;
-    edited_payload?: DispatchPayload;
-  },
-): Promise<void> {
-  const res = await authenticatedFetch(`/v1/task-events/${encodeURIComponent(eventId)}/resolve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
-  }
-}
-
 export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item";
 
 export async function resolveTaskItem(
