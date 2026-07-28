@@ -4,7 +4,7 @@ Manual scenarios for exercising task-event ingress, distributor auto-route,
 secretary triage, and manager reconciliation. Run against a local server
 (`http://127.0.0.1:6767`) with host connected.
 
-Use a **fresh database** (no active tasks, no open routing cards) unless a
+Use a **fresh database** (no active tasks, no open packages) unless a
 scenario says otherwise. Adjust `repo`, agent ids, and host headers to match your
 environment.
 
@@ -15,13 +15,13 @@ environment.
 **Story.** PR #123 fails CI. Later, John posts on Slack that PR #456 contains the
 fix for #123 and is waiting on merge approval. There are no managed tasks yet.
 
-**Goal.** Distributor stalls both events; secretary wakes and creates **Decisions**
-board proposal(s) for the user. After the user accepts, both events route to one
-new task and the manager reconciles them.
+**Goal.** Distributor stalls both events; secretary wakes and creates a **paused
+task package** for the user. After the user accepts the package, the task becomes
+active and the manager reconciles routed work.
 
 ### Preconditions
 
-1. **Empty task state** — no active tasks, no open `routing_proposed` items, no
+1. **Empty task state** — no active tasks, no open paused packages, no
    stalled events in `awaiting_grouping` (wipe DB or use a clean server).
 2. Server and host running (`uv run omnigent server`, `uv run omnigent host`).
 3. Task secretary session live (`POST /v1/agent-tasks/secretary/session`). This
@@ -85,25 +85,25 @@ X-Omnigent-Host-Id: HOST_ID
 
 **After events are posted (before user accepts)**
 
-- [ ] Event 1 state is `routing_proposed` (on a Decisions card), not `routed`.
-- [ ] Event 2 state is `routing_proposed` on the **same** Decisions card (or secretary clearly linked both before user acts).
+- [ ] Event 1 state is `reconciled` on a paused package item, not `routed`.
+- [ ] Event 2 is `reconciled` on the **same** package item (or secretary clearly linked both before user acts).
 - [ ] Secretary received a stall wake (check secretary session or server log).
-- [ ] `GET /v1/agent-tasks/board/decisions` shows one actionable card with both events (preferred) or two cards the user can tell belong together.
-- [ ] Card pre-selects **new task** (`suggested_task_id` null); paused proposed task is present.
-- [ ] Secretary did **not** call resolve (no task exists yet).
+- [ ] `GET /v1/agent-tasks/board/pending` shows one actionable package with both events (preferred) or two packages the user can tell belong together.
+- [ ] Package task state is `paused` with `awaiting_user_ack` inbox items.
+- [ ] Secretary did **not** bootstrap a manager session yet.
 
-**After user accepts the Decisions card**
+**After user accepts the package**
 
-- [ ] Exactly **one** new active task is created for the incident.
-- [ ] Both events are `routed` on that task.
-- [ ] Manager reconcile queue lists both events.
-- [ ] User sees inbox items after manager reconcile; no worker dispatched without approval.
+- [ ] Exactly **one** active task exists for the incident.
+- [ ] Both events remain `reconciled` on that task.
+- [ ] Inbox items are `approved` (manager can dispatch after user Go).
+- [ ] Manager session is bootstrapped; no worker dispatched without approval.
 
 ### Failure modes to watch
 
-- Events left in `awaiting_grouping` after secretary turn (no proposal created).
-- Secretary auto-resolves to a non-existent or wrong task instead of opening a board card.
-- Two unrelated Decisions cards with no link between PR #123 CI failure and PR #456 Slack follow-up.
+- Events left in `awaiting_grouping` after secretary turn (no package created).
+- Secretary auto-resolves to a non-existent or wrong active task instead of opening a package.
+- Two unrelated packages with no link between PR #123 CI failure and PR #456 Slack follow-up.
 - Secretary marks Slack message as FYI only and drops the follow-up signal.
 - Duplicate tasks created when user accepts.
 - Manager auto-dispatches workers without user Go on inbox items.
@@ -112,7 +112,7 @@ X-Omnigent-Host-Id: HOST_ID
 
 ```http
 GET /v1/task-events/ambiguous-inbox
-GET /v1/agent-tasks/board/decisions
+GET /v1/agent-tasks/board/pending
 GET /v1/agent-tasks/{task_id}/reconcile-queue
 ```
 

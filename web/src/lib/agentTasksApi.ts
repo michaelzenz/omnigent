@@ -196,46 +196,35 @@ export async function updateTaskItem(
   return readJson<TaskItemSummary>(res);
 }
 
-export interface RoutingCandidateSummary {
-  task_id: string;
-  task_title: string;
-  score: number | null;
-  recommended: boolean;
-  is_new?: boolean;
-}
-
-export interface ProposedTaskSummary {
-  task_id: string;
+export interface TaskPackageTaskSummary {
+  id: string;
   title: string;
-  charter: string | null;
   description: string | null;
-  manager_agent_id: string;
-  is_new: boolean;
+  charter: string | null;
+  state: string;
+  tags: Array<{ tag_type: string; tag: string }>;
 }
 
-export interface TaskItemRoutingBody {
+export interface TaskPackageInboxItem {
+  id: string;
   title: string;
   instructions: string | null;
-  suggested_task_id: string | null;
-  proposed_task: ProposedTaskSummary | null;
-  events: TaskEventSummary[];
-  candidates: RoutingCandidateSummary[];
-  worker_agent_id: string | null;
-  model: string | null;
-  harness: string | null;
-  host_id: string | null;
-  workspace: string | null;
+  state: string;
+  created_at: number;
 }
 
-export interface BoardDecisionCard {
+export interface PendingTaskPackageCard {
   id: string;
-  kind: "task_item_routing";
+  kind: "task_package";
   state: "pending";
   created_at: number;
   resolved_at: number | null;
   headline: string;
   rationale: string | null;
-  body: TaskItemRoutingBody;
+  body: {
+    task: TaskPackageTaskSummary;
+    inbox_items: TaskPackageInboxItem[];
+  };
 }
 
 export interface FyiClusterCard {
@@ -252,51 +241,43 @@ export interface FyiClusterCard {
 }
 
 export interface BoardTriage {
-  decisions: BoardDecisionCard[];
+  pending: PendingTaskPackageCard[];
   fyi: FyiClusterCard[];
 }
 
-export type RoutingResolution = "accept_routing" | "reject_routing";
 export type FyiResolution = "dismiss_fyi" | "promote_to_routing";
 
 export async function fetchBoardTriage(): Promise<BoardTriage> {
-  const res = await authenticatedFetch("/v1/agent-tasks/board/decisions");
-  const body = await readJson<{
-    object?: string;
-    decisions?: BoardDecisionCard[];
-    fyi?: FyiClusterCard[];
-    data?: BoardDecisionCard[];
-  }>(res);
-  if (body.decisions !== undefined) {
-    return { decisions: body.decisions, fyi: body.fyi ?? [] };
-  }
-  return { decisions: body.data ?? [], fyi: [] };
+  const res = await authenticatedFetch("/v1/agent-tasks/board/pending");
+  return readJson<BoardTriage>(res);
 }
 
-/** @deprecated Use fetchBoardTriage */
-export async function fetchBoardDecisions(): Promise<BoardDecisionCard[]> {
-  const triage = await fetchBoardTriage();
-  return triage.decisions;
-}
-
-export async function resolveRoutingProposal(
-  itemId: string,
+export async function acceptTaskPackage(
+  taskId: string,
   body: {
-    resolution: RoutingResolution;
-    selected_task_id?: string;
-    instructions?: string;
-    proposed_task_title?: string;
-    proposed_task_charter?: string;
-    proposed_task_description?: string;
-  },
+    host_id?: string;
+    workspace?: string;
+    harness?: string;
+    model?: string;
+  } = {},
 ): Promise<void> {
   const res = await authenticatedFetch(
-    `/v1/task-items/${encodeURIComponent(itemId)}/resolve-routing`,
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/accept-package`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
+export async function rejectTaskPackage(taskId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/reject-package`,
+    { method: "POST" },
   );
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}`);

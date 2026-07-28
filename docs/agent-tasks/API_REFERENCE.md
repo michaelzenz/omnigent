@@ -20,6 +20,7 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/task-events/{id}/dismiss` |
 | POST | `/v1/task-events/batch-resolve` |
 | GET | `/v1/task-events/ambiguous-inbox` |
+| POST | `/v1/task-events/match-tasks` |
 | POST | `/v1/task-events/fyi-clusters` |
 
 ## Tasks
@@ -27,6 +28,7 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | Method | Path |
 |--------|------|
 | POST | `/v1/agent-tasks` |
+| POST | `/v1/agent-tasks/packages` |
 | GET | `/v1/agent-tasks` |
 | GET | `/v1/agent-tasks/{id}` |
 | PATCH | `/v1/agent-tasks/{id}` |
@@ -39,6 +41,9 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/agent-tasks/{id}/items` |
 | GET | `/v1/agent-tasks/{id}/reconcile-queue` |
 | POST | `/v1/agent-tasks/{id}/reconcile` |
+| POST | `/v1/agent-tasks/{id}/reconcile-events` |
+| POST | `/v1/agent-tasks/{id}/accept-package` |
+| POST | `/v1/agent-tasks/{id}/reject-package` |
 
 ## Task items
 
@@ -47,14 +52,12 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/task-items/{id}/resolve` |
 | PATCH | `/v1/task-items/{id}` |
 | POST | `/v1/task-items/{id}/dispatch` |
-| POST | `/v1/task-items/routing-proposals` |
-| POST | `/v1/task-items/{id}/resolve-routing` |
 
 ## Board triage
 
 | Method | Path |
 |--------|------|
-| GET | `/v1/agent-tasks/board/decisions` |
+| GET | `/v1/agent-tasks/board/pending` |
 | POST | `/v1/fyi-clusters/{id}/resolve` |
 
 ## Secretary

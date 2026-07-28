@@ -220,7 +220,6 @@ class TaskItem:
     priority: int = 0
     created_by: str = "manager"
     updated_at: int | None = None
-    routing_proposal: str | None = None
 
 
 @dataclass

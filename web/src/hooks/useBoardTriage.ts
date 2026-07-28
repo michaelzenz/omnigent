@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  acceptTaskPackage,
   fetchBoardTriage,
+  rejectTaskPackage,
   resolveFyiCluster,
-  resolveRoutingProposal,
   type FyiResolution,
-  type RoutingResolution,
 } from "@/lib/agentTasksApi";
 
 const BOARD_TRIAGE_KEY = ["agent-task-board-triage"] as const;
@@ -17,49 +17,29 @@ export function useBoardTriage() {
   });
 }
 
-/** @deprecated Use useBoardTriage */
-export function useBoardDecisions() {
-  const query = useBoardTriage();
-  return {
-    ...query,
-    data: query.data?.decisions,
-  };
-}
-
 async function invalidateBoard(queryClient: ReturnType<typeof useQueryClient>) {
   await queryClient.invalidateQueries({ queryKey: BOARD_TRIAGE_KEY });
   await queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
   await queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard"] });
 }
 
-export function useResolveRoutingProposal() {
+export function useAcceptTaskPackage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      itemId,
-      resolution,
-      selectedTaskId,
-      instructions,
-      proposedTaskTitle,
-      proposedTaskCharter,
-      proposedTaskDescription,
-    }: {
-      itemId: string;
-      resolution: RoutingResolution;
-      selectedTaskId?: string;
-      instructions?: string;
-      proposedTaskTitle?: string;
-      proposedTaskCharter?: string;
-      proposedTaskDescription?: string;
-    }) => {
-      await resolveRoutingProposal(itemId, {
-        resolution,
-        selected_task_id: selectedTaskId,
-        instructions,
-        proposed_task_title: proposedTaskTitle,
-        proposed_task_charter: proposedTaskCharter,
-        proposed_task_description: proposedTaskDescription,
-      });
+    mutationFn: async (taskId: string) => {
+      await acceptTaskPackage(taskId);
+    },
+    onSuccess: async () => {
+      await invalidateBoard(queryClient);
+    },
+  });
+}
+
+export function useRejectTaskPackage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (taskId: string) => {
+      await rejectTaskPackage(taskId);
     },
     onSuccess: async () => {
       await invalidateBoard(queryClient);

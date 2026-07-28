@@ -32,7 +32,6 @@ class TaskItemStore(ABC):
         harness: str | None = None,
         priority: int = 0,
         created_by: str = "manager",
-        routing_proposal: str | None = None,
     ) -> TaskItem:
         """Insert a new task item."""
 
@@ -50,8 +49,8 @@ class TaskItemStore(ABC):
         """List task items in one state, newest first."""
 
     @abstractmethod
-    def get_routing_item_for_event(self, event_id: str) -> TaskItem | None:
-        """Return an open routing-proposed item linked to an event, if any."""
+    def get_item_for_event(self, event_id: str) -> TaskItem | None:
+        """Return a task item linked to an event, if any."""
 
     @abstractmethod
     def list_items_for_task(
@@ -77,7 +76,6 @@ class TaskItemStore(ABC):
         harness: str | None = _UNSET,
         priority: int | None = None,
         task_id: str | None = None,
-        routing_proposal: str | None = _UNSET,
     ) -> TaskItem | None:
         """Update mutable task-item fields."""
 

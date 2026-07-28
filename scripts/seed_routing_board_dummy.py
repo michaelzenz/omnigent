@@ -111,37 +111,28 @@ def _create_events(
     return event_ids
 
 
-def _create_routing_card(
+def _create_task_package(
     *,
     title: str,
     instructions: str,
-    rationale: str,
     event_ids: list[str],
-    task_id: str,
-    task_title: str,
-    score: float,
-    suggested_task_id: str | None = None,
-    proposed_task_title: str | None = None,
-    proposed_task_charter: str | None = None,
 ) -> None:
-    body: dict = {
-        "title": title,
-        "event_ids": event_ids,
-        "instructions": instructions,
-        "rationale": rationale,
-        "candidates": [
-            {"task_id": task_id, "title": task_title, "score": score},
-        ],
-        **DISPATCH,
-    }
-    if suggested_task_id is not None:
-        body["suggested_task_id"] = suggested_task_id
-    if proposed_task_title is not None:
-        body["proposed_task_title"] = proposed_task_title
-    if proposed_task_charter is not None:
-        body["proposed_task_charter"] = proposed_task_charter
-    item = _request("POST", "/v1/task-items/routing-proposals", body=body)
-    print(f"  routing card {title!r} → {item['id'][:8]}…")
+    package = _request(
+        "POST",
+        "/v1/agent-tasks/packages",
+        body={
+            "title": title,
+            "manager_agent_id": MANAGER_AGENT_ID,
+            "items": [
+                {
+                    "title": title,
+                    "event_ids": event_ids,
+                    "instructions": instructions,
+                },
+            ],
+        },
+    )
+    print(f"  task package {title!r} → {package['id'][:8]}…")
 
 
 def _create_fyi_cluster(
@@ -197,44 +188,26 @@ def main() -> int:
         "poll_plugins\ngithub_pr\nwatchers",
     )
 
-    print("Creating board routing cards…")
-    _create_routing_card(
+    print("Creating paused task packages…")
+    _create_task_package(
         title="Fix CI on PR #891",
         instructions="Investigate lint failure and address review feedback on PR #891.",
-        rationale="Same PR thread; matches omnigent-fork CI charter.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=891, offset_base=offset_base),
-        task_id=ci_task,
-        task_title="omnigent-fork CI",
-        score=0.84,
     )
-    _create_routing_card(
+    _create_task_package(
         title="Update API docs for task routing",
         instructions="Refresh TASK_SECRETARY.md and API_REFERENCE after routing cards shipped.",
-        rationale="Docs-oriented signals fit the docs refresh task.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10),
-        task_id=docs_task,
-        task_title="docs refresh",
-        score=0.79,
     )
-    _create_routing_card(
+    _create_task_package(
         title="Fix github_pr poll plugin flake",
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
-        rationale="Poll plugin events match poll plugins task charter.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20),
-        task_id=poll_task,
-        task_title="poll plugins",
-        score=0.76,
     )
-    _create_routing_card(
+    _create_task_package(
         title="Investigate unrelated repo alert",
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
-        rationale="No strong match to existing tasks; secretary recommends a new task.",
         event_ids=_create_events(host_header, repo="other-repo", pr=12, offset_base=offset_base + 30),
-        task_id=ci_task,
-        task_title="omnigent-fork CI",
-        score=0.22,
-        proposed_task_title="other-repo triage",
-        proposed_task_charter="repo:other-repo\nalerts\nunrelated",
     )
 
     print("Creating FYI clusters…")
@@ -267,11 +240,11 @@ def main() -> int:
         "Write a unit test ensuring duplicate check events do not create extra task events.",
     )
 
-    board = _request("GET", "/v1/agent-tasks/board/decisions")
-    decisions = board.get("decisions", board.get("data", []))
+    board = _request("GET", "/v1/agent-tasks/board/pending")
+    pending = board.get("pending", [])
     fyi = board.get("fyi", [])
-    print(f"\nBoard routing cards: {len(decisions)}")
-    for card in decisions:
+    print(f"\nBoard pending packages: {len(pending)}")
+    for card in pending:
         print(f"  - {card.get('headline')}")
     print(f"Board FYI clusters: {len(fyi)}")
     for card in fyi:
@@ -287,7 +260,7 @@ def main() -> int:
         workers = sum(len(g.get("executions", [])) for g in dash.get("workers", []))
         print(f"  {label}: {inbox} inbox, {workers} work rows")
 
-    print("\nDone — see **Decisions** and **FYI** above task cards in Puppy Garden.")
+    print("\nDone — see **Pending** and **FYI** above task cards in Puppy Garden.")
     return 0
 
 

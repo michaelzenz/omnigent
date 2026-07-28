@@ -3,7 +3,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { FyiClusterCard as FyiClusterCardType } from "@/lib/agentTasksApi";
-import { useResolveFyiCluster } from "@/hooks/useBoardDecisions";
+import { useResolveFyiCluster } from "@/hooks/useBoardTriage";
 
 interface FyiClusterCardProps {
   card: FyiClusterCardType;

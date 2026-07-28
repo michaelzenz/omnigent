@@ -26,7 +26,6 @@ _DISMISSABLE_STATES = frozenset(
         "received",
         "routing",
         "awaiting_grouping",
-        "routing_proposed",
         "classified_fyi",
     }
 )

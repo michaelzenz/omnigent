@@ -10,7 +10,13 @@ from omnigent.agent_tasks.constants import (
     FYI_CLUSTER_OPEN_STATE,
     AMBIGUOUS_EVENT_STATES,
 )
-from omnigent.agent_tasks.routing_proposals import _event_summary, create_routing_proposal
+from omnigent.agent_tasks.secretary_inbox import event_summary
+from omnigent.agent_tasks.task_packages import (
+    PackageItemSpec,
+    create_task_package,
+    reconcile_events_to_task,
+    resolve_manager_agent_id,
+)
 from omnigent.db.utils import now_epoch
 from omnigent.entities import FyiCluster, TaskItem
 from omnigent.errors import ErrorCode, OmnigentError
@@ -34,7 +40,7 @@ def _claimable_fyi_events(
 ) -> list[str]:
     claimed: list[str] = []
     for event_id in event_ids:
-        if task_item_store.get_routing_item_for_event(event_id) is not None:
+        if task_item_store.get_item_for_event(event_id) is not None:
             continue
         if task_item_store.get_fyi_cluster_for_event(event_id) is not None:
             continue
@@ -117,7 +123,7 @@ def list_fyi_board_cards(
         for event_id in event_ids:
             event = task_event_store.get_event(event_id)
             if event is not None:
-                events.append(_event_summary(event))
+                events.append(event_summary(event))
         cards.append(
             {
                 "id": cluster.id,
@@ -185,25 +191,49 @@ def resolve_fyi_cluster(
     assert updated is not None
 
     title = routing_title or cluster.headline
+    manager_id = resolve_manager_agent_id(agent_store, manager_agent_id)
 
-    item = create_routing_proposal(
+    if suggested_task_id is not None:
+        task = task_store.get(suggested_task_id)
+        if task is None:
+            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+        if task.state == "paused":
+            item = reconcile_events_to_task(
+                task=task,
+                spec=PackageItemSpec(
+                    title=title,
+                    event_ids=event_ids,
+                    instructions=routing_instructions,
+                ),
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+            )
+            if item is None:
+                raise OmnigentError(
+                    "No claimable ambiguous events for task package item",
+                    code=ErrorCode.CONFLICT,
+                )
+            return updated, item
+        raise OmnigentError(
+            "FYI promote to an active task requires batch-resolve",
+            code=ErrorCode.CONFLICT,
+        )
+
+    task = create_task_package(
         owner_user_id=owner_user_id,
-        title=title,
-        event_ids=event_ids,
-        suggested_task_id=suggested_task_id,
+        manager_agent_id=manager_id,
+        title=proposed_task_title or title,
+        items=[
+            PackageItemSpec(
+                title=title,
+                event_ids=event_ids,
+                instructions=routing_instructions,
+            ),
+        ],
         task_store=task_store,
         task_item_store=task_item_store,
         task_event_store=task_event_store,
-        agent_store=agent_store,
-        instructions=routing_instructions,
-        worker_agent_id=worker_agent_id,
-        model=model,
-        host_id=host_id,
-        workspace=workspace,
-        harness=harness,
-        rationale=cluster.rationale,
-        proposed_task_manager_agent_id=manager_agent_id,
-        proposed_task_title=proposed_task_title,
-        proposed_task_charter=proposed_task_charter,
+        charter=proposed_task_charter,
     )
-    return updated, item
+    items = task_item_store.list_items_for_task(task.id, state="awaiting_user_ack")
+    return updated, items[0] if items else None

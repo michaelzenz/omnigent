@@ -38,11 +38,24 @@ from omnigent.agent_tasks.fyi_clusters import (
     create_fyi_cluster,
     resolve_fyi_cluster,
 )
-from omnigent.agent_tasks.routing_proposals import (
-    build_ambiguous_inbox,
-    create_routing_proposal,
-    list_board_triage,
-    resolve_routing_proposal,
+from omnigent.agent_tasks.secretary_inbox import build_ambiguous_inbox
+from omnigent.agent_tasks.fyi_clusters import list_fyi_board_cards
+from omnigent.agent_tasks.task_match import (
+    load_events,
+    rank_tasks_for_events,
+    ranked_task_payload,
+    routable_tasks,
+    collect_event_tags,
+    task_tags_from_event_tags,
+)
+from omnigent.agent_tasks.task_packages import (
+    PackageItemSpec,
+    accept_task_package,
+    create_task_package,
+    list_pending_packages,
+    reconcile_events_to_task,
+    reject_task_package,
+    resolve_manager_agent_id,
 )
 from omnigent.agent_tasks.secretary_session import (
     bootstrap_secretary_conversation,
@@ -260,26 +273,27 @@ class UpdateTaskItemRequest(BaseModel):
         return stripped
 
 
-class CreateRoutingProposalRequest(BaseModel):
-    """Request body for ``POST /v1/task-items/routing-proposals``."""
+class MatchTasksRequest(BaseModel):
+    """Request body for ``POST /v1/task-events/match-tasks``."""
+
+    event_ids: list[str] = Field(min_length=1)
+
+    @field_validator("event_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        return cleaned
+
+
+class PackageItemInput(BaseModel):
+    """One backlog item on a paused task package."""
 
     title: str
     event_ids: list[str] = Field(min_length=1)
-    item_id: str | None = None
-    suggested_task_id: str | None = None
     instructions: str | None = None
-    worker_agent_id: str | None = None
-    model: str | None = None
-    host_id: str | None = None
-    workspace: str | None = None
-    harness: str | None = None
-    rationale: str | None = None
-    candidates: list[dict[str, Any]] | None = None
-    proposed_task_id: str | None = None
-    proposed_task_title: str | None = None
-    proposed_task_charter: str | None = None
-    proposed_task_description: str | None = None
-    proposed_task_manager_agent_id: str | None = None
+    item_id: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -298,15 +312,57 @@ class CreateRoutingProposalRequest(BaseModel):
         return cleaned
 
 
-class ResolveRoutingProposalRequest(BaseModel):
-    """Request body for ``POST /v1/task-items/{item_id}/resolve-routing``."""
+class CreateTaskPackageRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/packages``."""
 
-    resolution: Literal["accept_routing", "reject_routing"]
-    selected_task_id: str | None = None
+    title: str
+    description: str | None = None
+    charter: str | None = None
+    manager_agent_id: str | None = None
+    tags: list[TaskTagInput] = Field(default_factory=list)
+    items: list[PackageItemInput] = Field(min_length=1)
+
+    @field_validator("title")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must be a non-empty string")
+        return stripped
+
+
+class ReconcileEventsRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/reconcile-events``."""
+
+    title: str
+    event_ids: list[str] = Field(min_length=1)
     instructions: str | None = None
-    proposed_task_title: str | None = None
-    proposed_task_charter: str | None = None
-    proposed_task_description: str | None = None
+    item_id: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must be a non-empty string")
+        return stripped
+
+    @field_validator("event_ids")
+    @classmethod
+    def _non_empty_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [event_id.strip() for event_id in value if event_id.strip()]
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        return cleaned
+
+
+class AcceptTaskPackageRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/accept-package``."""
+
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    model: str | None = None
 
 
 class CreateFyiClusterRequest(BaseModel):
@@ -482,7 +538,6 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
         "harness": item.harness,
         "priority": item.priority,
         "created_by": item.created_by,
-        "routing_proposal": item.routing_proposal,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -1106,117 +1161,173 @@ def create_agent_tasks_router(
                 task_store=task_store,
             )
 
-        @router.post("/task-items/routing-proposals")
-        async def create_routing_proposal_route(
-            request: Request,
-            body: CreateRoutingProposalRequest,
-        ) -> dict[str, Any]:
-            """Create or extend a secretary routing proposal over ambiguous events."""
-            user_id = require_user(request, auth_provider)
-            profile = None
-            if secretary_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    secretary_profile_store.get,
-                    _effective_user_id(user_id),
-                )
+        @router.post("/task-events/match-tasks")
+        async def match_tasks(request: Request, body: MatchTasksRequest) -> dict[str, Any]:
+            """Rank active and paused tasks against one or more events."""
+            require_user(request, auth_provider)
 
-            def _create() -> TaskItem | None:
-                host_id = body.host_id
-                workspace = body.workspace
-                harness = body.harness
-                model = body.model
-                worker_agent_id = body.worker_agent_id
-                if profile is not None:
-                    host_id = host_id or profile.host_id
-                    workspace = workspace or profile.workspace
-                    harness = harness or profile.harness
-                    model = model or profile.model
-                if worker_agent_id is None:
-                    worker_agent_id = resolve_task_agent_id(
-                        agent_store,
-                        TASK_WORKER_AGENT_NAME,
-                    )
-                return create_routing_proposal(
+            def _match() -> dict[str, Any]:
+                events = load_events(body.event_ids, task_event_store=task_event_store)
+                ranked = rank_tasks_for_events(
+                    events=events,
+                    tasks=routable_tasks(task_store),
+                )
+                return {
+                    "object": "agent.task.match",
+                    "event_ids": body.event_ids,
+                    "candidates": ranked_task_payload(ranked),
+                }
+
+            return await asyncio.to_thread(_match)
+
+        @router.post("/agent-tasks/packages")
+        async def create_task_package_route(
+            request: Request,
+            body: CreateTaskPackageRequest,
+        ) -> dict[str, Any]:
+            """Create a paused task package with secretary-reconciled items."""
+            user_id = require_user(request, auth_provider)
+            manager_id = resolve_manager_agent_id(agent_store, body.manager_agent_id)
+            await _require_manager_agent(manager_id)
+            task_id = _generate_task_id()
+            tags = _tags_from_input(task_id, body.tags)
+            all_event_ids = [event_id for item in body.items for event_id in item.event_ids]
+            event_tags = collect_event_tags(
+                all_event_ids,
+                task_event_store=task_event_store,
+            )
+
+            def _create() -> Task:
+                return create_task_package(
+                    task_id=task_id,
                     owner_user_id=_effective_user_id(user_id),
+                    manager_agent_id=manager_id,
                     title=body.title,
-                    event_ids=body.event_ids,
-                    item_id=body.item_id,
-                    suggested_task_id=body.suggested_task_id,
+                    description=body.description,
+                    charter=body.charter,
+                    tags=tags or task_tags_from_event_tags(task_id, event_tags),
+                    event_tags=event_tags,
+                    items=[
+                        PackageItemSpec(
+                            title=item.title,
+                            event_ids=item.event_ids,
+                            instructions=item.instructions,
+                            item_id=item.item_id,
+                        )
+                        for item in body.items
+                    ],
                     task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
-                    agent_store=agent_store,
-                    instructions=body.instructions,
-                    worker_agent_id=worker_agent_id,
-                    model=model,
-                    host_id=host_id,
-                    workspace=workspace,
-                    harness=harness,
-                    rationale=body.rationale,
-                    candidates=body.candidates,
-                    proposed_task_id=body.proposed_task_id,
-                    proposed_task_title=body.proposed_task_title,
-                    proposed_task_charter=body.proposed_task_charter,
-                    proposed_task_description=body.proposed_task_description,
-                    proposed_task_manager_agent_id=body.proposed_task_manager_agent_id,
                 )
 
-            created = await asyncio.to_thread(_create)
-            if created is None:
-                raise OmnigentError(
-                    "No claimable ambiguous events for routing proposal",
-                    code=ErrorCode.CONFLICT,
-                )
-            return _item_to_response(created)
+            task = await asyncio.to_thread(_create)
+            saved_tags = await asyncio.to_thread(task_store.get_tags, task.id)
+            return _task_to_response(task, tags=saved_tags)
 
-        @router.get("/agent-tasks/board/decisions")
-        async def list_board_decisions(request: Request) -> dict[str, Any]:
-            """List pending board-level routing decisions and FYI clusters."""
+        @router.post("/agent-tasks/{task_id}/reconcile-events")
+        async def reconcile_events_route(
+            request: Request,
+            task_id: str,
+            body: ReconcileEventsRequest,
+        ) -> dict[str, Any]:
+            """Reconcile ambiguous events into a paused task package item."""
             user_id = require_user(request, auth_provider)
-            return await asyncio.to_thread(
-                list_board_triage,
+            task = await _get_task_or_404(task_id, user_id)
+
+            def _reconcile() -> TaskItem:
+                created = reconcile_events_to_task(
+                    task=task,
+                    spec=PackageItemSpec(
+                        title=body.title,
+                        event_ids=body.event_ids,
+                        instructions=body.instructions,
+                        item_id=body.item_id,
+                    ),
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                )
+                if created is None:
+                    raise OmnigentError(
+                        "No claimable ambiguous events for task package item",
+                        code=ErrorCode.CONFLICT,
+                    )
+                return created
+
+            item = await asyncio.to_thread(_reconcile)
+            return _item_to_response(item)
+
+        @router.get("/agent-tasks/board/pending")
+        async def list_board_pending(request: Request) -> dict[str, Any]:
+            """List paused task packages awaiting user acknowledgment."""
+            user_id = require_user(request, auth_provider)
+            packages = await asyncio.to_thread(
+                list_pending_packages,
+                owner_user_id=_effective_user_id(user_id),
+                task_store=task_store,
+                task_item_store=task_item_store,
+            )
+            fyi = await asyncio.to_thread(
+                list_fyi_board_cards,
                 owner_user_id=_effective_user_id(user_id),
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
-                task_store=task_store,
             )
+            return {
+                "object": "agent.task.board",
+                "pending": packages,
+                "fyi": fyi,
+            }
 
-        @router.post("/task-items/{item_id}/resolve-routing")
-        async def resolve_routing_proposal_route(
+        @router.post("/agent-tasks/{task_id}/accept-package")
+        async def accept_task_package_route(
             request: Request,
-            item_id: str,
-            body: ResolveRoutingProposalRequest,
+            task_id: str,
+            body: AcceptTaskPackageRequest,
         ) -> dict[str, Any]:
-            """Accept or reject a secretary task-item routing proposal."""
+            """Activate a paused task package and approve its inbox items."""
             user_id = require_user(request, auth_provider)
-            item = await _get_item_or_404(item_id, user_id)
+            task = await _get_task_or_404(task_id, user_id)
             profile = None
             if secretary_profile_store is not None:
                 profile = await asyncio.to_thread(
                     secretary_profile_store.get,
                     _effective_user_id(user_id),
                 )
-
-            updated, execution = await resolve_routing_proposal(
-                item=item,
-                resolution=body.resolution,
-                selected_task_id=body.selected_task_id,
-                instructions=body.instructions,
-                proposed_task_title=body.proposed_task_title,
-                proposed_task_charter=body.proposed_task_charter,
-                proposed_task_description=body.proposed_task_description,
+            activated = await asyncio.to_thread(
+                accept_task_package,
+                task=task,
                 task_store=task_store,
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
+                host_id=body.host_id,
+                workspace=body.workspace,
+                harness=body.harness,
+                model=body.model,
                 secretary_profile=profile,
             )
-            response = _item_to_response(updated)
-            if execution is not None:
-                response["execution_id"] = execution.id
-                response["worker_conversation_id"] = execution.conversation_id
-            return response
+            tags = await asyncio.to_thread(task_store.get_tags, task_id)
+            return _task_to_response(activated, tags=tags)
+
+        @router.post("/agent-tasks/{task_id}/reject-package")
+        async def reject_task_package_route(
+            request: Request,
+            task_id: str,
+        ) -> dict[str, Any]:
+            """Archive a paused task package and release its events."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            archived = await asyncio.to_thread(
+                reject_task_package,
+                task=task,
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+            )
+            tags = await asyncio.to_thread(task_store.get_tags, task_id)
+            return _task_to_response(archived, tags=tags)
 
         @router.post("/task-events/fyi-clusters")
         async def create_fyi_cluster_route(
