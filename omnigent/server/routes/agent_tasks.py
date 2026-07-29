@@ -737,7 +737,7 @@ def create_agent_tasks_router(
                     conversation_store=conversation_store,
                     agent_store=agent_store,
                     profile=profile,
-                    seed_manual=True,
+                    seed_prompt=True,
                 )
                 await asyncio.to_thread(
                     secretary_profile_store.upsert,
@@ -778,7 +778,7 @@ def create_agent_tasks_router(
                     conversation_store=conversation_store,
                     agent_store=agent_store,
                     profile=profile,
-                    seed_manual=True,
+                    seed_prompt=True,
                 )
                 await asyncio.to_thread(
                     secretary_profile_store.upsert,

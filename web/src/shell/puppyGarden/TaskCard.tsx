@@ -26,12 +26,15 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
     [dashboard, selectedExecutionId],
   );
 
+  const isActive = state === "active";
+
   return (
     <article
       className="flex min-h-[280px] flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm"
       data-testid={`task-card-${taskId}`}
+      data-task-state={state}
     >
-      <header className="flex items-start justify-between gap-2 border-b border-border px-3 py-2">
+      <header className="flex items-start justify-between gap-2 border-b border-border bg-white px-3 py-2">
         <div className="min-w-0">
           <h2 className="truncate text-base leading-tight font-semibold">{title}</h2>
           {description ? (
@@ -42,7 +45,16 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
           {dashboard?.derived.has_running_workers ? (
             <Loader2Icon className="size-4 animate-spin text-muted-foreground" aria-label="Workers running" />
           ) : null}
-          <Badge variant="outline">{state}</Badge>
+          <Badge
+            variant={isActive ? "default" : "outline"}
+            className={
+              isActive
+                ? "border-emerald-600 bg-emerald-600 text-white"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }
+          >
+            {isActive ? "Active" : "New"}
+          </Badge>
         </div>
       </header>
 

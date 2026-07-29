@@ -261,7 +261,7 @@ async def _put_secretary_profile(client: httpx.AsyncClient, manager_agent_id: st
     assert profile_resp.status_code == 200
 
 
-async def test_ensure_secretary_session_seeds_manual(
+async def test_ensure_secretary_session_seeds_prompt(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
@@ -279,8 +279,8 @@ async def test_ensure_secretary_session_seeds_manual(
     assert len(items) == 1
     assert items[0]["role"] == "user"
     assert items[0].get("is_meta") is True
-    assert "[Task Secretary manual]" in items_resp.text
-    assert "Orphan session routing" in items_resp.text
+    assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
+    assert "task secretary" in items_resp.text.lower()
 
     profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
     assert profile_resp.json()["conversation_id"] == conversation_id
@@ -291,7 +291,7 @@ async def test_ensure_secretary_session_seeds_manual(
     assert ensure_again.json()["conversation_id"] == conversation_id
 
 
-async def test_reset_secretary_session_reseeds_manual(
+async def test_reset_secretary_session_reseeds_prompt(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
@@ -312,7 +312,7 @@ async def test_reset_secretary_session_reseeds_manual(
     items = items_resp.json()["data"]
     assert len(items) == 1
     assert items[0].get("is_meta") is True
-    assert "[Task Secretary manual]" in items_resp.text
+    assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
 
     profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
     assert profile_resp.json()["conversation_id"] == reset_body["conversation_id"]

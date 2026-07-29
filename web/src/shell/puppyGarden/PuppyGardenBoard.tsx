@@ -38,7 +38,7 @@ export function PuppyGardenBoard() {
         <BoardFyiStream />
         {hasPaused ? (
           <section className="space-y-3" data-testid="board-paused-tasks">
-            <h2 className="text-sm font-semibold text-foreground">New packages</h2>
+            <h2 className="text-sm font-semibold text-amber-900">New packages</h2>
             {pausedTasks?.map((task) => (
               <TaskCard
                 key={task.id}
@@ -51,15 +51,18 @@ export function PuppyGardenBoard() {
           </section>
         ) : null}
         {hasActive ? (
-          activeTasks?.map((task) => (
-            <TaskCard
-              key={task.id}
-              taskId={task.id}
-              title={task.title}
-              description={task.description}
-              state={task.state}
-            />
-          ))
+          <section className="space-y-3" data-testid="board-active-tasks">
+            <h2 className="text-sm font-semibold text-emerald-800">Active tasks</h2>
+            {activeTasks?.map((task) => (
+              <TaskCard
+                key={task.id}
+                taskId={task.id}
+                title={task.title}
+                description={task.description}
+                state={task.state}
+              />
+            ))}
+          </section>
         ) : !hasPaused ? (
           <p className="text-sm text-muted-foreground">No active tasks yet.</p>
         ) : null}
