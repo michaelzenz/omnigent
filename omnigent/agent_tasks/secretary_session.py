@@ -30,11 +30,12 @@ NO_HOST_AVAILABLE_MESSAGE = (
     "No host is available. Start a host with `omnigent host --server <url>` and try again."
 )
 
+PG_README_PATH = "docs/agent-tasks/README.md"
 SECRETARY_MANUAL_PATH = "docs/agent-tasks/TASK_SECRETARY.md"
 
 SECRETARY_SEED_PROMPT = (
     "You are the secretary of the PuppyGarden task system. Read and follow "
-    f"{SECRETARY_MANUAL_PATH}."
+    f"{PG_README_PATH} and {SECRETARY_MANUAL_PATH}."
 )
 
 

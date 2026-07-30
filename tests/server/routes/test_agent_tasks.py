@@ -279,8 +279,9 @@ async def test_ensure_secretary_session_seeds_prompt(
     assert len(items) == 1
     assert items[0]["role"] == "user"
     assert items[0].get("is_meta") is True
+    assert "docs/agent-tasks/README.md" in items_resp.text
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
-    assert "task secretary" in items_resp.text.lower()
+    assert "secretary" in items_resp.text.lower()
 
     profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
     assert profile_resp.json()["conversation_id"] == conversation_id
@@ -312,6 +313,7 @@ async def test_reset_secretary_session_reseeds_prompt(
     items = items_resp.json()["data"]
     assert len(items) == 1
     assert items[0].get("is_meta") is True
+    assert "docs/agent-tasks/README.md" in items_resp.text
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
 
     profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
