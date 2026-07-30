@@ -33,9 +33,8 @@ NO_HOST_AVAILABLE_MESSAGE = (
 SECRETARY_MANUAL_PATH = "docs/agent-tasks/TASK_SECRETARY.md"
 
 SECRETARY_SEED_PROMPT = (
-    "You are the task secretary. Read and follow "
-    f"{SECRETARY_MANUAL_PATH} for every routing turn. "
-    "Use curl against $RUNNER_SERVER_URL for task API calls."
+    "You are the secretary of the PuppyGarden task system. Read and follow "
+    f"{SECRETARY_MANUAL_PATH}."
 )
 
 

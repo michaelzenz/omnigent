@@ -1,5 +1,6 @@
 # Task secretary manual
 
+You mainly handles taskEvents.
 
 ## API access
 
@@ -21,8 +22,8 @@ are in `awaiting_grouping`.
 
 ## Reconcile ambiguous events
 
-We want to avoid user make decisions on too many things, so we should reconcile TaskEvents(rawEvents)
-into spcific taskItem as execution unit
+We first find the right task for the taskEvent, because task has richer info. Then we reconcile events
+into existing/new taskItem as execution unit, so that we can avoid user make decisions on too many things.
 
 ### 1. List ambiguous events
 
@@ -34,7 +35,16 @@ Returns clusters of stalled events (`awaiting_grouping`) grouped by shared event
 Use each cluster’s `tags` and `suggested_candidates` when deciding how to route.
 Candidates include both **active** and **paused** tasks.
 
+### 2. List routable tasks (active and paused)
+
+```bash
+curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=active&limit=100"
+curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=paused&limit=100"
+```
+
 Optional: rank tasks for specific events:
+This api returns task candidates for the input group, usually used for finding candidate
+for a group of close events
 
 ```bash
 curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/match-tasks" \
@@ -42,23 +52,15 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/match-tasks" \
   -d '{"event_ids":["<id1>","<id2>"]}'
 ```
 
-### 2. List paused task packages (when escalating)
+List items on a package (use `item_id` when extending one):
 
 ```bash
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=paused&limit=100"
+curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items"
 ```
 
-Each paused task has inbox items in `awaiting_user_ack`. The user reviews them on
-the board and hits **Go** on each item (`POST /v1/task-items/{id}/resolve`) to
-activate the task, bootstrap the manager, and dispatch a worker. **Skip** leaves
-the item cancelled; if the user skips every item the paused task stays on the board.
-To add more events to an existing package, call
-`POST /v1/agent-tasks/{task_id}/reconcile-events` with `item_id` to extend an item.
+Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
 
 ### 3. Decide each cluster
-
-For every cluster from step 1, review events and `suggested_candidates`. Scores
-are hints only — use title, summary, charter fit, and your judgment.
 
 - **Confident existing active-task match** → route to that task’s manager (no worker
   dispatch) with `POST /v1/task-events/batch-resolve` (use one or more
@@ -68,8 +70,7 @@ are hints only — use title, summary, charter fit, and your judgment.
     -H 'Content-Type: application/json' \
     -d '{"event_ids":["<id1>","<id2>"],"task_id":"<id>"}'
   ```
-  - Event state becomes `routed`; the task manager is woken to reconcile into
-    task items. You do not dispatch workers.
+  - route to the active task means you dont need to reconcile to taskItem
 
 - **Confident existing paused-package match** → reconcile onto that paused task:
   ```bash
@@ -82,11 +83,11 @@ are hints only — use title, summary, charter fit, and your judgment.
       "item_id":"<optional-existing-item-id>"
     }'
   ```
+  - This case you need to reconcile into taskItem. update title/instructions if needed
   - Events move to `reconciled`; items stay in `awaiting_user_ack` until the user
     hits **Go** on the inbox item on the board.
 
-- **Not confident** (weak/ambiguous match, multiple plausible tasks, or needs a
-  new task) → create a paused task package:
+- **Not confident** (weak/ambiguous match and needs new task) → create a paused task package:
   ```bash
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/packages" \
     -H 'Content-Type: application/json' \
@@ -106,21 +107,21 @@ are hints only — use title, summary, charter fit, and your judgment.
   - Pass `item_id` on `reconcile-events` to attach more events to an open package item.
 
 - **FYI only** → classify without creating a task:
+
+  List open FYI clusters (each `fyi[].id` is the `cluster_id`):
+
+  ```bash
+  curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/board/pending"
+  ```
+
+  Create or extend a cluster:
+
   ```bash
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/fyi-clusters" \
     -H 'Content-Type: application/json' \
     -d '{"event_ids":["<id>"],"headline":"<headline>","cluster_id":"<optional-existing-cluster-id>"}'
   ```
-  - Pass `cluster_id` to attach more events to an open FYI card.
-  - Linked events move to `classified_fyi`; user dismisses on the board.
-
-Tell the user about any **paused packages** or **FYI** cards you created. You do not
-approve inbox items, reject packages, or dismiss FYI cards yourself.
-
----
-
-## Do not
-
-- Dispatch workers
-- Approve inbox items or dismiss FYI cards on behalf of the user
-- Ingest external event types (`build.finished`, etc.)
+  - When you think these events are NOT related to any task, and not actionable, just fyi
+  - Omit `cluster_id` to create a new card; the response `id` is the cluster id for later extends
+  - Pass `cluster_id` to attach more events to an open FYI card
+  - Linked events move to `classified_fyi`; user dismisses on the board
