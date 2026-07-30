@@ -99,6 +99,8 @@ from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.timer_item_store import TimerItemStore
+from omnigent.server.routes.timer_items import create_timer_items_router
 
 _logger = logging.getLogger(__name__)
 
@@ -1135,6 +1137,7 @@ def create_app(
     task_store: TaskStore | None = None,
     task_event_store: TaskEventStore | None = None,
     task_item_store: TaskItemStore | None = None,
+    timer_item_store: TimerItemStore | None = None,
     secretary_profile_store: SecretaryProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
@@ -1184,6 +1187,7 @@ def create_app(
         ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
     :param task_event_store: Store for task events and execution history.
     :param task_item_store: Store for task items and routing proposals.
+    :param timer_item_store: Store for deferred host timer items.
     :param secretary_profile_store: Per-user secretary profile defaults.
         When provided with task stores, enables secretary profile/session
         routes and resolve-time bootstrap defaults.
@@ -2331,6 +2335,16 @@ def create_app(
             )
         else:
             configure_secretary_queue(None)
+    if timer_item_store is not None:
+        app.include_router(
+            create_timer_items_router(
+                timer_item_store,
+                conversation_store,
+                auth_provider=auth_provider,
+            ),
+            prefix="/v1",
+            tags=["timer_items"],
+        )
     if policy_store is not None:
         app.include_router(
             create_session_policies_router(

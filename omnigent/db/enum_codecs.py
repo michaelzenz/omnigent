@@ -147,6 +147,13 @@ TASK_ITEM_STATE: dict[str, int] = {
     "cancelled": 7,
 }
 
+TIMER_ITEM_STATE: dict[str, int] = {
+    "pending": 1,
+    "running": 2,
+    "done": 3,
+    "failed": 4,
+}
+
 TASK_EVENT_ROUTING_DECISION: dict[str, int] = {
     "proposed": 1,
     "accepted": 2,
@@ -430,3 +437,13 @@ def encode_fyi_cluster_state(name: str) -> int:
 def decode_fyi_cluster_state(code: int) -> str:
     """Decode a ``fyi_clusters.state`` int code to its name."""
     return _decode(FYI_CLUSTER_STATE, code, field="fyi_clusters.state")
+
+
+def encode_timer_item_state(name: str) -> int:
+    """Encode a ``timer_items.state`` name to its int code."""
+    return _encode(TIMER_ITEM_STATE, name, field="timer_items.state")
+
+
+def decode_timer_item_state(code: int) -> str:
+    """Decode a ``timer_items.state`` int code to its name."""
+    return _decode(TIMER_ITEM_STATE, code, field="timer_items.state")

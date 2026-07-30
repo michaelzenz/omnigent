@@ -42,6 +42,7 @@ from omnigent.entities.task import (
     TaskSessionBinding,
     TaskTag,
 )
+from omnigent.entities.timer import TimerItem
 from omnigent.entities.session_resources import (
     DEFAULT_ENVIRONMENT_ID,
     SessionResourceView,
@@ -92,6 +93,7 @@ __all__ = [
     "TaskItemEvent",
     "TaskSessionBinding",
     "TaskTag",
+    "TimerItem",
     "UserSecretaryProfile",
     "TerminalCommandData",
     "filter_resources_by_type",

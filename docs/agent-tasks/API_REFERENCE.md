@@ -75,3 +75,22 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/agent-tasks/sessions/{session_id}/propose-adoption` |
 | POST | `/v1/agent-tasks/sessions/{session_id}/adopt` |
 | POST | `/v1/agent-tasks/sessions/{session_id}/reject-adoption` |
+
+## Timer items
+
+Agent-created deferred work executed by a registered host. Each row is scoped
+to one `host_id`; the host only pulls due items for itself.
+
+| Method | Path | Auth |
+|--------|------|------|
+| POST | `/v1/timer-items` | user |
+| GET | `/v1/timer-items/due` | host (`X-Omnigent-Host-Ambient-Id`) |
+| POST | `/v1/timer-items/{id}/claim` | host |
+| POST | `/v1/timer-items/{id}/complete` | host |
+| POST | `/v1/timer-items/{id}/fail` | host |
+| POST | `/v1/timer-items/dispatch-prompt` | host |
+
+Create body: `{ "task_type", "fire_at", "host_id", "payload" }`.
+
+First handler: `task_type: "prompt"` with payload
+`{ "session_id": "...", "message": "..." }`.

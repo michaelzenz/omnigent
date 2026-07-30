@@ -1663,6 +1663,48 @@ class SqlFyiClusterEvent(OmnigentBase):
     event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
 
 
+class SqlTimerItem(OmnigentBase):
+    """SQLAlchemy model for deferred host timer items."""
+
+    __tablename__ = "timer_items"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    fire_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    host_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False, server_default="{}")
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    fired_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4)", name="ck_timer_items_state"),
+        Index(
+            "ix_timer_items_host_due",
+            "workspace_id",
+            "host_id",
+            "state",
+            "fire_at",
+            "id",
+        ),
+        Index(
+            "ix_timer_items_owner_created",
+            "workspace_id",
+            "owner_user_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
 class SqlUserSecretaryProfile(OmnigentBase):
     """SQLAlchemy model for per-user secretary agent configuration."""
 
