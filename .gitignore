@@ -2,6 +2,9 @@
 build/
 dist/
 node_modules/
+# Lockfiles are regenerated locally; keep on disk but do not track in git.
+uv.lock
+web/package-lock.json
 reviews/
 
 # Generated artifact; never committed.
