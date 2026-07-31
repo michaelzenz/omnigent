@@ -293,7 +293,7 @@ describe("TaskCard", () => {
           id: "task-empty",
           title: "Empty task",
           description: null,
-          state: "paused",
+          state: "pending",
           manager_conversation_id: null,
         },
         derived: { has_running_workers: false },
@@ -309,7 +309,7 @@ describe("TaskCard", () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter>
-          <TaskCard taskId="task-empty" title="Empty task" description={null} state="paused" />
+          <TaskCard taskId="task-empty" title="Empty task" description={null} state="pending" />
         </MemoryRouter>
       </QueryClientProvider>,
     );

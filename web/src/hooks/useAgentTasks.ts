@@ -75,7 +75,7 @@ export function useResolveTaskItem(taskId: string) {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard", taskId] });
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "paused"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
       await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "active"] });
     },
   });

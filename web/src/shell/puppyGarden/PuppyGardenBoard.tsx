@@ -4,13 +4,13 @@ import { BoardFyiStream } from "./BoardFyiStream";
 import { TaskCard } from "./TaskCard";
 
 export function PuppyGardenBoard() {
-  const { data: pausedTasks, isLoading: pausedLoading, error: pausedError } =
-    useAgentTaskList("paused");
+  const { data: pendingTasks, isLoading: pendingLoading, error: pendingError } =
+    useAgentTaskList("pending");
   const { data: activeTasks, isLoading: activeLoading, error: activeError } =
     useAgentTaskList("active");
 
-  const isLoading = pausedLoading || activeLoading;
-  const error = pausedError ?? activeError;
+  const isLoading = pendingLoading || activeLoading;
+  const error = pendingError ?? activeError;
 
   if (isLoading) {
     return (
@@ -29,17 +29,17 @@ export function PuppyGardenBoard() {
     );
   }
 
-  const hasPaused = (pausedTasks?.length ?? 0) > 0;
+  const hasPending = (pendingTasks?.length ?? 0) > 0;
   const hasActive = (activeTasks?.length ?? 0) > 0;
 
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
         <BoardFyiStream />
-        {hasPaused ? (
-          <section className="space-y-3" data-testid="board-paused-tasks">
-            <h2 className="text-sm font-semibold text-amber-900">New packages</h2>
-            {pausedTasks?.map((task) => (
+        {hasPending ? (
+          <section className="space-y-3" data-testid="board-pending-tasks">
+            <h2 className="text-sm font-semibold text-amber-900">Pending packages</h2>
+            {pendingTasks?.map((task) => (
               <TaskCard
                 key={task.id}
                 taskId={task.id}
@@ -63,7 +63,7 @@ export function PuppyGardenBoard() {
               />
             ))}
           </section>
-        ) : !hasPaused ? (
+        ) : !hasPending ? (
           <p className="text-sm text-muted-foreground">No active tasks yet.</p>
         ) : null}
       </div>

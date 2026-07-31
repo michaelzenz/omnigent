@@ -142,7 +142,7 @@ def test_shipped_codes_are_stable() -> None:
     }
     assert ec.TASK_STATE == {
         "active": 1,
-        "paused": 2,
+        "pending": 2,
         "done": 3,
         "archived": 4,
     }

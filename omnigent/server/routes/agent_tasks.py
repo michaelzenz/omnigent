@@ -304,7 +304,7 @@ class MatchTasksRequest(BaseModel):
 
 
 class PackageItemInput(BaseModel):
-    """One backlog item on a paused task package."""
+    """One backlog item on a pending task package."""
 
     title: str
     event_ids: list[str] = Field(min_length=1)
@@ -1225,7 +1225,7 @@ def create_agent_tasks_router(
 
         @router.post("/task-events/match-tasks")
         async def match_tasks(request: Request, body: MatchTasksRequest) -> dict[str, Any]:
-            """Rank active and paused tasks against one or more events."""
+            """Rank active and pending tasks against one or more events."""
             require_user(request, auth_provider)
 
             def _match() -> dict[str, Any]:
@@ -1247,7 +1247,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateTaskPackageRequest,
         ) -> dict[str, Any]:
-            """Create a paused task package with secretary-reconciled items."""
+            """Create a pending task package with secretary-reconciled items."""
             user_id = require_user(request, auth_provider)
             manager_id = resolve_manager_agent_id(agent_store, body.manager_agent_id)
             await _require_manager_agent(manager_id)
@@ -1293,7 +1293,7 @@ def create_agent_tasks_router(
             task_id: str,
             body: ReconcileEventsRequest,
         ) -> dict[str, Any]:
-            """Reconcile ambiguous events into a paused task package item."""
+            """Reconcile ambiguous events into a pending task package item."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
 
@@ -1339,7 +1339,7 @@ def create_agent_tasks_router(
             request: Request,
             task_id: str,
         ) -> dict[str, Any]:
-            """Archive a paused task package and release its events."""
+            """Archive a pending task package and release its events."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
             archived = await asyncio.to_thread(

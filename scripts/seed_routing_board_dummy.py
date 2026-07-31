@@ -473,7 +473,7 @@ def main() -> int:
     _seed_rich_ci_task(ci_task, worker_agent_id=worker_agent_id, worker2_agent_id=worker2_agent_id)
     twenty_worker_task = _seed_twenty_worker_task(manager_agent_id=manager_agent_id)
 
-    print("Creating paused task packages…")
+    print("Creating pending task packages…")
     _create_task_package(
         title="Fix CI on PR #891",
         instructions="Investigate lint failure and address review feedback on PR #891.",
@@ -552,12 +552,12 @@ def main() -> int:
         worker_agent_id=worker_agent_id,
     )
 
-    paused = _request("GET", "/v1/agent-tasks?state=paused&limit=100")
+    pending = _request("GET", "/v1/agent-tasks?state=pending&limit=100")
     fyi_board = _request("GET", "/v1/agent-tasks/board/pending")
-    paused_tasks = paused.get("data", [])
+    pending_tasks = pending.get("data", [])
     fyi = fyi_board.get("fyi", [])
-    print(f"\nPaused packages: {len(paused_tasks)}")
-    for task in paused_tasks:
+    print(f"\nPending packages: {len(pending_tasks)}")
+    for task in pending_tasks:
         print(f"  - {task.get('title')}")
     print(f"Board FYI clusters: {len(fyi)}")
     for card in fyi:

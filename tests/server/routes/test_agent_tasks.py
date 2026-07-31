@@ -120,12 +120,12 @@ async def test_patch_task(
     ).json()
     patch_resp = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
-        json={"title": "Renamed task", "state": "paused"},
+        json={"title": "Renamed task", "state": "pending"},
     )
     assert patch_resp.status_code == 200
     body = patch_resp.json()
     assert body["title"] == "Renamed task"
-    assert body["state"] == "paused"
+    assert body["state"] == "pending"
 
 
 async def test_put_tags_replaces_all(

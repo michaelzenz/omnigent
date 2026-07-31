@@ -1,4 +1,4 @@
-"""Paused task packages — secretary reconcile and user inbox ack."""
+"""Pending task packages — secretary reconcile and user inbox ack."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _generate_task_id() -> str:
 
 @dataclass(frozen=True)
 class PackageItemSpec:
-    """One backlog item to create on a paused task package."""
+    """One backlog item to create on a pending task package."""
 
     title: str
     event_ids: list[str]
@@ -60,10 +60,10 @@ def _claimable_events(
     return claimed
 
 
-def _require_paused_package_task(task: Task) -> None:
-    if task.state != "paused":
+def _require_pending_package_task(task: Task) -> None:
+    if task.state != "pending":
         raise OmnigentError(
-            "Task package reconcile requires a paused task",
+            "Task package reconcile requires a pending task",
             code=ErrorCode.CONFLICT,
         )
 
@@ -75,8 +75,8 @@ def reconcile_events_to_task(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
 ) -> TaskItem | None:
-    """Create or extend a task item on a paused package and reconcile events."""
-    _require_paused_package_task(task)
+    """Create or extend a task item on a pending package and reconcile events."""
+    _require_pending_package_task(task)
     events = _claimable_events(
         spec.event_ids,
         task_event_store=task_event_store,
@@ -137,7 +137,7 @@ def create_task_package(
     tags: list[TaskTag] | None = None,
     event_tags: list | None = None,
 ) -> Task:
-    """Create a paused task package with secretary-reconciled items."""
+    """Create a pending task package with secretary-reconciled items."""
     if not items:
         raise OmnigentError("At least one item is required", code=ErrorCode.INVALID_INPUT)
 
@@ -156,7 +156,7 @@ def create_task_package(
         owner_user_id=owner_user_id,
         description=description,
         charter=resolved_charter,
-        state="paused",
+        state="pending",
         tags=resolved_tags,
     )
 
@@ -182,8 +182,8 @@ def reject_task_package(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
 ) -> Task:
-    """Archive a paused package and release its events back to the secretary queue."""
-    _require_paused_package_task(task)
+    """Archive a pending package and release its events back to the secretary queue."""
+    _require_pending_package_task(task)
 
     for item in task_item_store.list_items_for_task(task.id):
         for link in task_item_store.list_events_for_item(item.id):

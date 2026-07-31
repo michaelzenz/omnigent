@@ -23,7 +23,7 @@ class Task:
     :param description: Canonical task description. ``None`` when unset.
     :param charter: Keyword-dense routing charter maintained by the manager.
     :param search_text: Plain searchable mirror of title, charter, and tags.
-    :param state: One of ``"active"``, ``"paused"``, ``"done"``, ``"archived"``.
+    :param state: One of ``"active"``, ``"pending"``, ``"done"``, ``"archived"``.
     :param manager_conversation_id: Manager session for this task, or ``None``
         before bootstrap.
     :param created_at: Unix epoch seconds at row creation.

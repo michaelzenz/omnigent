@@ -1,4 +1,4 @@
-"""Task discovery for event routing — search active and paused tasks."""
+"""Task discovery for event routing — search active and pending tasks."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from omnigent.entities import Task, TaskEvent, TaskEventTag, TaskTag
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
-_ROUTABLE_TASK_STATES = frozenset({"active", "paused"})
+_ROUTABLE_TASK_STATES = frozenset({"active", "pending"})
 
 
 def routable_tasks(task_store: TaskStore) -> list[Task]:
-    """Return active and paused tasks eligible for event routing."""
+    """Return active and pending tasks eligible for event routing."""
     tasks: list[Task] = []
     for state in sorted(_ROUTABLE_TASK_STATES):
         tasks.extend(task_store.list(state=state))

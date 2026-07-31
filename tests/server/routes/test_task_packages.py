@@ -1,4 +1,4 @@
-"""Route tests for paused task packages."""
+"""Route tests for pending task packages."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ async def test_create_task_package_lists_as_paused_task(
     manager_agent_id: str,
     db_uri: str,
 ) -> None:
-    """Create a paused package and surface it in the paused task list."""
+    """Create a pending package and surface it in the pending task list."""
     event_store = SqlAlchemyTaskEventStore(db_uri)
     event_id = _uid("package-route-event")
     event_store.create_event(
@@ -75,13 +75,13 @@ async def test_create_task_package_lists_as_paused_task(
     )
     assert created.status_code == 200, created.text
     body = created.json()
-    assert body["state"] == "paused"
+    assert body["state"] == "pending"
     task_id = body["id"]
 
-    listed = await client.get("/v1/agent-tasks", params={"state": "paused", "limit": 100})
+    listed = await client.get("/v1/agent-tasks", params={"state": "pending", "limit": 100})
     assert listed.status_code == 200
-    paused = listed.json()["data"]
-    assert any(task["id"] == task_id for task in paused)
+    pending = listed.json()["data"]
+    assert any(task["id"] == task_id for task in pending)
 
     event = event_store.get_event(event_id)
     assert event is not None
@@ -94,7 +94,7 @@ async def test_resolve_inbox_item_activates_paused_package(
     worker_agent_id: str,
     db_uri: str,
 ) -> None:
-    """Go on a paused package inbox item activates the task and dispatches a worker."""
+    """Go on a pending package inbox item activates the task and dispatches a worker."""
     event_store = SqlAlchemyTaskEventStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_id = _uid("resolve-route-event")
@@ -146,7 +146,7 @@ async def test_skip_inbox_items_keeps_paused_task(
     manager_agent_id: str,
     db_uri: str,
 ) -> None:
-    """Skipping all inbox items leaves the paused package on the board."""
+    """Skipping all inbox items leaves the pending package on the board."""
     event_store = SqlAlchemyTaskEventStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     item_store = SqlAlchemyTaskItemStore(db_uri)
@@ -183,7 +183,7 @@ async def test_skip_inbox_items_keeps_paused_task(
 
     task = task_store.get(task_id)
     assert task is not None
-    assert task.state == "paused"
+    assert task.state == "pending"
 
 
 async def test_match_tasks_includes_paused_task(
@@ -191,7 +191,7 @@ async def test_match_tasks_includes_paused_task(
     manager_agent_id: str,
     db_uri: str,
 ) -> None:
-    """Paused tasks are eligible match candidates."""
+    """Pending tasks are eligible match candidates."""
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     paused_id = _uid("paused-route-task")
@@ -199,7 +199,7 @@ async def test_match_tasks_includes_paused_task(
         paused_id,
         manager_agent_id,
         "omnigent-fork",
-        state="paused",
+        state="pending",
         charter="repo:omnigent-fork",
     )
     event_id = _uid("match-route-event")
@@ -219,4 +219,4 @@ async def test_match_tasks_includes_paused_task(
     candidates = matched.json()["candidates"]
     assert candidates
     assert candidates[0]["task_id"] == paused_id
-    assert candidates[0]["state"] == "paused"
+    assert candidates[0]["state"] == "pending"

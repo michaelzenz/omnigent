@@ -104,8 +104,8 @@ def ensure_task_manager_for_dispatch(
     harness: str | None = None,
     model: str | None = None,
 ) -> Task:
-    """Activate paused packages and ensure a manager session exists before dispatch."""
-    if task.state == "paused":
+    """Activate pending packages and ensure a manager session exists before dispatch."""
+    if task.state == "pending":
         activated = task_store.update(task.id, state="active")
         if activated is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)

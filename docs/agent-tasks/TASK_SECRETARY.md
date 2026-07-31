@@ -33,13 +33,13 @@ curl -sS "$RUNNER_SERVER_URL/v1/task-events/ambiguous-inbox"
 
 Returns clusters of stalled events (`awaiting_grouping`) grouped by shared event tags.
 Use each cluster’s `tags` and `suggested_candidates` when deciding how to route.
-Candidates include both **active** and **paused** tasks.
+Candidates include both **active** and **pending** tasks.
 
-### 2. List routable tasks (active and paused)
+### 2. List routable tasks (active and pending)
 
 ```bash
 curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=active&limit=100"
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=paused&limit=100"
+curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=pending&limit=100"
 ```
 
 Optional: rank tasks for specific events:
@@ -72,7 +72,7 @@ Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
   ```
   - route to the active task means you dont need to reconcile to taskItem
 
-- **Confident existing paused-package match** → reconcile onto that paused task:
+- **Confident existing pending-package match** → reconcile onto that pending task:
   ```bash
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
     -H 'Content-Type: application/json' \
@@ -87,7 +87,7 @@ Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
   - Events move to `reconciled`; items stay in `awaiting_user_ack` until the user
     hits **Go** on the inbox item on the board.
 
-- **Not confident** (weak/ambiguous match and needs new task) → create a paused task package:
+- **Not confident** (weak/ambiguous match and needs new task) → create a pending task package:
   ```bash
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/packages" \
     -H 'Content-Type: application/json' \
@@ -102,7 +102,7 @@ Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
       ]
     }'
   ```
-  - Creates a **paused** task with `awaiting_user_ack` items. Tags are inferred
+  - Creates a **pending** task with `awaiting_user_ack` items. Tags are inferred
     from event tags when omitted.
   - Pass `item_id` on `reconcile-events` to attach more events to an open package item.
 

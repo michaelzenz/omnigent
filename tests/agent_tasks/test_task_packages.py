@@ -1,4 +1,4 @@
-"""Tests for paused task packages and event reconcile."""
+"""Tests for pending task packages and event reconcile."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def test_routable_tasks_include_paused(stores) -> None:
     active_id = _uid("active-task")
     paused_id = _uid("paused-task")
     task_store.create(active_id, manager_id, "Active task", state="active")
-    task_store.create(paused_id, manager_id, "Paused task", state="paused")
+    task_store.create(paused_id, manager_id, "Paused task", state="pending")
     routable = routable_tasks(task_store)
     assert {task.id for task in routable} == {active_id, paused_id}
 
@@ -61,7 +61,7 @@ def test_rank_tasks_for_events_includes_paused_match(stores) -> None:
         paused_id,
         manager_id,
         "omnigent-fork",
-        state="paused",
+        state="pending",
         charter="repo:omnigent-fork",
     )
     event = event_store.create_event(
@@ -112,7 +112,7 @@ def test_create_task_package_reconciles_events(stores) -> None:
         task_item_store=item_store,
         task_event_store=event_store,
     )
-    assert task.state == "paused"
+    assert task.state == "pending"
     items = item_store.list_items_for_task(task.id, state="awaiting_user_ack")
     assert len(items) == 1
     event = event_store.get_event(event_id)
@@ -266,7 +266,7 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
 
     unchanged = task_store.get(task.id)
     assert unchanged is not None
-    assert unchanged.state == "paused"
+    assert unchanged.state == "pending"
 
 
 def test_reject_task_package(stores) -> None:
@@ -315,7 +315,7 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
         paused_id,
         manager_id,
         "omnigent-fork",
-        state="paused",
+        state="pending",
         charter="repo:omnigent-fork",
     )
     event_id = _uid("inbox-event")
@@ -335,4 +335,4 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
     candidates = inbox["clusters"][0]["suggested_candidates"]
     assert candidates
     assert candidates[0]["task_id"] == paused_id
-    assert candidates[0]["state"] == "paused"
+    assert candidates[0]["state"] == "pending"

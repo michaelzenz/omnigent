@@ -197,7 +197,7 @@ def resolve_fyi_cluster(
         task = task_store.get(suggested_task_id)
         if task is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-        if task.state == "paused":
+        if task.state == "pending":
             item = reconcile_events_to_task(
                 task=task,
                 spec=PackageItemSpec(

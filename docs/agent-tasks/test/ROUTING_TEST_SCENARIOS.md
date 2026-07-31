@@ -15,13 +15,13 @@ environment.
 **Story.** PR #123 fails CI. Later, John posts on Slack that PR #456 contains the
 fix for #123 and is waiting on merge approval. There are no managed tasks yet.
 
-**Goal.** Distributor stalls both events; secretary wakes and creates a **paused
+**Goal.** Distributor stalls both events; secretary wakes and creates a **pending
 task package** for the user. After the user accepts the package, the task becomes
 active and the manager reconciles routed work.
 
 ### Preconditions
 
-1. **Empty task state** — no active tasks, no open paused packages, no
+1. **Empty task state** — no active tasks, no open pending packages, no
    stalled events in `awaiting_grouping` (wipe DB or use a clean server).
 2. Server and host running (`uv run omnigent server`, `uv run omnigent host`).
 3. Task secretary session live (`POST /v1/agent-tasks/secretary/session`). This
@@ -85,11 +85,11 @@ X-Omnigent-Host-Id: HOST_ID
 
 **After events are posted (before user accepts)**
 
-- [ ] Event 1 state is `reconciled` on a paused package item, not `routed`.
+- [ ] Event 1 state is `reconciled` on a pending package item, not `routed`.
 - [ ] Event 2 is `reconciled` on the **same** package item (or secretary clearly linked both before user acts).
 - [ ] Secretary received a stall wake (check secretary session or server log).
-- [ ] `GET /v1/agent-tasks?state=paused` shows one paused task with both events on inbox items (preferred) or two packages the user can tell belong together.
-- [ ] Package task state is `paused` with `awaiting_user_ack` inbox items.
+- [ ] `GET /v1/agent-tasks?state=pending` shows one pending task with both events on inbox items (preferred) or two packages the user can tell belong together.
+- [ ] Package task state is `pending` with `awaiting_user_ack` inbox items.
 - [ ] Secretary did **not** bootstrap a manager session yet.
 
 **After user Go on an inbox item**
@@ -101,7 +101,7 @@ X-Omnigent-Host-Id: HOST_ID
 
 **After user skips every inbox item**
 
-- [ ] Paused task remains on the board (no auto-archive).
+- [ ] Pending task remains on the board (no auto-archive).
 
 ### Failure modes to watch
 
@@ -116,7 +116,7 @@ X-Omnigent-Host-Id: HOST_ID
 
 ```http
 GET /v1/task-events/ambiguous-inbox
-GET /v1/agent-tasks?state=paused
+GET /v1/agent-tasks?state=pending
 GET /v1/agent-tasks/{task_id}/reconcile-queue
 ```
 
