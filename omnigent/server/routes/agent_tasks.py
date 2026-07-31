@@ -115,7 +115,7 @@ class CreateAgentTaskRequest(BaseModel):
     manager_agent_id: str
     title: str
     description: str | None = None
-    charter: str | None = None
+    internal_note: str | None = None
     manager_conversation_id: str | None = None
     state: str = "active"
     tags: list[TaskTagInput] = Field(default_factory=list)
@@ -142,7 +142,7 @@ class UpdateAgentTaskRequest(BaseModel):
 
     title: str | None = None
     description: str | None = None
-    charter: str | None = None
+    internal_note: str | None = None
     manager_agent_id: str | None = None
     manager_conversation_id: str | None = None
     state: str | None = None
@@ -197,12 +197,12 @@ class CreateTaskItemRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/{task_id}/items``."""
 
     title: str
+    description: str | None = None
     instructions: str | None = None
+    internal_note: str | None = None
     worker_agent_id: str | None = None
-    model: str | None = None
     host_id: str | None = None
     workspace: str | None = None
-    harness: str | None = None
     priority: int = 0
     state: str = "draft"
     event_ids: list[str] = Field(default_factory=list)
@@ -271,12 +271,12 @@ class UpdateTaskItemRequest(BaseModel):
     """Request body for ``PATCH /v1/task-items/{item_id}``."""
 
     title: str | None = None
+    description: str | None = None
     instructions: str | None = None
+    internal_note: str | None = None
     worker_agent_id: str | None = None
-    model: str | None = None
     host_id: str | None = None
     workspace: str | None = None
-    harness: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -308,7 +308,9 @@ class PackageItemInput(BaseModel):
 
     title: str
     event_ids: list[str] = Field(min_length=1)
+    description: str | None = None
     instructions: str | None = None
+    internal_note: str | None = None
     item_id: str | None = None
 
     @field_validator("title")
@@ -333,7 +335,7 @@ class CreateTaskPackageRequest(BaseModel):
 
     title: str
     description: str | None = None
-    charter: str | None = None
+    internal_note: str | None = None
     manager_agent_id: str | None = None
     tags: list[TaskTagInput] = Field(default_factory=list)
     items: list[PackageItemInput] = Field(min_length=1)
@@ -347,12 +349,14 @@ class CreateTaskPackageRequest(BaseModel):
         return stripped
 
 
-class ReconcileEventsRequest(BaseModel):
+class ReconcileEventsToTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/{task_id}/reconcile-events``."""
 
     title: str
     event_ids: list[str] = Field(min_length=1)
+    description: str | None = None
     instructions: str | None = None
+    internal_note: str | None = None
     item_id: str | None = None
 
     @field_validator("title")
@@ -405,7 +409,7 @@ class ResolveFyiClusterRequest(BaseModel):
     routing_instructions: str | None = None
     suggested_task_id: str | None = None
     proposed_task_title: str | None = None
-    proposed_task_charter: str | None = None
+    proposed_task_internal_note: str | None = None
     worker_agent_id: str | None = None
     model: str | None = None
     host_id: str | None = None
@@ -481,7 +485,7 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
         "owner_user_id": task.owner_user_id,
         "title": task.title,
         "description": task.description,
-        "charter": task.charter,
+        "internal_note": task.internal_note,
         "search_text": task.search_text,
         "state": task.state,
         "created_at": task.created_at,
@@ -550,12 +554,12 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
         "task_id": item.task_id,
         "title": item.title,
         "state": item.state,
+        "description": item.description,
         "instructions": item.instructions,
+        "internal_note": item.internal_note,
         "worker_agent_id": item.worker_agent_id,
-        "model": item.model,
         "host_id": item.host_id,
         "workspace": item.workspace,
-        "harness": item.harness,
         "priority": item.priority,
         "created_by": item.created_by,
         "created_at": item.created_at,
@@ -646,7 +650,7 @@ def create_agent_tasks_router(
             body.title,
             owner_user_id=user_id,
             description=body.description,
-            charter=body.charter,
+            internal_note=body.internal_note,
             manager_conversation_id=body.manager_conversation_id,
             state=body.state,
             tags=tags,
@@ -850,7 +854,7 @@ def create_agent_tasks_router(
         for field in (
             "title",
             "description",
-            "charter",
+            "internal_note",
             "manager_agent_id",
             "manager_conversation_id",
             "state",
@@ -1018,12 +1022,12 @@ def create_agent_tasks_router(
                     task_event_store=task_event_store,
                     title=body.title,
                     state=body.state,
+                    description=body.description,
                     instructions=body.instructions,
+                    internal_note=body.internal_note,
                     worker_agent_id=body.worker_agent_id,
-                    model=body.model,
                     host_id=body.host_id,
                     workspace=body.workspace,
-                    harness=body.harness,
                     priority=body.priority,
                     event_ids=body.event_ids or None,
                 )
@@ -1146,12 +1150,12 @@ def create_agent_tasks_router(
                     item=item,
                     task_item_store=task_item_store,
                     title=body.title,
+                    description=body.description,
                     instructions=body.instructions,
+                    internal_note=body.internal_note,
                     worker_agent_id=body.worker_agent_id,
-                    model=body.model,
                     host_id=body.host_id,
                     workspace=body.workspace,
-                    harness=body.harness,
                 )
 
             updated = await asyncio.to_thread(_patch)
@@ -1177,10 +1181,9 @@ def create_agent_tasks_router(
                 "worker_agent_id": item.worker_agent_id,
                 "title": item.title,
                 "instructions": item.instructions or "",
+                "internal_note": item.internal_note,
                 "host_id": item.host_id,
                 "workspace": item.workspace,
-                "harness": item.harness,
-                "model": item.model,
             }
             params = resolve_dispatch_params(
                 payload=payload,
@@ -1266,14 +1269,16 @@ def create_agent_tasks_router(
                     manager_agent_id=manager_id,
                     title=body.title,
                     description=body.description,
-                    charter=body.charter,
+                    internal_note=body.internal_note,
                     tags=tags or task_tags_from_event_tags(task_id, event_tags),
                     event_tags=event_tags,
                     items=[
                         PackageItemSpec(
                             title=item.title,
                             event_ids=item.event_ids,
+                            description=item.description,
                             instructions=item.instructions,
+                            internal_note=item.internal_note,
                             item_id=item.item_id,
                         )
                         for item in body.items
@@ -1291,7 +1296,7 @@ def create_agent_tasks_router(
         async def reconcile_events_route(
             request: Request,
             task_id: str,
-            body: ReconcileEventsRequest,
+            body: ReconcileEventsToTaskRequest,
         ) -> dict[str, Any]:
             """Reconcile ambiguous events into a pending task package item."""
             user_id = require_user(request, auth_provider)
@@ -1303,7 +1308,9 @@ def create_agent_tasks_router(
                     spec=PackageItemSpec(
                         title=body.title,
                         event_ids=body.event_ids,
+                        description=body.description,
                         instructions=body.instructions,
+                        internal_note=body.internal_note,
                         item_id=body.item_id,
                     ),
                     task_item_store=task_item_store,
@@ -1420,7 +1427,7 @@ def create_agent_tasks_router(
                 harness=body.harness,
                 manager_agent_id=body.manager_agent_id,
                 proposed_task_title=body.proposed_task_title,
-                proposed_task_charter=body.proposed_task_charter,
+                proposed_task_internal_note=body.proposed_task_internal_note,
             )
             response: dict[str, Any] = {
                 "object": "agent.task.fyi_cluster",

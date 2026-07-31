@@ -25,7 +25,7 @@ class TaskStore(ABC):
         *,
         owner_user_id: str | None = None,
         description: str | None = None,
-        charter: str | None = None,
+        internal_note: str | None = None,
         manager_conversation_id: str | None = None,
         state: str = "active",
         tags: list[TaskTag] | None = None,
@@ -52,7 +52,7 @@ class TaskStore(ABC):
         *,
         title: str | None = None,
         description: str | None = None,
-        charter: str | None = None,
+        internal_note: str | None = None,
         manager_agent_id: str | None = None,
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
@@ -78,7 +78,7 @@ class TaskStore(ABC):
 
     @abstractmethod
     def rebuild_search_text(self, task_id: str) -> Task | None:
-        """Rebuild ``search_text`` from title, charter, and tags."""
+        """Rebuild ``search_text`` from title, internal_note, and tags."""
 
     @abstractmethod
     def search(self, query: str, *, limit: int = 20) -> list[Task]:

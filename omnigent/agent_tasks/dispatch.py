@@ -42,6 +42,21 @@ def parse_dispatch_payload(payload: str | None) -> dict[str, Any]:
     return parsed
 
 
+def compose_worker_instructions(
+    *,
+    instructions: str | None,
+    internal_note: str | None,
+) -> str:
+    """Merge worker instructions with agent-facing context."""
+    worker_text = (instructions or "").strip()
+    note = (internal_note or "").strip()
+    if note and worker_text:
+        return f"{worker_text}\n\n## Context\n{note}"
+    if note:
+        return note
+    return worker_text
+
+
 def resolve_dispatch_params(
     *,
     payload: dict[str, Any],
@@ -57,7 +72,10 @@ def resolve_dispatch_params(
     """Merge explicit dispatch fields with payload and profile defaults."""
     resolved_worker = worker_agent_id or payload.get("worker_agent_id")
     resolved_title = title or payload.get("title")
-    resolved_instructions = instructions or payload.get("instructions")
+    resolved_instructions = compose_worker_instructions(
+        instructions=instructions if instructions is not None else payload.get("instructions"),
+        internal_note=payload.get("internal_note"),
+    )
     if not resolved_worker or not resolved_title or not resolved_instructions:
         raise OmnigentError(
             "worker_agent_id, title, and instructions are required",

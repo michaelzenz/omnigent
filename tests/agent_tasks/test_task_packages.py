@@ -62,7 +62,7 @@ def test_rank_tasks_for_events_includes_paused_match(stores) -> None:
         manager_id,
         "omnigent-fork",
         state="pending",
-        charter="repo:omnigent-fork",
+        internal_note="repo:omnigent-fork",
     )
     event = event_store.create_event(
         _uid("event-match"),
@@ -316,7 +316,7 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
         manager_id,
         "omnigent-fork",
         state="pending",
-        charter="repo:omnigent-fork",
+        internal_note="repo:omnigent-fork",
     )
     event_id = _uid("inbox-event")
     event_store.create_event(

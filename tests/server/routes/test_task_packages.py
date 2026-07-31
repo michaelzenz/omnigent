@@ -200,7 +200,7 @@ async def test_match_tasks_includes_paused_task(
         manager_agent_id,
         "omnigent-fork",
         state="pending",
-        charter="repo:omnigent-fork",
+        internal_note="repo:omnigent-fork",
     )
     event_id = _uid("match-route-event")
     event_store.create_event(

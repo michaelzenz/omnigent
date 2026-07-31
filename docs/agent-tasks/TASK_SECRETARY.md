@@ -37,14 +37,9 @@ Candidates include both **active** and **pending** tasks.
 
 ### 2. List routable tasks (active and pending)
 
-```bash
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=active&limit=100"
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks?state=pending&limit=100"
-```
-
-Optional: rank tasks for specific events:
+rank tasks for specific events:
 This api returns task candidates for the input group, usually used for finding candidate
-for a group of close events
+for a group of close events, so that you can pick from smaller subset of candidates(limit to 5 for now)
 
 ```bash
 curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/match-tasks" \
@@ -57,6 +52,12 @@ List items on a package (use `item_id` when extending one):
 ```bash
 curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items"
 ```
+
+Each item returns `internal_note` (agent-facing context you or a prior
+reconcile left behind). Read `internal_note` before extending an item — it
+records why that item exists, what was already concluded, and summary of previous events,
+so you can judge whether new ambiguous events belong on it or need a
+new item.
 
 Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
 
@@ -79,11 +80,16 @@ Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
     -d '{
       "event_ids":["<id>"],
       "title":"<title>",
-      "instructions":"<instructions>",
+      "description":"<why this item exists for the user>",
+      "instructions":"<worker instructions>",
+      "internal_note":"<agent context — links, ids, prior conclusions>",
       "item_id":"<optional-existing-item-id>"
     }'
   ```
-  - This case you need to reconcile into taskItem. update title/instructions if needed
+  - This case you need to reconcile into taskItem. Update title, description, or
+    instructions if needed. Use `description` for the user-facing why; put source
+    excerpts and routing rationale in `internal_note` such that you or other agent can have
+    enough context and avoid pulling from source for full context as much as possible in the future.
   - Events move to `reconciled`; items stay in `awaiting_user_ack` until the user
     hits **Go** on the inbox item on the board.
 
@@ -97,7 +103,9 @@ Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
         {
           "title":"<item title>",
           "event_ids":["<id>"],
-          "instructions":"<instructions>"
+          "description":"<why this item exists>",
+          "instructions":"<worker instructions>",
+          "internal_note":"<agent context>"
         }
       ]
     }'

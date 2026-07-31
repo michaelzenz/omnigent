@@ -27,7 +27,7 @@ export function useResolveFyiCluster() {
       routingInstructions,
       suggestedTaskId,
       proposedTaskTitle,
-      proposedTaskCharter,
+      proposedTaskInternalNote,
     }: {
       clusterId: string;
       resolution: FyiResolution;
@@ -35,7 +35,7 @@ export function useResolveFyiCluster() {
       routingInstructions?: string;
       suggestedTaskId?: string | null;
       proposedTaskTitle?: string;
-      proposedTaskCharter?: string;
+      proposedTaskInternalNote?: string;
     }) => {
       await resolveFyiCluster(clusterId, {
         resolution,
@@ -43,7 +43,7 @@ export function useResolveFyiCluster() {
         routing_instructions: routingInstructions,
         suggested_task_id: suggestedTaskId,
         proposed_task_title: proposedTaskTitle,
-        proposed_task_charter: proposedTaskCharter,
+        proposed_task_internal_note: proposedTaskInternalNote,
       });
     },
     onSuccess: async () => {

@@ -106,6 +106,9 @@ function ReadOnlyItemBody({ row }: { row: Extract<TaskWorkerRow, { kind: "item" 
   const item = row.item;
   return (
     <div className="space-y-1">
+      {item.description ? (
+        <p className="text-xs leading-snug whitespace-pre-wrap">{item.description}</p>
+      ) : null}
       {item.instructions ? (
         <p className="text-xs leading-snug whitespace-pre-wrap text-muted-foreground">
           {item.instructions}
@@ -126,6 +129,9 @@ function ReadOnlyExecutionBody({ row }: { row: Extract<TaskWorkerRow, { kind: "e
 
   return (
     <div className="space-y-1.5">
+      {item?.description ? (
+        <p className="text-xs leading-snug whitespace-pre-wrap">{item.description}</p>
+      ) : null}
       {item?.instructions ? (
         <p className="text-xs leading-snug whitespace-pre-wrap text-muted-foreground">
           {item.instructions}

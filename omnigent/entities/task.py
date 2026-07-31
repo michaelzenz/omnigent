@@ -21,8 +21,8 @@ class Task:
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
-    :param charter: Keyword-dense routing charter maintained by the manager.
-    :param search_text: Plain searchable mirror of title, charter, and tags.
+    :param internal_note: Agent-facing routing context maintained by the manager.
+    :param search_text: Plain searchable mirror of title, internal_note, and tags.
     :param state: One of ``"active"``, ``"pending"``, ``"done"``, ``"archived"``.
     :param manager_conversation_id: Manager session for this task, or ``None``
         before bootstrap.
@@ -35,7 +35,7 @@ class Task:
     owner_user_id: str | None
     title: str
     description: str | None
-    charter: str | None
+    internal_note: str | None
     search_text: str
     state: str
     created_at: int
@@ -194,12 +194,12 @@ class TaskItem:
     :param task_id: Parent managed task.
     :param title: Short label shown in the inbox/work UI.
     :param state: Lifecycle state (draft through done).
+    :param description: User-facing reason this item exists.
     :param instructions: Dispatch instructions for the worker.
+    :param internal_note: Agent-facing context to avoid re-querying sources.
     :param worker_agent_id: Proposed or assigned worker agent.
-    :param model: Model override for dispatch.
     :param host_id: Host override for dispatch.
     :param workspace: Workspace override for dispatch.
-    :param harness: Harness override for dispatch.
     :param priority: Sort priority within a task backlog.
     :param created_by: ``"manager"``, ``"secretary"``, or ``"user"``.
     :param created_at: Unix epoch seconds at row creation.
@@ -211,12 +211,12 @@ class TaskItem:
     title: str
     state: str
     created_at: int
+    description: str | None = None
     instructions: str | None = None
+    internal_note: str | None = None
     worker_agent_id: str | None = None
-    model: str | None = None
     host_id: str | None = None
     workspace: str | None = None
-    harness: str | None = None
     priority: int = 0
     created_by: str = "manager"
     updated_at: int | None = None

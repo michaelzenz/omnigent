@@ -256,6 +256,7 @@ describe("taskCardUtils", () => {
     const baseline = {
       worker_agent_id: "worker-a",
       title: "Title",
+      description: "",
       instructions: "Do thing",
       model: "composer-2.5",
     };
@@ -263,6 +264,7 @@ describe("taskCardUtils", () => {
       proposalHasEdits(baseline, {
         workerAgentId: "worker-a",
         title: "Title",
+        description: "",
         instructions: "Do thing",
         model: "composer-2.5",
       }),
@@ -271,6 +273,7 @@ describe("taskCardUtils", () => {
       proposalHasEdits(baseline, {
         workerAgentId: "worker-b",
         title: "Title",
+        description: "",
         instructions: "Do thing",
         model: "composer-2.5",
       }),

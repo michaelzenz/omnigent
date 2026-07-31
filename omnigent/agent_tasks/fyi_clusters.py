@@ -160,7 +160,7 @@ def resolve_fyi_cluster(
     harness: str | None = None,
     manager_agent_id: str | None = None,
     proposed_task_title: str | None = None,
-    proposed_task_charter: str | None = None,
+    proposed_task_internal_note: str | None = None,
 ) -> tuple[FyiCluster, TaskItem | None]:
     """Dismiss or promote an FYI cluster."""
     if cluster.state != FYI_CLUSTER_OPEN_STATE:
@@ -233,7 +233,7 @@ def resolve_fyi_cluster(
         task_store=task_store,
         task_item_store=task_item_store,
         task_event_store=task_event_store,
-        charter=proposed_task_charter,
+        internal_note=proposed_task_internal_note,
     )
     items = task_item_store.list_items_for_task(task.id, state="awaiting_user_ack")
     return updated, items[0] if items else None

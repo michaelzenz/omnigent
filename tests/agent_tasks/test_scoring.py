@@ -18,7 +18,7 @@ def _task(task_id: str, search_text: str) -> Task:
         owner_user_id=None,
         title="title",
         description=None,
-        charter=None,
+        internal_note=None,
         search_text=search_text,
         state="active",
         created_at=1,

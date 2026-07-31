@@ -1,6 +1,6 @@
 # Task manager manual
 
-You own **one** managed task. Maintain its charter and tags so the distributor
+You own **one** managed task. Maintain its `internal_note` and tags so the distributor
 can route inbound events.
 
 ## Triggers

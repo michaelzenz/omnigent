@@ -33,7 +33,7 @@ def _to_entity(row: SqlTask) -> Task:
         owner_user_id=row.owner_user_id,
         title=row.title,
         description=row.description,
-        charter=row.charter,
+        internal_note=row.internal_note,
         search_text=row.search_text,
         state=decode_task_state(row.state),
         created_at=row.created_at,
@@ -57,13 +57,13 @@ class SqlAlchemyTaskStore(TaskStore):
         *,
         owner_user_id: str | None = None,
         description: str | None = None,
-        charter: str | None = None,
+        internal_note: str | None = None,
         manager_conversation_id: str | None = None,
         state: str = "active",
         tags: list[TaskTag] | None = None,
     ) -> Task:
         tag_rows = tags or []
-        search_text = build_task_search_text(title=title, charter=charter, tags=tag_rows)
+        search_text = build_task_search_text(title=title, internal_note=internal_note, tags=tag_rows)
         row = SqlTask(
             id=task_id,
             manager_agent_id=manager_agent_id,
@@ -71,7 +71,7 @@ class SqlAlchemyTaskStore(TaskStore):
             owner_user_id=owner_user_id,
             title=title,
             description=description,
-            charter=charter,
+            internal_note=internal_note,
             search_text=search_text,
             state=encode_task_state(state),
             created_at=now_epoch(),
@@ -119,7 +119,7 @@ class SqlAlchemyTaskStore(TaskStore):
         *,
         title: str | None = None,
         description: str | None = None,
-        charter: str | None = None,
+        internal_note: str | None = None,
         manager_agent_id: str | None = None,
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
@@ -136,8 +136,8 @@ class SqlAlchemyTaskStore(TaskStore):
             if description is not None and row.description != description:
                 row.description = description
                 changed = True
-            if charter is not None and row.charter != charter:
-                row.charter = charter
+            if internal_note is not None and row.internal_note != internal_note:
+                row.internal_note = internal_note
                 changed = True
             if manager_agent_id is not None and row.manager_agent_id != manager_agent_id:
                 row.manager_agent_id = manager_agent_id
@@ -262,6 +262,6 @@ class SqlAlchemyTaskStore(TaskStore):
         tags = [_tag_to_entity(tag_row) for tag_row in session.execute(stmt).scalars().all()]
         row.search_text = build_task_search_text(
             title=row.title,
-            charter=row.charter,
+            internal_note=row.internal_note,
             tags=tags,
         )

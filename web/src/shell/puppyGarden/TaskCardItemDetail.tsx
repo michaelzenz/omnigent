@@ -38,20 +38,25 @@ interface ItemEditorState {
   workerAgentId: string;
   model: string;
   title: string;
+  description: string;
   instructions: string;
 }
 
-function itemEditorState(item: TaskItemSummary, workerOptions: WorkerOption[]): ItemEditorState {
+function itemEditorState(
+  item: TaskItemSummary,
+  workerOptions: WorkerOption[],
+  defaultModel: string,
+): ItemEditorState {
   const workerAgentId = item.worker_agent_id ?? workerOptions[0]?.workerAgentId ?? "";
   const model =
-    item.model ??
     workerOptions.find((option) => option.workerAgentId === workerAgentId)?.model ??
     workerOptions[0]?.model ??
-    "";
+    defaultModel;
   return {
     workerAgentId,
     model,
     title: item.title,
+    description: item.description ?? "",
     instructions: item.instructions ?? "",
   };
 }
@@ -76,8 +81,8 @@ export function TaskCardItemDetail({
             workerAgentIds,
             {
               worker_agent_id: item.worker_agent_id ?? undefined,
-              model: item.model ?? undefined,
               title: item.title,
+              description: item.description ?? "",
               instructions: item.instructions ?? "",
             },
             defaultModel,
@@ -92,14 +97,14 @@ export function TaskCardItemDetail({
   );
 
   const [editor, setEditor] = useState<ItemEditorState | null>(
-    item ? itemEditorState(item, workerOptions) : null,
+    item ? itemEditorState(item, workerOptions, defaultModel) : null,
   );
 
   useEffect(() => {
     if (item) {
-      setEditor(itemEditorState(item, workerOptions));
+      setEditor(itemEditorState(item, workerOptions, defaultModel));
     }
-  }, [item?.id, workerOptions]);
+  }, [item?.id, workerOptions, defaultModel]);
 
   useAutoGrowTextarea(instructionsRef, editor?.instructions ?? "", 12, execution.id);
 
@@ -122,8 +127,11 @@ export function TaskCardItemDetail({
   const baseline = {
     worker_agent_id: item.worker_agent_id ?? undefined,
     title: item.title,
+    description: item.description ?? "",
     instructions: item.instructions ?? "",
-    model: item.model ?? undefined,
+    model:
+      workerOptions.find((option) => option.workerAgentId === editor.workerAgentId)?.model ??
+      defaultModel,
   };
 
   const dirty = proposalHasEdits(baseline, editor);
@@ -146,8 +154,8 @@ export function TaskCardItemDetail({
       taskItemId: item.id,
       body: {
         worker_agent_id: editor.workerAgentId,
-        model: editor.model,
         title: editor.title,
+        description: editor.description,
         instructions: editor.instructions,
       },
     });
@@ -236,6 +244,9 @@ export function TaskCardItemDetail({
           <>
             <div>
               <p className="text-sm leading-tight font-medium">{item.title}</p>
+              {item.description ? (
+                <p className="mt-1 text-xs leading-snug whitespace-pre-wrap">{item.description}</p>
+              ) : null}
               {item.instructions ? (
                 <p className="mt-1 text-xs leading-snug whitespace-pre-wrap text-muted-foreground">
                   {item.instructions}

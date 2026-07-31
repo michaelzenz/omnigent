@@ -25,14 +25,15 @@ interface ItemEditorState {
   workerAgentId: string;
   model: string;
   title: string;
+  description: string;
   instructions: string;
 }
 
-function itemDispatchPayload(item: TaskItemSummary): DispatchPayload {
+function itemProposalPayload(item: TaskItemSummary): DispatchPayload & { description?: string } {
   return {
     worker_agent_id: item.worker_agent_id ?? undefined,
-    model: item.model ?? undefined,
     title: item.title,
+    description: item.description ?? "",
     instructions: item.instructions ?? "",
   };
 }
@@ -40,18 +41,19 @@ function itemDispatchPayload(item: TaskItemSummary): DispatchPayload {
 function initialEditorState(
   item: TaskItemSummary,
   workerOptions: WorkerOption[],
+  defaultModel: string,
 ): ItemEditorState {
   const workerAgentId =
     item.worker_agent_id ?? workerOptions[0]?.workerAgentId ?? "";
   const model =
-    item.model ??
     workerOptions.find((option) => option.workerAgentId === workerAgentId)?.model ??
     workerOptions[0]?.model ??
-    "";
+    defaultModel;
   return {
     workerAgentId,
     model,
     title: item.title,
+    description: item.description ?? "",
     instructions: item.instructions ?? "",
   };
 }
@@ -78,7 +80,7 @@ export function TaskCardItemEditor({
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
 
   const workerOptions = useMemo(
-    () => buildWorkerOptions(workerAgentIds, itemDispatchPayload(item), defaultModel),
+    () => buildWorkerOptions(workerAgentIds, itemProposalPayload(item), defaultModel),
     [workerAgentIds, item, defaultModel],
   );
 
@@ -87,15 +89,22 @@ export function TaskCardItemEditor({
     [agents],
   );
 
-  const [editor, setEditor] = useState(() => initialEditorState(item, workerOptions));
+  const [editor, setEditor] = useState(() =>
+    initialEditorState(item, workerOptions, defaultModel),
+  );
 
   useEffect(() => {
-    setEditor(initialEditorState(item, workerOptions));
-  }, [item.id, workerOptions]);
+    setEditor(initialEditorState(item, workerOptions, defaultModel));
+  }, [item.id, workerOptions, defaultModel]);
 
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12, item.id);
 
-  const baseline = itemDispatchPayload(item);
+  const baseline = {
+    ...itemProposalPayload(item),
+    model:
+      workerOptions.find((option) => option.workerAgentId === editor.workerAgentId)?.model ??
+      defaultModel,
+  };
   const pending = resolveItem.isPending || updateItem.isPending;
 
   const onWorkerChange = (workerAgentId: string) => {
@@ -114,8 +123,9 @@ export function TaskCardItemEditor({
             worker_agent_id: editor.workerAgentId,
             model: editor.model,
             title: editor.title,
+            description: editor.description,
             instructions: editor.instructions,
-          } satisfies DispatchPayload)
+          } satisfies DispatchPayload & { description?: string })
         : undefined;
 
     const effectiveResolution =
@@ -135,8 +145,8 @@ export function TaskCardItemEditor({
       taskItemId: item.id,
       body: {
         worker_agent_id: editor.workerAgentId,
-        model: editor.model,
         title: editor.title,
+        description: editor.description,
         instructions: editor.instructions,
       },
     });
@@ -146,6 +156,12 @@ export function TaskCardItemEditor({
 
   return (
     <div className="space-y-1.5">
+      {editor.description ? (
+        <p className="text-xs leading-snug whitespace-pre-wrap text-muted-foreground">
+          {editor.description}
+        </p>
+      ) : null}
+
       <div className="flex flex-col gap-0.5">
         <span className="text-xs leading-none text-muted-foreground">Worker</span>
         <Select value={editor.workerAgentId} onValueChange={onWorkerChange}>

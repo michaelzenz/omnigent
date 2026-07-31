@@ -34,7 +34,7 @@ def _create_payload(manager_agent_id: str, **overrides: object) -> dict:
     base: dict = {
         "manager_agent_id": manager_agent_id,
         "title": "S3 upload reliability",
-        "charter": "retry flaky uploads",
+        "internal_note": "retry flaky uploads",
         "tags": [{"tag_type": "domain", "tag": "s3"}],
     }
     base.update(overrides)  # type: ignore[arg-type]
@@ -100,10 +100,10 @@ async def test_search_tasks(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
-    """Text search finds tasks by charter/title."""
+    """Text search finds tasks by internal_note/title."""
     await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(manager_agent_id, charter="unique-flaky-upload-token"),
+        json=_create_payload(manager_agent_id, internal_note="unique-flaky-upload-token"),
     )
     resp = await client.get("/v1/agent-tasks?q=unique-flaky-upload-token")
     assert resp.status_code == 200

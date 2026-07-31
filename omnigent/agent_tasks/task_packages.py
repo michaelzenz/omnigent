@@ -10,7 +10,7 @@ from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve
 from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.task_match import (
-    charter_from_event_tags,
+    internal_note_from_event_tags,
     collect_event_tags,
     task_tags_from_event_tags,
 )
@@ -35,7 +35,9 @@ class PackageItemSpec:
 
     title: str
     event_ids: list[str]
+    description: str | None = None
     instructions: str | None = None
+    internal_note: str | None = None
     item_id: str | None = None
 
 
@@ -97,7 +99,9 @@ def reconcile_events_to_task(
         updated = task_item_store.update_item(
             spec.item_id,
             title=spec.title,
+            description=spec.description,
             instructions=spec.instructions,
+            internal_note=spec.internal_note,
         )
         assert updated is not None
         item = updated
@@ -115,7 +119,9 @@ def reconcile_events_to_task(
         task_item_store=task_item_store,
         task_event_store=task_event_store,
         title=spec.title,
+        description=spec.description,
         instructions=spec.instructions,
+        internal_note=spec.internal_note,
         state="awaiting_user_ack",
         created_by="secretary",
         event_ids=[event.id for event in events],
@@ -132,7 +138,7 @@ def create_task_package(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
     task_id: str | None = None,
-    charter: str | None = None,
+    internal_note: str | None = None,
     description: str | None = None,
     tags: list[TaskTag] | None = None,
     event_tags: list | None = None,
@@ -145,8 +151,8 @@ def create_task_package(
     resolved_tags = list(tags or [])
     if not resolved_tags and event_tags:
         resolved_tags = task_tags_from_event_tags(resolved_task_id, event_tags)
-    resolved_charter = charter or (
-        charter_from_event_tags(event_tags) if event_tags else None
+    resolved_internal_note = internal_note or (
+        internal_note_from_event_tags(event_tags) if event_tags else None
     )
 
     task = task_store.create(
@@ -155,7 +161,7 @@ def create_task_package(
         title,
         owner_user_id=owner_user_id,
         description=description,
-        charter=resolved_charter,
+        internal_note=resolved_internal_note,
         state="pending",
         tags=resolved_tags,
     )

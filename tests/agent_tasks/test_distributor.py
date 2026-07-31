@@ -42,7 +42,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
         task_id,
         manager_agent_id,
         "Upload retries",
-        charter="flaky upload retries repo:omnigent-fork",
+        internal_note="flaky upload retries repo:omnigent-fork",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
     return {

@@ -148,10 +148,11 @@ export function workerOptionLabel(
 }
 
 export function proposalHasEdits(
-  baseline: DispatchPayload,
+  baseline: DispatchPayload & { description?: string },
   current: {
     workerAgentId: string;
     title: string;
+    description: string;
     instructions: string;
     model: string;
   },
@@ -159,6 +160,7 @@ export function proposalHasEdits(
   return (
     baseline.worker_agent_id !== current.workerAgentId ||
     (baseline.title ?? "") !== current.title ||
+    (baseline.description ?? "") !== current.description ||
     (baseline.instructions ?? "") !== current.instructions ||
     (baseline.model ?? "") !== current.model
   );

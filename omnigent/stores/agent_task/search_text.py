@@ -8,20 +8,20 @@ from omnigent.entities import TaskEventTag, TaskTag
 def build_task_search_text(
     *,
     title: str,
-    charter: str | None,
+    internal_note: str | None,
     tags: list[TaskTag],
 ) -> str:
     """
     Build the plain searchable mirror for a task.
 
     :param title: Task title.
-    :param charter: Keyword-dense routing charter, or ``None``.
+    :param internal_note: Agent-facing routing context, or ``None``.
     :param tags: Typed tags attached to the task.
     :returns: Newline-joined searchable text.
     """
     parts = [title.strip()]
-    if charter:
-        parts.append(charter.strip())
+    if internal_note:
+        parts.append(internal_note.strip())
     for tag in sorted(tags, key=lambda row: (row.tag_type, row.tag)):
         parts.append(f"{tag.tag_type}:{tag.tag}")
     return "\n".join(part for part in parts if part)

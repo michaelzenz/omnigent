@@ -23,13 +23,13 @@ export interface TaskEventSummary {
 export interface TaskItemSummary {
   id: string;
   title: string;
+  description: string | null;
   instructions: string | null;
+  internal_note: string | null;
   state: string;
   worker_agent_id: string | null;
-  model: string | null;
   host_id: string | null;
   workspace: string | null;
-  harness: string | null;
   created_at: number;
   updated_at: number | null;
 }
@@ -265,7 +265,7 @@ export async function resolveFyiCluster(
     routing_instructions?: string;
     suggested_task_id?: string | null;
     proposed_task_title?: string;
-    proposed_task_charter?: string;
+    proposed_task_internal_note?: string;
   },
 ): Promise<void> {
   const res = await authenticatedFetch(

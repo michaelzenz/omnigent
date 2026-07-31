@@ -33,12 +33,12 @@ def _item_to_entity(row: SqlTaskItem) -> TaskItem:
         title=row.title,
         state=decode_task_item_state(row.state),
         created_at=row.created_at,
+        description=row.description,
         instructions=row.instructions,
+        internal_note=row.internal_note,
         worker_agent_id=row.worker_agent_id,
-        model=row.model,
         host_id=row.host_id,
         workspace=row.workspace,
-        harness=row.harness,
         priority=row.priority,
         created_by=row.created_by,
         updated_at=row.updated_at,
@@ -81,12 +81,12 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         title: str,
         *,
         state: str = "draft",
+        description: str | None = None,
         instructions: str | None = None,
+        internal_note: str | None = None,
         worker_agent_id: str | None = None,
-        model: str | None = None,
         host_id: str | None = None,
         workspace: str | None = None,
-        harness: str | None = None,
         priority: int = 0,
         created_by: str = "manager",
     ) -> TaskItem:
@@ -95,12 +95,12 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             task_id=task_id,
             title=title,
             state=encode_task_item_state(state),
+            description=description,
             instructions=instructions,
+            internal_note=internal_note,
             worker_agent_id=worker_agent_id,
-            model=model,
             host_id=host_id,
             workspace=workspace,
-            harness=harness,
             priority=priority,
             created_by=created_by,
             created_at=now_epoch(),
@@ -183,11 +183,11 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         title: str | None = None,
         state: str | None = None,
         instructions: str | None = _UNSET,
+        description: str | None = _UNSET,
+        internal_note: str | None = _UNSET,
         worker_agent_id: str | None = _UNSET,
-        model: str | None = _UNSET,
         host_id: str | None = _UNSET,
         workspace: str | None = _UNSET,
-        harness: str | None = _UNSET,
         priority: int | None = None,
         task_id: str | None = None,
     ) -> TaskItem | None:
@@ -203,16 +203,16 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 row.task_id = task_id
             if instructions is not _UNSET:
                 row.instructions = instructions
+            if description is not _UNSET:
+                row.description = description
+            if internal_note is not _UNSET:
+                row.internal_note = internal_note
             if worker_agent_id is not _UNSET:
                 row.worker_agent_id = worker_agent_id
-            if model is not _UNSET:
-                row.model = model
             if host_id is not _UNSET:
                 row.host_id = host_id
             if workspace is not _UNSET:
                 row.workspace = workspace
-            if harness is not _UNSET:
-                row.harness = harness
             if priority is not None:
                 row.priority = priority
             row.updated_at = now_epoch()

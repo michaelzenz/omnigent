@@ -253,13 +253,13 @@ def _item_summary(item: TaskItem) -> dict[str, Any]:
     return {
         "id": item.id,
         "title": item.title,
+        "description": item.description,
         "instructions": item.instructions,
+        "internal_note": item.internal_note,
         "state": item.state,
         "worker_agent_id": item.worker_agent_id,
-        "model": item.model,
         "host_id": item.host_id,
         "workspace": item.workspace,
-        "harness": item.harness,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }

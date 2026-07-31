@@ -41,10 +41,9 @@ def _item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
         "worker_agent_id": item.worker_agent_id,
         "title": item.title,
         "instructions": item.instructions or "",
+        "internal_note": item.internal_note,
         "host_id": item.host_id,
         "workspace": item.workspace,
-        "harness": item.harness,
-        "model": item.model,
     }
 
 
@@ -54,12 +53,12 @@ def create_task_item(
     task_item_store: TaskItemStore,
     title: str,
     state: str = "draft",
+    description: str | None = None,
     instructions: str | None = None,
+    internal_note: str | None = None,
     worker_agent_id: str | None = None,
-    model: str | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
-    harness: str | None = None,
     priority: int = 0,
     created_by: str = "manager",
     event_ids: list[str] | None = None,
@@ -71,12 +70,12 @@ def create_task_item(
         task.id,
         title,
         state=state,
+        description=description,
         instructions=instructions,
+        internal_note=internal_note,
         worker_agent_id=worker_agent_id,
-        model=model,
         host_id=host_id,
         workspace=workspace,
-        harness=harness,
         priority=priority,
         created_by=created_by,
     )
@@ -175,21 +174,24 @@ def resolve_task_item(
         model=str(payload.get("model")) if payload.get("model") is not None else None,
     )
     if resolution == "edit_and_dispatch":
-        task_item_store.update_item(
-            item.id,
-            title=str(payload.get("title", item.title)),
-            instructions=str(payload.get("instructions", item.instructions or "")),
-            worker_agent_id=str(payload.get("worker_agent_id", item.worker_agent_id or "")),
-            model=str(payload.get("model")) if payload.get("model") is not None else item.model,
-            host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else item.host_id,
-            workspace=str(payload.get("workspace"))
-            if payload.get("workspace") is not None
-            else item.workspace,
-            harness=str(payload.get("harness")) if payload.get("harness") is not None else item.harness,
-        )
+        update_kwargs: dict[str, Any] = {
+            "title": str(payload.get("title", item.title)),
+            "instructions": str(payload.get("instructions", item.instructions or "")),
+            "worker_agent_id": str(payload.get("worker_agent_id", item.worker_agent_id or "")),
+        }
+        if edited_payload is not None and "description" in edited_payload:
+            update_kwargs["description"] = str(payload.get("description") or "")
+        if edited_payload is not None and "internal_note" in edited_payload:
+            update_kwargs["internal_note"] = str(payload.get("internal_note") or "")
+        if payload.get("host_id") is not None:
+            update_kwargs["host_id"] = str(payload.get("host_id"))
+        if payload.get("workspace") is not None:
+            update_kwargs["workspace"] = str(payload.get("workspace"))
+        task_item_store.update_item(item.id, **update_kwargs)
         refreshed = task_item_store.get_item(item.id)
         assert refreshed is not None
         item = refreshed
+        payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
 
     params = resolve_dispatch_params(payload=payload, secretary_profile=secretary_profile)
     execution, _worker_id = dispatch_worker_for_item(
@@ -237,12 +239,12 @@ def patch_task_item(
     item: TaskItem,
     task_item_store: TaskItemStore,
     title: str | None = None,
+    description: str | None = None,
     instructions: str | None = None,
+    internal_note: str | None = None,
     worker_agent_id: str | None = None,
-    model: str | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
-    harness: str | None = None,
 ) -> TaskItem:
     """Update a queued work item before it is dispatched."""
     if item.state not in _EDITABLE_WORK_ITEM_STATES:
@@ -255,12 +257,12 @@ def patch_task_item(
     updated = task_item_store.update_item(
         item.id,
         title=title.strip() if title is not None else None,
+        description=description,
         instructions=instructions,
+        internal_note=internal_note,
         worker_agent_id=worker_agent_id,
-        model=model,
         host_id=host_id,
         workspace=workspace,
-        harness=harness,
     )
     if updated is None:
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)

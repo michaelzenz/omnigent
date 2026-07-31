@@ -46,7 +46,7 @@ async def test_ingress_auto_routes_matching_task(
         json={
             "manager_agent_id": manager_agent_id,
             "title": "Upload retries",
-            "charter": "flaky upload retries repo:omnigent-fork",
+            "internal_note": "flaky upload retries repo:omnigent-fork",
         },
     )
     task_id = created.json()["id"]
@@ -79,7 +79,7 @@ async def test_ingress_fast_paths_explicit_task_id(
         json={
             "manager_agent_id": manager_agent_id,
             "title": "Land PR #123",
-            "charter": "land pr 123 after blocker merges",
+            "internal_note": "land pr 123 after blocker merges",
         },
     )
     task_id = created.json()["id"]
@@ -156,7 +156,7 @@ async def test_complete_requires_routed_state(
         json={
             "manager_agent_id": manager_agent_id,
             "title": "Upload retries",
-            "charter": "flaky upload retries repo:omnigent-fork",
+            "internal_note": "flaky upload retries repo:omnigent-fork",
         },
     )
     ingress = await client.post(

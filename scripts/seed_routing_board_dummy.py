@@ -76,7 +76,7 @@ def _request(
         raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def _create_task(title: str, description: str, charter: str, *, manager_agent_id: str) -> str:
+def _create_task(title: str, description: str, internal_note: str, *, manager_agent_id: str) -> str:
     task = _request(
         "POST",
         "/v1/agent-tasks",
@@ -84,7 +84,7 @@ def _create_task(title: str, description: str, charter: str, *, manager_agent_id
             "manager_agent_id": manager_agent_id,
             "title": title,
             "description": description,
-            "charter": charter,
+            "internal_note": internal_note,
         },
     )
     task_id = task["id"]
@@ -132,7 +132,9 @@ def _create_events(
 def _create_task_package(
     *,
     title: str,
+    description: str,
     instructions: str,
+    internal_note: str | None = None,
     event_ids: list[str],
     manager_agent_id: str,
     asset_urls: list[tuple[str, str]] | None = None,
@@ -147,7 +149,9 @@ def _create_task_package(
                 {
                     "title": title,
                     "event_ids": event_ids,
+                    "description": description,
                     "instructions": instructions,
+                    "internal_note": internal_note,
                 },
             ],
         },
@@ -476,7 +480,9 @@ def main() -> int:
     print("Creating pending task packages…")
     _create_task_package(
         title="Fix CI on PR #891",
+        description="CI failed on your open PR and reviewers asked for lint fixes.",
         instructions="Investigate lint failure and address review feedback on PR #891.",
+        internal_note="PR #891, repo omnigent-fork. Lint job failed on main merge base.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=891, offset_base=offset_base),
         manager_agent_id=manager_agent_id,
         asset_urls=[
@@ -486,7 +492,9 @@ def main() -> int:
     )
     _create_task_package(
         title="Update API docs for task routing",
+        description="Routing UI shipped; docs still describe the old inbox flow.",
         instructions="Refresh TASK_SECRETARY.md and API_REFERENCE after routing cards shipped.",
+        internal_note="See PR #902 and docs/agent-tasks/ for current API shapes.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10),
         manager_agent_id=manager_agent_id,
         asset_urls=[
@@ -496,7 +504,9 @@ def main() -> int:
     )
     _create_task_package(
         title="Fix github_pr poll plugin flake",
+        description="Poll plugin reported a stale PR state that blocked routing.",
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
+        internal_note="Repro linked from PR #915 comments; watcher host poll_plugins.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20),
         manager_agent_id=manager_agent_id,
         asset_urls=[
@@ -506,7 +516,9 @@ def main() -> int:
     )
     _create_task_package(
         title="Investigate unrelated repo alert",
+        description="Alert fired from another repo; confirm whether we own the fix.",
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
+        internal_note="other-repo PR #12; no omnigent-fork code touched yet.",
         event_ids=_create_events(host_header, repo="other-repo", pr=12, offset_base=offset_base + 30),
         manager_agent_id=manager_agent_id,
         asset_urls=[

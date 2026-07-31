@@ -25,7 +25,7 @@ def test_create_and_get_round_trip(store: SqlAlchemyTaskStore) -> None:
         manager_agent_id=_uid("mgr_1"),
         title="S3 reliability",
         owner_user_id="alice@example.com",
-        charter="upload retries and backoff",
+        internal_note="upload retries and backoff",
         manager_conversation_id=_uid("conv_mgr"),
         tags=[TaskTag(task_id=_uid("task_1"), tag_type="domain", tag="s3")],
     )
@@ -71,7 +71,7 @@ def test_search_tasks(store: SqlAlchemyTaskStore) -> None:
         task_id=_uid("task_search"),
         manager_agent_id=_uid("mgr"),
         title="Upload retry work",
-        charter="backoff for flaky uploads",
+        internal_note="backoff for flaky uploads",
     )
     hits = store.search("flaky")
     assert len(hits) == 1

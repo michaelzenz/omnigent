@@ -80,8 +80,8 @@ def task_tags_from_event_tags(task_id: str, event_tags: list[TaskEventTag]) -> l
     return tags
 
 
-def charter_from_event_tags(event_tags: list[TaskEventTag]) -> str | None:
-    """Derive a task charter hint from event tags."""
+def internal_note_from_event_tags(event_tags: list[TaskEventTag]) -> str | None:
+    """Derive a task internal_note hint from event tags."""
     for tag in event_tags:
         if tag.tag_type == "repo":
             return f"repo:{tag.tag}"
