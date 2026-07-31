@@ -50,9 +50,45 @@ export interface TaskExecutionSummary {
   finished_at: number | null;
 }
 
+export interface TaskWorkerRowItem {
+  kind: "item";
+  item: TaskItemSummary;
+  default_folded: boolean;
+  sort_at: number;
+}
+
+export interface TaskWorkerRowExecution {
+  kind: "execution";
+  execution: TaskExecutionSummary;
+  default_folded: boolean;
+  sort_at: number;
+}
+
+export type TaskWorkerRow = TaskWorkerRowItem | TaskWorkerRowExecution;
+
+export type TaskWorkerLaneState = "new" | "active" | "idle";
+
+export interface TaskWorkerLane {
+  worker_agent_id: string;
+  state: TaskWorkerLaneState;
+  situation: string;
+  rows: TaskWorkerRow[];
+  executions: TaskExecutionSummary[];
+}
+
+/** @deprecated Use TaskWorkerLane */
 export interface TaskWorkerGroup {
   worker_agent_id: string;
   executions: TaskExecutionSummary[];
+}
+
+export interface TaskAssetSummary {
+  id: string;
+  kind: "url";
+  title: string;
+  url: string | null;
+  sort_order: number;
+  created_at: number;
 }
 
 export interface TaskDashboard {
@@ -68,7 +104,8 @@ export interface TaskDashboard {
   };
   inbox_items: TaskItemSummary[];
   reconcile_queue_count: number;
-  workers: TaskWorkerGroup[];
+  assets: TaskAssetSummary[];
+  workers: TaskWorkerLane[];
 }
 
 export interface DispatchPayload {

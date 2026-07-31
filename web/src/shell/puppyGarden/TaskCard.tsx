@@ -1,12 +1,11 @@
-import { useMemo, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
-import { TaskCardInbox } from "./TaskCardInbox";
-import { TaskCardSidePanel } from "./TaskCardSidePanel";
-import { TaskCardWork } from "./TaskCardWork";
-import { findExecution } from "./taskCardUtils";
+import { TaskCardAssets } from "./TaskCardAssets";
+import { TaskCardWorkers } from "./TaskCardWorkers";
+import { taskCardBodyClass, isTaskCardSparse, taskLaneCount } from "./taskCardUtils";
+import { cn } from "@/lib/utils";
 
 interface TaskCardProps {
   taskId: string;
@@ -19,18 +18,12 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
   const { data: agents = [] } = useAvailableAgents();
   const defaultModel = "composer-2.5";
-  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
-
-  const selectedExecution = useMemo(
-    () => (dashboard ? findExecution(dashboard.workers, selectedExecutionId) : null),
-    [dashboard, selectedExecutionId],
-  );
 
   const isActive = state === "active";
 
   return (
     <article
-      className="flex min-h-[280px] flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm"
+      className="flex flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm"
       data-testid={`task-card-${taskId}`}
       data-task-state={state}
     >
@@ -38,12 +31,17 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
         <div className="min-w-0">
           <h2 className="truncate text-base leading-tight font-semibold">{title}</h2>
           {description ? (
-            <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-muted-foreground">{description}</p>
+            <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-muted-foreground">
+              {description}
+            </p>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {dashboard?.derived.has_running_workers ? (
-            <Loader2Icon className="size-4 animate-spin text-muted-foreground" aria-label="Workers running" />
+            <Loader2Icon
+              className="size-4 animate-spin text-muted-foreground"
+              aria-label="Workers running"
+            />
           ) : null}
           <Badge
             variant={isActive ? "default" : "outline"}
@@ -59,39 +57,33 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
       </header>
 
       {isLoading ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+        <div className="flex min-h-[160px] items-center justify-center p-8 text-sm text-muted-foreground">
           <Loader2Icon className="mr-2 size-4 animate-spin" aria-hidden />
           Loading task…
         </div>
       ) : error ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-sm text-destructive">
+        <div className="flex min-h-[160px] items-center justify-center p-8 text-sm text-destructive">
           Failed to load task dashboard.
         </div>
       ) : dashboard ? (
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
-            <TaskCardInbox
+        <div
+          className={cn(
+            "flex min-h-0 items-stretch overflow-hidden",
+            taskCardBodyClass(isTaskCardSparse(dashboard), taskLaneCount(dashboard)),
+          )}
+          data-testid="task-card-body"
+          data-sparse={isTaskCardSparse(dashboard) ? "true" : "false"}
+        >
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <TaskCardWorkers
               taskId={taskId}
               inboxItems={dashboard.inbox_items}
-              workerGroups={dashboard.workers}
+              workers={dashboard.workers}
               agents={agents}
               defaultModel={defaultModel}
             />
-            <TaskCardWork
-              workers={dashboard.workers}
-              agents={agents}
-              selectedExecutionId={selectedExecutionId}
-              onSelectExecution={setSelectedExecutionId}
-            />
           </div>
-          <TaskCardSidePanel
-            dashboard={dashboard}
-            taskId={taskId}
-            agents={agents}
-            defaultModel={defaultModel}
-            selectedExecution={selectedExecution}
-            onClearSelection={() => setSelectedExecutionId(null)}
-          />
+          <TaskCardAssets assets={dashboard.assets ?? []} />
         </div>
       ) : null}
     </article>

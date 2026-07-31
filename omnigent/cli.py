@@ -3164,6 +3164,7 @@ def server(
     )
     from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
     from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+    from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
     from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
     from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
@@ -3196,6 +3197,7 @@ def server(
     task_store = SqlAlchemyTaskStore(db_uri)
     task_event_store = SqlAlchemyTaskEventStore(db_uri)
     task_item_store = SqlAlchemyTaskItemStore(db_uri)
+    task_asset_store = SqlAlchemyTaskAssetStore(db_uri)
     timer_item_store = SqlAlchemyTimerItemStore(db_uri)
     secretary_profile_store = SqlAlchemySecretaryProfileStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
@@ -3356,6 +3358,7 @@ def server(
         task_store=task_store,
         task_event_store=task_event_store,
         task_item_store=task_item_store,
+        task_asset_store=task_asset_store,
         timer_item_store=timer_item_store,
         secretary_profile_store=secretary_profile_store,
         auth_provider=auth_provider,

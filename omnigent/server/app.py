@@ -98,6 +98,7 @@ from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.timer_item_store import TimerItemStore
 from omnigent.server.routes.timer_items import create_timer_items_router
@@ -1137,6 +1138,7 @@ def create_app(
     task_store: TaskStore | None = None,
     task_event_store: TaskEventStore | None = None,
     task_item_store: TaskItemStore | None = None,
+    task_asset_store: TaskAssetStore | None = None,
     timer_item_store: TimerItemStore | None = None,
     secretary_profile_store: SecretaryProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
@@ -2269,12 +2271,18 @@ def create_app(
             prefix="/v1",
             tags=["comments"],
         )
-    if task_store is not None and task_event_store is not None and task_item_store is not None:
+    if (
+        task_store is not None
+        and task_event_store is not None
+        and task_item_store is not None
+        and task_asset_store is not None
+    ):
         app.include_router(
             create_agent_tasks_router(
                 task_store,
                 task_event_store,
                 task_item_store,
+                task_asset_store,
                 agent_store,
                 conversation_store=conversation_store,
                 secretary_profile_store=secretary_profile_store,

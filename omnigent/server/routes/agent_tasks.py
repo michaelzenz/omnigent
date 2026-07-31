@@ -67,7 +67,7 @@ from omnigent.agent_tasks.items import (
     submit_item_for_user_ack,
 )
 from omnigent.db.enum_codecs import TASK_STATE
-from omnigent.entities import FyiCluster, Task, TaskEventExecution, TaskItem, TaskTag
+from omnigent.entities import FyiCluster, Task, TaskAsset, TaskEventExecution, TaskItem, TaskTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
@@ -80,6 +80,7 @@ from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_store import TaskStore
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
@@ -213,6 +214,23 @@ class CreateTaskItemRequest(BaseModel):
         stripped = value.strip()
         if not stripped:
             raise ValueError("title must be a non-empty string")
+        return stripped
+
+
+class CreateTaskAssetRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``."""
+
+    kind: Literal["url"] = "url"
+    title: str
+    url: str
+    sort_order: int = 0
+
+    @field_validator("title", "url")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must be a non-empty string")
         return stripped
 
 
@@ -512,6 +530,19 @@ def _execution_to_response(execution: TaskEventExecution) -> dict[str, Any]:
     }
 
 
+def _asset_to_response(asset: TaskAsset) -> dict[str, Any]:
+    return {
+        "id": asset.id,
+        "object": "agent.task.asset",
+        "task_id": asset.task_id,
+        "kind": asset.kind,
+        "title": asset.title,
+        "url": asset.url,
+        "sort_order": asset.sort_order,
+        "created_at": asset.created_at,
+    }
+
+
 def _item_to_response(item: TaskItem) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -536,6 +567,7 @@ def create_agent_tasks_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
+    task_asset_store: TaskAssetStore,
     agent_store: AgentStore,
     conversation_store: ConversationStore | None = None,
     secretary_profile_store: SecretaryProfileStore | None = None,
@@ -924,7 +956,31 @@ def create_agent_tasks_router(
                 task,
                 task_event_store,
                 task_item_store,
+                task_asset_store,
             )
+
+        @router.post("/agent-tasks/{task_id}/assets")
+        async def create_task_asset_route(
+            request: Request,
+            task_id: str,
+            body: CreateTaskAssetRequest,
+        ) -> dict[str, Any]:
+            """Attach a URL or other asset reference to one managed task."""
+            user_id = require_user(request, auth_provider)
+            await _get_task_or_404(task_id, user_id)
+
+            def _create() -> TaskAsset:
+                return task_asset_store.create_asset(
+                    _generate_task_id(),
+                    task_id,
+                    kind=body.kind,
+                    title=body.title,
+                    url=body.url,
+                    sort_order=body.sort_order,
+                )
+
+            created = await asyncio.to_thread(_create)
+            return _asset_to_response(created)
 
         @router.get("/agent-tasks/{task_id}/items")
         async def list_task_items(

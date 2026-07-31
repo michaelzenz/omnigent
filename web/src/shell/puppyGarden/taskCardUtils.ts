@@ -5,7 +5,61 @@ export type WorkStateLabel = "To Run" | "Running" | "Done";
 /** Work section scrolls once a task has more than this many worker groups. */
 export const WORKER_GROUP_SCROLL_THRESHOLD = 2;
 
-/** Each worker's task-item list scrolls after this many items. */
+/** Minimum body height for sparse cards (2× loading-state floor). */
+export const TASK_CARD_BODY_MIN_CLASS = "min-h-[320px]";
+
+/** Scroll the worker lane list once a task has more than this many lanes. */
+export const WORKER_LANES_SCROLL_THRESHOLD = 3;
+
+/** Max height for the scrollable worker lane list. */
+export const WORKER_LANES_SCROLL_MAX_CLASS = "max-h-80";
+
+/** Max height for busy task card bodies (many worker lanes). */
+export const TASK_CARD_BODY_MAX_CLASS = "max-h-[480px]";
+
+export function taskLaneCount(dashboard: {
+  inbox_items: unknown[];
+  workers: unknown[];
+}): number {
+  return dashboard.workers.length + (dashboard.inbox_items.length > 0 ? 1 : 0);
+}
+
+export function isTaskCardSparse(dashboard: {
+  inbox_items: unknown[];
+  workers: unknown[];
+  assets: unknown[];
+}): boolean {
+  return (
+    dashboard.inbox_items.length === 0 &&
+    dashboard.workers.length === 0 &&
+    dashboard.assets.length === 0
+  );
+}
+
+export function taskCardBodyClass(
+  sparse: boolean,
+  laneCount: number,
+): string {
+  if (sparse) return TASK_CARD_BODY_MIN_CLASS;
+  if (laneCount > WORKER_LANES_SCROLL_THRESHOLD) return TASK_CARD_BODY_MAX_CLASS;
+  return "";
+}
+
+export function workerLanesScrollClass(laneCount: number): string {
+  return laneCount > WORKER_LANES_SCROLL_THRESHOLD ? WORKER_LANES_SCROLL_MAX_CLASS : "";
+}
+
+/** Apply scroll cap only when a lane has more than this many rows. */
+export const LANE_ITEMS_SCROLL_THRESHOLD = 2;
+
+/** Max height for scrollable expanded worker row lists (busy lanes only). */
+export const LANE_ITEMS_SCROLL_MAX_CLASS = "max-h-112";
+
+export function laneItemsScrollClass(rowCount: number): string {
+  return rowCount > LANE_ITEMS_SCROLL_THRESHOLD ? LANE_ITEMS_SCROLL_MAX_CLASS : "";
+}
+
+/** Each worker's task-item list scrolls after this many items (legacy TaskCardWork). */
 export const WORK_ITEM_SCROLL_THRESHOLD = 2;
 
 export interface WorkerOption {

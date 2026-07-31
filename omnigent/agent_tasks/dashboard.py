@@ -2,36 +2,56 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from omnigent.entities import Task, TaskEventExecution, TaskItem
+from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_asset_store import TaskAssetStore
 
 _RUNNING_EXECUTION_STATUSES = frozenset({"queued", "running"})
+_TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+_WORKER_LANE_ITEM_STATES = frozenset({"awaiting_user_ack", "queued", "running", "done"})
+_WORKER_STATE = Literal["new", "active", "idle"]
 
 
 def build_task_dashboard(
     task: Task,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
+    task_asset_store: TaskAssetStore | None = None,
 ) -> dict[str, Any]:
     """Build a card-shaped snapshot for one managed task."""
     items = task_item_store.list_items_for_task(task.id)
-    inbox_items = [item for item in items if item.state == "awaiting_user_ack"]
+    inbox_items = [
+        item
+        for item in items
+        if item.state == "awaiting_user_ack" and not item.worker_agent_id
+    ]
     reconcile_queue = task_event_store.list_events(state="routed", task_id=task.id)
     executions = task_event_store.list_executions_for_task(task.id)
     item_by_id = {item.id: item for item in items}
 
-    workers: dict[str, list[dict[str, Any]]] = {}
+    worker_ids: set[str] = set()
+    for item in items:
+        if item.worker_agent_id:
+            worker_ids.add(item.worker_agent_id)
     for execution in executions:
-        item = item_by_id.get(execution.task_item_id)
-        workers.setdefault(execution.worker_agent_id, []).append(
-            _execution_summary(execution, item),
-        )
+        worker_ids.add(execution.worker_agent_id)
+
+    workers = [
+        _worker_lane(worker_id, items, executions, item_by_id)
+        for worker_id in sorted(worker_ids)
+    ]
+    workers.sort(key=_worker_lane_rank)
 
     has_running_workers = any(
         execution.status in _RUNNING_EXECUTION_STATUSES for execution in executions
+    )
+    assets = (
+        task_asset_store.list_assets_for_task(task.id)
+        if task_asset_store is not None
+        else []
     )
 
     return {
@@ -48,13 +68,184 @@ def build_task_dashboard(
         },
         "inbox_items": [_item_summary(item) for item in inbox_items],
         "reconcile_queue_count": len(reconcile_queue),
-        "workers": [
-            {
-                "worker_agent_id": worker_agent_id,
-                "executions": rows,
-            }
-            for worker_agent_id, rows in sorted(workers.items())
+        "assets": [_asset_summary(asset) for asset in assets],
+        "workers": workers,
+    }
+
+
+def _worker_lane_rank(lane: dict[str, Any]) -> tuple[int, str]:
+    order = {"active": 0, "new": 1, "idle": 2}
+    return (order.get(lane["state"], 3), lane["worker_agent_id"])
+
+
+def _worker_lane(
+    worker_agent_id: str,
+    items: list[TaskItem],
+    executions: list[TaskEventExecution],
+    item_by_id: dict[str, TaskItem],
+) -> dict[str, Any]:
+    worker_items = [
+        item
+        for item in items
+        if item.worker_agent_id == worker_agent_id and item.state in _WORKER_LANE_ITEM_STATES
+    ]
+    worker_executions = [
+        execution for execution in executions if execution.worker_agent_id == worker_agent_id
+    ]
+    has_ever_executed = len(worker_executions) > 0
+    covered_item_ids: set[str] = set()
+    covered_execution_ids: set[str] = set()
+    rows: list[dict[str, Any]] = []
+
+    for execution in worker_executions:
+        if execution.status in _TERMINAL_EXECUTION_STATUSES:
+            continue
+        item = item_by_id.get(execution.task_item_id)
+        rows.append(
+            _execution_row(
+                execution,
+                item,
+                default_folded=False,
+                sort_at=_execution_sort_at(execution),
+            )
+        )
+        covered_item_ids.add(execution.task_item_id)
+        covered_execution_ids.add(execution.id)
+
+    for item in worker_items:
+        if item.id in covered_item_ids:
+            continue
+        if item.state in {"awaiting_user_ack", "queued", "running"}:
+            rows.append(
+                _item_row(
+                    item,
+                    default_folded=False,
+                    sort_at=_item_sort_at(item),
+                )
+            )
+            covered_item_ids.add(item.id)
+
+    for execution in worker_executions:
+        if execution.id in covered_execution_ids:
+            continue
+        if execution.status in _TERMINAL_EXECUTION_STATUSES:
+            item = item_by_id.get(execution.task_item_id)
+            rows.append(
+                _execution_row(
+                    execution,
+                    item,
+                    default_folded=True,
+                    sort_at=_execution_sort_at(execution),
+                )
+            )
+            covered_execution_ids.add(execution.id)
+            covered_item_ids.add(execution.task_item_id)
+
+    for item in worker_items:
+        if item.id in covered_item_ids:
+            continue
+        if item.state == "done":
+            rows.append(
+                _item_row(
+                    item,
+                    default_folded=True,
+                    sort_at=_item_sort_at(item),
+                )
+            )
+
+    rows.sort(key=lambda row: -int(row["sort_at"]))
+
+    state, situation = _worker_state_and_situation(
+        worker_items,
+        worker_executions,
+        item_by_id,
+        has_ever_executed=has_ever_executed,
+    )
+
+    return {
+        "worker_agent_id": worker_agent_id,
+        "state": state,
+        "situation": situation,
+        "rows": rows,
+        # Legacy field for callers that still read executions directly.
+        "executions": [
+            _execution_summary(execution, item_by_id.get(execution.task_item_id))
+            for execution in worker_executions
         ],
+    }
+
+
+def _worker_state_and_situation(
+    worker_items: list[TaskItem],
+    worker_executions: list[TaskEventExecution],
+    item_by_id: dict[str, TaskItem],
+    *,
+    has_ever_executed: bool,
+) -> tuple[_WORKER_STATE, str]:
+    running = next(
+        (execution for execution in worker_executions if execution.status == "running"),
+        None,
+    )
+    if running is not None:
+        item = item_by_id.get(running.task_item_id)
+        title = item.title if item is not None else "Work"
+        return "active", f"Running: {title}"
+
+    if not has_ever_executed:
+        awaiting = sum(1 for item in worker_items if item.state == "awaiting_user_ack")
+        if awaiting:
+            suffix = f" · {awaiting} awaiting" if awaiting > 1 else " · 1 awaiting"
+            return "new", f"New{suffix}"
+        return "new", "New"
+
+    pending = sum(
+        1 for item in worker_items if item.state in {"awaiting_user_ack", "queued"}
+    )
+    if pending:
+        return "idle", f"Idle · {pending} pending"
+    return "idle", "Idle"
+
+
+def _item_sort_at(item: TaskItem) -> int:
+    return item.updated_at or item.created_at
+
+
+def _execution_sort_at(execution: TaskEventExecution) -> int:
+    return execution.finished_at or execution.started_at or execution.assigned_at
+
+
+def _item_row(item: TaskItem, *, default_folded: bool, sort_at: int) -> dict[str, Any]:
+    return {
+        "kind": "item",
+        "item": _item_summary(item),
+        "default_folded": default_folded,
+        "sort_at": sort_at,
+    }
+
+
+def _execution_row(
+    execution: TaskEventExecution,
+    item: TaskItem | None,
+    *,
+    default_folded: bool,
+    sort_at: int,
+) -> dict[str, Any]:
+    return {
+        "kind": "execution",
+        "execution": _execution_summary(execution, item),
+        "default_folded": default_folded,
+        "sort_at": sort_at,
+    }
+
+
+def _asset_summary(asset: TaskAsset) -> dict[str, Any]:
+    return {
+        "id": asset.id,
+        "kind": asset.kind,
+        "title": asset.title,
+        "url": asset.url,
+        "sort_order": asset.sort_order,
+        "created_at": asset.created_at,
     }
 
 

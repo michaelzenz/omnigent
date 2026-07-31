@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed Puppy Garden with demo routing cards, tasks, and inbox items."""
+"""Seed Puppy Garden with demo routing cards, tasks, and worker lanes."""
 
 from __future__ import annotations
 
@@ -9,16 +9,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 DEFAULT_BASE = os.environ.get("OMNIGENT_SERVER_URL", "http://127.0.0.1:6767").rstrip("/")
-MANAGER_AGENT_ID = os.environ.get(
-    "SEED_MANAGER_AGENT_ID",
-    "b89e2ff3b870d8c67827bc5db09a6b0b",
-)
-WORKER_AGENT_ID = os.environ.get(
-    "SEED_WORKER_AGENT_ID",
-    "f71a802cad50a02cbeb99952955a4ebe",
-)
+MANAGER_AGENT_NAME = os.environ.get("SEED_MANAGER_AGENT_NAME", "task-manager")
+WORKER_AGENT_NAME = os.environ.get("SEED_WORKER_AGENT_NAME", "task-worker")
+WORKER2_AGENT_NAME = os.environ.get("SEED_WORKER2_AGENT_NAME", "task-docs")
 HOST_ID = os.environ.get("SEED_HOST_ID", "a443636bf8be4144ad01f31c6c3acb9f")
 WORKSPACE = os.environ.get("SEED_WORKSPACE", os.path.expanduser("~/Project/omnigent-fork"))
 BOOTSTRAP = {
@@ -28,9 +24,31 @@ BOOTSTRAP = {
     "model": "composer-2.5",
 }
 DISPATCH = {
-    "worker_agent_id": WORKER_AGENT_ID,
     **BOOTSTRAP,
 }
+DISPATCH_WORKER2 = {
+    **BOOTSTRAP,
+}
+
+
+def _resolve_agent_ids() -> tuple[str, str, str]:
+    listed = _request("GET", "/v1/agents?limit=200")
+    by_name = {row["name"]: row["id"] for row in listed.get("data", [])}
+    manager_id = by_name.get(MANAGER_AGENT_NAME)
+    worker_id = by_name.get(WORKER_AGENT_NAME)
+    worker2_id = by_name.get(WORKER2_AGENT_NAME)
+    missing = [
+        name
+        for name, value in (
+            (MANAGER_AGENT_NAME, manager_id),
+            (WORKER_AGENT_NAME, worker_id),
+            (WORKER2_AGENT_NAME, worker2_id),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"Missing agents after server start: {', '.join(missing)}")
+    return manager_id, worker_id, worker2_id
 
 
 def _request(
@@ -58,12 +76,12 @@ def _request(
         raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def _create_task(title: str, description: str, charter: str) -> str:
+def _create_task(title: str, description: str, charter: str, *, manager_agent_id: str) -> str:
     task = _request(
         "POST",
         "/v1/agent-tasks",
         body={
-            "manager_agent_id": MANAGER_AGENT_ID,
+            "manager_agent_id": manager_agent_id,
             "title": title,
             "description": description,
             "charter": charter,
@@ -116,13 +134,15 @@ def _create_task_package(
     title: str,
     instructions: str,
     event_ids: list[str],
-) -> None:
+    manager_agent_id: str,
+    asset_urls: list[tuple[str, str]] | None = None,
+) -> str:
     package = _request(
         "POST",
         "/v1/agent-tasks/packages",
         body={
             "title": title,
-            "manager_agent_id": MANAGER_AGENT_ID,
+            "manager_agent_id": manager_agent_id,
             "items": [
                 {
                     "title": title,
@@ -132,7 +152,11 @@ def _create_task_package(
             ],
         },
     )
-    print(f"  task package {title!r} → {package['id'][:8]}…")
+    task_id = package["id"]
+    print(f"  task package {title!r} → {task_id[:8]}…")
+    for sort_order, (asset_title, url) in enumerate(asset_urls or ()):
+        _create_task_asset(task_id, asset_title, url, sort_order=sort_order)
+    return task_id
 
 
 def _create_fyi_cluster(
@@ -153,7 +177,22 @@ def _create_fyi_cluster(
     print(f"  fyi cluster {headline!r} → {cluster['id'][:8]}…")
 
 
-def _create_inbox_item(task_id: str, title: str, instructions: str) -> None:
+def _create_task_asset(task_id: str, title: str, url: str, *, sort_order: int = 0) -> str:
+    asset = _request(
+        "POST",
+        f"/v1/agent-tasks/{task_id}/assets",
+        body={
+            "kind": "url",
+            "title": title,
+            "url": url,
+            "sort_order": sort_order,
+        },
+    )
+    print(f"  asset {title!r} → {asset['id'][:8]}…")
+    return asset["id"]
+
+
+def _create_unassigned_inbox_item(task_id: str, title: str, instructions: str) -> str:
     item = _request(
         "POST",
         f"/v1/agent-tasks/{task_id}/items",
@@ -161,53 +200,290 @@ def _create_inbox_item(task_id: str, title: str, instructions: str) -> None:
             "title": title,
             "instructions": instructions,
             "submit_for_user_ack": True,
+        },
+    )
+    print(f"  unassigned inbox {title!r} → {item['id'][:8]}…")
+    return item["id"]
+
+
+def _create_assigned_inbox_item(
+    task_id: str,
+    title: str,
+    instructions: str,
+    *,
+    worker_agent_id: str,
+) -> str:
+    item = _request(
+        "POST",
+        f"/v1/agent-tasks/{task_id}/items",
+        body={
+            "title": title,
+            "instructions": instructions,
+            "submit_for_user_ack": True,
+            "worker_agent_id": worker_agent_id,
+            **BOOTSTRAP,
+        },
+    )
+    print(f"  assigned pending {title!r} ({worker_agent_id[:8]}…) → {item['id'][:8]}…")
+    return item["id"]
+
+
+def _dispatch_item(item_id: str) -> None:
+    body = _request("POST", f"/v1/task-items/{item_id}/dispatch", body=BOOTSTRAP)
+    print(f"  dispatched {item_id[:8]}… → {body.get('conversation_id', '')[:8]}…")
+
+
+def _accept_item(item_id: str) -> None:
+    body = _request(
+        "POST",
+        f"/v1/task-items/{item_id}/resolve",
+        body={"resolution": "accept_item"},
+    )
+    print(f"  accepted {item_id[:8]}… → {body.get('state')}")
+
+
+def _seed_rich_ci_task(ci_task: str, *, worker_agent_id: str, worker2_agent_id: str) -> None:
+    print("Seeding rich CI worker lanes…")
+    _create_unassigned_inbox_item(
+        ci_task,
+        "Triage unknown failure",
+        "No worker picked yet — assign CI Fixer or Docs agent in inbox.",
+    )
+    _create_unassigned_inbox_item(
+        ci_task,
+        "Review dependabot bump",
+        "Decide whether to route to CI or docs after scanning the diff.",
+    )
+
+    _create_assigned_inbox_item(
+        ci_task,
+        "Fix flaky integration test",
+        "Re-run agent-tasks integration suite and capture logs.",
+        worker_agent_id=worker_agent_id,
+    )
+    _create_assigned_inbox_item(
+        ci_task,
+        "Update changelog entry",
+        "Add a routing-board entry to CHANGELOG after UI lands.",
+        worker_agent_id=worker2_agent_id,
+    )
+
+    running = _request(
+        "POST",
+        f"/v1/agent-tasks/{ci_task}/items",
+        body={
+            "title": "Investigate lint failure on main",
+            "instructions": "Read CI logs and patch the failing module.",
+            "state": "approved",
             **DISPATCH,
         },
     )
-    print(f"  inbox item {title!r} on {task_id[:8]}… → {item['id'][:8]}…")
+    _dispatch_item(running["id"])
+
+    queued = _request(
+        "POST",
+        f"/v1/agent-tasks/{ci_task}/items",
+        body={
+            "title": "Retry upload stress test",
+            "instructions": "Queue for CI Fixer after the lint run completes.",
+            "state": "queued",
+            **DISPATCH,
+        },
+    )
+    print(f"  queued item {queued['title']!r} → {queued['id'][:8]}…")
+
+    history_specs = [
+        ("Land green checks on PR #880", "Fixed retry logic and updated tests."),
+        ("Silence noisy codecov comment", "Adjusted coverage threshold in workflow."),
+        ("Patch nightly flake", "Stabilized timer test ordering."),
+    ]
+    for title, instructions in history_specs:
+        item = _request(
+            "POST",
+            f"/v1/agent-tasks/{ci_task}/items",
+            body={
+                "title": title,
+                "instructions": instructions,
+                "state": "approved",
+                **DISPATCH,
+            },
+        )
+        _dispatch_item(item["id"])
+        _finish_execution_for_item(item["id"], summary=instructions)
+        print(f"  completed history {title!r}")
+
+    _create_task_asset(
+        ci_task,
+        "PR #891",
+        "https://github.com/databricks/omnigent-fork/pull/891",
+        sort_order=0,
+    )
+    _create_task_asset(
+        ci_task,
+        "CI workflow (main)",
+        "https://github.com/databricks/omnigent-fork/actions",
+        sort_order=1,
+    )
+    _create_task_asset(
+        ci_task,
+        "Latest failing run",
+        "https://github.com/databricks/omnigent-fork/actions/runs/1234567890",
+        sort_order=2,
+    )
+
+
+def _finish_execution_for_item(item_id: str, *, summary: str) -> None:
+    db_uri = os.environ.get(
+        "OMNIGENT_DATABASE_URI",
+        f"sqlite:///{os.path.expanduser('~/.omnigent/chat.db')}",
+    )
+    from omnigent.agent_tasks.executions import complete_execution
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    executions = event_store.list_executions_for_item(item_id)
+    if not executions:
+        return
+    execution = executions[-1]
+    complete_execution(
+        event_store,
+        execution.id,
+        status="succeeded",
+        result_summary=summary,
+    )
+    item_store.update_item(item_id, state="done")
+
+
+def _demo_worker_id(index: int) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_DNS, f"seed-twenty-workers-{index:02d}").hex
+
+
+def _seed_twenty_worker_task(*, manager_agent_id: str) -> str:
+    """Create one active task with twenty distinct worker lanes."""
+    print("Seeding 20-worker load test task…")
+    task_id = _create_task(
+        "20-worker load test",
+        "Scroll and accordion stress test with twenty worker lanes",
+        "load-test\nworkers\nui",
+        manager_agent_id=manager_agent_id,
+    )
+    for index in range(1, 21):
+        worker_id = _demo_worker_id(index)
+        dispatch = {**BOOTSTRAP, "worker_agent_id": worker_id}
+        if index == 1:
+            running = _request(
+                "POST",
+                f"/v1/agent-tasks/{task_id}/items",
+                body={
+                    "title": f"Worker {index:02d} running job",
+                    "instructions": "Active lane for accordion default expansion.",
+                    "state": "approved",
+                    **dispatch,
+                },
+            )
+            _dispatch_item_with(dispatch, running["id"])
+            continue
+        _request(
+            "POST",
+            f"/v1/agent-tasks/{task_id}/items",
+            body={
+                "title": f"Worker {index:02d} queued job",
+                "instructions": f"Queued backlog for worker lane {index}.",
+                "state": "queued",
+                **dispatch,
+            },
+        )
+    _create_task_asset(
+        task_id,
+        "Load test tracker",
+        "https://github.com/databricks/omnigent-fork/issues/1",
+    )
+    dash = _request("GET", f"/v1/agent-tasks/{task_id}/dashboard")
+    workers = len(dash.get("workers", []))
+    print(f"  20-worker load test: {workers} workers")
+    if workers != 20:
+        raise RuntimeError(f"Expected 20 worker lanes, got {workers}")
+    return task_id
+
+
+def _dispatch_item_with(dispatch: dict, item_id: str) -> None:
+    body = _request("POST", f"/v1/task-items/{item_id}/dispatch", body=dispatch)
+    print(f"  dispatched {item_id[:8]}… → {body.get('conversation_id', '')[:8]}…")
 
 
 def main() -> int:
     host_header = {"X-Omnigent-Host-Id": HOST_ID}
     offset_base = int(time.time()) % 1_000_000
+    manager_agent_id, worker_agent_id, worker2_agent_id = _resolve_agent_ids()
+    global DISPATCH, DISPATCH_WORKER2
+    DISPATCH = {"worker_agent_id": worker_agent_id, **BOOTSTRAP}
+    DISPATCH_WORKER2 = {"worker_agent_id": worker2_agent_id, **BOOTSTRAP}
 
     print("Creating managed tasks…")
     ci_task = _create_task(
         "omnigent-fork CI",
         "CI failures and PR reviews for omnigent-fork",
         "repo:omnigent-fork\nci\npull requests",
+        manager_agent_id=manager_agent_id,
     )
     docs_task = _create_task(
         "docs refresh",
         "Documentation updates and changelog hygiene",
         "repo:omnigent-fork\ndocs\nmarkdown",
+        manager_agent_id=manager_agent_id,
     )
     poll_task = _create_task(
         "poll plugins",
         "Host poll plugin maintenance",
         "poll_plugins\ngithub_pr\nwatchers",
+        manager_agent_id=manager_agent_id,
     )
+
+    _seed_rich_ci_task(ci_task, worker_agent_id=worker_agent_id, worker2_agent_id=worker2_agent_id)
+    twenty_worker_task = _seed_twenty_worker_task(manager_agent_id=manager_agent_id)
 
     print("Creating paused task packages…")
     _create_task_package(
         title="Fix CI on PR #891",
         instructions="Investigate lint failure and address review feedback on PR #891.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=891, offset_base=offset_base),
+        manager_agent_id=manager_agent_id,
+        asset_urls=[
+            ("PR #891", "https://github.com/databricks/omnigent-fork/pull/891"),
+            ("CI checks", "https://github.com/databricks/omnigent-fork/actions"),
+        ],
     )
     _create_task_package(
         title="Update API docs for task routing",
         instructions="Refresh TASK_SECRETARY.md and API_REFERENCE after routing cards shipped.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10),
+        manager_agent_id=manager_agent_id,
+        asset_urls=[
+            ("API reference", "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/API_REFERENCE.md"),
+            ("PR #902", "https://github.com/databricks/omnigent-fork/pull/902"),
+        ],
     )
     _create_task_package(
         title="Fix github_pr poll plugin flake",
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20),
+        manager_agent_id=manager_agent_id,
+        asset_urls=[
+            ("PR #915", "https://github.com/databricks/omnigent-fork/pull/915"),
+            ("Poll plugin code", "https://github.com/databricks/omnigent-fork/tree/main/omnigent/host/polling"),
+        ],
     )
     _create_task_package(
         title="Investigate unrelated repo alert",
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
         event_ids=_create_events(host_header, repo="other-repo", pr=12, offset_base=offset_base + 30),
+        manager_agent_id=manager_agent_id,
+        asset_urls=[
+            ("other-repo PR #12", "https://github.com/example/other-repo/pull/12"),
+            ("omnigent-fork (reference)", "https://github.com/databricks/omnigent-fork"),
+        ],
     )
 
     print("Creating FYI clusters…")
@@ -218,26 +494,33 @@ def main() -> int:
         event_ids=fyi_events,
     )
 
-    print("Creating inbox task items (#3 dispatch approval)…")
-    _create_inbox_item(
-        ci_task,
-        "Re-run flaky integration test",
-        "Re-run the agent-tasks integration suite and capture logs if it fails again.",
-    )
-    _create_inbox_item(
-        ci_task,
-        "Bump composer model pin",
-        "Update the default task-worker model pin in constants and verify bootstrap.",
-    )
-    _create_inbox_item(
+    print("Creating docs/poll inbox samples…")
+    _create_unassigned_inbox_item(
         docs_task,
-        "Add routing card screenshot to README",
-        "Capture Puppy Garden decisions section and add to agent-tasks README.",
+        "Screenshot new worker lanes",
+        "Capture the accordion board for the README demo section.",
     )
-    _create_inbox_item(
+    _create_assigned_inbox_item(
+        docs_task,
+        "Polish API_REFERENCE worker section",
+        "Document dashboard worker lanes after deploy.",
+        worker_agent_id=worker2_agent_id,
+    )
+    _create_task_asset(
+        docs_task,
+        "Routing board README",
+        "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/README.md",
+    )
+    _create_unassigned_inbox_item(
+        poll_task,
+        "Pick owner for PR watcher dedupe",
+        "Assign to CI Fixer or create a new worker for poll plugins.",
+    )
+    _create_assigned_inbox_item(
         poll_task,
         "Add dedupe test for PR watcher",
-        "Write a unit test ensuring duplicate check events do not create extra task events.",
+        "Unit test duplicate check events do not create extra task events.",
+        worker_agent_id=worker_agent_id,
     )
 
     paused = _request("GET", "/v1/agent-tasks?state=paused&limit=100")
@@ -253,15 +536,17 @@ def main() -> int:
 
     for task_id, label in [
         (ci_task, "omnigent-fork CI"),
+        (twenty_worker_task, "20-worker load test"),
         (docs_task, "docs refresh"),
         (poll_task, "poll plugins"),
     ]:
         dash = _request("GET", f"/v1/agent-tasks/{task_id}/dashboard")
         inbox = len(dash.get("inbox_items", []))
-        workers = sum(len(g.get("executions", [])) for g in dash.get("workers", []))
-        print(f"  {label}: {inbox} inbox, {workers} work rows")
+        workers = len(dash.get("workers", []))
+        rows = sum(len(w.get("rows", [])) for w in dash.get("workers", []))
+        print(f"  {label}: {inbox} unassigned inbox, {workers} workers, {rows} lane rows")
 
-    print("\nDone — see **New packages** and **FYI** above task cards in Puppy Garden.")
+    print("\nDone — open Puppy Garden to review worker lanes and unassigned inbox.")
     return 0
 
 

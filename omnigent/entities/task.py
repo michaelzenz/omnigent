@@ -223,6 +223,19 @@ class TaskItem:
 
 
 @dataclass
+class TaskAsset:
+    """A link or file reference attached to one managed task."""
+
+    id: str
+    task_id: str
+    kind: str
+    title: str
+    created_at: int
+    url: str | None = None
+    sort_order: int = 0
+
+
+@dataclass
 class TaskItemEvent:
     """Link between a task item and a contributing task event."""
 

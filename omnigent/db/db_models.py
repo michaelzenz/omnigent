@@ -1588,6 +1588,32 @@ class SqlTaskItem(OmnigentBase):
     )
 
 
+class SqlTaskAsset(OmnigentBase):
+    """SQLAlchemy model for the ``task_assets`` table."""
+
+    __tablename__ = "task_assets"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('url')", name="ck_task_assets_kind"),
+        Index("ix_task_assets_task_sort", "workspace_id", "task_id", "sort_order", "id"),
+    )
+
+
 class SqlTaskItemEvent(OmnigentBase):
     """SQLAlchemy model for the ``task_item_events`` table."""
 

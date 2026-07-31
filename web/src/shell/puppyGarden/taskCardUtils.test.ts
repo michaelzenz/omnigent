@@ -7,6 +7,8 @@ import {
   proposalHasEdits,
   sortExecutions,
   workStateLabel,
+  workerLanesScrollClass,
+  WORKER_LANES_SCROLL_THRESHOLD,
 } from "./taskCardUtils";
 
 describe("taskCardUtils", () => {
@@ -269,5 +271,10 @@ describe("taskCardUtils", () => {
         model: "composer-2.5",
       }),
     ).toBe(true);
+  });
+
+  it("scrolls worker lanes once there are more than the threshold", () => {
+    expect(workerLanesScrollClass(WORKER_LANES_SCROLL_THRESHOLD)).toBe("");
+    expect(workerLanesScrollClass(WORKER_LANES_SCROLL_THRESHOLD + 1)).toBe("max-h-80");
   });
 });

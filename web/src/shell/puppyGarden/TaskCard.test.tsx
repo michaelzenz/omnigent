@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { TaskCard } from "./TaskCard";
-import { TaskCardWork } from "./TaskCardWork";
+import { TaskCardWorkers } from "./TaskCardWorkers";
+import { INBOX_LANE_ID } from "./workerLaneStorage";
 
 vi.mock("@/hooks/useAgentTasks", () => ({
   useTaskDashboard: vi.fn(),
@@ -20,19 +21,16 @@ vi.mock("@/hooks/useAgentTasks", () => ({
 
 vi.mock("@/hooks/useAvailableAgents", () => ({
   useAvailableAgents: vi.fn(() => ({
-    data: [{ id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", harness: null, skills: [] }],
+    data: [
+      { id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", harness: null, skills: [] },
+      { id: "worker-2", name: "docs", display_name: "Docs", harness: null, skills: [] },
+    ],
   })),
 }));
 
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
 
 const mockedDashboard = vi.mocked(useTaskDashboard);
-const noopSelect = vi.fn();
-
-const workListProps = {
-  selectedExecutionId: null,
-  onSelectExecution: noopSelect,
-};
 
 function renderCard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -52,21 +50,8 @@ function renderCard() {
 
 afterEach(cleanup);
 
-function expandWorkerGroup(workerAgentId: string) {
-  fireEvent.click(screen.getByTestId(`worker-group-toggle-${workerAgentId}`));
-}
-
-function workItemTitles(workerAgentId: string): string[] {
-  const list =
-    screen.queryByTestId(`worker-items-scroll-${workerAgentId}`) ??
-    screen.getByTestId(`worker-items-${workerAgentId}`);
-  return within(list)
-    .getAllByRole("listitem")
-    .map((item) => item.querySelector("p")?.textContent?.trim() ?? "");
-}
-
 describe("TaskCard", () => {
-  it("renders inbox items and grouped work", () => {
+  it("renders unassigned inbox and worker lanes with assets panel", () => {
     mockedDashboard.mockReturnValue({
       data: {
         task: {
@@ -79,52 +64,67 @@ describe("TaskCard", () => {
         derived: { has_running_workers: true },
         inbox_items: [
           {
-            id: "item-1",
-            title: "Retry CI",
-            instructions: "Rerun checks",
+            id: "item-unassigned",
+            title: "Pick a worker",
+            instructions: "Route this to someone",
             state: "awaiting_user_ack",
-            worker_agent_id: "worker-1",
-            model: "composer-2.5",
+            worker_agent_id: null,
+            model: null,
             host_id: null,
             workspace: null,
             harness: null,
             created_at: 1,
             updated_at: null,
           },
-          {
-            id: "item-2",
-            title: "Update docs",
-            instructions: "Refresh README after merge",
-            state: "awaiting_user_ack",
-            worker_agent_id: "worker-1",
-            model: "composer-2.5",
-            host_id: null,
-            workspace: null,
-            harness: null,
-            created_at: 2,
-            updated_at: null,
-          },
         ],
         reconcile_queue_count: 0,
+        assets: [],
         workers: [
           {
             worker_agent_id: "worker-1",
-            executions: [
+            state: "active",
+            situation: "Running: Investigate failure",
+            rows: [
               {
-                id: "exec-1",
-                task_item_id: "item-running",
-                event_id: "evt-1",
-                event_title: "Investigate failure",
-                status: "running",
-                result_summary: null,
-                error: null,
-                conversation_id: "worker-session",
-                attempt_no: 1,
-                assigned_at: 2,
-                started_at: 2,
-                finished_at: null,
+                kind: "execution",
+                default_folded: false,
+                sort_at: 2,
+                execution: {
+                  id: "exec-1",
+                  task_item_id: "item-running",
+                  event_id: "evt-1",
+                  event_title: "Investigate failure",
+                  status: "running",
+                  result_summary: null,
+                  error: null,
+                  conversation_id: "worker-session",
+                  attempt_no: 1,
+                  assigned_at: 2,
+                  started_at: 2,
+                  finished_at: null,
+                },
+              },
+              {
+                kind: "execution",
+                default_folded: true,
+                sort_at: 1,
+                execution: {
+                  id: "exec-done",
+                  task_item_id: "item-done",
+                  event_id: "evt-2",
+                  event_title: "Earlier fix",
+                  status: "succeeded",
+                  result_summary: "ok",
+                  error: null,
+                  conversation_id: "worker-session-old",
+                  attempt_no: 1,
+                  assigned_at: 1,
+                  started_at: 1,
+                  finished_at: 1,
+                },
               },
             ],
+            executions: [],
           },
         ],
       },
@@ -133,43 +133,44 @@ describe("TaskCard", () => {
     } as unknown as ReturnType<typeof useTaskDashboard>);
 
     renderCard();
+    expect(screen.getByTestId("task-card-body")).toHaveAttribute("data-sparse", "false");
 
-    expect(screen.getByText("Land PR #123")).toBeInTheDocument();
     expect(screen.getByText("Inbox")).toBeInTheDocument();
-    expect(screen.getByTestId("inbox-item-item-1")).toBeInTheDocument();
-    expect(screen.getByTestId("inbox-item-item-2")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Rerun checks")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Refresh README after merge")).toBeInTheDocument();
-    expect(screen.getByText("Work")).toBeInTheDocument();
+    expect(screen.getByTestId(`worker-lane-${INBOX_LANE_ID}`)).toHaveAttribute(
+      "data-expanded",
+      "true",
+    );
+    expect(screen.getByTestId("worker-row-item:item-unassigned")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Route this to someone")).toBeInTheDocument();
+    expect(screen.getByText("Workers")).toBeInTheDocument();
+    expect(screen.getByTestId("worker-lane-worker-1")).toBeInTheDocument();
     expect(screen.getByText("CI Fixer")).toBeInTheDocument();
-    expect(screen.getAllByText("Investigate failure").length).toBeGreaterThan(0);
-    expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.getByText("Manager")).toBeInTheDocument();
+    expect(screen.getByTestId("task-card-assets")).toBeInTheDocument();
+    expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
+    expect(screen.getByTestId("worker-lane-worker-1")).toHaveAttribute("data-expanded", "false");
+    fireEvent.click(screen.getByTestId("worker-lane-toggle-worker-1"));
+    expect(screen.getByText("Investigate failure")).toBeInTheDocument();
   });
 
-  it("replaces the entire side panel when a work item is selected", () => {
-    mockedDashboard.mockReturnValue({
-      data: {
-        task: {
-          id: "task-1",
-          title: "Land PR #123",
-          description: null,
-          state: "active",
-          manager_conversation_id: "mgr-session",
-        },
-        derived: { has_running_workers: false },
-        inbox_items: [],
-        reconcile_queue_count: 0,
-        workers: [
+  it("expands a worker lane and folds finished rows by default", async () => {
+    render(
+      <TaskCardWorkers
+        taskId="task-1"
+        inboxItems={[]}
+        defaultModel="composer-2.5"
+        agents={[
+          { id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", description: null, harness: null, skills: [] },
+        ]}
+        workers={[
           {
             worker_agent_id: "worker-1",
-            executions: [
+            state: "idle",
+            situation: "Idle",
+            rows: [
               {
-                id: "exec-q",
-                task_item_id: "item-q",
-                event_id: "evt-q",
-                event_title: "Queued task",
+                kind: "item",
+                default_folded: false,
+                sort_at: 3,
                 item: {
                   id: "item-q",
                   title: "Queued task",
@@ -180,343 +181,140 @@ describe("TaskCard", () => {
                   host_id: null,
                   workspace: null,
                   harness: null,
-                  created_at: 1,
+                  created_at: 3,
                   updated_at: null,
                 },
-                status: "queued",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 1,
-                started_at: null,
-                finished_at: null,
+              },
+              {
+                kind: "execution",
+                default_folded: true,
+                sort_at: 1,
+                execution: {
+                  id: "exec-done",
+                  task_item_id: "item-done",
+                  event_id: "evt-1",
+                  event_title: "Done task",
+                  status: "succeeded",
+                  result_summary: "ok",
+                  error: null,
+                  conversation_id: null,
+                  attempt_no: 1,
+                  assigned_at: 1,
+                  started_at: 1,
+                  finished_at: 1,
+                },
               },
             ],
+            executions: [],
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("worker-lane-worker-1")).toHaveAttribute("data-expanded", "true");
+    });
+    expect(screen.getByDisplayValue("Do the thing")).toBeInTheDocument();
+    expect(screen.getByTestId("worker-row-exec:exec-done")).toHaveAttribute("data-folded", "true");
+    fireEvent.click(within(screen.getByTestId("worker-row-exec:exec-done")).getByRole("button"));
+    expect(screen.getByTestId("worker-row-exec:exec-done")).toHaveAttribute("data-folded", "false");
+  });
+
+  it("scrolls the worker lane list when there are many lanes", () => {
+    const workers = Array.from({ length: 5 }, (_, index) => ({
+      worker_agent_id: `worker-${index}`,
+      state: "new" as const,
+      situation: "New",
+      rows: [],
+      executions: [],
+    }));
+
+    render(
+      <TaskCardWorkers
+        taskId="task-many"
+        inboxItems={[]}
+        defaultModel="composer-2.5"
+        agents={[]}
+        workers={workers}
+      />,
+    );
+
+    expect(screen.getByTestId("task-card-workers").className).toContain("overflow-y-auto");
+    expect(screen.getByTestId("task-card-workers").className).toContain("max-h-80");
+  });
+
+  it("collapses inbox lane when the header is toggled", () => {
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-1",
+          title: "Land PR #123",
+          description: null,
+          state: "active",
+          manager_conversation_id: null,
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [
+          {
+            id: "item-unassigned",
+            title: "Pick a worker",
+            instructions: "Route this to someone",
+            state: "awaiting_user_ack",
+            worker_agent_id: null,
+            model: null,
+            host_id: null,
+            workspace: null,
+            harness: null,
+            created_at: 1,
+            updated_at: null,
           },
         ],
+        reconcile_queue_count: 0,
+        assets: [],
+        workers: [],
       },
       isLoading: false,
       error: null,
     } as unknown as ReturnType<typeof useTaskDashboard>);
 
     renderCard();
-    expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.getByText("Assets")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("work-item-exec-q"));
-
-    expect(screen.getByTestId("task-item-detail")).toBeInTheDocument();
-    expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
-    expect(screen.queryByText("Assets")).not.toBeInTheDocument();
-    expect(screen.getByDisplayValue("Queued task")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Do the thing")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.getByText("Assets")).toBeInTheDocument();
-    expect(screen.queryByTestId("task-item-detail")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId(`worker-lane-toggle-${INBOX_LANE_ID}`));
+    expect(screen.getByTestId(`worker-lane-${INBOX_LANE_ID}`)).toHaveAttribute(
+      "data-expanded",
+      "false",
+    );
+    expect(screen.queryByTestId("worker-row-item:item-unassigned")).not.toBeInTheDocument();
   });
 
-  it("scrolls work when more than two worker groups are present", () => {
+  it("applies minimum body height when the dashboard is sparse", () => {
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-empty",
+          title: "Empty task",
+          description: null,
+          state: "paused",
+          manager_conversation_id: null,
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [],
+        reconcile_queue_count: 0,
+        assets: [],
+        workers: [],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
     render(
-      <TaskCardWork
-        agents={[
-          { id: "w1", name: "ci-fixer", display_name: "CI Fixer", description: null, harness: null, skills: [] },
-          { id: "w2", name: "reviewer", display_name: "Reviewer", description: null, harness: null, skills: [] },
-          { id: "w3", name: "docs", display_name: "Docs", description: null, harness: null, skills: [] },
-        ]}
-        workers={[
-          {
-            worker_agent_id: "w1",
-            executions: [
-              {
-                id: "e1",
-                task_item_id: "item-1",
-                event_id: "ev1",
-                event_title: "Run checks",
-                status: "running",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 1,
-                started_at: 1,
-                finished_at: null,
-              },
-            ],
-          },
-          {
-            worker_agent_id: "w2",
-            executions: [
-              {
-                id: "e2",
-                task_item_id: "item-2",
-                event_id: "ev2",
-                event_title: "Review diff",
-                status: "queued",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 2,
-                started_at: null,
-                finished_at: null,
-              },
-            ],
-          },
-          {
-            worker_agent_id: "w3",
-            executions: [
-              {
-                id: "e3",
-                task_item_id: "item-3",
-                event_id: "ev3",
-                event_title: "Update docs",
-                status: "succeeded",
-                result_summary: "Done",
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 3,
-                started_at: 3,
-                finished_at: 4,
-              },
-            ],
-          },
-        ]}
-        {...workListProps}
-      />,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <TaskCard taskId="task-empty" title="Empty task" description={null} state="paused" />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
-    expect(screen.getByTestId("task-card-work-scroll")).toBeInTheDocument();
-  });
-
-  it("scrolls task items within a worker when more than two are present", () => {
-    render(
-      <TaskCardWork
-        agents={[
-          { id: "w1", name: "task-worker", display_name: "Task Worker", description: null, harness: null, skills: [] },
-        ]}
-        workers={[
-          {
-            worker_agent_id: "w1",
-            executions: [
-              {
-                id: "e1",
-                task_item_id: "item-1",
-                event_id: "ev1",
-                event_title: "Investigate failure",
-                status: "running",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 1,
-                started_at: 1,
-                finished_at: null,
-              },
-              {
-                id: "e2",
-                task_item_id: "item-2",
-                event_id: "ev2",
-                event_title: "Rerun upload job",
-                status: "queued",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 2,
-                started_at: null,
-                finished_at: null,
-              },
-              {
-                id: "e3",
-                task_item_id: "item-3",
-                event_id: "ev3",
-                event_title: "Verify green checks",
-                status: "succeeded",
-                result_summary: "All checks passed",
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 3,
-                started_at: 3,
-                finished_at: 4,
-              },
-            ],
-          },
-        ]}
-        {...workListProps}
-      />,
-    );
-
-    expandWorkerGroup("w1");
-    expect(screen.getByTestId("worker-items-scroll-w1")).toBeInTheDocument();
-  });
-
-  it("folds worker groups to running tasks by default", () => {
-    render(
-      <TaskCardWork
-        agents={[
-          { id: "w1", name: "task-worker", display_name: "Task Worker", description: null, harness: null, skills: [] },
-        ]}
-        workers={[
-          {
-            worker_agent_id: "w1",
-            executions: [
-              {
-                id: "r1",
-                task_item_id: "item-r1",
-                event_id: "ev-r1",
-                event_title: "Running task",
-                status: "running",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 1,
-                started_at: 1,
-                finished_at: null,
-              },
-              {
-                id: "q1",
-                task_item_id: "item-q1",
-                event_id: "ev-q1",
-                event_title: "Queued task",
-                status: "queued",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 2,
-                started_at: null,
-                finished_at: null,
-              },
-            ],
-          },
-        ]}
-        {...workListProps}
-      />,
-    );
-
-    expect(workItemTitles("w1")).toEqual(["Running task"]);
-    expect(screen.getByText("+1")).toBeInTheDocument();
-
-    expandWorkerGroup("w1");
-    expect(workItemTitles("w1")).toEqual(["Running task", "Queued task"]);
-  });
-
-  it("renders worker task items in fifo receive order within each status bucket", () => {
-    render(
-      <TaskCardWork
-        agents={[
-          { id: "w1", name: "task-worker", display_name: "Task Worker", description: null, harness: null, skills: [] },
-        ]}
-        workers={[
-          {
-            worker_agent_id: "w1",
-            executions: [
-              {
-                id: "d2",
-                task_item_id: "item-d2",
-                event_id: "ev-d2",
-                event_title: "Done second",
-                status: "succeeded",
-                result_summary: "ok",
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 50,
-                started_at: 50,
-                finished_at: 55,
-              },
-              {
-                id: "q2",
-                task_item_id: "item-q2",
-                event_id: "ev-q2",
-                event_title: "Queue second",
-                status: "queued",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 40,
-                started_at: null,
-                finished_at: null,
-              },
-              {
-                id: "r2",
-                task_item_id: "item-r2",
-                event_id: "ev-r2",
-                event_title: "Running second",
-                status: "running",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 20,
-                started_at: 20,
-                finished_at: null,
-              },
-              {
-                id: "d1",
-                task_item_id: "item-d1",
-                event_id: "ev-d1",
-                event_title: "Done first",
-                status: "succeeded",
-                result_summary: "ok",
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 45,
-                started_at: 45,
-                finished_at: 48,
-              },
-              {
-                id: "q1",
-                task_item_id: "item-q1",
-                event_id: "ev-q1",
-                event_title: "Queue first",
-                status: "queued",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 35,
-                started_at: null,
-                finished_at: null,
-              },
-              {
-                id: "r1",
-                task_item_id: "item-r1",
-                event_id: "ev-r1",
-                event_title: "Running first",
-                status: "running",
-                result_summary: null,
-                error: null,
-                conversation_id: null,
-                attempt_no: 1,
-                assigned_at: 15,
-                started_at: 15,
-                finished_at: null,
-              },
-            ],
-          },
-        ]}
-        {...workListProps}
-      />,
-    );
-
-    expandWorkerGroup("w1");
-    expect(workItemTitles("w1")).toEqual([
-      "Running first",
-      "Running second",
-      "Queue first",
-      "Queue second",
-      "Done first",
-      "Done second",
-    ]);
+    expect(screen.getByTestId("task-card-body")).toHaveAttribute("data-sparse", "true");
+    expect(screen.getByText("No assets yet.")).toBeInTheDocument();
   });
 });

@@ -32,6 +32,7 @@ from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.entities.task import (
     FyiCluster,
     Task,
+    TaskAsset,
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
@@ -84,6 +85,7 @@ __all__ = [
     "SlashCommandData",
     "StoredFile",
     "Task",
+    "TaskAsset",
     "TaskEvent",
     "TaskEventExecution",
     "TaskEventRoutingAttempt",
