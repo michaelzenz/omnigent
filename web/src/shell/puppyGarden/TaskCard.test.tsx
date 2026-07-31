@@ -220,7 +220,7 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("worker-row-exec:exec-done")).toHaveAttribute("data-folded", "false");
   });
 
-  it("scrolls the worker lane list when there are many lanes", () => {
+  it("always scrolls the worker lane list", () => {
     const workers = Array.from({ length: 5 }, (_, index) => ({
       worker_agent_id: `worker-${index}`,
       state: "new" as const,
@@ -240,7 +240,7 @@ describe("TaskCard", () => {
     );
 
     expect(screen.getByTestId("task-card-workers").className).toContain("overflow-y-auto");
-    expect(screen.getByTestId("task-card-workers").className).toContain("max-h-80");
+    expect(screen.getByTestId("task-card-workers").className).toContain("flex-1");
   });
 
   it("collapses inbox lane when the header is toggled", () => {
@@ -315,6 +315,7 @@ describe("TaskCard", () => {
     );
 
     expect(screen.getByTestId("task-card-body")).toHaveAttribute("data-sparse", "true");
+    expect(screen.getByTestId("task-card-body").className).toContain("max-h-[480px]");
     expect(screen.getByText("No assets yet.")).toBeInTheDocument();
   });
 });

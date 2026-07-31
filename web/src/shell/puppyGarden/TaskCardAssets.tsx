@@ -1,10 +1,7 @@
 import { ExternalLinkIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TaskAssetSummary } from "@/lib/agentTasksApi";
-import {
-  laneItemsScrollClass,
-  LANE_ITEMS_SCROLL_THRESHOLD,
-} from "./taskCardUtils";
+import { TASK_CARD_ASSETS_WIDTH_CLASS, TASK_CARD_SCROLLABLE_LIST_CLASS } from "./taskCardUtils";
 
 interface TaskCardAssetsProps {
   assets: TaskAssetSummary[];
@@ -13,7 +10,10 @@ interface TaskCardAssetsProps {
 export function TaskCardAssets({ assets }: TaskCardAssetsProps) {
   return (
     <aside
-      className="flex min-h-full w-[260px] shrink-0 flex-col self-stretch border-l border-border bg-muted/20"
+      className={cn(
+        "flex min-h-full shrink-0 flex-col self-stretch overflow-hidden border-l border-border bg-muted/20",
+        TASK_CARD_ASSETS_WIDTH_CLASS,
+      )}
       data-testid="task-card-assets"
     >
       <div className="shrink-0 border-b border-border px-3 py-2">
@@ -30,11 +30,7 @@ export function TaskCardAssets({ assets }: TaskCardAssetsProps) {
         <p className="flex-1 p-3 text-xs text-muted-foreground">No assets yet.</p>
       ) : (
         <ul
-          className={cn(
-            "min-h-0 flex-1 space-y-1.5 p-2",
-            laneItemsScrollClass(assets.length),
-            assets.length > LANE_ITEMS_SCROLL_THRESHOLD && "overflow-y-auto",
-          )}
+          className={cn("min-h-0 flex-1 space-y-1.5 p-2", TASK_CARD_SCROLLABLE_LIST_CLASS)}
           data-testid="task-card-assets-list"
         >
           {assets.map((asset) => (

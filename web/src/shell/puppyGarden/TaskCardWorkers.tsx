@@ -6,10 +6,7 @@ import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { TaskCardWorkerRows } from "./TaskCardWorkerRows";
 import {
-  laneItemsScrollClass,
-  LANE_ITEMS_SCROLL_THRESHOLD,
-  workerLanesScrollClass,
-  WORKER_LANES_SCROLL_THRESHOLD,
+  TASK_CARD_INNER_SCROLL_CLASS,
 } from "./taskCardUtils";
 import {
   buildInboxLane,
@@ -90,26 +87,26 @@ export function TaskCardWorkers({
 
   if (lanes.length === 0) {
     return (
-      <section className="flex min-h-0 flex-1 flex-col px-3 py-2">
-        <h3 className="shrink-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Workers
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">No worker lanes yet.</p>
+      <section className="flex min-h-0 flex-1 flex-col self-stretch overflow-hidden">
+        <div className="shrink-0 border-b border-border px-3 py-2">
+          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            Workers
+          </h3>
+        </div>
+        <p className="flex-1 p-3 text-sm text-muted-foreground">No worker lanes yet.</p>
       </section>
     );
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col px-3 py-2">
-      <h3 className="mb-1 shrink-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-        Workers
-      </h3>
+    <section className="flex min-h-0 flex-1 flex-col self-stretch overflow-hidden">
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          Workers
+        </h3>
+      </div>
       <div
-        className={cn(
-          "min-h-0 space-y-1.5 pr-1",
-          workerLanesScrollClass(lanes.length),
-          lanes.length > WORKER_LANES_SCROLL_THRESHOLD && "overflow-y-auto",
-        )}
+        className={cn("flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-2")}
         data-testid="task-card-workers"
       >
         {lanes.map((lane) => {
@@ -123,7 +120,7 @@ export function TaskCardWorkers({
             <article
               key={lane.worker_agent_id}
               className={cn(
-                "overflow-hidden rounded-md border shadow-sm",
+                "shrink-0 overflow-hidden rounded-md border shadow-sm",
                 workerLaneStateClass(lane.state),
               )}
               data-testid={`worker-lane-${lane.worker_agent_id}`}
@@ -131,7 +128,7 @@ export function TaskCardWorkers({
             >
               <button
                 type="button"
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
+                className="flex w-full shrink-0 items-center gap-2 px-2 py-1.5 text-left"
                 onClick={() => toggleLane(lane.worker_agent_id)}
                 aria-expanded={expanded}
                 data-testid={`worker-lane-toggle-${lane.worker_agent_id}`}
@@ -156,8 +153,7 @@ export function TaskCardWorkers({
                 <div
                   className={cn(
                     "border-t border-border/60 px-2 pb-2 pt-1",
-                    laneItemsScrollClass(lane.rows.length),
-                    lane.rows.length > LANE_ITEMS_SCROLL_THRESHOLD && "overflow-y-auto",
+                    TASK_CARD_INNER_SCROLL_CLASS,
                   )}
                   data-testid={`worker-lane-rows-scroll-${lane.worker_agent_id}`}
                 >

@@ -4,7 +4,7 @@ import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
 import { TaskCardAssets } from "./TaskCardAssets";
 import { TaskCardWorkers } from "./TaskCardWorkers";
-import { taskCardBodyClass, isTaskCardSparse, taskLaneCount } from "./taskCardUtils";
+import { TASK_CARD_BODY_CLASS, isTaskCardSparse, taskCardBodyStyle } from "./taskCardUtils";
 import { cn } from "@/lib/utils";
 
 interface TaskCardProps {
@@ -67,14 +67,12 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
         </div>
       ) : dashboard ? (
         <div
-          className={cn(
-            "flex min-h-0 items-stretch overflow-hidden",
-            taskCardBodyClass(isTaskCardSparse(dashboard), taskLaneCount(dashboard)),
-          )}
+          className={cn("flex min-h-0 items-stretch overflow-hidden", TASK_CARD_BODY_CLASS)}
+          style={taskCardBodyStyle()}
           data-testid="task-card-body"
           data-sparse={isTaskCardSparse(dashboard) ? "true" : "false"}
         >
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col self-stretch overflow-hidden">
             <TaskCardWorkers
               taskId={taskId}
               inboxItems={dashboard.inbox_items}

@@ -2,26 +2,38 @@ import type { DispatchPayload, TaskExecutionSummary, TaskWorkerGroup } from "@/l
 
 export type WorkStateLabel = "To Run" | "Running" | "Done";
 
-/** Work section scrolls once a task has more than this many worker groups. */
-export const WORKER_GROUP_SCROLL_THRESHOLD = 2;
+/** Minimum task card body height in pixels. */
+export const TASK_CARD_BODY_MIN_PX = 320;
 
-/** Minimum body height for sparse cards (2× loading-state floor). */
+/** Maximum task card body height in pixels. */
+export const TASK_CARD_BODY_MAX_PX = 480;
+
 export const TASK_CARD_BODY_MIN_CLASS = "min-h-[320px]";
-
-/** Scroll the worker lane list once a task has more than this many lanes. */
-export const WORKER_LANES_SCROLL_THRESHOLD = 3;
-
-/** Max height for the scrollable worker lane list. */
-export const WORKER_LANES_SCROLL_MAX_CLASS = "max-h-80";
-
-/** Max height for busy task card bodies (many worker lanes). */
 export const TASK_CARD_BODY_MAX_CLASS = "max-h-[480px]";
+export const TASK_CARD_BODY_CLASS = `${TASK_CARD_BODY_MIN_CLASS} ${TASK_CARD_BODY_MAX_CLASS}`;
 
-export function taskLaneCount(dashboard: {
-  inbox_items: unknown[];
-  workers: unknown[];
-}): number {
-  return dashboard.workers.length + (dashboard.inbox_items.length > 0 ? 1 : 0);
+/** Outer lists (worker lanes, assets) fill the body column and scroll. */
+export const TASK_CARD_SCROLLABLE_LIST_CLASS = "min-h-0 flex-1 overflow-y-auto";
+
+/** Space above expanded lane rows (workers header, list padding, lane header). */
+export const TASK_CARD_WORKERS_CHROME = "6.5rem";
+
+/** Reserve space below an expanded lane so the next lane title stays visible. */
+export const TASK_CARD_NEXT_LANE_PEEK = "3.5rem";
+
+/** Expanded lane row lists fill the body and scroll when needed. */
+export const TASK_CARD_INNER_SCROLL_CLASS =
+  "min-h-0 max-h-[calc(var(--task-card-body-max)-var(--task-card-workers-chrome)-var(--task-card-next-lane-peek))] overflow-y-auto";
+
+/** Assets panel width — kept narrow so worker lanes have more horizontal room. */
+export const TASK_CARD_ASSETS_WIDTH_CLASS = "w-[220px]";
+
+export function taskCardBodyStyle(): Record<string, string> {
+  return {
+    "--task-card-body-max": `${TASK_CARD_BODY_MAX_PX}px`,
+    "--task-card-workers-chrome": TASK_CARD_WORKERS_CHROME,
+    "--task-card-next-lane-peek": TASK_CARD_NEXT_LANE_PEEK,
+  };
 }
 
 export function isTaskCardSparse(dashboard: {
@@ -36,28 +48,8 @@ export function isTaskCardSparse(dashboard: {
   );
 }
 
-export function taskCardBodyClass(
-  sparse: boolean,
-  laneCount: number,
-): string {
-  if (sparse) return TASK_CARD_BODY_MIN_CLASS;
-  if (laneCount > WORKER_LANES_SCROLL_THRESHOLD) return TASK_CARD_BODY_MAX_CLASS;
-  return "";
-}
-
-export function workerLanesScrollClass(laneCount: number): string {
-  return laneCount > WORKER_LANES_SCROLL_THRESHOLD ? WORKER_LANES_SCROLL_MAX_CLASS : "";
-}
-
-/** Apply scroll cap only when a lane has more than this many rows. */
-export const LANE_ITEMS_SCROLL_THRESHOLD = 2;
-
-/** Max height for scrollable expanded worker row lists (busy lanes only). */
-export const LANE_ITEMS_SCROLL_MAX_CLASS = "max-h-112";
-
-export function laneItemsScrollClass(rowCount: number): string {
-  return rowCount > LANE_ITEMS_SCROLL_THRESHOLD ? LANE_ITEMS_SCROLL_MAX_CLASS : "";
-}
+/** Work section scrolls once a task has more than this many worker groups. */
+export const WORKER_GROUP_SCROLL_THRESHOLD = 2;
 
 /** Each worker's task-item list scrolls after this many items (legacy TaskCardWork). */
 export const WORK_ITEM_SCROLL_THRESHOLD = 2;

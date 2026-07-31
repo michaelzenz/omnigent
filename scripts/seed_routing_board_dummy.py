@@ -360,6 +360,12 @@ def _demo_worker_id(index: int) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, f"seed-twenty-workers-{index:02d}").hex
 
 
+# Worker 01 → cb7784…; used for inner-scroll / lane row load tests.
+_HEAVY_WORKER_INDEX = 1
+_HEAVY_WORKER_ITEM_COUNT = 10
+_LOAD_TEST_ASSET_COUNT = 40
+
+
 def _seed_twenty_worker_task(*, manager_agent_id: str) -> str:
     """Create one active task with twenty distinct worker lanes."""
     print("Seeding 20-worker load test task…")
@@ -372,18 +378,29 @@ def _seed_twenty_worker_task(*, manager_agent_id: str) -> str:
     for index in range(1, 21):
         worker_id = _demo_worker_id(index)
         dispatch = {**BOOTSTRAP, "worker_agent_id": worker_id}
-        if index == 1:
+        if index == _HEAVY_WORKER_INDEX:
             running = _request(
                 "POST",
                 f"/v1/agent-tasks/{task_id}/items",
                 body={
-                    "title": f"Worker {index:02d} running job",
+                    "title": f"Worker {index:02d} item 01 (running)",
                     "instructions": "Active lane for accordion default expansion.",
                     "state": "approved",
                     **dispatch,
                 },
             )
             _dispatch_item_with(dispatch, running["id"])
+            for item_index in range(2, _HEAVY_WORKER_ITEM_COUNT + 1):
+                _request(
+                    "POST",
+                    f"/v1/agent-tasks/{task_id}/items",
+                    body={
+                        "title": f"Worker {index:02d} item {item_index:02d}",
+                        "instructions": f"Queued backlog item {item_index} for worker {index:02d}.",
+                        "state": "queued",
+                        **dispatch,
+                    },
+                )
             continue
         _request(
             "POST",
@@ -395,16 +412,28 @@ def _seed_twenty_worker_task(*, manager_agent_id: str) -> str:
                 **dispatch,
             },
         )
-    _create_task_asset(
-        task_id,
-        "Load test tracker",
-        "https://github.com/databricks/omnigent-fork/issues/1",
-    )
+    for asset_index in range(1, _LOAD_TEST_ASSET_COUNT + 1):
+        _create_task_asset(
+            task_id,
+            f"Load test link {asset_index:02d}",
+            f"https://example.com/load-test/{asset_index:02d}",
+            sort_order=asset_index - 1,
+        )
     dash = _request("GET", f"/v1/agent-tasks/{task_id}/dashboard")
     workers = len(dash.get("workers", []))
-    print(f"  20-worker load test: {workers} workers")
+    assets = len(dash.get("assets", []))
+    heavy_lane = next(
+        (lane for lane in dash.get("workers", []) if lane.get("worker_agent_id", "").startswith("cb7784")),
+        None,
+    )
+    heavy_rows = len(heavy_lane.get("rows", [])) if heavy_lane else 0
+    print(f"  20-worker load test: {workers} workers, {assets} assets, heavy lane rows={heavy_rows}")
     if workers != 20:
         raise RuntimeError(f"Expected 20 worker lanes, got {workers}")
+    if assets != _LOAD_TEST_ASSET_COUNT:
+        raise RuntimeError(f"Expected {_LOAD_TEST_ASSET_COUNT} assets, got {assets}")
+    if heavy_rows != _HEAVY_WORKER_ITEM_COUNT:
+        raise RuntimeError(f"Expected {_HEAVY_WORKER_ITEM_COUNT} items on heavy worker, got {heavy_rows}")
     return task_id
 
 

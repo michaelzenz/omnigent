@@ -6,9 +6,13 @@ import {
   isExecutionEditable,
   proposalHasEdits,
   sortExecutions,
+  taskCardBodyStyle,
+  TASK_CARD_BODY_MAX_PX,
+  TASK_CARD_INNER_SCROLL_CLASS,
+  TASK_CARD_NEXT_LANE_PEEK,
+  TASK_CARD_SCROLLABLE_LIST_CLASS,
+  TASK_CARD_WORKERS_CHROME,
   workStateLabel,
-  workerLanesScrollClass,
-  WORKER_LANES_SCROLL_THRESHOLD,
 } from "./taskCardUtils";
 
 describe("taskCardUtils", () => {
@@ -273,8 +277,14 @@ describe("taskCardUtils", () => {
     ).toBe(true);
   });
 
-  it("scrolls worker lanes once there are more than the threshold", () => {
-    expect(workerLanesScrollClass(WORKER_LANES_SCROLL_THRESHOLD)).toBe("");
-    expect(workerLanesScrollClass(WORKER_LANES_SCROLL_THRESHOLD + 1)).toBe("max-h-80");
+  it("exposes body max height for task card layout", () => {
+    expect(taskCardBodyStyle()).toEqual({
+      "--task-card-body-max": `${TASK_CARD_BODY_MAX_PX}px`,
+      "--task-card-workers-chrome": TASK_CARD_WORKERS_CHROME,
+      "--task-card-next-lane-peek": TASK_CARD_NEXT_LANE_PEEK,
+    });
+    expect(TASK_CARD_SCROLLABLE_LIST_CLASS).toContain("overflow-y-auto");
+    expect(TASK_CARD_INNER_SCROLL_CLASS).toContain("overflow-y-auto");
+    expect(TASK_CARD_INNER_SCROLL_CLASS).toContain("var(--task-card-body-max)");
   });
 });
