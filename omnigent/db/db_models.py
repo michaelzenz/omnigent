@@ -1489,9 +1489,7 @@ class SqlTaskTag(OmnigentBase):
     tag_type: Mapped[str] = mapped_column(String(64), primary_key=True)
     tag: Mapped[str] = mapped_column(String(128), primary_key=True)
 
-    __table_args__ = (
-        Index("ix_task_tags_reverse", "workspace_id", "tag_type", "tag", "task_id"),
-    )
+    __table_args__ = (Index("ix_task_tags_reverse", "workspace_id", "tag_type", "tag", "task_id"),)
 
 
 class SqlTaskEvent(OmnigentBase):
@@ -1565,7 +1563,7 @@ class SqlTaskItem(OmnigentBase):
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7)", name="ck_task_items_state"),
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_task_items_state"),
         Index("ix_task_items_task_state", "workspace_id", "task_id", "state", "id"),
         Index("ix_task_items_worker", "workspace_id", "worker_id", "id"),
     )
@@ -1862,3 +1860,94 @@ class SqlTaskEventExecution(OmnigentBase):
         ),
     )
 
+
+# A queue is identified by (role, owner_user_id, scope_id), and all three are
+# key columns, so none may be NULL — SQL uniqueness does not constrain NULLs and
+# a NULL cannot sit in a primary key. Both nullable-in-spirit parts therefore
+# store an empty string for "not scoped" / "no owner", and the store translates
+# to and from ``None`` at the entity boundary. ``scope_id`` is VARCHAR(32) hex
+# rather than Uuid16 for the same reason: the sentinel needs a representable
+# empty value.
+class SqlAgentQueue(OmnigentBase):
+    """SQLAlchemy model for the ``agent_queues`` control table."""
+
+    __tablename__ = "agent_queues"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    scope_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_due_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inflight_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    inflight_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3)", name="ck_agent_queues_state"),
+        Index(
+            "ix_agent_queues_due",
+            "workspace_id",
+            "state",
+            "next_due_at",
+            "lease_expires_at",
+        ),
+    )
+
+
+class SqlAgentQueueItem(OmnigentBase):
+    """SQLAlchemy model for the ``agent_queue_items`` table."""
+
+    __tablename__ = "agent_queue_items"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    role: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_ids: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
+    payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
+    # Arrival order. created_at is second-granularity, so it cannot break ties
+    # between items enqueued in the same second — and a uuid tiebreak would
+    # reorder them arbitrarily. Assigned monotonically per workspace.
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    not_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dispatched_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4, 5)", name="ck_agent_queue_items_state"),
+        Index(
+            "ix_agent_queue_items_drain",
+            "workspace_id",
+            "role",
+            "owner_user_id",
+            "scope_id",
+            "state",
+            "priority",
+            "seq",
+        ),
+    )

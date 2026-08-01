@@ -2,6 +2,13 @@
 
 from omnigent.entities.account import Account, AccountToken
 from omnigent.entities.agent import Agent, LoadedAgent
+from omnigent.entities.agent_queue import (
+    AGENT_QUEUE_ITEM_KINDS,
+    AGENT_QUEUE_ROLES,
+    AgentQueue,
+    AgentQueueItem,
+    AgentQueueKey,
+)
 from omnigent.entities.comment import Comment, CommentsFingerprint
 from omnigent.entities.conversation import (
     NON_CONTENT_ITEM_TYPES,
@@ -28,21 +35,6 @@ from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
-from omnigent.entities.task import (
-    FyiCluster,
-    Task,
-    TaskAsset,
-    TaskEvent,
-    TaskEventExecution,
-    TaskEventRoutingAttempt,
-    EventTag,
-    TaskItem,
-    TaskItemEvent,
-    TaskTag,
-    Worker,
-)
-from omnigent.entities.timer import TimerItem
 from omnigent.entities.session_resources import (
     DEFAULT_ENVIRONMENT_ID,
     SessionResourceView,
@@ -50,19 +42,40 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
+from omnigent.entities.task import (
+    EventTag,
+    FyiCluster,
+    Task,
+    TaskAsset,
+    TaskEvent,
+    TaskEventExecution,
+    TaskEventRoutingAttempt,
+    TaskItem,
+    TaskItemEvent,
+    TaskTag,
+    Worker,
+)
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.timer import TimerItem
 
 __all__ = [
+    "AGENT_QUEUE_ITEM_KINDS",
+    "AGENT_QUEUE_ROLES",
     "DEFAULT_ENVIRONMENT_ID",
     "NON_CONTENT_ITEM_TYPES",
     "Account",
     "AccountToken",
     "Agent",
+    "AgentQueue",
+    "AgentQueueItem",
+    "AgentQueueKey",
     "Comment",
     "CommentsFingerprint",
     "CompactionData",
     "Conversation",
     "ConversationItem",
     "ErrorData",
+    "EventTag",
     "FunctionCallData",
     "FunctionCallOutputData",
     "FyiCluster",
@@ -88,14 +101,13 @@ __all__ = [
     "TaskEvent",
     "TaskEventExecution",
     "TaskEventRoutingAttempt",
-    "EventTag",
     "TaskItem",
     "TaskItemEvent",
     "TaskTag",
-    "Worker",
+    "TerminalCommandData",
     "TimerItem",
     "UserTaskRoleProfile",
-    "TerminalCommandData",
+    "Worker",
     "filter_resources_by_type",
     "get_resource_by_id",
     "parse_item_data",

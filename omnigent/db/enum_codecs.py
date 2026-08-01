@@ -6,7 +6,8 @@ Several low-cardinality closed-set columns (``conversations.kind``,
 ``hosts.status``, ``agents.kind``, ``scheduled_tasks.state``,
 ``scheduled_tasks.execution_target``,
 ``scheduled_task_runs.status``, ``tasks.state``,
-``task_events.state``, ``task_event_executions.status``) are stored as
+``task_events.state``, ``task_event_executions.status``,
+``agent_queues.state``, ``agent_queue_items.state``) are stored as
 integer codes rather
 than their string names — smaller rows and a tighter ``CHECK`` than a
 free ``VARCHAR``. The string names remain the
@@ -140,6 +141,28 @@ TASK_ITEM_STATE: dict[str, int] = {
     "running": 5,
     "done": 6,
     "cancelled": 7,
+    # The dispatcher could not hand this item to an agent at all (no runner, the
+    # conversation could not be created, injection refused). Distinct from a
+    # worker that ran and failed, which returns to "queued" with an execution row
+    # carrying the reason.
+    "dispatch_failed": 8,
+}
+
+AGENT_QUEUE_ITEM_STATE: dict[str, int] = {
+    "queued": 1,
+    "dispatched": 2,
+    "done": 3,
+    "cancelled": 4,
+    "dispatch_failed": 5,
+}
+
+AGENT_QUEUE_STATE: dict[str, int] = {
+    "active": 1,
+    # Stopped by a user, who is the only one that may resume it.
+    "paused": 2,
+    # Stopped by a failed dispatch. Also user-resumable only, but surfaced
+    # separately because it means something broke rather than someone chose.
+    "halted": 3,
 }
 
 TIMER_ITEM_STATE: dict[str, int] = {
@@ -406,6 +429,26 @@ def encode_fyi_cluster_state(name: str) -> int:
 def decode_fyi_cluster_state(code: int) -> str:
     """Decode a ``fyi_clusters.state`` int code to its name."""
     return _decode(FYI_CLUSTER_STATE, code, field="fyi_clusters.state")
+
+
+def encode_agent_queue_item_state(name: str) -> int:
+    """Encode an ``agent_queue_items.state`` name to its int code."""
+    return _encode(AGENT_QUEUE_ITEM_STATE, name, field="agent_queue_items.state")
+
+
+def decode_agent_queue_item_state(code: int) -> str:
+    """Decode an ``agent_queue_items.state`` int code to its name."""
+    return _decode(AGENT_QUEUE_ITEM_STATE, code, field="agent_queue_items.state")
+
+
+def encode_agent_queue_state(name: str) -> int:
+    """Encode an ``agent_queues.state`` name to its int code."""
+    return _encode(AGENT_QUEUE_STATE, name, field="agent_queues.state")
+
+
+def decode_agent_queue_state(code: int) -> str:
+    """Decode an ``agent_queues.state`` int code to its name."""
+    return _decode(AGENT_QUEUE_STATE, code, field="agent_queues.state")
 
 
 def encode_timer_item_state(name: str) -> int:

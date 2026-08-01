@@ -158,7 +158,16 @@ def test_shipped_codes_are_stable() -> None:
         "running": 5,
         "done": 6,
         "cancelled": 7,
+        "dispatch_failed": 8,
     }
+    assert ec.AGENT_QUEUE_ITEM_STATE == {
+        "queued": 1,
+        "dispatched": 2,
+        "done": 3,
+        "cancelled": 4,
+        "dispatch_failed": 5,
+    }
+    assert ec.AGENT_QUEUE_STATE == {"active": 1, "paused": 2, "halted": 3}
     assert ec.TASK_EVENT_EXECUTION_STATUS == {
         "queued": 1,
         "running": 2,
