@@ -19,7 +19,6 @@ CLEAR_TABLES = [
     "task_event_executions",
     "task_event_routing_resolutions",
     "task_event_routing_attempts",
-    "task_event_tags",
     "task_events",
     "task_session_bindings",
     "task_tags",

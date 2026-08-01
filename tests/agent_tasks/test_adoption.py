@@ -14,12 +14,14 @@ from omnigent.agent_tasks.adoption import (
     propose_session_adoption,
     reject_session_adoption,
 )
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.session_labels import (
     ADOPTION_DISMISSED_LABEL,
-    ROUTING_SEARCH_TEXT_LABEL,
+    ROUTING_REPO_LABEL,
 )
 from omnigent.db.utils import generate_agent_id
+from omnigent.entities import TaskTag
 from omnigent.errors import OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -41,7 +43,11 @@ def stores(db_uri: str) -> tuple[
 ]:
     agent_store = SqlAlchemyAgentStore(db_uri)
     manager_agent_id = generate_agent_id()
-    agent_store.create(manager_agent_id, name="task-manager", bundle_location="test:///bundle")
+    agent_store.create(
+        manager_agent_id,
+        name=TASK_MANAGER_AGENT_NAME,
+        bundle_location="test:///bundle",
+    )
     return (
         SqlAlchemyConversationStore(db_uri),
         SqlAlchemyTaskStore(db_uri),
@@ -64,7 +70,7 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
     conv = conversation_store.create_conversation(title="Orphan", agent_id=manager_agent_id)
     assert is_orphan_candidate(conv, task_event_store=task_event_store) is True
 
-    task = task_store.create(_uid("task-bound"), manager_agent_id, title="Bound task")
+    task = task_store.create(_uid("task-bound"), "Bound task", agent_profile_id=manager_agent_id)
     task_event_store.upsert_binding(conv.id, task.id, manager_agent_id, "ambient")
     assert is_orphan_candidate(conv, task_event_store=task_event_store) is False
 
@@ -74,7 +80,7 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
     assert is_orphan_candidate(dismissed, task_event_store=task_event_store) is False
 
 
-def test_propose_session_adoption_requires_routing_text(
+def test_propose_session_adoption_requires_routing_tags(
     stores: tuple[
         SqlAlchemyConversationStore,
         SqlAlchemyTaskStore,
@@ -84,13 +90,14 @@ def test_propose_session_adoption_requires_routing_text(
     ],
 ) -> None:
     conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
-    conv = conversation_store.create_conversation(title="Needs text", agent_id=manager_agent_id)
+    conv = conversation_store.create_conversation(title="Needs tags", agent_id=manager_agent_id)
     with pytest.raises(OmnigentError):
         propose_session_adoption(
             session_id=conv.id,
             task_store=task_store,
             task_event_store=task_event_store,
             conversation_store=conversation_store,
+            agent_store=agent_store,
         )
 
 
@@ -105,16 +112,20 @@ async def test_propose_and_adopt_session(
 ) -> None:
     conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
     conv = conversation_store.create_conversation(title="Upload retries", agent_id=manager_agent_id)
-    conversation_store.set_labels(
-        conv.id,
-        {ROUTING_SEARCH_TEXT_LABEL: "upload retries flaky CI"},
+    conversation_store.set_labels(conv.id, {ROUTING_REPO_LABEL: "omnigent-fork"})
+    task_id = _uid("task-upload")
+    task = task_store.create(
+        task_id,
+        "Upload retries",
+        agent_profile_id=manager_agent_id,
+        tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
-    task = task_store.create(_uid("task-upload"), manager_agent_id, title="Upload retries")
     proposal = propose_session_adoption(
         session_id=conv.id,
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
     )
     assert proposal.event_type == SESSION_ADOPTION_PROPOSAL
     assert proposal.state == "awaiting_user_ack"
@@ -158,12 +169,13 @@ def test_reject_session_adoption_sets_dismiss_label(
 ) -> None:
     conversation_store, task_store, task_event_store, agent_store, manager_agent_id = stores
     conv = conversation_store.create_conversation(title="Stay orphan", agent_id=manager_agent_id)
-    conversation_store.set_labels(conv.id, {ROUTING_SEARCH_TEXT_LABEL: "misc work"})
+    conversation_store.set_labels(conv.id, {ROUTING_REPO_LABEL: "misc-repo"})
     proposal = propose_session_adoption(
         session_id=conv.id,
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
+        agent_store=agent_store,
     )
     dismissed = reject_session_adoption(
         session_id=conv.id,

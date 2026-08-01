@@ -17,6 +17,7 @@ from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
 from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
+from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt, TaskEventTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -127,7 +128,7 @@ def _event_to_response(event: TaskEvent) -> dict[str, Any]:
         "source_key": event.source_key,
         "source_offset": event.source_offset,
         "source_session_id": event.source_session_id,
-        "search_text": event.search_text,
+        "tags": tags_to_payload(event.tags or []),
         "summary": event.summary,
         "state": event.state,
         "priority": event.priority,
@@ -318,13 +319,8 @@ def create_task_events_router(
         """Return one task event with routing attempts."""
         event = await _get_event_or_404(event_id)
         attempts = await asyncio.to_thread(task_event_store.list_routing_attempts, event_id)
-        tags = await asyncio.to_thread(task_event_store.get_event_tags, event_id)
         payload = _event_to_response(event)
         payload["routing_attempts"] = [_attempt_to_response(attempt) for attempt in attempts]
-        payload["tags"] = [
-            {"tag_type": tag.tag_type, "tag": tag.tag}
-            for tag in tags
-        ]
         return payload
 
     @router.post("/task-events/{event_id}/complete")

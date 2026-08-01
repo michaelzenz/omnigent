@@ -26,8 +26,8 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
     task_id = _uid("task_inbox")
     task_store.create(
         task_id,
-        manager_id,
-        title="Demo task",
+        "Demo task",
+        agent_profile_id=manager_id,
         state="active",
         manager_conversation_id=_uid("mgr_conv"),
     )
@@ -64,8 +64,8 @@ def test_dashboard_includes_task_assets(db_uri: str) -> None:
     task_id = _uid("task_assets")
     task_store.create(
         task_id,
-        manager_id,
-        title="Asset task",
+        "Asset task",
+        agent_profile_id=manager_id,
         state="active",
         manager_conversation_id=_uid("mgr_conv_assets"),
     )
@@ -95,8 +95,8 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     task_id = _uid("task_lane")
     task_store.create(
         task_id,
-        manager_id,
-        title="Lane task",
+        "Lane task",
+        agent_profile_id=manager_id,
         state="active",
         manager_conversation_id=_uid("mgr_conv2"),
     )
@@ -131,6 +131,7 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     start_execution_for_item(
         task=task,
         item=running_item,
+        manager_agent_id=manager_id,
         worker_agent_id=worker_id,
         task_event_store=event_store,
         conversation_id=_uid("worker_conv"),
@@ -139,6 +140,7 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     done_execution = start_execution_for_item(
         task=task,
         item=done_item,
+        manager_agent_id=manager_id,
         worker_agent_id=worker_id,
         task_event_store=event_store,
         conversation_id=_uid("worker_conv_done"),

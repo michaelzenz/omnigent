@@ -7,6 +7,7 @@ import uuid
 import httpx
 import pytest_asyncio
 
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.agent_tasks.secretary_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
@@ -22,17 +23,24 @@ def _uid(seed: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(db_uri: str) -> str:
-    """Register a manager agent for task CRUD tests."""
+async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    """Return the seeded task-manager built-in agent id."""
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
+
+
+@pytest_asyncio.fixture()
+async def secretary_agent_id(db_uri: str) -> str:
+    """Register a secretary agent for profile tests."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent", bundle_location="test:///bundle")
+    agent_store.create(agent_id, name="secretary-agent", bundle_location="test:///bundle")
     return agent_id
 
 
-def _create_payload(manager_agent_id: str, **overrides: object) -> dict:
+def _create_payload(agent_profile_id: str, **overrides: object) -> dict:
     base: dict = {
-        "manager_agent_id": manager_agent_id,
+        "agent_profile_id": agent_profile_id,
         "title": "S3 upload reliability",
         "internal_note": "retry flaky uploads",
         "tags": [{"tag_type": "domain", "tag": "s3"}],
@@ -43,14 +51,17 @@ def _create_payload(manager_agent_id: str, **overrides: object) -> dict:
 
 async def test_create_and_get_task(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
 ) -> None:
     """Creating a task returns the task snapshot; GET includes tags."""
-    create_resp = await client.post("/v1/agent-tasks", json=_create_payload(manager_agent_id))
+    create_resp = await client.post(
+        "/v1/agent-tasks",
+        json=_create_payload(task_manager_agent_id),
+    )
     assert create_resp.status_code == 200
     created = create_resp.json()
     assert created["object"] == "agent.task"
-    assert created["manager_agent_id"] == manager_agent_id
+    assert created["agent_profile_id"] == task_manager_agent_id
     assert created["state"] == "active"
     assert created["tags"] == [{"tag_type": "domain", "tag": "s3"}]
 
@@ -62,12 +73,12 @@ async def test_create_and_get_task(
     assert loaded["tags"] == created["tags"]
 
 
-async def test_create_rejects_missing_manager_agent(client: httpx.AsyncClient) -> None:
-    """Unknown manager_agent_id returns 404."""
+async def test_create_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
+    """Unknown agent_profile_id returns 404."""
     resp = await client.post(
         "/v1/agent-tasks",
         json={
-            "manager_agent_id": _uid("missing_mgr"),
+            "agent_profile_id": _uid("missing_profile"),
             "title": "Orphan task",
         },
     )
@@ -76,16 +87,16 @@ async def test_create_rejects_missing_manager_agent(client: httpx.AsyncClient) -
 
 async def test_list_tasks_filters_by_state(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
 ) -> None:
     """List endpoint filters by state query param."""
     active = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(manager_agent_id, title="Active task"),
+        json=_create_payload(task_manager_agent_id, title="Active task"),
     )
     archived = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(manager_agent_id, title="Archived task"),
+        json=_create_payload(task_manager_agent_id, title="Archived task"),
     )
     await client.delete(f"/v1/agent-tasks/{archived.json()['id']}")
 
@@ -96,27 +107,13 @@ async def test_list_tasks_filters_by_state(
     assert archived.json()["id"] not in ids
 
 
-async def test_search_tasks(
-    client: httpx.AsyncClient,
-    manager_agent_id: str,
-) -> None:
-    """Text search finds tasks by internal_note/title."""
-    await client.post(
-        "/v1/agent-tasks",
-        json=_create_payload(manager_agent_id, internal_note="unique-flaky-upload-token"),
-    )
-    resp = await client.get("/v1/agent-tasks?q=unique-flaky-upload-token")
-    assert resp.status_code == 200
-    assert len(resp.json()["data"]) == 1
-
-
 async def test_patch_task(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
 ) -> None:
     """PATCH updates mutable fields."""
     created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(manager_agent_id))
+        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
     ).json()
     patch_resp = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
@@ -130,11 +127,11 @@ async def test_patch_task(
 
 async def test_put_tags_replaces_all(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
 ) -> None:
     """PUT /tags replaces the full tag set."""
     created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(manager_agent_id))
+        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
     ).json()
     put_resp = await client.put(
         f"/v1/agent-tasks/{created['id']}/tags",
@@ -155,16 +152,17 @@ async def test_put_tags_replaces_all(
 
 async def test_list_executions(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     db_uri: str,
 ) -> None:
     """Execution history is exposed for a task."""
     created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(manager_agent_id))
+        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
     ).json()
     task_id = created["id"]
     event_store = SqlAlchemyTaskEventStore(db_uri)
     item_store = SqlAlchemyTaskItemStore(db_uri)
+    manager_agent_id = _uid("mgr_exec")
     event_id = _uid("event_exec")
     task_item_id = _uid("item_exec")
     event_store.create_event(
@@ -203,11 +201,11 @@ async def test_list_executions(
 
 async def test_delete_archives_task(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
 ) -> None:
     """DELETE soft-archives the task."""
     created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(manager_agent_id))
+        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
     ).json()
     delete_resp = await client.delete(f"/v1/agent-tasks/{created['id']}")
     assert delete_resp.status_code == 200
@@ -221,13 +219,14 @@ async def test_delete_archives_task(
 
 async def test_secretary_profile_and_bootstrap(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
+    secretary_agent_id: str,
 ) -> None:
     """Secretary profile defaults feed manager bootstrap."""
     profile_resp = await client.put(
         "/v1/agent-tasks/secretary/profile",
         json={
-            "agent_id": manager_agent_id,
+            "agent_id": secretary_agent_id,
             "host_id": _uid("secretary_host"),
             "workspace": "/tmp/secretary",
             "harness": "cursor",
@@ -239,7 +238,7 @@ async def test_secretary_profile_and_bootstrap(
 
     created = await client.post(
         "/v1/agent-tasks",
-        json={"manager_agent_id": manager_agent_id, "title": "Bootstrap me"},
+        json={"agent_profile_id": task_manager_agent_id, "title": "Bootstrap me"},
     )
     task_id = created.json()["id"]
     bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
@@ -247,11 +246,11 @@ async def test_secretary_profile_and_bootstrap(
     assert bootstrap_resp.json()["manager_conversation_id"] is not None
 
 
-async def _put_secretary_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
+async def _put_secretary_profile(client: httpx.AsyncClient, secretary_agent_id: str) -> None:
     profile_resp = await client.put(
         "/v1/agent-tasks/secretary/profile",
         json={
-            "agent_id": manager_agent_id,
+            "agent_id": secretary_agent_id,
             "host_id": _uid("secretary_host"),
             "workspace": "/tmp/secretary",
             "harness": "cursor",
@@ -263,9 +262,9 @@ async def _put_secretary_profile(client: httpx.AsyncClient, manager_agent_id: st
 
 async def test_ensure_secretary_session_seeds_prompt(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    secretary_agent_id: str,
 ) -> None:
-    await _put_secretary_profile(client, manager_agent_id)
+    await _put_secretary_profile(client, secretary_agent_id)
 
     ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
     assert ensure_resp.status_code == 200
@@ -294,9 +293,9 @@ async def test_ensure_secretary_session_seeds_prompt(
 
 async def test_reset_secretary_session_reseeds_prompt(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    secretary_agent_id: str,
 ) -> None:
-    await _put_secretary_profile(client, manager_agent_id)
+    await _put_secretary_profile(client, secretary_agent_id)
     first = await client.post("/v1/agent-tasks/secretary/session")
     first_id = first.json()["conversation_id"]
 

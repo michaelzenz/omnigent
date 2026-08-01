@@ -7,6 +7,7 @@ import uuid
 import httpx
 import pytest_asyncio
 
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 
@@ -16,11 +17,9 @@ def _uid(seed: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(db_uri: str) -> str:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent", bundle_location="test:///bundle")
-    return agent_id
+async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
 async def _secretary_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
@@ -44,9 +43,9 @@ async def test_ingress_auto_routes_matching_task(
     created = await client.post(
         "/v1/agent-tasks",
         json={
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "title": "Upload retries",
-            "internal_note": "flaky upload retries repo:omnigent-fork",
+            "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
     task_id = created.json()["id"]
@@ -77,7 +76,7 @@ async def test_ingress_fast_paths_explicit_task_id(
     created = await client.post(
         "/v1/agent-tasks",
         json={
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "title": "Land PR #123",
             "internal_note": "land pr 123 after blocker merges",
         },
@@ -154,9 +153,9 @@ async def test_complete_requires_routed_state(
     await client.post(
         "/v1/agent-tasks",
         json={
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "title": "Upload retries",
-            "internal_note": "flaky upload retries repo:omnigent-fork",
+            "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
     ingress = await client.post(

@@ -1,77 +1,61 @@
-"""Keyword confidence scoring for task-event routing."""
+"""Tag-overlap confidence scoring for task-event routing."""
 
 from __future__ import annotations
-
-import re
 
 from omnigent.agent_tasks.constants import (
     AUTO_ROUTE_MAX_CANDIDATES,
     AUTO_ROUTE_MIN_CONFIDENCE,
     AUTO_ROUTE_MIN_MARGIN,
 )
-from omnigent.entities import Task
-
-_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[:][a-z0-9_-]+)?", re.IGNORECASE)
-_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "for",
-        "in",
-        "of",
-        "on",
-        "or",
-        "the",
-        "to",
-        "with",
-    }
-)
+from omnigent.entities import Task, TaskEventTag, TaskTag
+from omnigent.stores.agent_task.tags import tag_pair, task_tag_pairs
+from omnigent.stores.task_store import TaskStore
 
 
-def tokenize_search_text(text: str) -> list[str]:
-    """Split searchable text into lowercase routing tokens."""
-    tokens: list[str] = []
-    for raw in text.split("\n"):
-        for match in _TOKEN_RE.finditer(raw.lower()):
-            token = match.group(0)
-            if token in _STOPWORDS or len(token) < 2:
-                continue
-            tokens.append(token)
-    return tokens
-
-
-def score_task_for_event(*, event_tokens: list[str], task: Task) -> float:
-    """
-    Score how well a task matches event tokens.
-
-    Returns the fraction of distinct event tokens found in the task search text.
-    Tag-shaped tokens (``type:value``) count double when matched.
-    """
-    if not event_tokens:
-        return 0.0
-    haystack = task.search_text.lower()
-    weight = 0.0
-    total_weight = 0.0
-    for token in event_tokens:
-        token_weight = 2.0 if ":" in token else 1.0
-        total_weight += token_weight
-        if token in haystack:
-            weight += token_weight
-    if total_weight <= 0:
-        return 0.0
-    return weight / total_weight
-
-
-def rank_tasks_for_event(
+def score_task_for_event_tags(
     *,
-    event_search_text: str,
+    event_tags: list[TaskEventTag],
+    task_tags: list[TaskTag],
+) -> float:
+    """Return the fraction of event tags matched on the task."""
+    if not event_tags:
+        return 0.0
+    event_pairs = {tag_pair(tag.tag_type, tag.tag) for tag in event_tags}
+    overlap = len(event_pairs & task_tag_pairs(task_tags))
+    return overlap / len(event_pairs)
+
+
+def candidate_task_ids_for_event_tags(
+    event_tags: list[TaskEventTag],
+    *,
+    task_store: TaskStore,
+) -> set[str]:
+    """Return task ids that share at least one tag with the event."""
+    candidate_ids: set[str] = set()
+    for tag in event_tags:
+        candidate_ids.update(
+            task_store.list_task_ids_by_tag(tag.tag_type, tag.tag),
+        )
+    return candidate_ids
+
+
+def rank_tasks_for_event_tags(
+    *,
+    event_tags: list[TaskEventTag],
     tasks: list[Task],
+    task_store: TaskStore,
     limit: int = AUTO_ROUTE_MAX_CANDIDATES,
 ) -> list[tuple[Task, float]]:
-    """Return tasks sorted by descending confidence score."""
-    event_tokens = tokenize_search_text(event_search_text)
-    scored = [(task, score_task_for_event(event_tokens=event_tokens, task=task)) for task in tasks]
+    """Return tasks sorted by descending tag-overlap score."""
+    if not event_tags:
+        return []
+    scored: list[tuple[Task, float]] = []
+    for task in tasks:
+        task_tags = task_store.get_tags(task.id)
+        score = score_task_for_event_tags(event_tags=event_tags, task_tags=task_tags)
+        if score <= 0:
+            continue
+        scored.append((task, score))
     scored.sort(key=lambda row: (-row[1], row[0].id))
     return scored[:limit]
 
@@ -94,4 +78,3 @@ def pick_auto_route(
     if top_score - second_score < min_margin:
         return None
     return top_task
-

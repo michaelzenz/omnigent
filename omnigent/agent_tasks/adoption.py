@@ -10,12 +10,14 @@ from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.routing import route_event_to_task
-from omnigent.agent_tasks.scoring import rank_tasks_for_event
-from omnigent.agent_tasks.session_labels import (
-    ADOPTION_DISMISSED_LABEL,
-    ROUTING_SEARCH_TEXT_LABEL,
+from omnigent.agent_tasks.manager_agent import (
+    resolve_manager_agent_id,
+    resolve_manager_agent_id_for_task,
 )
-from omnigent.agent_tasks.session_profile import resolve_session_search_text
+from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
+from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
+from omnigent.agent_tasks.session_profile import resolve_session_routing_tags
+from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.agent_tasks.wake import (
     wake_secretary_for_orphan_sessions,
     wake_task_manager_for_event,
@@ -197,13 +199,22 @@ async def _schedule_secretary_wake(owner_user_id: str) -> None:
     _DEBOUNCE_HANDLES[owner_user_id] = asyncio.create_task(_debounced())
 
 
-def _candidate_payload(ranked: list[tuple[Task, float]]) -> dict[str, Any]:
+def _candidate_payload(
+    ranked: list[tuple[Task, float]],
+    *,
+    agent_store: AgentStore,
+    conversation_store: ConversationStore,
+) -> dict[str, Any]:
     candidates = [
         {
             "task_id": task.id,
             "title": task.title,
             "score": round(score, 4),
-            "manager_agent_id": task.manager_agent_id,
+            "manager_agent_id": resolve_manager_agent_id_for_task(
+                task,
+                agent_store=agent_store,
+                conversation_store=conversation_store,
+            ),
         }
         for task, score in ranked
     ]
@@ -220,6 +231,7 @@ def propose_session_adoption(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
+    agent_store: AgentStore,
     owner_user_id: str | None = None,
 ) -> TaskEvent:
     """Score tasks and create a user-gated session adoption proposal."""
@@ -230,9 +242,9 @@ def propose_session_adoption(
             code=ErrorCode.CONFLICT,
         )
     assert conv is not None
-    if not conv.labels.get(ROUTING_SEARCH_TEXT_LABEL, "").strip():
+    if not resolve_session_routing_tags(session_id, conv):
         raise OmnigentError(
-            "routing_search_text label is required before proposing adoption",
+            "routing tags are required before proposing adoption",
             code=ErrorCode.INVALID_INPUT,
         )
     active_tasks = [
@@ -242,11 +254,19 @@ def propose_session_adoption(
         or task.owner_user_id is None
         or task.owner_user_id == owner_user_id
     ]
-    search_text = resolve_session_search_text(conv)
-    ranked = rank_tasks_for_event(event_search_text=search_text, tasks=active_tasks)
-    payload = _candidate_payload(ranked)
+    routing_tags = resolve_session_routing_tags(session_id, conv)
+    ranked = rank_tasks_for_event_tags(
+        event_tags=routing_tags,
+        tasks=active_tasks,
+        task_store=task_store,
+    )
+    payload = _candidate_payload(
+        ranked,
+        agent_store=agent_store,
+        conversation_store=conversation_store,
+    )
     payload["session_id"] = session_id
-    payload["routing_search_text"] = search_text
+    payload["routing_tags"] = tags_to_payload(routing_tags)
     event_id = uuid.uuid4().hex
     return task_event_store.create_event(
         event_id,
@@ -286,10 +306,15 @@ async def adopt_session(
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
 
+    manager_agent_id = resolve_manager_agent_id_for_task(
+        task,
+        agent_store=agent_store,
+        conversation_store=conversation_store,
+    )
     task_event_store.upsert_binding(
         session_id,
         task.id,
-        task.manager_agent_id,
+        manager_agent_id,
         "ambient",
         manager_conversation_id=task.manager_conversation_id,
     )

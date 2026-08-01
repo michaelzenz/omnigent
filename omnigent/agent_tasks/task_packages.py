@@ -6,7 +6,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.task_match import (
@@ -131,7 +130,7 @@ def reconcile_events_to_task(
 def create_task_package(
     *,
     owner_user_id: str,
-    manager_agent_id: str,
+    agent_profile_id: str,
     title: str,
     items: list[PackageItemSpec],
     task_store: TaskStore,
@@ -157,8 +156,8 @@ def create_task_package(
 
     task = task_store.create(
         resolved_task_id,
-        manager_agent_id,
         title,
+        agent_profile_id=agent_profile_id,
         owner_user_id=owner_user_id,
         description=description,
         internal_note=resolved_internal_note,
@@ -202,9 +201,3 @@ def reject_task_package(
     archived = task_store.update(task.id, state="archived")
     assert archived is not None
     return archived
-
-
-def resolve_manager_agent_id(agent_store: AgentStore, manager_agent_id: str | None) -> str:
-    if manager_agent_id:
-        return manager_agent_id
-    return resolve_task_agent_id(agent_store, TASK_MANAGER_AGENT_NAME)

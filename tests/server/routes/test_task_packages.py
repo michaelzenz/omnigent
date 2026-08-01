@@ -7,6 +7,8 @@ import uuid
 import httpx
 import pytest_asyncio
 
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
+from omnigent.entities import TaskEventTag, TaskTag
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -19,11 +21,9 @@ def _uid(seed: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(db_uri: str) -> str:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent", bundle_location="test:///bundle")
-    return agent_id
+async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
 @pytest_asyncio.fixture()
@@ -63,7 +63,7 @@ async def test_create_task_package_lists_as_paused_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "CI failure on PR #123",
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "items": [
                 {
                     "title": "Investigate CI failure",
@@ -109,7 +109,7 @@ async def test_resolve_inbox_item_activates_paused_package(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to activate",
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "items": [
                 {"title": "Do work", "event_ids": [event_id], "instructions": "Do the work"},
             ],
@@ -163,7 +163,7 @@ async def test_skip_inbox_items_keeps_paused_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to skip",
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "items": [
                 {"title": "Skip me", "event_ids": [event_ids[0]]},
                 {"title": "Skip me too", "event_ids": [event_ids[1]]},
@@ -197,10 +197,11 @@ async def test_match_tasks_includes_paused_task(
     paused_id = _uid("paused-route-task")
     task_store.create(
         paused_id,
-        manager_agent_id,
         "omnigent-fork",
+        agent_profile_id=manager_agent_id,
         state="pending",
         internal_note="repo:omnigent-fork",
+        tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
     )
     event_id = _uid("match-route-event")
     event_store.create_event(
@@ -208,7 +209,7 @@ async def test_match_tasks_includes_paused_task(
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
-        summary="repo:omnigent-fork pr:891",
+        tags=[TaskEventTag(event_id=event_id, tag_type="repo", tag="omnigent-fork")],
     )
 
     matched = await client.post(

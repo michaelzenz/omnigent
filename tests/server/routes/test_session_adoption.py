@@ -7,7 +7,8 @@ import uuid
 import httpx
 import pytest_asyncio
 
-from omnigent.agent_tasks.session_labels import ROUTING_SEARCH_TEXT_LABEL
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
+from omnigent.agent_tasks.session_labels import ROUTING_REPO_LABEL
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -19,11 +20,9 @@ def _uid(seed: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(db_uri: str) -> str:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent", bundle_location="test:///bundle")
-    return agent_id
+async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
 @pytest_asyncio.fixture()
@@ -47,23 +46,27 @@ def _bootstrap_body() -> dict[str, str]:
 
 async def test_session_adoption_flow(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     conversation_store: SqlAlchemyConversationStore,
     task_event_store: SqlAlchemyTaskEventStore,
 ) -> None:
     """Propose, adopt, and bind an orphan session to a task."""
     conv = conversation_store.create_conversation(
         title="Upload retries",
-        agent_id=manager_agent_id,
+        agent_id=task_manager_agent_id,
     )
     conversation_store.set_labels(
         conv.id,
-        {ROUTING_SEARCH_TEXT_LABEL: "upload retries flaky CI pipeline"},
+        {ROUTING_REPO_LABEL: "omnigent-fork"},
     )
 
     task_resp = await client.post(
         "/v1/agent-tasks",
-        json={"manager_agent_id": manager_agent_id, "title": "Upload retries"},
+        json={
+            "agent_profile_id": task_manager_agent_id,
+            "title": "Upload retries",
+            "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
+        },
     )
     task_id = task_resp.json()["id"]
 
@@ -95,16 +98,16 @@ async def test_session_adoption_flow(
 
 async def test_reject_session_adoption(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     conversation_store: SqlAlchemyConversationStore,
     task_event_store: SqlAlchemyTaskEventStore,
 ) -> None:
     """Rejecting adoption dismisses the proposal and leaves the session orphan."""
     conv = conversation_store.create_conversation(
         title="Stay orphan",
-        agent_id=manager_agent_id,
+        agent_id=task_manager_agent_id,
     )
-    conversation_store.set_labels(conv.id, {ROUTING_SEARCH_TEXT_LABEL: "misc cleanup"})
+    conversation_store.set_labels(conv.id, {ROUTING_REPO_LABEL: "misc-repo"})
 
     propose_resp = await client.post(
         f"/v1/agent-tasks/sessions/{conv.id}/propose-adoption",

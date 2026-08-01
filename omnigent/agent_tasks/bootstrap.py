@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from omnigent.agent_tasks.agent_builtins import (
-    TASK_MANAGER_AGENT_NAME,
-    resolve_task_agent_id,
-)
 from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_HARNESS,
     DEFAULT_TASK_MODEL,
@@ -88,11 +84,7 @@ def bootstrap_task_manager(
             )
         return task
 
-    manager_agent_id = resolve_task_agent_id(
-        agent_store,
-        TASK_MANAGER_AGENT_NAME,
-        fallback_agent_id=task.manager_agent_id,
-    )
+    manager_agent_id = task.agent_profile_id
 
     conversation = conversation_store.create_conversation(
         title=f"Task manager: {task.title}",

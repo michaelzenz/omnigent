@@ -17,12 +17,11 @@ class Task:
     A managed task persisted in the ``tasks`` table.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
-    :param manager_agent_id: Manager agent bound to this task.
+    :param agent_profile_id: Registered agent profile that runs the task manager.
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
     :param internal_note: Agent-facing routing context maintained by the manager.
-    :param search_text: Plain searchable mirror of title, internal_note, and tags.
     :param state: One of ``"active"``, ``"pending"``, ``"done"``, ``"archived"``.
     :param manager_conversation_id: Manager session for this task, or ``None``
         before bootstrap.
@@ -31,12 +30,11 @@ class Task:
     """
 
     id: str
-    manager_agent_id: str
+    agent_profile_id: str
     owner_user_id: str | None
     title: str
     description: str | None
     internal_note: str | None
-    search_text: str
     state: str
     created_at: int
     manager_conversation_id: str | None = None
@@ -69,7 +67,7 @@ class TaskEvent:
     :param title: Human-readable one-liner for the event.
     :param payload: JSON payload string. ``None`` when unset.
     :param source: Event source, e.g. ``"github"`` or ``"ci"``.
-    :param search_text: Plain searchable mirror used for routing.
+    :param tags: Immutable ingress tags used for routing. Empty when unset.
     :param summary: Extraction done at ingestion for routing. ``None`` when unset.
     :param state: Routing/handling lifecycle state.
     :param priority: Routing queue priority; higher sorts first.
@@ -92,10 +90,10 @@ class TaskEvent:
     id: str
     event_type: str
     title: str
-    search_text: str
     state: str
     priority: int
     created_at: int
+    tags: list[TaskEventTag] | None = None
     task_id: str | None = None
     payload: str | None = None
     source: str | None = None

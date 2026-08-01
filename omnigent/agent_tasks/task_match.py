@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from omnigent.agent_tasks.constants import AUTO_ROUTE_MAX_CANDIDATES
-from omnigent.agent_tasks.scoring import rank_tasks_for_event
+from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
 from omnigent.entities import Task, TaskEvent, TaskEventTag, TaskTag
+from omnigent.stores.agent_task.tags import merge_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
@@ -25,15 +26,17 @@ def rank_tasks_for_events(
     *,
     events: list[TaskEvent],
     tasks: list[Task],
+    task_store: TaskStore,
     limit: int = AUTO_ROUTE_MAX_CANDIDATES,
 ) -> list[tuple[Task, float]]:
-    """Score tasks against one or more events using combined search text."""
+    """Score tasks against one or more events using merged ingress tags."""
     if not events:
         return []
-    cluster_search = "\n".join(event.search_text for event in events)
-    return rank_tasks_for_event(
-        event_search_text=cluster_search,
+    merged_tags = merge_event_tags(events)
+    return rank_tasks_for_event_tags(
+        event_tags=merged_tags,
         tasks=tasks,
+        task_store=task_store,
         limit=limit,
     )
 
@@ -57,14 +60,8 @@ def collect_event_tags(
     task_event_store: TaskEventStore,
 ) -> list[TaskEventTag]:
     """Merge tags from multiple events, last write wins per tag_type."""
-    tag_map: dict[str, str] = {}
-    for event_id in event_ids:
-        for tag in task_event_store.get_event_tags(event_id):
-            tag_map[tag.tag_type] = tag.tag
-    return [
-        TaskEventTag(event_id=event_ids[0] if event_ids else "", tag_type=tag_type, tag=tag)
-        for tag_type, tag in sorted(tag_map.items())
-    ]
+    events = load_events(event_ids, task_event_store=task_event_store)
+    return merge_event_tags(events)
 
 
 def task_tags_from_event_tags(task_id: str, event_tags: list[TaskEventTag]) -> list[TaskTag]:

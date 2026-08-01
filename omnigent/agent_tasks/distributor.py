@@ -8,7 +8,12 @@ import uuid
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.event_types import is_distributor_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
-from omnigent.agent_tasks.scoring import pick_auto_route, rank_tasks_for_event
+from omnigent.agent_tasks.manager_agent import resolve_manager_agent_id
+from omnigent.agent_tasks.scoring import (
+    candidate_task_ids_for_event_tags,
+    pick_auto_route,
+    rank_tasks_for_event_tags,
+)
 from omnigent.agent_tasks.secretary_queue import enqueue_secretary_event
 from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
@@ -45,13 +50,15 @@ def _record_auto_route_attempt(
     rank: int,
     score: float,
     task_event_store: TaskEventStore,
+    agent_store: AgentStore,
 ) -> None:
     """Persist the winning auto-route choice for monitoring."""
+    manager_agent_id = resolve_manager_agent_id(agent_store)
     task_event_store.create_routing_attempt(
         _generate_attempt_id(),
         event_id,
         task.id,
-        task.manager_agent_id,
+        manager_agent_id,
         rank,
         score=score,
         decision="selected",
@@ -134,18 +141,28 @@ async def distribute_event(
             owner_user_id=owner_user_id,
         )
 
-    prefiltered: list[Task] = []
-    seen_ids: set[str] = set()
-    for task in task_store.search(event.search_text, limit=20):
-        if task.id not in seen_ids and task.state == "active":
-            prefiltered.append(task)
-            seen_ids.add(task.id)
-    for task in active_tasks:
-        if task.id not in seen_ids:
-            prefiltered.append(task)
-            seen_ids.add(task.id)
+    event_tags = event.tags or []
+    if not event_tags:
+        return await _stall(
+            event=event,
+            task_event_store=task_event_store,
+            owner_user_id=owner_user_id,
+        )
 
-    ranked = rank_tasks_for_event(event_search_text=event.search_text, tasks=prefiltered)
+    candidate_ids = candidate_task_ids_for_event_tags(event_tags, task_store=task_store)
+    prefiltered = [task for task in active_tasks if task.id in candidate_ids]
+    if not prefiltered:
+        return await _stall(
+            event=event,
+            task_event_store=task_event_store,
+            owner_user_id=owner_user_id,
+        )
+
+    ranked = rank_tasks_for_event_tags(
+        event_tags=event_tags,
+        tasks=prefiltered,
+        task_store=task_store,
+    )
     auto_task = pick_auto_route(ranked)
     if auto_task is not None:
         auto_rank = 1
@@ -161,6 +178,7 @@ async def distribute_event(
             rank=auto_rank,
             score=auto_score,
             task_event_store=task_event_store,
+            agent_store=agent_store,
         )
         params = _bootstrap_params(secretary_profile)
         return await _finish_route(

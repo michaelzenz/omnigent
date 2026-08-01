@@ -11,11 +11,11 @@ from omnigent.agent_tasks.constants import (
     AMBIGUOUS_EVENT_STATES,
 )
 from omnigent.agent_tasks.secretary_inbox import event_summary
+from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     create_task_package,
     reconcile_events_to_task,
-    resolve_manager_agent_id,
 )
 from omnigent.db.utils import now_epoch
 from omnigent.entities import FyiCluster, TaskItem
@@ -158,7 +158,7 @@ def resolve_fyi_cluster(
     host_id: str | None = None,
     workspace: str | None = None,
     harness: str | None = None,
-    manager_agent_id: str | None = None,
+    agent_profile_id: str | None = None,
     proposed_task_title: str | None = None,
     proposed_task_internal_note: str | None = None,
 ) -> tuple[FyiCluster, TaskItem | None]:
@@ -191,7 +191,7 @@ def resolve_fyi_cluster(
     assert updated is not None
 
     title = routing_title or cluster.headline
-    manager_id = resolve_manager_agent_id(agent_store, manager_agent_id)
+    profile_id = resolve_agent_profile_id(agent_store, agent_profile_id)
 
     if suggested_task_id is not None:
         task = task_store.get(suggested_task_id)
@@ -221,7 +221,7 @@ def resolve_fyi_cluster(
 
     task = create_task_package(
         owner_user_id=owner_user_id,
-        manager_agent_id=manager_id,
+        agent_profile_id=profile_id,
         title=proposed_task_title or title,
         items=[
             PackageItemSpec(

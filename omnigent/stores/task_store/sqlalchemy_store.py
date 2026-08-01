@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, delete, desc, func, select
+from sqlalchemy import asc, delete, desc, select
 
 from omnigent.db.db_models import (
     SqlTask,
@@ -15,7 +15,6 @@ from omnigent.db.db_models import (
 from omnigent.db.enum_codecs import decode_task_state, encode_task_state
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import Task, TaskTag
-from omnigent.stores.agent_task.search_text import build_task_search_text
 from omnigent.stores.task_store import TaskStore
 
 _UNSET: Any = object()
@@ -28,13 +27,12 @@ def _tag_to_entity(row: SqlTaskTag) -> TaskTag:
 def _to_entity(row: SqlTask) -> Task:
     return Task(
         id=row.id,
-        manager_agent_id=row.manager_agent_id,
+        agent_profile_id=row.agent_profile_id,
         manager_conversation_id=row.manager_conversation_id,
         owner_user_id=row.owner_user_id,
         title=row.title,
         description=row.description,
         internal_note=row.internal_note,
-        search_text=row.search_text,
         state=decode_task_state(row.state),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -52,9 +50,9 @@ class SqlAlchemyTaskStore(TaskStore):
     def create(
         self,
         task_id: str,
-        manager_agent_id: str,
         title: str,
         *,
+        agent_profile_id: str,
         owner_user_id: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
@@ -63,16 +61,14 @@ class SqlAlchemyTaskStore(TaskStore):
         tags: list[TaskTag] | None = None,
     ) -> Task:
         tag_rows = tags or []
-        search_text = build_task_search_text(title=title, internal_note=internal_note, tags=tag_rows)
         row = SqlTask(
             id=task_id,
-            manager_agent_id=manager_agent_id,
+            agent_profile_id=agent_profile_id,
             manager_conversation_id=manager_conversation_id,
             owner_user_id=owner_user_id,
             title=title,
             description=description,
             internal_note=internal_note,
-            search_text=search_text,
             state=encode_task_state(state),
             created_at=now_epoch(),
             updated_at=None,
@@ -101,14 +97,11 @@ class SqlAlchemyTaskStore(TaskStore):
         self,
         *,
         state: str | None = None,
-        manager_agent_id: str | None = None,
     ) -> list[Task]:
         with self._session() as session:
             stmt = select(SqlTask).where(SqlTask.workspace_id == current_workspace_id())
             if state is not None:
                 stmt = stmt.where(SqlTask.state == encode_task_state(state))
-            if manager_agent_id is not None:
-                stmt = stmt.where(SqlTask.manager_agent_id == manager_agent_id)
             stmt = stmt.order_by(desc(SqlTask.updated_at), desc(SqlTask.id))
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
@@ -120,9 +113,9 @@ class SqlAlchemyTaskStore(TaskStore):
         title: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        manager_agent_id: str | None = None,
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
+        agent_profile_id: str | None = None,
         state: str | None = None,
     ) -> Task | None:
         with self._session() as session:
@@ -139,9 +132,6 @@ class SqlAlchemyTaskStore(TaskStore):
             if internal_note is not None and row.internal_note != internal_note:
                 row.internal_note = internal_note
                 changed = True
-            if manager_agent_id is not None and row.manager_agent_id != manager_agent_id:
-                row.manager_agent_id = manager_agent_id
-                changed = True
             if manager_conversation_id is not _UNSET and (
                 row.manager_conversation_id != manager_conversation_id
             ):
@@ -150,6 +140,9 @@ class SqlAlchemyTaskStore(TaskStore):
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
                 row.owner_user_id = owner_user_id
                 changed = True
+            if agent_profile_id is not None and row.agent_profile_id != agent_profile_id:
+                row.agent_profile_id = agent_profile_id
+                changed = True
             if state is not None:
                 encoded_state = encode_task_state(state)
                 if row.state != encoded_state:
@@ -157,7 +150,6 @@ class SqlAlchemyTaskStore(TaskStore):
                     changed = True
             if changed:
                 row.updated_at = now_epoch()
-                self._refresh_search_text(session, row)
             session.flush()
             return _to_entity(row)
 
@@ -214,7 +206,6 @@ class SqlAlchemyTaskStore(TaskStore):
                     )
                 )
             row.updated_at = now_epoch()
-            self._refresh_search_text(session, row)
             session.flush()
             return tags
 
@@ -228,40 +219,3 @@ class SqlAlchemyTaskStore(TaskStore):
                 .order_by(asc(SqlTaskTag.task_id))
             )
             return list(session.execute(stmt).scalars().all())
-
-    def rebuild_search_text(self, task_id: str) -> Task | None:
-        with self._session() as session:
-            row = session.get(SqlTask, (current_workspace_id(), task_id))
-            if row is None:
-                return None
-            self._refresh_search_text(session, row)
-            row.updated_at = now_epoch()
-            session.flush()
-            return _to_entity(row)
-
-    def search(self, query: str, *, limit: int = 20) -> list[Task]:
-        pattern = f"%{query.strip().lower()}%"
-        with self._session() as session:
-            stmt = (
-                select(SqlTask)
-                .where(SqlTask.workspace_id == current_workspace_id())
-                .where(func.lower(SqlTask.search_text).like(pattern))
-                .order_by(desc(SqlTask.updated_at), desc(SqlTask.id))
-                .limit(limit)
-            )
-            rows = session.execute(stmt).scalars().all()
-            return [_to_entity(row) for row in rows]
-
-    def _refresh_search_text(self, session: Any, row: SqlTask) -> None:
-        stmt = (
-            select(SqlTaskTag)
-            .where(SqlTaskTag.workspace_id == current_workspace_id())
-            .where(SqlTaskTag.task_id == row.id)
-            .order_by(asc(SqlTaskTag.tag_type), asc(SqlTaskTag.tag))
-        )
-        tags = [_tag_to_entity(tag_row) for tag_row in session.execute(stmt).scalars().all()]
-        row.search_text = build_task_search_text(
-            title=row.title,
-            internal_note=row.internal_note,
-            tags=tags,
-        )

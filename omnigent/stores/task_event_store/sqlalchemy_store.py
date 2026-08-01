@@ -11,7 +11,6 @@ from omnigent.db.db_models import (
     SqlTaskEventExecution,
     SqlTaskEventRoutingAttempt,
     SqlTaskEventRoutingResolution,
-    SqlTaskEventTag,
     SqlTaskSessionBinding,
     current_workspace_id,
 )
@@ -32,14 +31,10 @@ from omnigent.entities import (
     TaskEventTag,
     TaskSessionBinding,
 )
-from omnigent.stores.agent_task.search_text import build_event_search_text
+from omnigent.stores.agent_task.tags import decode_event_tags, encode_event_tags
 from omnigent.stores.task_event_store import TASK_SESSION_BINDING_KINDS, TaskEventStore
 
 _UNSET: Any = object()
-
-
-def _event_tag_to_entity(row: SqlTaskEventTag) -> TaskEventTag:
-    return TaskEventTag(event_id=row.event_id, tag_type=row.tag_type, tag=row.tag)
 
 
 def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
@@ -47,7 +42,7 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         id=row.id,
         event_type=row.event_type,
         title=row.title,
-        search_text=row.search_text,
+        tags=decode_event_tags(row.id, row.tags),
         state=decode_task_event_state(row.state),
         priority=row.priority,
         created_at=row.created_at,
@@ -149,7 +144,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         source_key: str | None = None,
         source_offset: int | None = None,
         source_session_id: str | None = None,
-        search_text: str | None = None,
         summary: str | None = None,
         state: str = "received",
         priority: int = 0,
@@ -158,12 +152,10 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         tags: list[TaskEventTag] | None = None,
     ) -> TaskEvent:
         tag_rows = tags or []
-        resolved_search_text = search_text or build_event_search_text(
-            event_type=event_type,
-            title=title,
-            summary=summary,
-            tags=tag_rows,
-        )
+        normalized_tags = [
+            TaskEventTag(event_id=event_id, tag_type=tag.tag_type, tag=tag.tag)
+            for tag in tag_rows
+        ]
         row = SqlTaskEvent(
             id=event_id,
             task_id=task_id,
@@ -176,7 +168,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             source_key=source_key,
             source_offset=source_offset,
             source_session_id=source_session_id,
-            search_text=resolved_search_text,
+            tags=encode_event_tags(normalized_tags),
             summary=summary,
             state=encode_task_event_state(state),
             priority=priority,
@@ -187,14 +179,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         )
         with self._session() as session:
             session.add(row)
-            for tag in tag_rows:
-                session.add(
-                    SqlTaskEventTag(
-                        event_id=event_id,
-                        tag_type=tag.tag_type,
-                        tag=tag.tag,
-                    )
-                )
             session.flush()
             return _event_to_entity(row)
 
@@ -302,45 +286,10 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             return _event_to_entity(row)
 
     def get_event_tags(self, event_id: str) -> list[TaskEventTag]:
-        with self._session() as session:
-            stmt = (
-                select(SqlTaskEventTag)
-                .where(SqlTaskEventTag.workspace_id == current_workspace_id())
-                .where(SqlTaskEventTag.event_id == event_id)
-                .order_by(asc(SqlTaskEventTag.tag_type), asc(SqlTaskEventTag.tag))
-            )
-            rows = session.execute(stmt).scalars().all()
-            return [_event_tag_to_entity(row) for row in rows]
-
-    def set_event_tags(self, event_id: str, tags: list[TaskEventTag]) -> list[TaskEventTag]:
-        with self._session() as session:
-            row = session.get(SqlTaskEvent, (current_workspace_id(), event_id))
-            if row is None:
-                raise ValueError(f"unknown event id: {event_id!r}")
-            workspace_id = current_workspace_id()
-            session.execute(
-                delete(SqlTaskEventTag).where(
-                    SqlTaskEventTag.workspace_id == workspace_id,
-                    SqlTaskEventTag.event_id == event_id,
-                )
-            )
-            for tag in tags:
-                session.add(
-                    SqlTaskEventTag(
-                        event_id=event_id,
-                        tag_type=tag.tag_type,
-                        tag=tag.tag,
-                    )
-                )
-            row.search_text = build_event_search_text(
-                event_type=row.event_type,
-                title=row.title,
-                summary=row.summary,
-                tags=tags,
-            )
-            row.updated_at = now_epoch()
-            session.flush()
-            return tags
+        event = self.get_event(event_id)
+        if event is None:
+            return []
+        return list(event.tags or [])
 
     def create_routing_attempt(
         self,

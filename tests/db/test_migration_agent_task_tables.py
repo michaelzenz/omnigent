@@ -34,7 +34,6 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "tasks",
         "task_tags",
         "task_events",
-        "task_event_tags",
         "task_event_routing_attempts",
         "task_event_routing_resolutions",
         "task_event_executions",
@@ -42,6 +41,14 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "task_item_events",
         "user_secretary_profiles",
     } <= tables
+    columns = {column["name"] for column in sa.inspect(db_engine).get_columns("task_events")}
+    assert "tags" in columns
+    assert "search_text" not in columns
+    assert "task_event_tags" not in tables
+    task_columns = {column["name"] for column in sa.inspect(db_engine).get_columns("tasks")}
+    assert "search_text" not in task_columns
+    assert "agent_profile_id" in task_columns
+    assert "manager_agent_id" not in task_columns
 
 
 def test_tasks_state_check_enforced(db_engine: Engine) -> None:
@@ -51,12 +58,12 @@ def test_tasks_state_check_enforced(db_engine: Engine) -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO tasks "
-                    "(workspace_id, id, manager_agent_id, title, state, created_at) "
-                    "VALUES (0, :id, :manager_id, 't', 99, 1)"
+                    "(workspace_id, id, agent_profile_id, title, state, created_at) "
+                    "VALUES (0, :id, :profile_id, 't', 99, 1)"
                 ),
                 {
                     "id": bytes.fromhex("0ecf75a6ff1ff86bcc1902eb0951ef45"),
-                    "manager_id": bytes.fromhex("a9930027fd3e2e979e65844f7af7bf88"),
+                    "profile_id": bytes.fromhex("a9930027fd3e2e979e65844f7af7bf88"),
                 },
             )
 

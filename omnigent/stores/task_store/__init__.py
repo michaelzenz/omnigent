@@ -20,9 +20,9 @@ class TaskStore(ABC):
     def create(
         self,
         task_id: str,
-        manager_agent_id: str,
         title: str,
         *,
+        agent_profile_id: str,
         owner_user_id: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
@@ -41,7 +41,6 @@ class TaskStore(ABC):
         self,
         *,
         state: str | None = None,
-        manager_agent_id: str | None = None,
     ) -> list[Task]:
         """List tasks ordered by ``updated_at DESC, id DESC``."""
 
@@ -53,9 +52,9 @@ class TaskStore(ABC):
         title: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        manager_agent_id: str | None = None,
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
+        agent_profile_id: str | None = None,
         state: str | None = None,
     ) -> Task | None:
         """Update mutable task fields."""
@@ -70,16 +69,8 @@ class TaskStore(ABC):
 
     @abstractmethod
     def set_tags(self, task_id: str, tags: list[TaskTag]) -> list[TaskTag]:
-        """Replace all tags on a task and refresh ``search_text``."""
+        """Replace all tags on a task."""
 
     @abstractmethod
     def list_task_ids_by_tag(self, tag_type: str, tag: str) -> list[str]:
         """Return task ids with the given typed tag."""
-
-    @abstractmethod
-    def rebuild_search_text(self, task_id: str) -> Task | None:
-        """Rebuild ``search_text`` from title, internal_note, and tags."""
-
-    @abstractmethod
-    def search(self, query: str, *, limit: int = 20) -> list[Task]:
-        """Case-insensitive substring search over ``search_text``."""

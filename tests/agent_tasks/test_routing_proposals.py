@@ -45,11 +45,7 @@ def test_cluster_ambiguous_events_groups_by_tags(event_store) -> None:
             TaskEventTag(event_id=_uid("e2"), tag_type="pr", tag="891"),
         ],
     )
-    tags_by_id = {
-        e1.id: event_store.get_event_tags(e1.id),
-        e2.id: event_store.get_event_tags(e2.id),
-    }
-    clusters = cluster_ambiguous_events([e1, e2], tags_by_event_id=tags_by_id)
+    clusters = cluster_ambiguous_events([e1, e2])
     assert len(clusters) == 1
     assert len(clusters[0].events) == 2
     assert clusters[0].tags == [

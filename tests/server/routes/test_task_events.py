@@ -7,6 +7,7 @@ import uuid
 import httpx
 import pytest_asyncio
 
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -17,11 +18,9 @@ def _uid(seed: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(db_uri: str) -> str:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent", bundle_location="test:///bundle")
-    return agent_id
+async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
 @pytest_asyncio.fixture()
@@ -53,7 +52,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     create_resp = await client.post(
         "/v1/agent-tasks",
         json={
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "title": "Upload retries",
         },
     )
@@ -101,7 +100,7 @@ async def test_bootstrap_rejects_dead_manager_session(
     create_resp = await client.post(
         "/v1/agent-tasks",
         json={
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": manager_agent_id,
             "title": "Dead session task",
             "manager_conversation_id": dead_conversation_id,
         },

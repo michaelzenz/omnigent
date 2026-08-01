@@ -40,7 +40,6 @@ class TaskEventStore(ABC):
         source_key: str | None = None,
         source_offset: int | None = None,
         source_session_id: str | None = None,
-        search_text: str | None = None,
         summary: str | None = None,
         state: str = "received",
         priority: int = 0,
@@ -93,11 +92,7 @@ class TaskEventStore(ABC):
 
     @abstractmethod
     def get_event_tags(self, event_id: str) -> list[TaskEventTag]:
-        """Return all tags for an event."""
-
-    @abstractmethod
-    def set_event_tags(self, event_id: str, tags: list[TaskEventTag]) -> list[TaskEventTag]:
-        """Replace all tags on an event."""
+        """Return immutable ingress tags for an event."""
 
     # ── Routing ──────────────────────────────────────────────────
 

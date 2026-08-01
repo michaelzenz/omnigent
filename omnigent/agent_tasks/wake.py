@@ -143,8 +143,9 @@ async def wake_secretary_for_stalled_events(
 def _format_orphan_session_notice(session_ids: list[str]) -> str:
     lines = [
         f"[System: {len(session_ids)} new session(s) need routing profiles]",
-        "Read each session, write omnigent.task.routing_search_text, then call "
-        "propose-adoption. User must accept before adopt.",
+        "Read each session, write omnigent.task.routing_repo (and optional "
+        "omnigent.task.routing_intent), then call propose-adoption. User must "
+        "accept before adopt.",
     ]
     for session_id in session_ids[:10]:
         lines.append(f"- session {session_id}")

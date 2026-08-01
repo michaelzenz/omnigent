@@ -76,12 +76,12 @@ def _request(
         raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def _create_task(title: str, description: str, internal_note: str, *, manager_agent_id: str) -> str:
+def _create_task(title: str, description: str, internal_note: str, *, agent_profile_id: str) -> str:
     task = _request(
         "POST",
         "/v1/agent-tasks",
         body={
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": agent_profile_id,
             "title": title,
             "description": description,
             "internal_note": internal_note,
@@ -136,7 +136,7 @@ def _create_task_package(
     instructions: str,
     internal_note: str | None = None,
     event_ids: list[str],
-    manager_agent_id: str,
+    agent_profile_id: str,
     asset_urls: list[tuple[str, str]] | None = None,
 ) -> str:
     package = _request(
@@ -144,7 +144,7 @@ def _create_task_package(
         "/v1/agent-tasks/packages",
         body={
             "title": title,
-            "manager_agent_id": manager_agent_id,
+            "agent_profile_id": agent_profile_id,
             "items": [
                 {
                     "title": title,
@@ -370,14 +370,14 @@ _HEAVY_WORKER_ITEM_COUNT = 10
 _LOAD_TEST_ASSET_COUNT = 40
 
 
-def _seed_twenty_worker_task(*, manager_agent_id: str) -> str:
+def _seed_twenty_worker_task(*, agent_profile_id: str) -> str:
     """Create one active task with twenty distinct worker lanes."""
     print("Seeding 20-worker load test task…")
     task_id = _create_task(
         "20-worker load test",
         "Scroll and accordion stress test with twenty worker lanes",
         "load-test\nworkers\nui",
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
     )
     for index in range(1, 21):
         worker_id = _demo_worker_id(index)
@@ -459,23 +459,23 @@ def main() -> int:
         "omnigent-fork CI",
         "CI failures and PR reviews for omnigent-fork",
         "repo:omnigent-fork\nci\npull requests",
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
     )
     docs_task = _create_task(
         "docs refresh",
         "Documentation updates and changelog hygiene",
         "repo:omnigent-fork\ndocs\nmarkdown",
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
     )
     poll_task = _create_task(
         "poll plugins",
         "Host poll plugin maintenance",
         "poll_plugins\ngithub_pr\nwatchers",
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
     )
 
     _seed_rich_ci_task(ci_task, worker_agent_id=worker_agent_id, worker2_agent_id=worker2_agent_id)
-    twenty_worker_task = _seed_twenty_worker_task(manager_agent_id=manager_agent_id)
+    twenty_worker_task = _seed_twenty_worker_task(agent_profile_id=manager_agent_id)
 
     print("Creating pending task packages…")
     _create_task_package(
@@ -484,7 +484,7 @@ def main() -> int:
         instructions="Investigate lint failure and address review feedback on PR #891.",
         internal_note="PR #891, repo omnigent-fork. Lint job failed on main merge base.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=891, offset_base=offset_base),
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
         asset_urls=[
             ("PR #891", "https://github.com/databricks/omnigent-fork/pull/891"),
             ("CI checks", "https://github.com/databricks/omnigent-fork/actions"),
@@ -496,7 +496,7 @@ def main() -> int:
         instructions="Refresh TASK_SECRETARY.md and API_REFERENCE after routing cards shipped.",
         internal_note="See PR #902 and docs/agent-tasks/ for current API shapes.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10),
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
         asset_urls=[
             ("API reference", "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/API_REFERENCE.md"),
             ("PR #902", "https://github.com/databricks/omnigent-fork/pull/902"),
@@ -508,7 +508,7 @@ def main() -> int:
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
         internal_note="Repro linked from PR #915 comments; watcher host poll_plugins.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20),
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
         asset_urls=[
             ("PR #915", "https://github.com/databricks/omnigent-fork/pull/915"),
             ("Poll plugin code", "https://github.com/databricks/omnigent-fork/tree/main/omnigent/host/polling"),
@@ -520,7 +520,7 @@ def main() -> int:
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
         internal_note="other-repo PR #12; no omnigent-fork code touched yet.",
         event_ids=_create_events(host_header, repo="other-repo", pr=12, offset_base=offset_base + 30),
-        manager_agent_id=manager_agent_id,
+        agent_profile_id=manager_agent_id,
         asset_urls=[
             ("other-repo PR #12", "https://github.com/example/other-repo/pull/12"),
             ("omnigent-fork (reference)", "https://github.com/databricks/omnigent-fork"),

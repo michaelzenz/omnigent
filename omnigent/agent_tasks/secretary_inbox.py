@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
-from omnigent.entities import Task, TaskEvent, TaskEventTag
+from omnigent.entities import Task, TaskEvent
+from omnigent.stores.agent_task.tags import tag_fingerprint, tags_to_payload
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
@@ -20,33 +21,21 @@ class AmbiguousEventCluster:
     events: list[TaskEvent]
 
 
-def _tag_fingerprint(tags: list[TaskEventTag]) -> tuple[tuple[str, str], ...]:
-    return tuple(sorted((tag.tag_type, tag.tag) for tag in tags))
-
-
-def _tags_to_payload(tags: list[TaskEventTag]) -> list[dict[str, str]]:
-    return [{"tag_type": tag.tag_type, "tag": tag.tag} for tag in tags]
-
-
-def cluster_ambiguous_events(
-    events: list[TaskEvent],
-    *,
-    tags_by_event_id: dict[str, list[TaskEventTag]],
-) -> list[AmbiguousEventCluster]:
-    """Group ambiguous events that share the same event tags."""
+def cluster_ambiguous_events(events: list[TaskEvent]) -> list[AmbiguousEventCluster]:
+    """Group ambiguous events that share the same ingress tags."""
     buckets: dict[tuple[tuple[str, str], ...], list[TaskEvent]] = {}
     singletons: list[TaskEvent] = []
     for event in events:
-        tags = tags_by_event_id.get(event.id, [])
+        tags = event.tags or []
         if not tags:
             singletons.append(event)
             continue
-        fingerprint = _tag_fingerprint(tags)
+        fingerprint = tag_fingerprint(tags)
         buckets.setdefault(fingerprint, []).append(event)
 
     clusters = [
         AmbiguousEventCluster(
-            tags=_tags_to_payload(tags_by_event_id[rows[0].id]),
+            tags=tags_to_payload(rows[0].tags or []),
             events=rows,
         )
         for rows in buckets.values()
@@ -68,6 +57,7 @@ def event_summary(event: TaskEvent) -> dict[str, Any]:
         "source": event.source,
         "source_key": event.source_key,
         "created_at": event.created_at,
+        "tags": tags_to_payload(event.tags or []),
     }
 
 
@@ -98,15 +88,15 @@ def build_ambiguous_inbox(
             continue
         ambiguous_events.append(event)
 
-    tags_by_event_id: dict[str, list[TaskEventTag]] = {}
-    for event in ambiguous_events:
-        tags_by_event_id[event.id] = task_event_store.get_event_tags(event.id)
-
-    clusters = cluster_ambiguous_events(ambiguous_events, tags_by_event_id=tags_by_event_id)
+    clusters = cluster_ambiguous_events(ambiguous_events)
     searchable_tasks = routable_tasks(task_store)
     rendered_clusters: list[dict[str, Any]] = []
     for cluster in clusters:
-        ranked = rank_tasks_for_events(events=cluster.events, tasks=searchable_tasks)
+        ranked = rank_tasks_for_events(
+            events=cluster.events,
+            tasks=searchable_tasks,
+            task_store=task_store,
+        )
         candidate_payload = _candidate_payload(ranked)
         rendered_clusters.append(
             {

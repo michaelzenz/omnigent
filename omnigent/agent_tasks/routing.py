@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, bootstrap_task_manager
+from omnigent.agent_tasks.manager_agent import resolve_manager_agent_id_for_task
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
 from omnigent.errors import ErrorCode, OmnigentError
@@ -35,12 +36,17 @@ def route_event_to_task(
         params=params,
     )
     routed_at = now_epoch()
+    manager_agent_id = resolve_manager_agent_id_for_task(
+        bootstrapped,
+        agent_store=agent_store,
+        conversation_store=conversation_store,
+    )
     updated = task_event_store.update_event(
         event.id,
         task_id=bootstrapped.id,
         state=ROUTED_EVENT_STATE,
         selected_routing_attempt_id=selected_attempt_id,
-        manager_agent_id=bootstrapped.manager_agent_id,
+        manager_agent_id=manager_agent_id,
         manager_conversation_id=bootstrapped.manager_conversation_id,
         routed_at=routed_at,
     )

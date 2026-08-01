@@ -7,6 +7,7 @@ import uuid
 import httpx
 import pytest_asyncio
 
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.agent_tasks.completion import (
     TaskCompletionContext,
     configure_task_completion,
@@ -25,11 +26,9 @@ def _uid(seed: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(db_uri: str) -> str:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent", bundle_location="test:///bundle")
-    return agent_id
+async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
 @pytest_asyncio.fixture()
@@ -58,10 +57,10 @@ def _item_payload(worker_agent_id: str) -> dict[str, str]:
     }
 
 
-async def _bootstrapped_task(client: httpx.AsyncClient, manager_agent_id: str) -> str:
+async def _bootstrapped_task(client: httpx.AsyncClient, task_manager_agent_id: str) -> str:
     created = await client.post(
         "/v1/agent-tasks",
-        json={"manager_agent_id": manager_agent_id, "title": "Phase 4 task"},
+        json={"agent_profile_id": task_manager_agent_id, "title": "Phase 4 task"},
     )
     task_id = created.json()["id"]
     bootstrap = await client.post(
@@ -74,12 +73,12 @@ async def _bootstrapped_task(client: httpx.AsyncClient, manager_agent_id: str) -
 
 async def test_dispatch_and_dashboard(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     worker_agent_id: str,
     db_uri: str,
 ) -> None:
     """Dispatch creates an execution visible on the task dashboard."""
-    task_id = await _bootstrapped_task(client, manager_agent_id)
+    task_id = await _bootstrapped_task(client, task_manager_agent_id)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     event_id = _uid("routed_event")
     event_store.create_event(
@@ -121,11 +120,11 @@ async def test_dispatch_and_dashboard(
 
 async def test_item_accept_dispatches_worker(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     worker_agent_id: str,
 ) -> None:
     """User can accept a task item and dispatch a worker."""
-    task_id = await _bootstrapped_task(client, manager_agent_id)
+    task_id = await _bootstrapped_task(client, task_manager_agent_id)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
@@ -150,11 +149,11 @@ async def test_item_accept_dispatches_worker(
 
 async def test_item_edit_and_dispatch(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     worker_agent_id: str,
 ) -> None:
     """User-edited item payload is used for dispatch."""
-    task_id = await _bootstrapped_task(client, manager_agent_id)
+    task_id = await _bootstrapped_task(client, task_manager_agent_id)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
@@ -178,11 +177,11 @@ async def test_item_edit_and_dispatch(
 
 async def test_patch_queued_task_item(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     worker_agent_id: str,
 ) -> None:
     """Queued work items can be edited before dispatch."""
-    task_id = await _bootstrapped_task(client, manager_agent_id)
+    task_id = await _bootstrapped_task(client, task_manager_agent_id)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
@@ -208,7 +207,7 @@ async def test_patch_queued_task_item(
 
 async def test_worker_completion_hook(
     db_uri: str,
-    manager_agent_id: str,
+    task_manager_agent_id: str,
     worker_agent_id: str,
 ) -> None:
     """Worker idle status completes execution and wakes manager binding."""
@@ -220,10 +219,10 @@ async def test_worker_completion_hook(
     task_id = _uid("task_complete")
     event_id = _uid("event_complete")
     task_item_id = _uid("item_complete")
-    task_store.create(task_id, manager_agent_id, "Completion task")
+    task_store.create(task_id, "Completion task", agent_profile_id=task_manager_agent_id)
     manager_conv = conversation_store.create_conversation(
         title="Manager",
-        agent_id=manager_agent_id,
+        agent_id=task_manager_agent_id,
         host_id=_uid("host_mgr"),
         workspace="/tmp/mgr",
     )
@@ -254,7 +253,7 @@ async def test_worker_completion_hook(
         _uid("exec_complete"),
         task_item_id,
         task_id,
-        manager_agent_id,
+        task_manager_agent_id,
         worker_agent_id,
         event_id=event_id,
         status="running",
@@ -263,7 +262,7 @@ async def test_worker_completion_hook(
     event_store.upsert_binding(
         worker_conv.id,
         task_id,
-        manager_agent_id,
+        task_manager_agent_id,
         "worker",
         manager_conversation_id=manager_conv.id,
     )

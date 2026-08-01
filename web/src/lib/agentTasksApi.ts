@@ -5,7 +5,7 @@ export interface AgentTaskSummary {
   title: string;
   description: string | null;
   state: string;
-  manager_agent_id: string;
+  agent_profile_id: string;
   manager_conversation_id: string | null;
 }
 

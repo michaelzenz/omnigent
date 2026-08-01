@@ -12,7 +12,7 @@ a secretary adoption proposal. Reject → no manager involvement.
 |-------|----------|
 | Orphan default | Sessions stay orphan until user **accepts** adoption |
 | Auto-adopt | **Never** for sessions — always secretary propose → user accept |
-| Routing text | Secretary writes `omnigent.task.routing_search_text` before scoring |
+| Routing tags | Secretary writes `omnigent.task.routing_repo` (and optional `routing_intent`) before scoring |
 | User reject | No binding; optional `omnigent.task.adoption_dismissed=1` label |
 | Host imports | `host_id` → `host.owner` → that user's secretary |
 | User sessions | Same pipeline as poller import |
@@ -25,8 +25,8 @@ a secretary adoption proposal. Reject → no manager involvement.
 ```mermaid
 flowchart TB
   Trigger[Import or create session] --> Batch[Batch wake secretary]
-  Batch --> Text[Secretary writes routing_search_text]
-  Text --> Score[Score vs active tasks]
+  Batch --> Tags[Secretary writes routing tags]
+  Tags --> Score[Score vs active tasks]
   Score --> Propose[Secretary proposes adoption to user]
   Propose --> User{User}
   User -->|accept| Adopt[POST …/sessions/id/adopt]
@@ -38,7 +38,7 @@ flowchart TB
 
 1. **Detect** orphan (no binding; not task-spawned `manager`/`worker`).
 2. **Batch-wake secretary** for the session owner (`host.owner` or session user).
-3. **Secretary writes routing search text** (see [TASK_SECRETARY.md](TASK_SECRETARY.md)).
+3. **Secretary writes routing tags** (see [TASK_SECRETARY.md](TASK_SECRETARY.md)).
 4. **Score** tasks using that text (thresholds inform the proposal, not auto-adopt).
 5. **Secretary proposes** which task should adopt the session (top match + alternatives).
 6. **User accepts** → `POST /v1/agent-tasks/sessions/{session_id}/adopt`.
@@ -47,13 +47,12 @@ flowchart TB
 Scoring thresholds (≥ `0.6`, margin ≥ `0.15`) rank candidates for the proposal;
 they do **not** auto-bind sessions.
 
-## Routing search text storage
+## Routing tag storage
 
 | Label key | Purpose |
 |-----------|---------|
-| `omnigent.task.routing_search_text` | Keyword-dense text for task scoring |
-| `omnigent.task.routing_repo` | Optional repo hint |
-| `omnigent.task.routing_intent` | Optional one-line intent |
+| `omnigent.task.routing_repo` | Repo tag for task scoring (`repo` dimension) |
+| `omnigent.task.routing_intent` | Optional intent tag (`intent` dimension) |
 | `omnigent.task.adoption_dismissed` | Set when user rejects adoption (`1`) |
 
 ## Event type

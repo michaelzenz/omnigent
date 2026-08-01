@@ -1450,13 +1450,12 @@ class SqlTask(OmnigentBase):
         default=current_workspace_id,
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    manager_agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    search_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1464,7 +1463,7 @@ class SqlTask(OmnigentBase):
     __table_args__ = (
         CheckConstraint("state IN (1, 2, 3, 4)", name="ck_tasks_state"),
         Index("ix_tasks_state_updated", "workspace_id", "state", "updated_at", "id"),
-        Index("ix_tasks_manager_agent_id", "workspace_id", "manager_agent_id", "id"),
+        Index("ix_tasks_agent_profile_id", "workspace_id", "agent_profile_id", "id"),
         Index("ix_tasks_created_at", "workspace_id", "created_at", "id"),
     )
 
@@ -1513,7 +1512,7 @@ class SqlTaskEvent(OmnigentBase):
     source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
     source_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    search_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    tags: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
     summary: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
@@ -1758,33 +1757,6 @@ class SqlUserSecretaryProfile(OmnigentBase):
             "ix_user_secretary_profiles_conversation",
             "workspace_id",
             "conversation_id",
-        ),
-    )
-
-
-class SqlTaskEventTag(OmnigentBase):
-    """SQLAlchemy model for the ``task_event_tags`` table."""
-
-    __tablename__ = "task_event_tags"
-
-    workspace_id: Mapped[int] = mapped_column(
-        BigInteger,
-        primary_key=True,
-        nullable=False,
-        server_default="0",
-        default=current_workspace_id,
-    )
-    event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    tag_type: Mapped[str] = mapped_column(String(64), primary_key=True)
-    tag: Mapped[str] = mapped_column(String(128), primary_key=True)
-
-    __table_args__ = (
-        Index(
-            "ix_task_event_tags_reverse",
-            "workspace_id",
-            "tag_type",
-            "tag",
-            "event_id",
         ),
     )
 

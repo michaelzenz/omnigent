@@ -123,6 +123,13 @@ def dispatch_worker_for_item(
             code=ErrorCode.CONFLICT,
         )
 
+    if manager_conv.agent_id is None:
+        raise OmnigentError(
+            "Manager session has no agent binding",
+            code=ErrorCode.CONFLICT,
+        )
+    manager_agent_id = manager_conv.agent_id
+
     linked_events = task_item_store.list_events_for_item(item.id)
     trigger_event_id = linked_events[0].event_id if linked_events else None
 
@@ -143,6 +150,7 @@ def dispatch_worker_for_item(
     execution = start_execution_for_item(
         task=task,
         item=item,
+        manager_agent_id=manager_agent_id,
         worker_agent_id=params.worker_agent_id,
         task_event_store=task_event_store,
         event_id=trigger_event_id,
@@ -158,7 +166,7 @@ def dispatch_worker_for_item(
     task_event_store.upsert_binding(
         worker_conv.id,
         task.id,
-        task.manager_agent_id,
+        manager_agent_id,
         "worker",
         manager_conversation_id=task.manager_conversation_id,
     )

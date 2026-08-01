@@ -38,6 +38,7 @@ from omnigent.agent_tasks.fyi_clusters import (
     create_fyi_cluster,
     resolve_fyi_cluster,
 )
+from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
 from omnigent.agent_tasks.secretary_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.fyi_clusters import list_fyi_board_cards
 from omnigent.agent_tasks.task_match import (
@@ -53,7 +54,6 @@ from omnigent.agent_tasks.task_packages import (
     create_task_package,
     reconcile_events_to_task,
     reject_task_package,
-    resolve_manager_agent_id,
 )
 from omnigent.agent_tasks.secretary_session import (
     bootstrap_secretary_conversation,
@@ -112,7 +112,7 @@ class TaskTagInput(BaseModel):
 class CreateAgentTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks``."""
 
-    manager_agent_id: str
+    agent_profile_id: str
     title: str
     description: str | None = None
     internal_note: str | None = None
@@ -143,7 +143,7 @@ class UpdateAgentTaskRequest(BaseModel):
     title: str | None = None
     description: str | None = None
     internal_note: str | None = None
-    manager_agent_id: str | None = None
+    agent_profile_id: str | None = None
     manager_conversation_id: str | None = None
     state: str | None = None
 
@@ -336,7 +336,7 @@ class CreateTaskPackageRequest(BaseModel):
     title: str
     description: str | None = None
     internal_note: str | None = None
-    manager_agent_id: str | None = None
+    agent_profile_id: str | None = None
     tags: list[TaskTagInput] = Field(default_factory=list)
     items: list[PackageItemInput] = Field(min_length=1)
 
@@ -415,7 +415,7 @@ class ResolveFyiClusterRequest(BaseModel):
     host_id: str | None = None
     workspace: str | None = None
     harness: str | None = None
-    manager_agent_id: str | None = None
+    agent_profile_id: str | None = None
 
 
 class AdoptSessionRequest(BaseModel):
@@ -480,13 +480,12 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
     result: dict[str, Any] = {
         "id": task.id,
         "object": "agent.task",
-        "manager_agent_id": task.manager_agent_id,
+        "agent_profile_id": task.agent_profile_id,
         "manager_conversation_id": task.manager_conversation_id,
         "owner_user_id": task.owner_user_id,
         "title": task.title,
         "description": task.description,
         "internal_note": task.internal_note,
-        "search_text": task.search_text,
         "state": task.state,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
@@ -584,7 +583,7 @@ def create_agent_tasks_router(
     :param task_store: Store for task CRUD and tags.
     :param task_event_store: Store for execution history reads.
     :param task_item_store: Store for task items and routing proposals.
-    :param agent_store: Used to validate ``manager_agent_id`` references.
+    :param agent_store: Used to resolve the built-in task-manager agent.
     :param conversation_store: Used for manager/secretary session bootstrap.
     :param secretary_profile_store: Per-user secretary defaults for bootstrap.
     :param host_store: Used to auto-provision secretary profiles with a default host.
@@ -616,11 +615,11 @@ def create_agent_tasks_router(
             if task.owner_user_id is None or task.owner_user_id == user_id
         ]
 
-    async def _require_manager_agent(manager_agent_id: str) -> None:
-        agent = await asyncio.to_thread(agent_store.get, manager_agent_id)
+    async def _require_agent_profile(agent_profile_id: str) -> None:
+        agent = await asyncio.to_thread(agent_store.get, agent_profile_id)
         if agent is None:
             raise OmnigentError(
-                f"Manager agent not found: {manager_agent_id!r}",
+                f"Agent profile not found: {agent_profile_id!r}",
                 code=ErrorCode.NOT_FOUND,
             )
 
@@ -640,14 +639,14 @@ def create_agent_tasks_router(
     async def create_task(request: Request, body: CreateAgentTaskRequest) -> dict[str, Any]:
         """Create a managed task."""
         user_id = require_user(request, auth_provider)
-        await _require_manager_agent(body.manager_agent_id)
+        await _require_agent_profile(body.agent_profile_id)
         task_id = _generate_task_id()
         tags = _tags_from_input(task_id, body.tags)
         task = await asyncio.to_thread(
             task_store.create,
             task_id,
-            body.manager_agent_id,
             body.title,
+            agent_profile_id=body.agent_profile_id,
             owner_user_id=user_id,
             description=body.description,
             internal_note=body.internal_note,
@@ -661,8 +660,7 @@ def create_agent_tasks_router(
     async def list_tasks(
         request: Request,
         state: str | None = None,
-        manager_agent_id: str | None = None,
-        q: str | None = Query(default=None, min_length=1),
+        agent_profile_id: str | None = None,
         limit: int = Query(default=20, ge=1, le=100),
     ) -> dict[str, Any]:
         """List managed tasks visible to the caller."""
@@ -673,18 +671,12 @@ def create_agent_tasks_router(
                 f"state must be one of: {allowed}",
                 code=ErrorCode.INVALID_INPUT,
             )
-        if q is not None:
-            tasks = await asyncio.to_thread(task_store.search, q, limit=limit)
-            if state is not None:
-                tasks = [task for task in tasks if task.state == state]
-            if manager_agent_id is not None:
-                tasks = [task for task in tasks if task.manager_agent_id == manager_agent_id]
-        else:
-            tasks = await asyncio.to_thread(
-                task_store.list,
-                state=state,
-                manager_agent_id=manager_agent_id,
-            )
+        tasks = await asyncio.to_thread(
+            task_store.list,
+            state=state,
+        )
+        if agent_profile_id is not None:
+            tasks = [task for task in tasks if task.agent_profile_id == agent_profile_id]
         tasks = _filter_tasks_for_user(tasks, user_id)[:limit]
         return {
             "object": "list",
@@ -730,7 +722,7 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Create or update the caller's secretary profile."""
             user_id = require_user(request, auth_provider)
-            await _require_manager_agent(body.agent_id)
+            await _require_agent_profile(body.agent_id)
             profile = await asyncio.to_thread(
                 secretary_profile_store.upsert,
                 _effective_user_id(user_id),
@@ -855,7 +847,7 @@ def create_agent_tasks_router(
             "title",
             "description",
             "internal_note",
-            "manager_agent_id",
+            "agent_profile_id",
             "manager_conversation_id",
             "state",
         ):
@@ -866,9 +858,9 @@ def create_agent_tasks_router(
             assert task is not None
             tags = await asyncio.to_thread(task_store.get_tags, task_id)
             return _task_to_response(task, tags=tags)
-        manager_agent_id = update_kwargs.get("manager_agent_id")
-        if manager_agent_id is not None:
-            await _require_manager_agent(manager_agent_id)
+        profile_id = update_kwargs.get("agent_profile_id")
+        if profile_id is not None:
+            await _require_agent_profile(profile_id)
         task = await asyncio.to_thread(task_store.update, task_id, **update_kwargs)
         if task is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
@@ -1236,6 +1228,7 @@ def create_agent_tasks_router(
                 ranked = rank_tasks_for_events(
                     events=events,
                     tasks=routable_tasks(task_store),
+                    task_store=task_store,
                 )
                 return {
                     "object": "agent.task.match",
@@ -1252,8 +1245,8 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Create a pending task package with secretary-reconciled items."""
             user_id = require_user(request, auth_provider)
-            manager_id = resolve_manager_agent_id(agent_store, body.manager_agent_id)
-            await _require_manager_agent(manager_id)
+            profile_id = resolve_agent_profile_id(agent_store, body.agent_profile_id)
+            await _require_agent_profile(profile_id)
             task_id = _generate_task_id()
             tags = _tags_from_input(task_id, body.tags)
             all_event_ids = [event_id for item in body.items for event_id in item.event_ids]
@@ -1266,7 +1259,7 @@ def create_agent_tasks_router(
                 return create_task_package(
                     task_id=task_id,
                     owner_user_id=_effective_user_id(user_id),
-                    manager_agent_id=manager_id,
+                    agent_profile_id=profile_id,
                     title=body.title,
                     description=body.description,
                     internal_note=body.internal_note,
@@ -1425,7 +1418,7 @@ def create_agent_tasks_router(
                 host_id=body.host_id,
                 workspace=body.workspace,
                 harness=body.harness,
-                manager_agent_id=body.manager_agent_id,
+                agent_profile_id=body.agent_profile_id,
                 proposed_task_title=body.proposed_task_title,
                 proposed_task_internal_note=body.proposed_task_internal_note,
             )
@@ -1465,6 +1458,7 @@ def create_agent_tasks_router(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
+                agent_store=agent_store,
                 owner_user_id=_effective_user_id(user_id),
             )
             return _event_to_response(created)

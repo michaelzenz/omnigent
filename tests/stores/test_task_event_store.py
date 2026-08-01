@@ -41,6 +41,9 @@ def test_create_event_and_get_by_source_dedupes(store: SqlAlchemyTaskEventStore)
     )
     assert loaded is not None
     assert loaded.id == event_id
+    assert loaded.tags == [
+        TaskEventTag(event_id=event_id, tag_type="domain", tag="ci"),
+    ]
 
 
 def test_routing_attempts_and_resolution(store: SqlAlchemyTaskEventStore) -> None:
