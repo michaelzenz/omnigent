@@ -68,6 +68,7 @@ from omnigent.agent_tasks.items import (
     create_task_item,
     patch_task_item,
     reconcile_events,
+    reject_task_item,
     resolve_task_item,
     submit_item_for_user_ack,
 )
@@ -1125,6 +1126,15 @@ def create_agent_tasks_router(
             """Accept, edit, or reject a user-inbox task item."""
             user_id = require_user(request, auth_provider)
             item = await _get_item_or_404(item_id, user_id)
+            # Rejection cancels the item outright — no manager profile, dispatch
+            # params, or worker runner are needed, so short-circuit before them.
+            if body.resolution == "reject_item":
+                updated = await asyncio.to_thread(
+                    reject_task_item,
+                    item=item,
+                    task_item_store=task_item_store,
+                )
+                return _item_to_response(updated)
             task = await _get_task_or_404(item.task_id, user_id)
             profile = None
             if task_role_profile_store is not None:
@@ -1152,21 +1162,6 @@ def create_agent_tasks_router(
                 )
 
             updated, execution = await asyncio.to_thread(_resolve)
-            if (
-                body.resolution != "reject_item"
-                and execution is not None
-                and updated.state == "running"
-            ):
-                refreshed_task = await asyncio.to_thread(task_store.get, task.id)
-                if (
-                    refreshed_task is not None
-                    and refreshed_task.manager_conversation_id is not None
-                ):
-                    await _best_effort_ensure_conversation_runner(
-                        request,
-                        refreshed_task.manager_conversation_id,
-                        conversation_store,
-                    )
             response = _item_to_response(updated)
             if execution is not None:
                 response["execution_id"] = execution.id

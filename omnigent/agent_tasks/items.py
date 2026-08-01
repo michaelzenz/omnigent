@@ -144,6 +144,19 @@ def submit_item_for_user_ack(task_item_store: TaskItemStore, item_id: str) -> Ta
     return updated
 
 
+def reject_task_item(*, item: TaskItem, task_item_store: TaskItemStore) -> TaskItem:
+    """Cancel a user-inbox task item without dispatching."""
+    if item.state not in _INBOX_STATES:
+        raise OmnigentError(
+            f"Cannot resolve item in state {item.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+    updated = task_item_store.update_item(item.id, state="cancelled")
+    if updated is None:
+        raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+    return updated
+
+
 def resolve_task_item(
     *,
     item: TaskItem,
