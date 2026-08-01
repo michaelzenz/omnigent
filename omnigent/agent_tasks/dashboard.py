@@ -181,6 +181,7 @@ def _worker_lane(
         "worker_id": worker.id,
         "profile_id": worker.profile_id,
         "session_id": worker.session_id,
+        "kind": worker.kind,
         "state": state,
         "situation": situation,
         "rows": rows,
@@ -285,7 +286,6 @@ def _execution_summary(
     return {
         "id": execution.id,
         "task_item_id": execution.task_item_id,
-        "event_id": execution.event_id,
         "event_title": item.title if item is not None else None,
         "item": _item_summary(item) if item is not None else None,
         "status": execution.status,

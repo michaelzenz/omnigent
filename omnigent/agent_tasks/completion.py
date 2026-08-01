@@ -15,6 +15,7 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
 
 _logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class TaskCompletionContext:
     task_event_store: TaskEventStore
     task_item_store: TaskItemStore
     conversation_store: ConversationStore
+    worker_store: WorkerStore
     runner_router: RunnerRouter | None = None
 
 
@@ -55,17 +57,17 @@ async def notify_worker_session_status(
     """
     Update task execution state and wake the manager when a worker session settles.
 
-    :returns: ``True`` when a task worker binding was handled.
+    :returns: ``True`` when a managed worker session was handled.
     """
     if _context is None or status not in {"idle", "failed"}:
         return False
-    binding = _context.task_event_store.get_binding(session_id)
-    if binding is None or binding.binding_kind != "worker":
+    worker = _context.worker_store.get_by_session_id(session_id)
+    if worker is None or worker.kind != WORKER_KIND_MANAGED:
         return False
     execution = _context.task_event_store.get_execution_by_conversation_id(session_id)
     if execution is None:
         _logger.warning(
-            "worker completion: binding without execution for session %s",
+            "worker completion: managed worker without execution for session %s",
             session_id,
         )
         return False
@@ -85,7 +87,7 @@ async def notify_worker_session_status(
     item_state = "done" if terminal_status == "succeeded" else "queued"
     _context.task_item_store.update_item(execution.task_item_id, state=item_state)
 
-    task = _context.task_store.get(binding.task_id)
+    task = _context.task_store.get(worker.task_id)
     if task is not None:
         sync_task_activity_state(
             task,
@@ -94,15 +96,10 @@ async def notify_worker_session_status(
         )
     if task is None or task.manager_conversation_id is None:
         return True
-    event = (
-        _context.task_event_store.get_event(execution.event_id)
-        if execution.event_id is not None
-        else None
-    )
     await wake_task_manager_for_execution(
         manager_conversation_id=task.manager_conversation_id,
         execution=completed,
-        event=event,
+        event=None,
         conversation_store=_context.conversation_store,
         runner_router=_context.runner_router,
         task_item_store=_context.task_item_store,

@@ -67,22 +67,21 @@ def test_list_task_ids_by_tag(store: SqlAlchemyTaskStore) -> None:
     assert sorted(store.list_task_ids_by_tag("domain", "s3")) == sorted([task_a, task_b])
 
 
-def test_delete_removes_tags_and_bindings(store: SqlAlchemyTaskStore) -> None:
-    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+def test_delete_removes_tags_and_workers(store: SqlAlchemyTaskStore) -> None:
+    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
     task_id = _uid("task_delete")
     session_id = _uid("sess_delete")
     store.create(task_id=task_id, title="Delete me", agent_profile_id=_uid("profile_del"))
     store.set_tags(task_id, [TaskTag(task_id=task_id, tag_type="domain", tag="x")])
-    event_store = SqlAlchemyTaskEventStore(store.storage_location)
-    event_store.upsert_binding(
-        session_id,
+    worker_store = SqlAlchemyWorkerStore(store.storage_location)
+    worker_store.create_worker(
+        _uid("worker_delete"),
         task_id,
-        _uid("mgr"),
-        "manager",
-        manager_conversation_id=_uid("conv_mgr"),
+        _uid("profile_del"),
+        session_id=session_id,
     )
     assert store.delete(task_id) is True
     assert store.get(task_id) is None
     assert store.get_tags(task_id) == []
-    assert event_store.get_binding(session_id) is None
+    assert worker_store.get_by_session_id(session_id) is None

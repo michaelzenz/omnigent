@@ -9,6 +9,9 @@ from omnigent.entities import Worker
 
 _UNSET: Any = object()
 
+WORKER_KIND_MANAGED = "managed"
+WORKER_KIND_EXTERNAL = "external"
+
 
 class WorkerStore(ABC):
     """Abstract base for worker persistence."""
@@ -23,6 +26,7 @@ class WorkerStore(ABC):
         task_id: str,
         profile_id: str,
         *,
+        kind: str = WORKER_KIND_MANAGED,
         session_id: str | None = None,
     ) -> Worker:
         """Insert a worker slot for one task."""
@@ -30,6 +34,10 @@ class WorkerStore(ABC):
     @abstractmethod
     def get_worker(self, worker_id: str) -> Worker | None:
         """Return one worker by id."""
+
+    @abstractmethod
+    def get_by_session_id(self, session_id: str) -> Worker | None:
+        """Return the worker row for a live session, if any."""
 
     @abstractmethod
     def list_workers_for_task(self, task_id: str) -> list[Worker]:
@@ -42,5 +50,6 @@ class WorkerStore(ABC):
         *,
         session_id: str | None = _UNSET,
         profile_id: str | None = None,
+        kind: str | None = None,
     ) -> Worker | None:
         """Update mutable worker fields."""

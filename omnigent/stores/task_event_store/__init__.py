@@ -1,4 +1,4 @@
-"""Agent-task event store — events, routing, executions, and session bindings."""
+"""Agent-task event store — events, routing, and executions."""
 
 from __future__ import annotations
 
@@ -10,12 +10,9 @@ from omnigent.entities import (
     TaskEventExecution,
     TaskEventRoutingAttempt,
     EventTag,
-    TaskSessionBinding,
 )
 
 _UNSET: Any = object()
-
-TASK_SESSION_BINDING_KINDS = frozenset({"ambient", "worker", "manager"})
 
 
 class TaskEventStore(ABC):
@@ -111,10 +108,7 @@ class TaskEventStore(ABC):
         execution_id: str,
         task_item_id: str,
         task_id: str,
-        manager_agent_id: str,
-        worker_agent_id: str,
         *,
-        event_id: str | None = None,
         status: str = "queued",
         attempt_no: int = 1,
         conversation_id: str | None = None,
@@ -149,36 +143,9 @@ class TaskEventStore(ABC):
         """Update one execution row."""
 
     @abstractmethod
-    def list_executions_for_event(self, event_id: str) -> list[TaskEventExecution]:
-        """List executions for an event ordered by ``attempt_no ASC, id ASC``."""
-
-    @abstractmethod
     def list_executions_for_task(self, task_id: str) -> list[TaskEventExecution]:
         """List executions for a task ordered by ``created_at DESC, id DESC``."""
 
     @abstractmethod
     def list_executions_for_item(self, task_item_id: str) -> list[TaskEventExecution]:
         """List executions for a task item ordered by ``attempt_no ASC, id ASC``."""
-
-    # ── Session bindings ───────────────────────────────────────────
-
-    @abstractmethod
-    def get_binding(self, session_id: str) -> TaskSessionBinding | None:
-        """Return the task binding for a session, if any."""
-
-    @abstractmethod
-    def upsert_binding(
-        self,
-        session_id: str,
-        task_id: str,
-        manager_agent_id: str,
-        binding_kind: str,
-        *,
-        manager_conversation_id: str | None = None,
-        created_at: int | None = None,
-    ) -> TaskSessionBinding:
-        """Create or replace a session-to-task binding."""
-
-    @abstractmethod
-    def delete_binding(self, session_id: str) -> bool:
-        """Delete a session binding. Idempotent."""

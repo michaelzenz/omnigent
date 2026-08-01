@@ -10,6 +10,8 @@ from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.routing import route_event_to_task
+from omnigent.agent_tasks.session_task import task_for_session
+from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.agent_tasks.manager_agent import (
     resolve_manager_agent_id,
     resolve_manager_agent_id_for_task,
@@ -35,6 +37,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
 
 _logger = logging.getLogger(__name__)
 
@@ -60,6 +63,7 @@ class SessionAdoptionContext:
 
     task_store: TaskStore
     task_event_store: TaskEventStore
+    worker_store: WorkerStore
     conversation_store: ConversationStore
     secretary_profile_store: SecretaryProfileStore | None = None
     host_store: HostStore | None = None
@@ -99,14 +103,19 @@ def resolve_owner_user_id(
 def is_orphan_candidate(
     conv: Conversation | None,
     *,
-    task_event_store: TaskEventStore,
+    task_store: TaskStore,
+    worker_store: WorkerStore,
 ) -> bool:
     """Return whether a conversation should enter the adoption pipeline."""
     if conv is None:
         return False
     if conv.kind == "sub_agent":
         return False
-    if task_event_store.get_binding(conv.id) is not None:
+    if task_for_session(
+        conv.id,
+        task_store=task_store,
+        worker_store=worker_store,
+    ) is not None:
         return False
     if conv.labels.get(ADOPTION_DISMISSED_LABEL) == "1":
         return False
@@ -145,7 +154,11 @@ async def enqueue_orphan_session(
     if _context is None:
         return False
     conv = _context.conversation_store.get_conversation(session_id)
-    if not is_orphan_candidate(conv, task_event_store=_context.task_event_store):
+    if not is_orphan_candidate(
+        conv,
+        task_store=_context.task_store,
+        worker_store=_context.worker_store,
+    ):
         return False
     pending = _PENDING_BY_USER.setdefault(owner_user_id, [])
     if session_id not in pending:
@@ -231,13 +244,18 @@ def propose_session_adoption(
     session_id: str,
     task_store: TaskStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     owner_user_id: str | None = None,
 ) -> TaskEvent:
     """Score tasks and create a user-gated session adoption proposal."""
     conv = conversation_store.get_conversation(session_id)
-    if not is_orphan_candidate(conv, task_event_store=task_event_store):
+    if not is_orphan_candidate(
+        conv,
+        task_store=task_store,
+        worker_store=worker_store,
+    ):
         raise OmnigentError(
             "Session is not eligible for adoption",
             code=ErrorCode.CONFLICT,
@@ -286,6 +304,7 @@ async def adopt_session(
     task_id: str,
     task_store: TaskStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     runner_router: RunnerRouter | None,
@@ -298,7 +317,11 @@ async def adopt_session(
     :returns: The processed adoption proposal (if any) and manager triage event.
     """
     conv = conversation_store.get_conversation(session_id)
-    if not is_orphan_candidate(conv, task_event_store=task_event_store):
+    if not is_orphan_candidate(
+        conv,
+        task_store=task_store,
+        worker_store=worker_store,
+    ):
         raise OmnigentError(
             "Session is not eligible for adoption",
             code=ErrorCode.CONFLICT,
@@ -312,12 +335,13 @@ async def adopt_session(
         agent_store=agent_store,
         conversation_store=conversation_store,
     )
-    task_event_store.upsert_binding(
-        session_id,
+    assert conv is not None
+    worker_store.create_worker(
+        _generate_worker_id(),
         task.id,
-        manager_agent_id,
-        "ambient",
-        manager_conversation_id=task.manager_conversation_id,
+        conv.agent_id,
+        kind=WORKER_KIND_EXTERNAL,
+        session_id=session_id,
     )
     adopted_event_id = uuid.uuid4().hex
     adopted_event = task_event_store.create_event(

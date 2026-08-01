@@ -510,11 +510,8 @@ def _execution_to_response(execution: TaskEventExecution) -> dict[str, Any]:
     return {
         "id": execution.id,
         "object": "agent.task.execution",
-        "event_id": execution.event_id,
         "task_item_id": execution.task_item_id,
         "task_id": execution.task_id,
-        "manager_agent_id": execution.manager_agent_id,
-        "worker_agent_id": execution.worker_agent_id,
         "status": execution.status,
         "attempt_no": execution.attempt_no,
         "conversation_id": execution.conversation_id,
@@ -1452,6 +1449,7 @@ def create_agent_tasks_router(
                 session_id=session_id,
                 task_store=task_store,
                 task_event_store=task_event_store,
+                worker_store=worker_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
                 owner_user_id=_effective_user_id(user_id),
@@ -1492,18 +1490,19 @@ def create_agent_tasks_router(
                 task_id=body.task_id,
                 task_store=task_store,
                 task_event_store=task_event_store,
+                worker_store=worker_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
                 runner_router=runner_router,
                 params=params,
                 proposal_event=proposal,
             )
-            binding = await asyncio.to_thread(task_event_store.get_binding, session_id)
+            worker = await asyncio.to_thread(worker_store.get_by_session_id, session_id)
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,
                 "task_id": body.task_id,
-                "binding_kind": binding.binding_kind if binding is not None else None,
+                "worker_kind": worker.kind if worker is not None else None,
                 "proposal": (
                     _event_to_response(proposal_event)
                     if proposal_event.event_type == SESSION_ADOPTION_PROPOSAL

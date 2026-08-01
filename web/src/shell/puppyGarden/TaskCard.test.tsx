@@ -92,7 +92,6 @@ describe("TaskCard", () => {
                 execution: {
                   id: "exec-1",
                   task_item_id: "item-running",
-                  event_id: "evt-1",
                   event_title: "Investigate failure",
                   status: "running",
                   result_summary: null,
@@ -111,7 +110,6 @@ describe("TaskCard", () => {
                 execution: {
                   id: "exec-done",
                   task_item_id: "item-done",
-                  event_id: "evt-2",
                   event_title: "Earlier fix",
                   status: "succeeded",
                   result_summary: "ok",
@@ -196,7 +194,6 @@ describe("TaskCard", () => {
                 execution: {
                   id: "exec-done",
                   task_item_id: "item-done",
-                  event_id: "evt-1",
                   event_title: "Done task",
                   status: "succeeded",
                   result_summary: "ok",

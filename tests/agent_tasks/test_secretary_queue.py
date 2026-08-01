@@ -23,6 +23,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
 def _uid(seed: str) -> str:
@@ -34,6 +35,7 @@ async def secretary_queue(db_uri: str) -> dict:
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
     manager_agent_id = generate_agent_id()
@@ -65,6 +67,7 @@ async def secretary_queue(db_uri: str) -> dict:
         "agent_store": agent_store,
         "task_store": task_store,
         "event_store": event_store,
+        "worker_store": worker_store,
         "conversation_store": conversation_store,
         "secretary_store": secretary_store,
         "user_id": user_id,
@@ -99,6 +102,7 @@ async def test_stall_enqueues_secretary_wake(
             event=event,
             task_store=secretary_queue["task_store"],
             task_event_store=event_store,
+            worker_store=secretary_queue["worker_store"],
             conversation_store=secretary_queue["conversation_store"],
             agent_store=secretary_queue["agent_store"],
             runner_router=None,

@@ -132,18 +132,13 @@ def test_task_event_executions_status_check_enforced(db_engine: Engine) -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO task_event_executions "
-                    "(workspace_id, id, task_item_id, event_id, task_id, manager_agent_id, "
-                    "worker_agent_id, status, attempt_no, assigned_at, created_at) "
-                    "VALUES (0, :id, :task_item_id, :event_id, :task_id, :manager_id, :worker_id, "
-                    "99, 1, 1, 1)"
+                    "(workspace_id, id, task_item_id, task_id, status, attempt_no, assigned_at, created_at) "
+                    "VALUES (0, :id, :task_item_id, :task_id, 99, 1, 1, 1)"
                 ),
                 {
                     "id": bytes.fromhex("55555555555555555555555555555555"),
                     "task_item_id": bytes.fromhex("77777777777777777777777777777777"),
-                    "event_id": bytes.fromhex("11111111111111111111111111111111"),
                     "task_id": bytes.fromhex("33333333333333333333333333333333"),
-                    "manager_id": bytes.fromhex("44444444444444444444444444444444"),
-                    "worker_id": bytes.fromhex("66666666666666666666666666666666"),
                 },
             )
 

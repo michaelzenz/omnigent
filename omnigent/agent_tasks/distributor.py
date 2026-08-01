@@ -7,6 +7,7 @@ import logging
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.event_types import is_distributor_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
+from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.scoring import (
     candidate_task_ids_for_event_tags,
     pick_auto_route,
@@ -24,6 +25,7 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ async def distribute_event(
     event: TaskEvent,
     task_store: TaskStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     runner_router: RunnerRouter | None,
@@ -89,24 +92,26 @@ async def distribute_event(
         )
 
     if event.source_internal_session_id:
-        binding = task_event_store.get_binding(event.source_internal_session_id)
-        if binding is not None:
-            bound_task = task_store.get(binding.task_id)
-            if bound_task is not None:
-                params = _bootstrap_params(secretary_profile)
-                return await _finish_route(
-                    event=event,
-                    task=bound_task,
-                    task_store=task_store,
-                    task_event_store=task_event_store,
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    runner_router=runner_router,
-                    params=params,
-                    secretary_profile_store=secretary_profile_store,
-                    owner_user_id=owner_user_id,
-                    routing_reason="session-binding",
-                )
+        bound_task = task_for_session(
+            event.source_internal_session_id,
+            task_store=task_store,
+            worker_store=worker_store,
+        )
+        if bound_task is not None:
+            params = _bootstrap_params(secretary_profile)
+            return await _finish_route(
+                event=event,
+                task=bound_task,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                agent_store=agent_store,
+                runner_router=runner_router,
+                params=params,
+                secretary_profile_store=secretary_profile_store,
+                owner_user_id=owner_user_id,
+                routing_reason="session-binding",
+            )
 
     active_tasks = live_tasks(task_store)
     if not active_tasks:

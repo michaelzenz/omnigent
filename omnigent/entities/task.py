@@ -140,8 +140,9 @@ class Worker:
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param task_id: Parent managed task.
-    :param profile_id: Registered agent profile that runs this worker.
-    :param session_id: Live worker session after dispatch, or ``None`` before spawn.
+    :param profile_id: Registered agent profile for this slot.
+    :param kind: ``"managed"`` for dispatched workers, ``"external"`` for adopted sessions.
+    :param session_id: Live session id when spawned or adopted, or ``None`` before bind.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
@@ -149,6 +150,7 @@ class Worker:
     id: str
     task_id: str
     profile_id: str
+    kind: str
     created_at: int
     session_id: str | None = None
     updated_at: int | None = None
@@ -227,10 +229,7 @@ class TaskEventExecution:
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param task_item_id: Backlog item being executed.
-    :param event_id: Optional triggering event, or ``None``.
     :param task_id: Task the item belongs to.
-    :param manager_agent_id: Manager that dispatched the worker.
-    :param worker_agent_id: Worker that executed the event.
     :param status: One of ``"queued"``, ``"running"``, ``"succeeded"``,
         ``"failed"``, ``"cancelled"``.
     :param attempt_no: Monotonic attempt number for this event.
@@ -248,13 +247,10 @@ class TaskEventExecution:
     id: str
     task_item_id: str
     task_id: str
-    manager_agent_id: str
-    worker_agent_id: str
     status: str
     attempt_no: int
     assigned_at: int
     created_at: int
-    event_id: str | None = None
     conversation_id: str | None = None
     started_at: int | None = None
     finished_at: int | None = None
@@ -262,24 +258,3 @@ class TaskEventExecution:
     error: str | None = None
     error_code: str | None = None
     updated_at: int | None = None
-
-
-@dataclass
-class TaskSessionBinding:
-    """
-    Maps an Omnigent session to the task manager that owns it.
-
-    :param session_id: Bound conversation id.
-    :param task_id: Task the session belongs to.
-    :param manager_agent_id: Manager agent for the task.
-    :param binding_kind: One of ``"ambient"``, ``"worker"``, ``"manager"``.
-    :param created_at: Unix epoch seconds when the binding was created.
-    :param manager_conversation_id: Manager session wake target, or ``None``.
-    """
-
-    session_id: str
-    task_id: str
-    manager_agent_id: str
-    binding_kind: str
-    created_at: int
-    manager_conversation_id: str | None = None

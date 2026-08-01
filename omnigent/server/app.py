@@ -2302,6 +2302,7 @@ def create_app(
             create_task_events_router(
                 task_store,
                 task_event_store,
+                worker_store,
                 conversation_store,
                 agent_store,
                 secretary_profile_store=secretary_profile_store,
@@ -2324,6 +2325,7 @@ def create_app(
                 task_event_store=task_event_store,
                 task_item_store=task_item_store,
                 conversation_store=conversation_store,
+                worker_store=worker_store,
                 runner_router=runner_router,
             )
         )
@@ -2331,6 +2333,7 @@ def create_app(
             SessionAdoptionContext(
                 task_store=task_store,
                 task_event_store=task_event_store,
+                worker_store=worker_store,
                 conversation_store=conversation_store,
                 secretary_profile_store=secretary_profile_store,
                 host_store=host_store,

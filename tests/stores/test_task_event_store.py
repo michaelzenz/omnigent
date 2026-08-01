@@ -7,7 +7,6 @@ import uuid
 import pytest
 
 from omnigent.entities import EventTag
-from omnigent.stores.task_event_store import TASK_SESSION_BINDING_KINDS
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 
 
@@ -78,10 +77,7 @@ def test_execution_lookup_by_conversation_id(store: SqlAlchemyTaskEventStore) ->
     store.create_execution(
         execution_id=execution_id,
         task_item_id=task_item_id,
-        event_id=event_id,
         task_id=_uid("task_1"),
-        manager_agent_id=_uid("mgr_1"),
-        worker_agent_id=_uid("worker_1"),
         conversation_id=conversation_id,
         status="running",
     )
@@ -96,32 +92,3 @@ def test_execution_lookup_by_conversation_id(store: SqlAlchemyTaskEventStore) ->
     )
     assert updated is not None
     assert updated.status == "succeeded"
-
-
-def test_session_binding_upsert_and_get(store: SqlAlchemyTaskEventStore) -> None:
-    session_id = _uid("sess_bind")
-    binding = store.upsert_binding(
-        session_id,
-        _uid("task_1"),
-        _uid("mgr_1"),
-        "ambient",
-        manager_conversation_id=_uid("conv_mgr"),
-    )
-    assert binding.binding_kind == "ambient"
-    loaded = store.get_binding(session_id)
-    assert loaded == binding
-    replaced = store.upsert_binding(
-        session_id,
-        _uid("task_2"),
-        _uid("mgr_2"),
-        "worker",
-    )
-    assert replaced.task_id == _uid("task_2")
-    assert store.delete_binding(session_id) is True
-    assert store.get_binding(session_id) is None
-
-
-def test_unknown_binding_kind_raises(store: SqlAlchemyTaskEventStore) -> None:
-    with pytest.raises(ValueError, match="unknown binding_kind"):
-        store.upsert_binding(_uid("sess"), _uid("task"), _uid("mgr"), "invalid")
-    assert "manager" in TASK_SESSION_BINDING_KINDS

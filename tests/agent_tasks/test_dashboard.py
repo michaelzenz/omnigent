@@ -142,8 +142,6 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     start_execution_for_item(
         task=task,
         item=running_item,
-        manager_agent_id=manager_id,
-        worker_agent_id=worker_profile_id,
         task_event_store=event_store,
         conversation_id=_uid("worker_conv"),
         status="running",
@@ -151,8 +149,6 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     done_execution = start_execution_for_item(
         task=task,
         item=done_item,
-        manager_agent_id=manager_id,
-        worker_agent_id=worker_profile_id,
         task_event_store=event_store,
         conversation_id=_uid("worker_conv_done"),
         status="succeeded",

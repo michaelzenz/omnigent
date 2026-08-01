@@ -13,6 +13,8 @@ from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
 def _uid(seed: str) -> str:
@@ -35,6 +37,11 @@ def task_event_store(db_uri: str) -> SqlAlchemyTaskEventStore:
     return SqlAlchemyTaskEventStore(db_uri)
 
 
+@pytest_asyncio.fixture()
+def worker_store(db_uri: str) -> SqlAlchemyWorkerStore:
+    return SqlAlchemyWorkerStore(db_uri)
+
+
 def _bootstrap_body() -> dict[str, str]:
     return {
         "host_id": _uid("host_test"),
@@ -48,7 +55,7 @@ async def test_session_adoption_flow(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
     conversation_store: SqlAlchemyConversationStore,
-    task_event_store: SqlAlchemyTaskEventStore,
+    worker_store: SqlAlchemyWorkerStore,
 ) -> None:
     """Propose, adopt, and bind an orphan session to a task."""
     conv = conversation_store.create_conversation(
@@ -85,22 +92,22 @@ async def test_session_adoption_flow(
     )
     assert adopt_resp.status_code == 200
     body = adopt_resp.json()
-    assert body["binding_kind"] == "ambient"
+    assert body["worker_kind"] == WORKER_KIND_EXTERNAL
     assert body["task_id"] == task_id
     assert body["event"]["event_type"] == "session.adopted"
     assert body["event"]["state"] == "routed"
     assert body["proposal"]["state"] == "reconciled"
 
-    binding = task_event_store.get_binding(conv.id)
-    assert binding is not None
-    assert binding.task_id == task_id
+    worker = worker_store.get_by_session_id(conv.id)
+    assert worker is not None
+    assert worker.task_id == task_id
 
 
 async def test_reject_session_adoption(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
     conversation_store: SqlAlchemyConversationStore,
-    task_event_store: SqlAlchemyTaskEventStore,
+    worker_store: SqlAlchemyWorkerStore,
 ) -> None:
     """Rejecting adoption dismisses the proposal and leaves the session orphan."""
     conv = conversation_store.create_conversation(
@@ -119,7 +126,7 @@ async def test_reject_session_adoption(
     )
     assert reject_resp.status_code == 200
     assert reject_resp.json()["proposal"]["state"] == "dismissed"
-    assert task_event_store.get_binding(conv.id) is None
+    assert worker_store.get_by_session_id(conv.id) is None
 
     updated = conversation_store.get_conversation(conv.id)
     assert updated is not None

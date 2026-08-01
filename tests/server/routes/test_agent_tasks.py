@@ -182,10 +182,7 @@ async def test_list_executions(
     event_store.create_execution(
         execution_id=execution_id,
         task_item_id=task_item_id,
-        event_id=event_id,
         task_id=task_id,
-        manager_agent_id=manager_agent_id,
-        worker_agent_id=manager_agent_id,
         status="succeeded",
     )
     event_store.update_execution(execution_id, status="succeeded", result_summary="done")

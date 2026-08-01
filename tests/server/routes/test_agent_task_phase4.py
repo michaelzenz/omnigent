@@ -257,19 +257,10 @@ async def test_worker_completion_hook(
         _uid("exec_complete"),
         task_item_id,
         task_id,
-        task_manager_agent_id,
-        worker_agent_id,
-        event_id=event_id,
         status="running",
         conversation_id=worker_conv.id,
     )
-    event_store.upsert_binding(
-        worker_conv.id,
-        task_id,
-        task_manager_agent_id,
-        "worker",
-        manager_conversation_id=manager_conv.id,
-    )
+    worker_store.update_worker(worker.id, session_id=worker_conv.id)
 
     configure_task_completion(
         TaskCompletionContext(
@@ -277,6 +268,7 @@ async def test_worker_completion_hook(
             task_event_store=event_store,
             task_item_store=item_store,
             conversation_store=conversation_store,
+            worker_store=worker_store,
             runner_router=None,
         )
     )

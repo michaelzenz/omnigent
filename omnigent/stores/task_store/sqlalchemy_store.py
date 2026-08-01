@@ -8,8 +8,8 @@ from sqlalchemy import asc, delete, desc, select
 
 from omnigent.db.db_models import (
     SqlTask,
-    SqlTaskSessionBinding,
     SqlTaskTag,
+    SqlWorker,
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import decode_task_state, encode_task_state
@@ -93,6 +93,18 @@ class SqlAlchemyTaskStore(TaskStore):
                 return None
             return _to_entity(row)
 
+    def get_by_manager_conversation_id(self, conversation_id: str) -> Task | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .where(SqlTask.manager_conversation_id == conversation_id)
+            )
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            return _to_entity(row)
+
     def list(
         self,
         *,
@@ -166,9 +178,9 @@ class SqlAlchemyTaskStore(TaskStore):
                 )
             )
             session.execute(
-                delete(SqlTaskSessionBinding).where(
-                    SqlTaskSessionBinding.workspace_id == workspace_id,
-                    SqlTaskSessionBinding.task_id == task_id,
+                delete(SqlWorker).where(
+                    SqlWorker.workspace_id == workspace_id,
+                    SqlWorker.task_id == task_id,
                 )
             )
             session.delete(row)

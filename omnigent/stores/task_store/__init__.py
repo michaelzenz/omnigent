@@ -37,6 +37,10 @@ class TaskStore(ABC):
         """Return a task by id, or ``None`` if not found."""
 
     @abstractmethod
+    def get_by_manager_conversation_id(self, conversation_id: str) -> Task | None:
+        """Return the task whose manager session matches *conversation_id*."""
+
+    @abstractmethod
     def list(
         self,
         *,

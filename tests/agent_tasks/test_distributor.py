@@ -17,6 +17,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
 def _uid(seed: str) -> str:
@@ -45,6 +46,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
     event_store = SqlAlchemyTaskEventStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
     task_id = _uid("dist_task")
     task_store.create(
         task_id,
@@ -59,6 +61,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
         "event_store": event_store,
         "conversation_store": conversation_store,
         "secretary_store": secretary_store,
+        "worker_store": worker_store,
         "task_id": task_id,
         "agent_profile_id": manager_agent_id,
     }
@@ -90,6 +93,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         event=event,
         task_store=stores["task_store"],
         task_event_store=event_store,
+        worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
         runner_router=None,
@@ -107,6 +111,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
 async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) -> None:
     event_store = SqlAlchemyTaskEventStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
     agent_store = SqlAlchemyAgentStore(db_uri)
@@ -121,6 +126,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
         event=event,
         task_store=task_store,
         task_event_store=event_store,
+        worker_store=worker_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
         runner_router=None,
@@ -144,6 +150,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         event=event,
         task_store=stores["task_store"],
         task_event_store=event_store,
+        worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
         runner_router=None,
@@ -175,6 +182,7 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         event=event,
         task_store=stores["task_store"],
         task_event_store=event_store,
+        worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
         runner_router=None,

@@ -27,7 +27,6 @@ describe("taskCardUtils", () => {
       {
         id: "1",
         task_item_id: "item-1",
-        event_id: "e1",
         event_title: "Done item",
         status: "succeeded",
         result_summary: null,
@@ -41,7 +40,6 @@ describe("taskCardUtils", () => {
       {
         id: "2",
         task_item_id: "item-2",
-        event_id: "e2",
         event_title: "Running item",
         status: "running",
         result_summary: null,
@@ -61,7 +59,6 @@ describe("taskCardUtils", () => {
       {
         id: "3",
         task_item_id: "item-3",
-        event_id: "e3",
         event_title: "Third queued",
         status: "queued",
         result_summary: null,
@@ -75,7 +72,6 @@ describe("taskCardUtils", () => {
       {
         id: "1",
         task_item_id: "item-1",
-        event_id: "e1",
         event_title: "First queued",
         status: "queued",
         result_summary: null,
@@ -89,7 +85,6 @@ describe("taskCardUtils", () => {
       {
         id: "2",
         task_item_id: "item-2",
-        event_id: "e2",
         event_title: "Second queued",
         status: "queued",
         result_summary: null,
@@ -117,7 +112,6 @@ describe("taskCardUtils", () => {
     const sorted = sortExecutions([
       {
         id: "d2",
-        event_id: "e-d2",
         event_title: "Done second",
         status: "succeeded",
         assigned_at: 50,
@@ -127,7 +121,6 @@ describe("taskCardUtils", () => {
       },
       {
         id: "q2",
-        event_id: "e-q2",
         event_title: "Queue second",
         status: "queued",
         assigned_at: 40,
@@ -135,7 +128,6 @@ describe("taskCardUtils", () => {
       },
       {
         id: "r2",
-        event_id: "e-r2",
         event_title: "Running second",
         status: "running",
         assigned_at: 20,
@@ -144,7 +136,6 @@ describe("taskCardUtils", () => {
       },
       {
         id: "d1",
-        event_id: "e-d1",
         event_title: "Done first",
         status: "succeeded",
         assigned_at: 45,
@@ -154,7 +145,6 @@ describe("taskCardUtils", () => {
       },
       {
         id: "q1",
-        event_id: "e-q1",
         event_title: "Queue first",
         status: "queued",
         assigned_at: 35,
@@ -162,7 +152,6 @@ describe("taskCardUtils", () => {
       },
       {
         id: "r1",
-        event_id: "e-r1",
         event_title: "Running first",
         status: "running",
         assigned_at: 15,
@@ -178,7 +167,6 @@ describe("taskCardUtils", () => {
       {
         id: "1",
         task_item_id: "item-1",
-        event_id: "e1",
         event_title: "Done item",
         status: "succeeded",
         result_summary: null,
@@ -192,7 +180,6 @@ describe("taskCardUtils", () => {
       {
         id: "2",
         task_item_id: "item-2",
-        event_id: "e2",
         event_title: "Running item",
         status: "running",
         result_summary: null,
@@ -215,7 +202,6 @@ describe("taskCardUtils", () => {
           {
             id: "exec-1",
             task_item_id: "item-1",
-            event_id: "e1",
             event_title: "One",
             item: null,
             status: "running",

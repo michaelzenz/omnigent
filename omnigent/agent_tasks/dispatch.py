@@ -151,7 +151,6 @@ def dispatch_worker_for_item(
             "Manager session has no agent binding",
             code=ErrorCode.CONFLICT,
         )
-    manager_agent_id = manager_conv.agent_id
 
     worker = worker_for_item(item, worker_store=worker_store)
     if worker is None:
@@ -168,9 +167,6 @@ def dispatch_worker_for_item(
             worker_store=worker_store,
             task_item_store=task_item_store,
         )
-
-    linked_events = task_item_store.list_events_for_item(item.id)
-    trigger_event_id = linked_events[0].event_id if linked_events else None
 
     worker_conv = conversation_store.create_conversation(
         kind="sub_agent",
@@ -190,10 +186,7 @@ def dispatch_worker_for_item(
     execution = start_execution_for_item(
         task=task,
         item=item,
-        manager_agent_id=manager_agent_id,
-        worker_agent_id=worker.profile_id,
         task_event_store=task_event_store,
-        event_id=trigger_event_id,
         conversation_id=worker_conv.id,
         status="running",
     )
@@ -207,13 +200,6 @@ def dispatch_worker_for_item(
         task,
         task_store=task_store,
         task_item_store=task_item_store,
-    )
-    task_event_store.upsert_binding(
-        worker_conv.id,
-        task.id,
-        manager_agent_id,
-        "worker",
-        manager_conversation_id=task.manager_conversation_id,
     )
     refreshed = task_event_store.get_execution(execution.id)
     assert refreshed is not None

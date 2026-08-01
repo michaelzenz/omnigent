@@ -39,7 +39,6 @@ from omnigent.entities.task import (
     EventTag,
     TaskItem,
     TaskItemEvent,
-    TaskSessionBinding,
     TaskTag,
     Worker,
 )
@@ -92,7 +91,6 @@ __all__ = [
     "EventTag",
     "TaskItem",
     "TaskItemEvent",
-    "TaskSessionBinding",
     "TaskTag",
     "Worker",
     "TimerItem",

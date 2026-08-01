@@ -103,11 +103,4 @@ def bootstrap_task_manager(
     )
     if updated is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-    task_event_store.upsert_binding(
-        conversation.id,
-        task.id,
-        manager_agent_id,
-        "manager",
-        manager_conversation_id=conversation.id,
-    )
     return updated

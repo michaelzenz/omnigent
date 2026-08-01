@@ -10,7 +10,6 @@ from omnigent.db.db_models import (
     SqlTaskEvent,
     SqlTaskEventExecution,
     SqlTaskEventRoutingAttempt,
-    SqlTaskSessionBinding,
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import (
@@ -25,10 +24,9 @@ from omnigent.entities import (
     TaskEventExecution,
     TaskEventRoutingAttempt,
     EventTag,
-    TaskSessionBinding,
 )
 from omnigent.stores.agent_task.tags import decode_event_tags, encode_event_tags
-from omnigent.stores.task_event_store import TASK_SESSION_BINDING_KINDS, TaskEventStore
+from omnigent.stores.task_event_store import TaskEventStore
 
 _UNSET: Any = object()
 
@@ -68,10 +66,7 @@ def _execution_to_entity(row: SqlTaskEventExecution) -> TaskEventExecution:
     return TaskEventExecution(
         id=row.id,
         task_item_id=row.task_item_id,
-        event_id=row.event_id,
         task_id=row.task_id,
-        manager_agent_id=row.manager_agent_id,
-        worker_agent_id=row.worker_agent_id,
         status=decode_task_event_execution_status(row.status),
         attempt_no=row.attempt_no,
         assigned_at=row.assigned_at,
@@ -83,17 +78,6 @@ def _execution_to_entity(row: SqlTaskEventExecution) -> TaskEventExecution:
         error=row.error,
         error_code=row.error_code,
         updated_at=row.updated_at,
-    )
-
-
-def _binding_to_entity(row: SqlTaskSessionBinding) -> TaskSessionBinding:
-    return TaskSessionBinding(
-        session_id=row.session_id,
-        task_id=row.task_id,
-        manager_agent_id=row.manager_agent_id,
-        binding_kind=row.binding_kind,
-        created_at=row.created_at,
-        manager_conversation_id=row.manager_conversation_id,
     )
 
 
@@ -270,10 +254,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         execution_id: str,
         task_item_id: str,
         task_id: str,
-        manager_agent_id: str,
-        worker_agent_id: str,
         *,
-        event_id: str | None = None,
         status: str = "queued",
         attempt_no: int = 1,
         conversation_id: str | None = None,
@@ -283,10 +264,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         row = SqlTaskEventExecution(
             id=execution_id,
             task_item_id=task_item_id,
-            event_id=event_id,
             task_id=task_id,
-            manager_agent_id=manager_agent_id,
-            worker_agent_id=worker_agent_id,
             conversation_id=conversation_id,
             status=encode_task_event_execution_status(status),
             attempt_no=attempt_no,
@@ -368,17 +346,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             session.flush()
             return _execution_to_entity(row)
 
-    def list_executions_for_event(self, event_id: str) -> list[TaskEventExecution]:
-        with self._session() as session:
-            stmt = (
-                select(SqlTaskEventExecution)
-                .where(SqlTaskEventExecution.workspace_id == current_workspace_id())
-                .where(SqlTaskEventExecution.event_id == event_id)
-                .order_by(asc(SqlTaskEventExecution.attempt_no), asc(SqlTaskEventExecution.id))
-            )
-            rows = session.execute(stmt).scalars().all()
-            return [_execution_to_entity(row) for row in rows]
-
     def list_executions_for_task(self, task_id: str) -> list[TaskEventExecution]:
         with self._session() as session:
             stmt = (
@@ -400,50 +367,3 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             )
             rows = session.execute(stmt).scalars().all()
             return [_execution_to_entity(row) for row in rows]
-
-    def get_binding(self, session_id: str) -> TaskSessionBinding | None:
-        with self._session() as session:
-            row = session.get(SqlTaskSessionBinding, (current_workspace_id(), session_id))
-            if row is None:
-                return None
-            return _binding_to_entity(row)
-
-    def upsert_binding(
-        self,
-        session_id: str,
-        task_id: str,
-        manager_agent_id: str,
-        binding_kind: str,
-        *,
-        manager_conversation_id: str | None = None,
-        created_at: int | None = None,
-    ) -> TaskSessionBinding:
-        if binding_kind not in TASK_SESSION_BINDING_KINDS:
-            raise ValueError(f"unknown binding_kind: {binding_kind!r}")
-        with self._session() as session:
-            row = session.get(SqlTaskSessionBinding, (current_workspace_id(), session_id))
-            if row is None:
-                row = SqlTaskSessionBinding(
-                    session_id=session_id,
-                    task_id=task_id,
-                    manager_agent_id=manager_agent_id,
-                    manager_conversation_id=manager_conversation_id,
-                    binding_kind=binding_kind,
-                    created_at=created_at if created_at is not None else now_epoch(),
-                )
-                session.add(row)
-            else:
-                row.task_id = task_id
-                row.manager_agent_id = manager_agent_id
-                row.manager_conversation_id = manager_conversation_id
-                row.binding_kind = binding_kind
-            session.flush()
-            return _binding_to_entity(row)
-
-    def delete_binding(self, session_id: str) -> bool:
-        with self._session() as session:
-            row = session.get(SqlTaskSessionBinding, (current_workspace_id(), session_id))
-            if row is None:
-                return False
-            session.delete(row)
-            return True

@@ -31,6 +31,7 @@ from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WorkerStore
 
 _VALID_EVENT_STATES = frozenset(TASK_EVENT_STATE)
 
@@ -160,6 +161,7 @@ def _attempt_to_response(attempt: TaskEventRoutingAttempt) -> dict[str, Any]:
 def create_task_events_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     secretary_profile_store: SecretaryProfileStore | None = None,
@@ -265,6 +267,7 @@ def create_task_events_router(
             event=created,
             task_store=task_store,
             task_event_store=task_event_store,
+            worker_store=worker_store,
             conversation_store=conversation_store,
             agent_store=agent_store,
             runner_router=_runner_router(request),

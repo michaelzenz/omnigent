@@ -34,7 +34,6 @@ export interface TaskItemSummary {
 export interface TaskExecutionSummary {
   id: string;
   task_item_id: string;
-  event_id: string;
   event_title: string | null;
   item?: TaskItemSummary | null;
   status: string;
