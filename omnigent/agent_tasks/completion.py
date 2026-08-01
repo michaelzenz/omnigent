@@ -8,9 +8,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
+from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.executions import complete_execution
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
-from omnigent.agent_tasks.wake import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEventExecution
 from omnigent.runner.routing import RunnerRouter

@@ -8,13 +8,13 @@ import uuid
 import pytest
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_ROLE
+from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.queue.packagers import (
     DEFAULT_PACKAGER_AGE_THRESHOLD_S,
     DEFAULT_PACKAGER_POLL_INTERVAL_S,
     ManagerPackager,
     _StatusReader,
 )
-from omnigent.agent_tasks.wake import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import AgentQueueKey
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore

@@ -11,11 +11,12 @@ from __future__ import annotations
 import json
 import logging
 
-from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
+from omnigent.agent_tasks.event_types import (
+    SESSION_ORPHAN_EVENT_TYPE,
+    WORKER_EXECUTION_FINISHED_EVENT_TYPE,
+)
 
 _logger = logging.getLogger(__name__)
-
-WORKER_EXECUTION_FINISHED_EVENT_TYPE = "worker.execution.finished"
 
 
 def _format_manager_notice(events: list) -> str:

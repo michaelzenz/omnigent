@@ -38,7 +38,7 @@ from omnigent.agent_tasks.constants import (
     MANAGER_BATCH_MAX_SIZE,
     SECRETARY_BATCH_MAX_SIZE,
 )
-from omnigent.agent_tasks.wake import _format_manager_notice, _format_secretary_stall_notice
+from omnigent.agent_tasks.notices import _format_manager_notice, _format_secretary_stall_notice
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
 from omnigent.stores.agent_queue_store import AgentQueueStore

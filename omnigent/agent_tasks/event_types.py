@@ -9,6 +9,11 @@ SESSION_EVENT_PREFIX = "session."
 # other stalled event, instead of a direct wake.
 SESSION_ORPHAN_EVENT_TYPE = "session.orphan"
 
+# A worker execution settled. Emitted by the completion hook (born ``routed`` to
+# the task) so the manager packager polls it like any other routed event instead
+# of being woken directly.
+WORKER_EXECUTION_FINISHED_EVENT_TYPE = "worker.execution.finished"
+
 
 def is_session_internal_event(event_type: str) -> bool:
     """Return whether an event belongs to the session adoption lane."""

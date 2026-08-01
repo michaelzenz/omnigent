@@ -16,7 +16,7 @@ from omnigent.agent_tasks.completion import (
     configure_task_completion,
     notify_worker_session_status,
 )
-from omnigent.agent_tasks.wake import WORKER_EXECUTION_FINISHED_EVENT_TYPE
+from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
