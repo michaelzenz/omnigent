@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Literal
 
@@ -14,8 +15,10 @@ from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
+from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -170,8 +173,18 @@ def resolve_task_item(
     agent_store: AgentStore,
     edited_payload: dict[str, Any] | None = None,
     role_profile: UserTaskRoleProfile | None = None,
+    agent_queue_store: AgentQueueStore | None = None,
+    owner_user_id: str | None = None,
 ) -> tuple[TaskItem, TaskEventExecution | None]:
-    """Accept, edit, or reject a user-inbox task item."""
+    """Accept, edit, or reject a user-inbox task item.
+
+    Accept/edit-and-dispatch no longer launch a worker synchronously when an
+    agent queue store is wired: the item moves to ``queued`` and an
+    ``item.dispatch`` queue item is enqueued for the worker slot, and the
+    dispatcher spawns the worker session off the request path. When no queue
+    store is provided (single-process tests, older setups) the legacy
+    synchronous dispatch path is used so behaviour is preserved.
+    """
     if item.state not in _INBOX_STATES:
         raise OmnigentError(
             f"Cannot resolve item in state {item.state!r}",
@@ -235,6 +248,30 @@ def resolve_task_item(
         harness=str(payload.get("harness")) if payload.get("harness") is not None else None,
         model=str(payload.get("model")) if payload.get("model") is not None else None,
     )
+    if agent_queue_store is not None:
+        # Phase 4: enqueue for the worker slot; the dispatcher launches the
+        # worker session off the request path. No execution/runner here.
+        updated = task_item_store.update_item(item.id, state="queued")
+        assert updated is not None
+        queue_payload = {**payload, "worker_profile_id": worker.profile_id}
+        agent_queue_store.enqueue(
+            uuid.uuid4().hex,
+            AgentQueueKey(
+                role="worker",
+                owner_user_id=owner_user_id or task.owner_user_id or "__anonymous__",
+                scope_id=worker.id,
+            ),
+            kind="item.dispatch",
+            source_ids=[item.id],
+            payload=json.dumps(queue_payload),
+        )
+        task = sync_task_activity_state(
+            task,
+            task_store=task_store,
+            task_item_store=task_item_store,
+        )
+        return updated, None
+
     execution, _worker_id = dispatch_worker_for_item(
         task=task,
         item=item,

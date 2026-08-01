@@ -130,12 +130,16 @@ async def test_resolve_inbox_item_activates_paused_package(
         },
     )
     assert resolved.status_code == 200, resolved.text
-    assert resolved.json()["state"] == "running"
-    assert resolved.json()["execution_id"] is not None
+    # Phase 4: accept no longer launches a worker synchronously — the item
+    # moves to ``queued`` and the dispatcher spawns the worker off the path.
+    assert resolved.json()["state"] == "queued"
+    assert resolved.json().get("execution_id") is None
 
     activated = task_store.get(task_id)
     assert activated is not None
-    assert activated.state == "active"
+    # The task leaves ``pending`` (activated) but has no running worker yet, so
+    # it sits idle with a queued backlog rather than going active.
+    assert activated.state == "idle"
     assert activated.manager_conversation_id is not None
 
 

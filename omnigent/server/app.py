@@ -1126,6 +1126,66 @@ async def _placeholder_on_fire(scheduled_task_id: str) -> None:
     )
 
 
+def _build_worker_runner_ensurer(
+    conversation_store: ConversationStore,
+    host_registry: Any,
+    tunnel_registry: Any,
+    runner_exit_reports: Any,
+):
+    """Build the runner-ensure callback the worker dispatch handler uses.
+
+    The dispatcher runs outside request scope, so it cannot use the route helper
+    that reads ``request.app.state``. This closure captures the same registries
+    and replays the best-effort runner launch for a freshly created worker
+    conversation. Returns ``None`` (no-op) when the sessions helpers are not
+    importable in this deployment.
+    """
+    import asyncio
+
+    async def _ensure_runner(conversation_id: str) -> None:
+        from omnigent.server.routes.sessions import (
+            ServerRunnerInfrastructure,
+            _ensure_runner_session_initialized,
+            _server_runner_router,
+            ensure_session_runner_client,
+        )
+
+        conv = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            conversation_id,
+        )
+        if conv is None:
+            return
+        infrastructure = ServerRunnerInfrastructure(
+            host_registry=host_registry,
+            tunnel_registry=tunnel_registry,
+            runner_exit_reports=runner_exit_reports,
+        )
+        runner_client, needs_session_init = await ensure_session_runner_client(
+            conversation_id,
+            conv,
+            conversation_store=conversation_store,
+            runner_router=_server_runner_router,
+            infrastructure=infrastructure,
+        )
+        if runner_client is None:
+            return
+        if needs_session_init:
+            refreshed = await asyncio.to_thread(
+                conversation_store.get_conversation,
+                conversation_id,
+            )
+            if refreshed is not None:
+                await _ensure_runner_session_initialized(
+                    conversation_id,
+                    refreshed,
+                    runner_client,
+                    conversation_store,
+                )
+
+    return _ensure_runner
+
+
 def create_app(
     agent_store: AgentStore,
     file_store: FileStore,
@@ -1379,6 +1439,7 @@ def create_app(
         from omnigent.agent_tasks.queue.handlers import (
             ManagerDispatchHandler,
             SecretaryDispatchHandler,
+            WorkerDispatchHandler,
         )
         from omnigent.agent_tasks.queue.packagers import (
             ManagerPackager,
@@ -1410,6 +1471,25 @@ def create_app(
                     task_store=task_store,
                     conversation_store=conversation_store,
                     runner_router=runner_router,
+                )
+            worker_handler: WorkerDispatchHandler | None = None
+            if task_store is not None and task_item_store is not None and worker_store is not None:
+                worker_handler = WorkerDispatchHandler(
+                    store=agent_queue_store,
+                    task_store=task_store,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    worker_store=worker_store,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    task_role_profile_store=task_role_profile_store,
+                    runner_router=runner_router,
+                    ensure_runner=_build_worker_runner_ensurer(
+                        conversation_store,
+                        host_registry,
+                        tunnel_registry,
+                        runner_exit_reports,
+                    ),
                 )
 
             class _CacheStatusReader(StatusReader):
@@ -1445,6 +1525,7 @@ def create_app(
                     handlers={
                         "secretary": secretary_handler,
                         **({"manager": manager_handler} if manager_handler is not None else {}),
+                        **({"worker": worker_handler} if worker_handler is not None else {}),
                     },
                     read_status=_CacheStatusReader(),
                 )
@@ -2402,6 +2483,7 @@ def create_app(
                 host_store=host_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
+                agent_queue_store=agent_queue_store,
             ),
             prefix="/v1",
             tags=["agent_tasks"],
@@ -2420,6 +2502,17 @@ def create_app(
             prefix="/v1",
             tags=["task_events"],
         )
+        if agent_queue_store is not None:
+            from omnigent.server.routes.agent_queues import create_agent_queues_router
+
+            app.include_router(
+                create_agent_queues_router(
+                    agent_queue_store,
+                    auth_provider=auth_provider,
+                ),
+                prefix="/v1",
+                tags=["agent_queues"],
+            )
         from omnigent.agent_tasks.adoption import (
             SessionAdoptionContext,
             configure_session_adoption,

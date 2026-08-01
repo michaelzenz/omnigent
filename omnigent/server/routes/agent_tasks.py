@@ -76,6 +76,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_access, require_user
 from omnigent.server.routes.task_events import _event_to_response
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
@@ -597,6 +598,7 @@ def create_agent_tasks_router(
     host_store: HostStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
+    agent_queue_store: AgentQueueStore | None = None,
 ) -> APIRouter:
     """Build the managed-task router.
 
@@ -1153,6 +1155,8 @@ def create_agent_tasks_router(
                     agent_store=agent_store,
                     edited_payload=body.edited_payload,
                     role_profile=profile,
+                    agent_queue_store=agent_queue_store,
+                    owner_user_id=_effective_user_id(user_id),
                 )
 
             updated, execution = await asyncio.to_thread(_resolve)

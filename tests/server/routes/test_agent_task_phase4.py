@@ -119,12 +119,18 @@ async def test_dispatch_and_dashboard(
     assert dashboard["workers"][0]["executions"][0]["task_item_id"] == item_id
 
 
-async def test_item_accept_dispatches_worker(
+async def test_item_accept_enqueues_worker(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
     worker_agent_id: str,
+    db_uri: str,
 ) -> None:
-    """User can accept a task item and dispatch a worker."""
+    """Accepting a task item moves it to ``queued`` and enqueues a dispatch."""
+    from omnigent.entities import AgentQueueKey
+    from omnigent.stores.agent_queue_store.sqlalchemy_store import (
+        SqlAlchemyAgentQueueStore,
+    )
+
     task_id = await _bootstrapped_task(client, task_manager_agent_id)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
@@ -143,17 +149,34 @@ async def test_item_accept_dispatches_worker(
     )
     assert resolve_resp.status_code == 200
     resolved = resolve_resp.json()
-    assert resolved["state"] == "running"
-    assert resolved["execution_id"] is not None
-    assert resolved["worker_conversation_id"] is not None
+    # Phase 4: no synchronous dispatch — the item is queued for the worker slot.
+    assert resolved["state"] == "queued"
+    assert resolved.get("execution_id") is None
+    assert resolved.get("worker_conversation_id") is None
+
+    queue_store = SqlAlchemyAgentQueueStore(db_uri)
+    items = queue_store.list_items(
+        AgentQueueKey(role="worker", owner_user_id="__anonymous__", scope_id=resolved["worker_id"])
+    )
+    assert len(items) == 1
+    assert items[0].kind == "item.dispatch"
+    assert items[0].source_ids == [item_id]
 
 
-async def test_item_edit_and_dispatch(
+async def test_item_edit_and_dispatch_enqueues(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
     worker_agent_id: str,
+    db_uri: str,
 ) -> None:
-    """User-edited item payload is used for dispatch."""
+    """User-edited item payload is enqueued for dispatch (not launched)."""
+    import json as _json
+
+    from omnigent.entities import AgentQueueKey
+    from omnigent.stores.agent_queue_store.sqlalchemy_store import (
+        SqlAlchemyAgentQueueStore,
+    )
+
     task_id = await _bootstrapped_task(client, task_manager_agent_id)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
@@ -174,7 +197,17 @@ async def test_item_edit_and_dispatch(
         },
     )
     assert resolve_resp.status_code == 200
-    assert resolve_resp.json()["worker_conversation_id"] is not None
+    resolved = resolve_resp.json()
+    assert resolved["state"] == "queued"
+    assert resolved.get("worker_conversation_id") is None
+    queue_store = SqlAlchemyAgentQueueStore(db_uri)
+    items = queue_store.list_items(
+        AgentQueueKey(role="worker", owner_user_id="__anonymous__", scope_id=resolved["worker_id"])
+    )
+    assert len(items) == 1
+    assert (
+        "Apply the patch and run unit tests only." in _json.loads(items[0].payload)["instructions"]
+    )
 
 
 async def test_patch_queued_task_item(
