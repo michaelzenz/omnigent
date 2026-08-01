@@ -17,14 +17,12 @@ from omnigent.stores.task_store import TaskStore
 _ROUTE_TO_TASK_STATES = frozenset(
     {
         "received",
-        "routing",
         "awaiting_grouping",
     }
 )
 _DISMISSABLE_STATES = frozenset(
     {
         "received",
-        "routing",
         "awaiting_grouping",
         "classified_fyi",
     }

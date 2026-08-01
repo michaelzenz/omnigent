@@ -295,7 +295,7 @@ def propose_session_adoption(
         source_key=session_id,
         payload=json.dumps(payload),
         source="secretary",
-        state="awaiting_user_ack",
+        state="received",
     )
 
 
@@ -402,9 +402,10 @@ def find_open_adoption_proposal(
     session_id: str,
 ) -> TaskEvent | None:
     """Return the open adoption proposal for a session, if any."""
-    for event in task_event_store.list_events(state="awaiting_user_ack"):
-        if event.event_type != SESSION_ADOPTION_PROPOSAL:
-            continue
+    for event in task_event_store.list_events(
+        state="received",
+        event_type=SESSION_ADOPTION_PROPOSAL,
+    ):
         if event.source_key == session_id:
             return event
     return None

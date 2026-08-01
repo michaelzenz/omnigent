@@ -118,17 +118,46 @@ def test_task_events_state_9_allowed(db_engine: Engine) -> None:
         )
 
 
-def test_task_events_state_10_allowed(db_engine: Engine) -> None:
-    """The awaiting_user_ack state code is accepted (session adoption)."""
+def test_task_events_state_10_rejected(db_engine: Engine) -> None:
+    """The removed awaiting_user_ack state code is rejected."""
     with db_engine.begin() as conn:
-        conn.execute(
-            sa.text(
-                "INSERT INTO task_events "
-                "(workspace_id, id, event_type, title, state, created_at) "
-                "VALUES (0, :id, 'session.adoption', 'retry', 10, 1)"
-            ),
-            {"id": bytes.fromhex("44444444444444444444444444444444")},
-        )
+        with pytest.raises(IntegrityError):
+            conn.execute(
+                sa.text(
+                    "INSERT INTO task_events "
+                    "(workspace_id, id, event_type, title, state, created_at) "
+                    "VALUES (0, :id, 'session.adoption', 'retry', 10, 1)"
+                ),
+                {"id": bytes.fromhex("44444444444444444444444444444444")},
+            )
+
+
+def test_task_events_state_2_rejected(db_engine: Engine) -> None:
+    """The removed routing state code is rejected."""
+    with db_engine.begin() as conn:
+        with pytest.raises(IntegrityError):
+            conn.execute(
+                sa.text(
+                    "INSERT INTO task_events "
+                    "(workspace_id, id, event_type, title, state, created_at) "
+                    "VALUES (0, :id, 'build.finished', 'done', 2, 1)"
+                ),
+                {"id": bytes.fromhex("45454545454545454545454545454545")},
+            )
+
+
+def test_task_events_state_3_rejected(db_engine: Engine) -> None:
+    """The removed awaiting_user_selection state code is rejected."""
+    with db_engine.begin() as conn:
+        with pytest.raises(IntegrityError):
+            conn.execute(
+                sa.text(
+                    "INSERT INTO task_events "
+                    "(workspace_id, id, event_type, title, state, created_at) "
+                    "VALUES (0, :id, 'build.finished', 'done', 3, 1)"
+                ),
+                {"id": bytes.fromhex("46464646464646464646464646464646")},
+            )
 
 
 def test_task_event_executions_status_check_enforced(db_engine: Engine) -> None:

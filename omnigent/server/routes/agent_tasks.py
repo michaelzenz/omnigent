@@ -236,8 +236,8 @@ class CreateTaskAssetRequest(BaseModel):
         return stripped
 
 
-class ReconcileEventsRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/reconcile``."""
+class AckEventsRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/ack``."""
 
     event_ids: list[str] = Field(min_length=1)
 
@@ -789,7 +789,6 @@ def create_agent_tasks_router(
                         existing.id,
                         conversation_store,
                     )
-                    await flush_pending_orphan_sessions(effective_user_id)
                     return _agent_role_session_to_response(
                         role,
                         conversation_id=existing.id,
@@ -813,7 +812,6 @@ def create_agent_tasks_router(
                     conversation_id,
                     conversation_store,
                 )
-                await flush_pending_orphan_sessions(effective_user_id)
                 return _agent_role_session_to_response(
                     role,
                     conversation_id=conversation_id,
@@ -989,8 +987,7 @@ def create_agent_tasks_router(
                 agent_store=agent_store,
                 params=params,
             )
-            tags = await asyncio.to_thread(task_store.get_tags, task_id)
-            return _task_to_response(bootstrapped, tags=tags)
+            return _task_to_response(bootstrapped)
 
         @router.get("/agent-tasks/{task_id}/dashboard")
         async def get_task_dashboard(request: Request, task_id: str) -> dict[str, Any]:
@@ -1092,13 +1089,13 @@ def create_agent_tasks_router(
                 "data": [_event_to_response(event) for event in events],
             }
 
-        @router.post("/agent-tasks/{task_id}/reconcile")
-        async def reconcile_task_events(
+        @router.post("/agent-tasks/{task_id}/ack")
+        async def ack_task_events(
             request: Request,
             task_id: str,
-            body: ReconcileEventsRequest,
+            body: AckEventsRequest,
         ) -> dict[str, Any]:
-            """Mark routed events reconciled without creating items."""
+            """Ack routed events as processed without creating items."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
             reconciled = await asyncio.to_thread(

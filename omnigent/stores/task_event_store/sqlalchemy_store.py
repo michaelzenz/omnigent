@@ -162,6 +162,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         state: str | None = None,
         task_id: str | None = None,
+        event_type: str | None = None,
     ) -> list[TaskEvent]:
         with self._session() as session:
             stmt = select(SqlTaskEvent).where(SqlTaskEvent.workspace_id == current_workspace_id())
@@ -169,6 +170,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 stmt = stmt.where(SqlTaskEvent.state == encode_task_event_state(state))
             if task_id is not None:
                 stmt = stmt.where(SqlTaskEvent.task_id == task_id)
+            if event_type is not None:
+                stmt = stmt.where(SqlTaskEvent.event_type == event_type)
             stmt = stmt.order_by(desc(SqlTaskEvent.created_at), desc(SqlTaskEvent.id))
             rows = session.execute(stmt).scalars().all()
             return [_event_to_entity(row) for row in rows]

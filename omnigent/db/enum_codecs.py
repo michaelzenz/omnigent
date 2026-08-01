@@ -118,15 +118,11 @@ TASK_STATE: dict[str, int] = {
 
 TASK_EVENT_STATE: dict[str, int] = {
     "received": 1,
-    "routing": 2,
-    "awaiting_user_selection": 3,
     "awaiting_grouping": 4,
     "routed": 6,
     "reconciled": 7,
     "dismissed": 8,
     "failed": 9,
-    # Session adoption proposals only.
-    "awaiting_user_ack": 10,
     # Classified as informational by the secretary; shown in the FYI bucket.
     "classified_fyi": 12,
 }

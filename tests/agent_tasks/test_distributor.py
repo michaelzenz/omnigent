@@ -145,7 +145,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         "session.adoption",
         "Adoption proposal",
         source_internal_session_id=_uid("orphan_session"),
-        state="awaiting_user_ack",
+        state="received",
     )
     updated = await distribute_event(
         event=event,
@@ -156,7 +156,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         agent_store=stores["agent_store"],
         runner_router=None,
     )
-    assert updated.state == "awaiting_user_ack"
+    assert updated.state == "received"
 
 
 @pytest.mark.asyncio

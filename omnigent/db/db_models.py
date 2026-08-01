@@ -1524,19 +1524,12 @@ class SqlTaskEvent(OmnigentBase):
 
     __table_args__ = (
         CheckConstraint(
-            "state IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 12)",
+            "state IN (1, 4, 6, 7, 8, 9, 12)",
             name="ck_task_events_state",
         ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
         Index("ix_task_events_state_created", "workspace_id", "state", "created_at", "id"),
         Index("ix_task_events_event_type", "workspace_id", "event_type", "created_at", "id"),
-        Index(
-            "ix_task_events_awaiting_user_selection",
-            "workspace_id",
-            "state",
-            "updated_at",
-            "id",
-        ),
         Index(
             "ix_task_events_awaiting_grouping",
             "workspace_id",

@@ -155,7 +155,7 @@ async def test_propose_and_adopt_session(
         agent_store=agent_store,
     )
     assert proposal.event_type == SESSION_ADOPTION_PROPOSAL
-    assert proposal.state == "awaiting_user_ack"
+    assert proposal.state == "received"
     assert proposal.source_key == conv.id
 
     params = resolve_bootstrap_params(

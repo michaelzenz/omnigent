@@ -83,7 +83,7 @@ async def test_session_adoption_flow(
     assert propose_resp.status_code == 200
     proposal = propose_resp.json()
     assert proposal["event_type"] == "session.adoption"
-    assert proposal["state"] == "awaiting_user_ack"
+    assert proposal["state"] == "received"
     assert proposal["source_key"] == conv.id
 
     adopt_resp = await client.post(

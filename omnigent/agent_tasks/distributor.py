@@ -63,11 +63,6 @@ async def distribute_event(
     if event.state in {ROUTED_EVENT_STATE, "reconciled"}:
         return event
 
-    routing = task_event_store.update_event(event.id, state="routing")
-    if routing is None:
-        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-    event = routing
-
     if event.task_id is not None:
         bound_task = task_store.get(event.task_id)
         if bound_task is not None and bound_task.state in _LIVE_TASK_STATES:

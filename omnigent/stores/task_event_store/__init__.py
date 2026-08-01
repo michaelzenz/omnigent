@@ -62,6 +62,7 @@ class TaskEventStore(ABC):
         *,
         state: str | None = None,
         task_id: str | None = None,
+        event_type: str | None = None,
     ) -> list[TaskEvent]:
         """List events ordered by ``created_at DESC, id DESC``."""
 
