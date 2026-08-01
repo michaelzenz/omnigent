@@ -46,7 +46,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
-from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
@@ -610,7 +610,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         worker_store=SqlAlchemyWorkerStore(db_uri),
         task_asset_store=SqlAlchemyTaskAssetStore(db_uri),
         timer_item_store=SqlAlchemyTimerItemStore(db_uri),
-        secretary_profile_store=SqlAlchemySecretaryProfileStore(db_uri),
+        task_role_profile_store=SqlAlchemyTaskRoleProfileStore(db_uri),
         host_store=HostStore(db_uri),
     )
 

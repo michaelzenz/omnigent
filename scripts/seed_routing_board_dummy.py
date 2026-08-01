@@ -14,7 +14,7 @@ import uuid
 DEFAULT_BASE = os.environ.get("OMNIGENT_SERVER_URL", "http://127.0.0.1:6767").rstrip("/")
 MANAGER_AGENT_NAME = os.environ.get("SEED_MANAGER_AGENT_NAME", "task-manager")
 WORKER_AGENT_NAME = os.environ.get("SEED_WORKER_AGENT_NAME", "task-worker")
-WORKER2_AGENT_NAME = os.environ.get("SEED_WORKER2_AGENT_NAME", "task-docs")
+WORKER2_AGENT_NAME = os.environ.get("SEED_WORKER2_AGENT_NAME", "task-worker")
 HOST_ID = os.environ.get("SEED_HOST_ID", "a443636bf8be4144ad01f31c6c3acb9f")
 WORKSPACE = os.environ.get("SEED_WORKSPACE", os.path.expanduser("~/Project/omnigent-fork"))
 BOOTSTRAP = {

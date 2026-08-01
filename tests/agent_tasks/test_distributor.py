@@ -6,15 +6,15 @@ import uuid
 
 import pytest
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME
+from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.distributor import distribute_event
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import TaskTag
 from omnigent.entities import EventTag
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
@@ -45,7 +45,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
-    secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
+    secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     task_id = _uid("dist_task")
     task_store.create(
@@ -80,9 +80,10 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
             EventTag(tag_type="repo", tag="omnigent-fork"),
         ],
     )
-    profile = UserSecretaryProfile(
+    profile = UserTaskRoleProfile(
         user_id="__anonymous__",
-        agent_id=stores["agent_profile_id"],
+        role=TASK_SECRETARY_ROLE,
+        agent_profile_id=stores["agent_profile_id"],
         harness="cursor",
         model="composer-2.5",
         host_id=_uid("host_dist"),
@@ -97,7 +98,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
         runner_router=None,
-        secretary_profile=profile,
+        role_profile=profile,
     )
     assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]
@@ -113,7 +114,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
     task_store = SqlAlchemyTaskStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
-    secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
+    secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     agent_store = SqlAlchemyAgentStore(db_uri)
     event_id = _uid("stall_event")
     event = event_store.create_event(
@@ -130,7 +131,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
         conversation_store=conversation_store,
         agent_store=agent_store,
         runner_router=None,
-        secretary_profile_store=secretary_store,
+        task_role_profile_store=secretary_store,
         owner_user_id="__anonymous__",
     )
     assert updated.state == "awaiting_grouping"
@@ -169,9 +170,10 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         task_id=stores["task_id"],
         state="received",
     )
-    profile = UserSecretaryProfile(
+    profile = UserTaskRoleProfile(
         user_id="__anonymous__",
-        agent_id=stores["agent_profile_id"],
+        role=TASK_SECRETARY_ROLE,
+        agent_profile_id=stores["agent_profile_id"],
         harness="cursor",
         model="composer-2.5",
         host_id=_uid("host_bound"),
@@ -186,7 +188,7 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
         runner_router=None,
-        secretary_profile=profile,
+        role_profile=profile,
     )
     assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]

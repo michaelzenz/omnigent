@@ -163,7 +163,7 @@ async def test_propose_and_adopt_session(
         workspace="/tmp/test",
         harness="cursor",
         model="composer-2.5",
-        secretary_profile=None,
+        role_profile=None,
     )
     processed, adopted = await adopt_session(
         session_id=conv.id,

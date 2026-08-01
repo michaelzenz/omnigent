@@ -11,7 +11,7 @@ from omnigent.agent_tasks.constants import (
     resolve_task_harness,
 )
 from omnigent.entities import Task
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
@@ -35,16 +35,16 @@ def resolve_bootstrap_params(
     workspace: str | None,
     harness: str | None,
     model: str | None,
-    secretary_profile: UserSecretaryProfile | None,
+    role_profile: UserTaskRoleProfile | None,
 ) -> BootstrapParams:
-    """Merge explicit bootstrap inputs with secretary profile defaults."""
-    resolved_host_id = host_id or (secretary_profile.host_id if secretary_profile else None)
+    """Merge explicit bootstrap inputs with role profile defaults."""
+    resolved_host_id = host_id or (role_profile.host_id if role_profile else None)
     resolved_workspace = (
         workspace
-        or (secretary_profile.workspace if secretary_profile else None)
+        or (role_profile.workspace if role_profile else None)
         or DEFAULT_TASK_WORKSPACE
     )
-    # Host/workspace come from the secretary profile; harness/model use task-agent defaults.
+    # Host/workspace come from the role profile; harness/model use task-agent defaults.
     resolved_harness = resolve_task_harness(harness or DEFAULT_TASK_HARNESS)
     resolved_model = model or DEFAULT_TASK_MODEL
     if not resolved_host_id or not resolved_workspace:

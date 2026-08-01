@@ -10,6 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
+from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
 from omnigent.agent_tasks.distributor import distribute_event
 from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
@@ -20,7 +21,7 @@ from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt, EventTag
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import AuthProvider
@@ -28,7 +29,7 @@ from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
@@ -164,7 +165,7 @@ def create_task_events_router(
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    secretary_profile_store: SecretaryProfileStore | None = None,
+    task_role_profile_store: TaskRoleProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
 ) -> APIRouter:
@@ -188,11 +189,13 @@ def create_task_events_router(
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         return event
 
-    async def _load_secretary_profile(user_id: str | None) -> UserSecretaryProfile | None:
-        if secretary_profile_store is None:
+    async def _load_secretary_profile(user_id: str | None) -> UserTaskRoleProfile | None:
+        if task_role_profile_store is None:
             return None
         effective_user_id = user_id if user_id is not None else "__anonymous__"
-        return await asyncio.to_thread(secretary_profile_store.get, effective_user_id)
+        return await asyncio.to_thread(
+            task_role_profile_store.get, effective_user_id, TASK_SECRETARY_ROLE
+        )
 
     def _runner_router(request: Request) -> RunnerRouter | None:
         return getattr(request.app.state, "runner_router", None)
@@ -271,8 +274,8 @@ def create_task_events_router(
             conversation_store=conversation_store,
             agent_store=agent_store,
             runner_router=_runner_router(request),
-            secretary_profile_store=secretary_profile_store,
-            secretary_profile=profile,
+            task_role_profile_store=task_role_profile_store,
+            role_profile=profile,
             owner_user_id=_effective_user_id(user_id),
         )
         return _event_to_response(distributed)
@@ -368,7 +371,7 @@ def create_task_events_router(
                 workspace=body.workspace,
                 harness=body.harness,
                 model=body.model,
-                secretary_profile=profile,
+                role_profile=profile,
             )
             resolved.append(_event_to_response(updated))
         return {"object": "list", "data": resolved}

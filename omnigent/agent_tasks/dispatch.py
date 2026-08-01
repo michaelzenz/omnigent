@@ -11,7 +11,7 @@ from omnigent.agent_tasks.executions import mark_execution_running, start_execut
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
 from omnigent.entities import Task, TaskEventExecution, TaskItem
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -84,7 +84,7 @@ def resolve_dispatch_params(
     workspace: str | None = None,
     harness: str | None = None,
     model: str | None = None,
-    secretary_profile: UserSecretaryProfile | None = None,
+    role_profile: UserTaskRoleProfile | None = None,
 ) -> DispatchParams:
     """Merge explicit dispatch fields with payload and profile defaults."""
     resolved_profile = _resolve_worker_profile_id(
@@ -106,7 +106,7 @@ def resolve_dispatch_params(
         workspace=workspace or payload.get("workspace"),
         harness=harness or payload.get("harness"),
         model=model or payload.get("model"),
-        secretary_profile=secretary_profile,
+        role_profile=role_profile,
     )
     return DispatchParams(
         worker_profile_id=resolved_profile,

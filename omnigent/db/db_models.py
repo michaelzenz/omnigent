@@ -1748,10 +1748,10 @@ class SqlTimerItem(OmnigentBase):
     )
 
 
-class SqlUserSecretaryProfile(OmnigentBase):
-    """SQLAlchemy model for per-user secretary agent configuration."""
+class SqlUserTaskRoleProfile(OmnigentBase):
+    """SQLAlchemy model for per-user task agent role configuration."""
 
-    __tablename__ = "user_secretary_profiles"
+    __tablename__ = "user_task_role_profiles"
 
     workspace_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -1761,6 +1761,7 @@ class SqlUserSecretaryProfile(OmnigentBase):
         default=current_workspace_id,
     )
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
     agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1772,7 +1773,7 @@ class SqlUserSecretaryProfile(OmnigentBase):
 
     __table_args__ = (
         Index(
-            "ix_user_secretary_profiles_conversation",
+            "ix_user_task_role_profiles_conversation",
             "workspace_id",
             "conversation_id",
         ),

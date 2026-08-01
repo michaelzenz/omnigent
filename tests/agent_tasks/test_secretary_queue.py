@@ -20,7 +20,7 @@ from omnigent.db.utils import generate_agent_id
 from omnigent.entities import TaskTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.stores.secretary_profile_store.sqlalchemy_store import SqlAlchemySecretaryProfileStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
@@ -37,7 +37,7 @@ async def secretary_queue(db_uri: str) -> dict:
     event_store = SqlAlchemyTaskEventStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
-    secretary_store = SqlAlchemySecretaryProfileStore(db_uri)
+    secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     manager_agent_id = generate_agent_id()
     agent_store.create(manager_agent_id, name="task-manager-agent", bundle_location="test:///bundle")
     user_id = "__anonymous__"
@@ -49,7 +49,8 @@ async def secretary_queue(db_uri: str) -> dict:
     )
     secretary_store.upsert(
         user_id,
-        agent_id=manager_agent_id,
+        "secretary",
+        agent_profile_id=manager_agent_id,
         conversation_id=secretary_conv.id,
         host_id=_uid("host_sec"),
         workspace="/tmp/secretary",
@@ -58,7 +59,7 @@ async def secretary_queue(db_uri: str) -> dict:
         SecretaryQueueContext(
             task_event_store=event_store,
             conversation_store=conversation_store,
-            secretary_profile_store=secretary_store,
+            task_role_profile_store=secretary_store,
             runner_router=None,
         )
     )

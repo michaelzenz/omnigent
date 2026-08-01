@@ -16,7 +16,7 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -106,7 +106,7 @@ def ensure_task_manager_for_dispatch(
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    secretary_profile: UserSecretaryProfile | None = None,
+    role_profile: UserTaskRoleProfile | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
     harness: str | None = None,
@@ -124,7 +124,7 @@ def ensure_task_manager_for_dispatch(
         workspace=workspace,
         harness=harness,
         model=model,
-        secretary_profile=secretary_profile,
+        role_profile=role_profile,
     )
     return bootstrap_task_manager(
         task=task,
@@ -156,7 +156,7 @@ def resolve_task_item(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     edited_payload: dict[str, Any] | None = None,
-    secretary_profile: UserSecretaryProfile | None = None,
+    role_profile: UserTaskRoleProfile | None = None,
 ) -> tuple[TaskItem, TaskEventExecution | None]:
     """Accept, edit, or reject a user-inbox task item."""
     if item.state not in _INBOX_STATES:
@@ -177,7 +177,7 @@ def resolve_task_item(
         task_event_store=task_event_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
-        secretary_profile=secretary_profile,
+        role_profile=role_profile,
         host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
         workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
         harness=str(payload.get("harness")) if payload.get("harness") is not None else None,
@@ -216,7 +216,7 @@ def resolve_task_item(
 
     params = resolve_dispatch_params(
         payload={**payload, "worker_profile_id": worker.profile_id},
-        secretary_profile=secretary_profile,
+        role_profile=role_profile,
         host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
         workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
         harness=str(payload.get("harness")) if payload.get("harness") is not None else None,

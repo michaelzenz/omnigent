@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
+from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.workers import _generate_worker_id
@@ -28,13 +29,13 @@ from omnigent.agent_tasks.wake import (
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.conversation import Conversation
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
@@ -65,7 +66,7 @@ class SessionAdoptionContext:
     task_event_store: TaskEventStore
     worker_store: WorkerStore
     conversation_store: ConversationStore
-    secretary_profile_store: SecretaryProfileStore | None = None
+    task_role_profile_store: TaskRoleProfileStore | None = None
     host_store: HostStore | None = None
     runner_router: RunnerRouter | None = None
 
@@ -169,7 +170,7 @@ async def enqueue_orphan_session(
 
 async def flush_pending_orphan_sessions(owner_user_id: str) -> None:
     """Wake the secretary for any queued orphan sessions for one user."""
-    if _context is None or _context.secretary_profile_store is None:
+    if _context is None or _context.task_role_profile_store is None:
         return
     session_ids = _PENDING_BY_USER.pop(owner_user_id, [])
     if not session_ids:
@@ -177,7 +178,7 @@ async def flush_pending_orphan_sessions(owner_user_id: str) -> None:
     await wake_secretary_for_orphan_sessions(
         user_id=owner_user_id,
         session_ids=session_ids,
-        secretary_profile_store=_context.secretary_profile_store,
+        task_role_profile_store=_context.task_role_profile_store,
         conversation_store=_context.conversation_store,
         runner_router=_context.runner_router,
     )
@@ -187,8 +188,8 @@ async def _schedule_secretary_wake(owner_user_id: str) -> None:
     if _context is None:
         return
     profile = (
-        _context.secretary_profile_store.get(owner_user_id)
-        if _context.secretary_profile_store is not None
+        _context.task_role_profile_store.get(owner_user_id, TASK_SECRETARY_ROLE)
+        if _context.task_role_profile_store is not None
         else None
     )
     if profile is None or profile.conversation_id is None:

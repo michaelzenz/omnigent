@@ -8,7 +8,8 @@ from omnigent.entities import TaskEvent, TaskEventExecution
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
 from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
 
 _logger = logging.getLogger(__name__)
 
@@ -106,14 +107,14 @@ async def wake_secretary_for_stalled_events(
     *,
     user_id: str,
     events: list[TaskEvent],
-    secretary_profile_store: SecretaryProfileStore,
+    task_role_profile_store: TaskRoleProfileStore,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
 ) -> bool:
     """Wake the task secretary when routing stalls and needs user input."""
     if not events:
         return False
-    profile = secretary_profile_store.get(user_id)
+    profile = task_role_profile_store.get(user_id, TASK_SECRETARY_ROLE)
     if profile is None or profile.conversation_id is None:
         _logger.warning(
             "secretary wake skipped: no live session for user %s (%s event(s))",
@@ -156,14 +157,14 @@ async def wake_secretary_for_orphan_sessions(
     *,
     user_id: str,
     session_ids: list[str],
-    secretary_profile_store: SecretaryProfileStore,
+    task_role_profile_store: TaskRoleProfileStore,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
 ) -> bool:
     """Wake the secretary when orphan sessions need routing search text."""
     if not session_ids:
         return False
-    profile = secretary_profile_store.get(user_id)
+    profile = task_role_profile_store.get(user_id, TASK_SECRETARY_ROLE)
     if profile is None or profile.conversation_id is None:
         _logger.warning(
             "orphan session wake skipped: no live secretary for user %s",

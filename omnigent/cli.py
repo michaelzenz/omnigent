@@ -3159,8 +3159,8 @@ def server(
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
     from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
-    from omnigent.stores.secretary_profile_store.sqlalchemy_store import (
-        SqlAlchemySecretaryProfileStore,
+    from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
+        SqlAlchemyTaskRoleProfileStore,
     )
     from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
     from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -3201,7 +3201,7 @@ def server(
     worker_store = SqlAlchemyWorkerStore(db_uri)
     task_asset_store = SqlAlchemyTaskAssetStore(db_uri)
     timer_item_store = SqlAlchemyTimerItemStore(db_uri)
-    secretary_profile_store = SqlAlchemySecretaryProfileStore(db_uri)
+    task_role_profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -3363,7 +3363,7 @@ def server(
         worker_store=worker_store,
         task_asset_store=task_asset_store,
         timer_item_store=timer_item_store,
-        secretary_profile_store=secretary_profile_store,
+        task_role_profile_store=task_role_profile_store,
         auth_provider=auth_provider,
         host_store=host_store,
         account_store=account_store,

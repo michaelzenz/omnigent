@@ -6,7 +6,7 @@ from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
@@ -62,7 +62,7 @@ async def resolve_task_event(
     workspace: str | None = None,
     harness: str | None = None,
     model: str | None = None,
-    secretary_profile: UserSecretaryProfile | None = None,
+    role_profile: UserTaskRoleProfile | None = None,
     wake: bool = True,
 ) -> TaskEvent:
     """Route a stalled event to a task manager, bootstrapping when needed."""
@@ -77,7 +77,7 @@ async def resolve_task_event(
         workspace=workspace,
         harness=harness,
         model=model,
-        secretary_profile=secretary_profile,
+        role_profile=role_profile,
     )
     updated = route_event_to_task(
         event=event,

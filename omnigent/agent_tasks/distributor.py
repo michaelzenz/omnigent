@@ -17,12 +17,12 @@ from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES, live_tasks
 from omnigent.agent_tasks.secretary_queue import enqueue_secretary_event
 from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
@@ -30,13 +30,13 @@ from omnigent.stores.worker_store import WorkerStore
 _logger = logging.getLogger(__name__)
 
 
-def _bootstrap_params(secretary_profile: UserSecretaryProfile | None) -> BootstrapParams:
+def _bootstrap_params(role_profile: UserTaskRoleProfile | None) -> BootstrapParams:
     return resolve_bootstrap_params(
-        host_id=secretary_profile.host_id if secretary_profile else None,
-        workspace=secretary_profile.workspace if secretary_profile else None,
-        harness=secretary_profile.harness if secretary_profile else None,
-        model=secretary_profile.model if secretary_profile else None,
-        secretary_profile=secretary_profile,
+        host_id=role_profile.host_id if role_profile else None,
+        workspace=role_profile.workspace if role_profile else None,
+        harness=role_profile.harness if role_profile else None,
+        model=role_profile.model if role_profile else None,
+        role_profile=role_profile,
     )
 
 
@@ -49,8 +49,8 @@ async def distribute_event(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     runner_router: RunnerRouter | None,
-    secretary_profile_store: SecretaryProfileStore | None = None,
-    secretary_profile: UserSecretaryProfile | None = None,
+    task_role_profile_store: TaskRoleProfileStore | None = None,
+    role_profile: UserTaskRoleProfile | None = None,
     owner_user_id: str | None = None,
 ) -> TaskEvent:
     """
@@ -71,7 +71,7 @@ async def distribute_event(
     if event.task_id is not None:
         bound_task = task_store.get(event.task_id)
         if bound_task is not None and bound_task.state in _LIVE_TASK_STATES:
-            params = _bootstrap_params(secretary_profile)
+            params = _bootstrap_params(role_profile)
             return await _finish_route(
                 event=event,
                 task=bound_task,
@@ -81,7 +81,7 @@ async def distribute_event(
                 agent_store=agent_store,
                 runner_router=runner_router,
                 params=params,
-                secretary_profile_store=secretary_profile_store,
+                task_role_profile_store=task_role_profile_store,
                 owner_user_id=owner_user_id,
                 routing_reason="explicit-task",
             )
@@ -98,7 +98,7 @@ async def distribute_event(
             worker_store=worker_store,
         )
         if bound_task is not None:
-            params = _bootstrap_params(secretary_profile)
+            params = _bootstrap_params(role_profile)
             return await _finish_route(
                 event=event,
                 task=bound_task,
@@ -108,7 +108,7 @@ async def distribute_event(
                 agent_store=agent_store,
                 runner_router=runner_router,
                 params=params,
-                secretary_profile_store=secretary_profile_store,
+                task_role_profile_store=task_role_profile_store,
                 owner_user_id=owner_user_id,
                 routing_reason="session-binding",
             )
@@ -150,7 +150,7 @@ async def distribute_event(
             if task.id == auto_task.id:
                 auto_score = score
                 break
-        params = _bootstrap_params(secretary_profile)
+        params = _bootstrap_params(role_profile)
         return await _finish_route(
             event=event,
             task=auto_task,
@@ -160,7 +160,7 @@ async def distribute_event(
             agent_store=agent_store,
             runner_router=runner_router,
             params=params,
-            secretary_profile_store=secretary_profile_store,
+            task_role_profile_store=task_role_profile_store,
             owner_user_id=owner_user_id,
             routing_reason=f"auto-route score={auto_score:.4f}",
             routing_score=auto_score,
@@ -183,7 +183,7 @@ async def _finish_route(
     agent_store: AgentStore,
     runner_router: RunnerRouter | None,
     params: BootstrapParams,
-    secretary_profile_store: SecretaryProfileStore | None = None,
+    task_role_profile_store: TaskRoleProfileStore | None = None,
     owner_user_id: str | None = None,
     routing_reason: str | None = None,
     routing_score: float | None = None,

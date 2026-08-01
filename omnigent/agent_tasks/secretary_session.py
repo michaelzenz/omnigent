@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from omnigent.agent_tasks.agent_builtins import (
-    TASK_SECRETARY_AGENT_NAME,
-    resolve_task_agent_id,
+    TASK_ROLE_DEFAULTS,
+    TASK_SECRETARY_ROLE,
+    resolve_role_agent_profile_id,
 )
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
-    DEFAULT_SECRETARY_HARNESS,
-    DEFAULT_SECRETARY_MODEL,
     DEFAULT_TASK_WORKSPACE,
     resolve_task_harness,
 )
@@ -18,13 +17,13 @@ from omnigent.native_coding_agents import native_coding_agent_for_harness
 from omnigent.runtime import get_agent_cache
 from omnigent.db.utils import generate_task_id, now_epoch
 from omnigent.entities import MessageData, NewConversationItem
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore, host_is_live
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 
 NO_HOST_AVAILABLE_MESSAGE = (
     "No host is available. Start a host with `omnigent host --server <url>` and try again."
@@ -69,16 +68,17 @@ def resolve_first_live_host_id(host_store: HostStore, owner: str) -> str | None:
     return None
 
 
-def get_or_create_secretary_profile(
+def get_or_create_role_profile(
     *,
+    role: str,
     profile_user_id: str,
     auth_user_id: str | None,
-    secretary_profile_store: SecretaryProfileStore,
+    task_role_profile_store: TaskRoleProfileStore,
     host_store: HostStore,
     agent_store: AgentStore,
-) -> UserSecretaryProfile:
-    """Load the secretary profile, auto-provisioning defaults on first use."""
-    existing = secretary_profile_store.get(profile_user_id)
+) -> UserTaskRoleProfile:
+    """Load the role profile, auto-provisioning defaults on first use."""
+    existing = task_role_profile_store.get(profile_user_id, role)
     if existing is not None:
         return existing
 
@@ -86,25 +86,27 @@ def get_or_create_secretary_profile(
     if host_id is None:
         raise OmnigentError(NO_HOST_AVAILABLE_MESSAGE, code=ErrorCode.INVALID_INPUT)
 
-    agent_profile_id = resolve_task_agent_id(agent_store, TASK_SECRETARY_AGENT_NAME)
-    return secretary_profile_store.upsert(
+    defaults = TASK_ROLE_DEFAULTS.get(role)
+    agent_profile_id = resolve_role_agent_profile_id(agent_store, role)
+    return task_role_profile_store.upsert(
         profile_user_id,
+        role,
         agent_profile_id=agent_profile_id,
         host_id=host_id,
-        harness=DEFAULT_SECRETARY_HARNESS,
-        model=DEFAULT_SECRETARY_MODEL,
+        harness=defaults.harness if defaults else "claude-native",
+        model=defaults.model if defaults else "sonnet",
         workspace=DEFAULT_TASK_WORKSPACE,
     )
 
 
 def resolve_secretary_profile_id(
     agent_store: AgentStore,
-    profile: UserSecretaryProfile,
+    profile: UserTaskRoleProfile,
 ) -> str:
     """Prefer the packaged task-secretary builtin over a stale profile id."""
-    return resolve_task_agent_id(
+    return resolve_role_agent_profile_id(
         agent_store,
-        TASK_SECRETARY_AGENT_NAME,
+        TASK_SECRETARY_ROLE,
         fallback_agent_id=profile.agent_profile_id,
     )
 
@@ -150,7 +152,7 @@ def bootstrap_secretary_conversation(
     *,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    profile: UserSecretaryProfile,
+    profile: UserTaskRoleProfile,
     seed_prompt: bool = True,
 ) -> str:
     """Create a secretary conversation with harness/model defaults and optional prompt seed."""
@@ -159,7 +161,7 @@ def bootstrap_secretary_conversation(
         workspace=profile.workspace,
         harness=resolve_task_harness(profile.harness),
         model=profile.model,
-        secretary_profile=profile,
+        role_profile=profile,
     )
     agent_id = resolve_secretary_profile_id(agent_store, profile)
     terminal_launch_args = _secretary_terminal_launch_args(

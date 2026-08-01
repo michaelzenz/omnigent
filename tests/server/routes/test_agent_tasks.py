@@ -8,6 +8,7 @@ import httpx
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
+    TASK_DISTRIBUTOR_ROLE,
     TASK_MANAGER_AGENT_NAME,
     TASK_SECRETARY_ROLE,
     resolve_task_agent_id,
@@ -242,6 +243,37 @@ async def test_delete_archives_task(
 async def test_unknown_task_agent_role_returns_404(client: httpx.AsyncClient) -> None:
     profile_resp = await client.get(agent_role_profile_url("manager"))
     assert profile_resp.status_code == 404
+
+
+async def test_distributor_profile_round_trip(
+    client: httpx.AsyncClient,
+    secretary_agent_id: str,
+) -> None:
+    """Distributor role accepts and stores a profile independent of secretary."""
+    profile_resp = await put_agent_role_profile(
+        client,
+        role=TASK_DISTRIBUTOR_ROLE,
+        agent_profile_id=secretary_agent_id,
+        host_id=_uid("distributor_host"),
+        workspace="/tmp/distributor",
+    )
+    assert profile_resp.status_code == 200
+    body = profile_resp.json()
+    assert body["role"] == TASK_DISTRIBUTOR_ROLE
+    assert body["agent_profile_id"] == secretary_agent_id
+
+    loaded = await client.get(agent_role_profile_url(TASK_DISTRIBUTOR_ROLE))
+    assert loaded.status_code == 200
+    assert loaded.json()["workspace"] == "/tmp/distributor"
+    assert loaded.json()["agent_profile_id"] == secretary_agent_id
+
+
+async def test_distributor_session_not_supported(client: httpx.AsyncClient) -> None:
+    """Session bootstrap is rejected for the distributor role."""
+    ensure_resp = await client.post(agent_role_session_url(TASK_DISTRIBUTOR_ROLE))
+    assert ensure_resp.status_code == 400
+    reset_resp = await client.post(agent_role_session_reset_url(TASK_DISTRIBUTOR_ROLE))
+    assert reset_resp.status_code == 400
 
 
 async def test_secretary_profile_and_bootstrap(

@@ -38,7 +38,7 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "task_event_executions",
         "task_items",
         "task_item_events",
-        "user_secretary_profiles",
+        "user_task_role_profiles",
     } <= tables
     columns = {column["name"] for column in sa.inspect(db_engine).get_columns("task_events")}
     assert "tags" in columns
@@ -53,11 +53,12 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     assert "search_text" not in task_columns
     assert "agent_profile_id" in task_columns
     assert "manager_agent_id" not in task_columns
-    secretary_columns = {
-        column["name"] for column in sa.inspect(db_engine).get_columns("user_secretary_profiles")
+    role_columns = {
+        column["name"] for column in sa.inspect(db_engine).get_columns("user_task_role_profiles")
     }
-    assert "agent_profile_id" in secretary_columns
-    assert "agent_id" not in secretary_columns
+    assert "agent_profile_id" in role_columns
+    assert "agent_id" not in role_columns
+    assert "role" in role_columns
 
 
 def test_tasks_state_check_enforced(db_engine: Engine) -> None:

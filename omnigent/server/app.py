@@ -95,7 +95,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.worker_store import WorkerStore
@@ -1142,7 +1142,7 @@ def create_app(
     worker_store: WorkerStore | None = None,
     task_asset_store: TaskAssetStore | None = None,
     timer_item_store: TimerItemStore | None = None,
-    secretary_profile_store: SecretaryProfileStore | None = None,
+    task_role_profile_store: TaskRoleProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
@@ -1193,8 +1193,8 @@ def create_app(
     :param task_item_store: Store for task items and routing proposals.
     :param worker_store: Store for per-task worker slots.
     :param timer_item_store: Store for deferred host timer items.
-    :param secretary_profile_store: Per-user secretary profile defaults.
-        When provided with task stores, enables secretary profile/session
+    :param task_role_profile_store: Per-user task role profile defaults.
+        When provided with task stores, enables role profile/session
         routes and resolve-time bootstrap defaults.
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
@@ -2290,7 +2290,7 @@ def create_app(
                 task_asset_store,
                 agent_store,
                 conversation_store=conversation_store,
-                secretary_profile_store=secretary_profile_store,
+                task_role_profile_store=task_role_profile_store,
                 host_store=host_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
@@ -2305,7 +2305,7 @@ def create_app(
                 worker_store,
                 conversation_store,
                 agent_store,
-                secretary_profile_store=secretary_profile_store,
+                task_role_profile_store=task_role_profile_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
             ),
@@ -2335,17 +2335,17 @@ def create_app(
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
-                secretary_profile_store=secretary_profile_store,
+                task_role_profile_store=task_role_profile_store,
                 host_store=host_store,
                 runner_router=runner_router,
             )
         )
-        if secretary_profile_store is not None:
+        if task_role_profile_store is not None:
             configure_secretary_queue(
                 SecretaryQueueContext(
                     task_event_store=task_event_store,
                     conversation_store=conversation_store,
-                    secretary_profile_store=secretary_profile_store,
+                    task_role_profile_store=task_role_profile_store,
                     runner_router=runner_router,
                 )
             )

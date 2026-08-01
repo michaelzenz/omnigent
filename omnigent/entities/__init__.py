@@ -28,7 +28,7 @@ from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
-from omnigent.entities.secretary import UserSecretaryProfile
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.entities.task import (
     FyiCluster,
     Task,
@@ -94,7 +94,7 @@ __all__ = [
     "TaskTag",
     "Worker",
     "TimerItem",
-    "UserSecretaryProfile",
+    "UserTaskRoleProfile",
     "TerminalCommandData",
     "filter_resources_by_type",
     "get_resource_by_id",

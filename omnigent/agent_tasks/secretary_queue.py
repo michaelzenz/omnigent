@@ -15,7 +15,7 @@ from omnigent.agent_tasks.wake import wake_secretary_for_stalled_events
 from omnigent.entities import TaskEvent
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.secretary_profile_store import SecretaryProfileStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 
 _logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class SecretaryQueueContext:
 
     task_event_store: TaskEventStore
     conversation_store: ConversationStore
-    secretary_profile_store: SecretaryProfileStore
+    task_role_profile_store: TaskRoleProfileStore
     runner_router: RunnerRouter | None = None
 
 
@@ -140,7 +140,7 @@ async def _process_user_batch(user_id: str, items: list[SecretaryQueueItem]) -> 
     await wake_secretary_for_stalled_events(
         user_id=user_id,
         events=events,
-        secretary_profile_store=_context.secretary_profile_store,
+        task_role_profile_store=_context.task_role_profile_store,
         conversation_store=_context.conversation_store,
         runner_router=_context.runner_router,
     )
