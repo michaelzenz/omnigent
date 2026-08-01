@@ -88,9 +88,10 @@ async def resolve_task_event(
         agent_store=agent_store,
         params=params,
     )
-    if wake and updated.manager_conversation_id is not None:
+    routed_task = task_store.get(task.id)
+    if wake and routed_task is not None and routed_task.manager_conversation_id is not None:
         await wake_task_manager_for_event(
-            manager_conversation_id=updated.manager_conversation_id,
+            manager_conversation_id=routed_task.manager_conversation_id,
             event=updated,
             conversation_store=conversation_store,
             runner_router=runner_router,

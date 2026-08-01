@@ -82,7 +82,6 @@ def test_execution_lookup_by_conversation_id(store: SqlAlchemyTaskEventStore) ->
         event_type="worker.execution.finished",
         title="Worker done",
         task_id=_uid("task_1"),
-        manager_agent_id=_uid("mgr_1"),
         state="routed",
     )
     store.create_execution(

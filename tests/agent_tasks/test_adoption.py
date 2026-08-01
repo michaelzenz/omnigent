@@ -129,7 +129,7 @@ async def test_propose_and_adopt_session(
     )
     assert proposal.event_type == SESSION_ADOPTION_PROPOSAL
     assert proposal.state == "awaiting_user_ack"
-    assert proposal.source_session_id == conv.id
+    assert proposal.source_key == conv.id
 
     params = resolve_bootstrap_params(
         host_id=_uid("host"),

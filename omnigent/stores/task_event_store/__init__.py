@@ -39,12 +39,8 @@ class TaskEventStore(ABC):
         source: str | None = None,
         source_key: str | None = None,
         source_offset: int | None = None,
-        source_session_id: str | None = None,
-        summary: str | None = None,
+        source_internal_session_id: str | None = None,
         state: str = "received",
-        priority: int = 0,
-        manager_agent_id: str | None = None,
-        manager_conversation_id: str | None = None,
         tags: list[TaskEventTag] | None = None,
     ) -> TaskEvent:
         """Insert a new task event."""
@@ -70,7 +66,6 @@ class TaskEventStore(ABC):
         *,
         state: str | None = None,
         task_id: str | None = None,
-        manager_agent_id: str | None = None,
     ) -> list[TaskEvent]:
         """List events ordered by ``created_at DESC, id DESC``."""
 
@@ -81,10 +76,7 @@ class TaskEventStore(ABC):
         *,
         task_id: str | None = _UNSET,
         state: str | None = None,
-        priority: int | None = None,
         selected_routing_attempt_id: str | None = _UNSET,
-        manager_agent_id: str | None = _UNSET,
-        manager_conversation_id: str | None = _UNSET,
         routed_at: int | None = None,
         processed_at: int | None = None,
     ) -> TaskEvent | None:

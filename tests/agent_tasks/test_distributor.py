@@ -72,7 +72,6 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         event_id,
         "build.finished",
         "Upload retries failed",
-        summary="repo omnigent-fork upload flaky",
         state="received",
         tags=[
             TaskEventTag(event_id=event_id, tag_type="repo", tag="omnigent-fork"),
@@ -138,7 +137,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         _uid("internal_event"),
         "session.adoption",
         "Adoption proposal",
-        source_session_id=_uid("orphan_session"),
+        source_internal_session_id=_uid("orphan_session"),
         state="awaiting_user_ack",
     )
     updated = await distribute_event(
@@ -160,7 +159,6 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         event_id,
         "github.pr.merged",
         "Blocker PR merged",
-        summary="repo:org/repo pr:456 merged unblocks:pr:123",
         task_id=stores["task_id"],
         state="received",
     )

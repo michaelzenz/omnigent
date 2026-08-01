@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from omnigent.agent_tasks.executions import complete_execution
+from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.wake import wake_task_manager_for_execution
 from omnigent.entities import Task
 from omnigent.runner.routing import RunnerRouter
@@ -85,6 +86,12 @@ async def notify_worker_session_status(
     _context.task_item_store.update_item(execution.task_item_id, state=item_state)
 
     task = _context.task_store.get(binding.task_id)
+    if task is not None:
+        sync_task_activity_state(
+            task,
+            task_store=_context.task_store,
+            task_item_store=_context.task_item_store,
+        )
     if task is None or task.manager_conversation_id is None:
         return True
     event = (

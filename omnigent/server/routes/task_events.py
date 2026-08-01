@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
 from omnigent.agent_tasks.distributor import distribute_event
+from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
 from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
 from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
@@ -54,14 +55,12 @@ class CreateIngressTaskEventRequest(BaseModel):
 
     event_type: str
     title: str
-    summary: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     source: str | None = None
     source_key: str | None = None
     source_offset: int = 0
-    source_session_id: str | None = None
+    source_internal_session_id: str | None = None
     task_id: str | None = None
-    priority: int = 0
     tags: list[TaskEventTagInput] = Field(default_factory=list)
 
     @field_validator("event_type", "title")
@@ -91,6 +90,14 @@ class CreateIngressTaskEventRequest(BaseModel):
     @field_validator("task_id")
     @classmethod
     def _task_id_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("source_internal_session_id")
+    @classmethod
+    def _source_internal_session_id_non_empty(cls, value: str | None) -> str | None:
         if value is None:
             return None
         stripped = value.strip()
@@ -127,14 +134,10 @@ def _event_to_response(event: TaskEvent) -> dict[str, Any]:
         "source": event.source,
         "source_key": event.source_key,
         "source_offset": event.source_offset,
-        "source_session_id": event.source_session_id,
+        "source_internal_session_id": event.source_internal_session_id,
         "tags": tags_to_payload(event.tags or []),
-        "summary": event.summary,
         "state": event.state,
-        "priority": event.priority,
         "task_id": event.task_id,
-        "manager_agent_id": event.manager_agent_id,
-        "manager_conversation_id": event.manager_conversation_id,
         "selected_routing_attempt_id": event.selected_routing_attempt_id,
         "created_at": event.created_at,
         "updated_at": event.updated_at,
@@ -227,9 +230,9 @@ def create_task_events_router(
             task = await asyncio.to_thread(task_store.get, body.task_id)
             if task is None:
                 raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-            if task.state != "active":
+            if task.state not in _LIVE_TASK_STATES:
                 raise OmnigentError(
-                    "Task is not active",
+                    "Task is not accepting events",
                     code=ErrorCode.INVALID_INPUT,
                 )
 
@@ -260,11 +263,9 @@ def create_task_events_router(
                 source=body.source,
                 source_key=body.source_key,
                 source_offset=body.source_offset,
-                source_session_id=body.source_session_id,
+                source_internal_session_id=body.source_internal_session_id,
                 task_id=body.task_id,
-                summary=body.summary,
                 state="received",
-                priority=body.priority,
                 tags=tags,
             )
 
@@ -287,7 +288,6 @@ def create_task_events_router(
         request: Request,
         state: str | None = None,
         task_id: str | None = None,
-        manager_agent_id: str | None = None,
         limit: int = Query(default=50, ge=1, le=200),
     ) -> dict[str, Any]:
         """List task events visible to the caller."""
@@ -302,7 +302,6 @@ def create_task_events_router(
             task_event_store.list_events,
             state=state,
             task_id=task_id,
-            manager_agent_id=manager_agent_id,
         )
         if task_id is not None and user_id is not None and not _is_admin(user_id):
             task = await asyncio.to_thread(task_store.get, task_id)

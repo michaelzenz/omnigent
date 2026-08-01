@@ -62,7 +62,7 @@ async def test_create_and_get_task(
     created = create_resp.json()
     assert created["object"] == "agent.task"
     assert created["agent_profile_id"] == task_manager_agent_id
-    assert created["state"] == "active"
+    assert created["state"] == "idle"
     assert created["tags"] == [{"tag_type": "domain", "tag": "s3"}]
 
     get_resp = await client.get(f"/v1/agent-tasks/{created['id']}")
@@ -90,9 +90,9 @@ async def test_list_tasks_filters_by_state(
     task_manager_agent_id: str,
 ) -> None:
     """List endpoint filters by state query param."""
-    active = await client.post(
+    idle_task = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(task_manager_agent_id, title="Active task"),
+        json=_create_payload(task_manager_agent_id, title="Idle task"),
     )
     archived = await client.post(
         "/v1/agent-tasks",
@@ -100,10 +100,10 @@ async def test_list_tasks_filters_by_state(
     )
     await client.delete(f"/v1/agent-tasks/{archived.json()['id']}")
 
-    list_resp = await client.get("/v1/agent-tasks?state=active")
+    list_resp = await client.get("/v1/agent-tasks?state=idle")
     assert list_resp.status_code == 200
     ids = {row["id"] for row in list_resp.json()["data"]}
-    assert active.json()["id"] in ids
+    assert idle_task.json()["id"] in ids
     assert archived.json()["id"] not in ids
 
 

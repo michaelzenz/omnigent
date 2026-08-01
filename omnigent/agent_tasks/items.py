@@ -9,6 +9,7 @@ from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
     resolve_bootstrap_params,
 )
+from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.dispatch import dispatch_worker_for_item, resolve_dispatch_params
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_store import TaskStore
@@ -105,7 +106,7 @@ def ensure_task_manager_for_dispatch(
 ) -> Task:
     """Activate pending packages and ensure a manager session exists before dispatch."""
     if task.state == "pending":
-        activated = task_store.update(task.id, state="active")
+        activated = task_store.update(task.id, state="idle")
         if activated is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         task = activated
@@ -198,12 +199,18 @@ def resolve_task_item(
         task=task,
         item=item,
         params=params,
+        task_store=task_store,
         task_item_store=task_item_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
     )
-    updated = task_item_store.update_item(item.id, state="running")
+    updated = task_item_store.get_item(item.id)
     assert updated is not None
+    task = sync_task_activity_state(
+        task,
+        task_store=task_store,
+        task_item_store=task_item_store,
+    )
     return updated, execution
 
 

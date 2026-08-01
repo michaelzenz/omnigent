@@ -88,7 +88,6 @@ async def test_stall_enqueues_secretary_wake(
         event_id,
         "build.finished",
         "Ambiguous build",
-        summary="repo omnigent-fork maybe upload",
         state="received",
     )
     with patch(

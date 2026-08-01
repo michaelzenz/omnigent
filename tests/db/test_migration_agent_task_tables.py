@@ -43,6 +43,10 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     } <= tables
     columns = {column["name"] for column in sa.inspect(db_engine).get_columns("task_events")}
     assert "tags" in columns
+    assert "priority" not in columns
+    assert "summary" not in columns
+    assert "source_internal_session_id" in columns
+    assert "source_session_id" not in columns
     assert "search_text" not in columns
     assert "task_event_tags" not in tables
     task_columns = {column["name"] for column in sa.inspect(db_engine).get_columns("tasks")}

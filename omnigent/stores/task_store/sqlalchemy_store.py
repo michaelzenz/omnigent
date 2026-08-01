@@ -57,7 +57,7 @@ class SqlAlchemyTaskStore(TaskStore):
         description: str | None = None,
         internal_note: str | None = None,
         manager_conversation_id: str | None = None,
-        state: str = "active",
+        state: str = "idle",
         tags: list[TaskTag] | None = None,
     ) -> Task:
         tag_rows = tags or []

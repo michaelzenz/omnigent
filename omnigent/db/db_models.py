@@ -1503,19 +1503,15 @@ class SqlTaskEvent(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    manager_agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     source: Mapped[str | None] = mapped_column(String(256), nullable=True)
     source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
-    source_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    source_internal_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     tags: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
-    summary: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
-    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
     selected_routing_attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1535,13 +1531,6 @@ class SqlTaskEvent(OmnigentBase):
             "workspace_id",
             "state",
             "updated_at",
-            "id",
-        ),
-        Index(
-            "ix_task_events_manager_agent_state",
-            "workspace_id",
-            "manager_agent_id",
-            "state",
             "id",
         ),
         Index(

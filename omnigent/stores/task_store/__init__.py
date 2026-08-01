@@ -27,7 +27,7 @@ class TaskStore(ABC):
         description: str | None = None,
         internal_note: str | None = None,
         manager_conversation_id: str | None = None,
-        state: str = "active",
+        state: str = "idle",
         tags: list[TaskTag] | None = None,
     ) -> Task:
         """Insert a new managed task."""

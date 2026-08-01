@@ -104,7 +104,6 @@ def _create_events(
         {
             "event_type": "github.pr.checks_failed",
             "title": f"PR #{pr} checks failed",
-            "summary": f"repo:{repo} pr:{pr} ci failure",
             "source": "seed:dummy",
             "source_key": f"{repo}#{pr}",
             "source_offset": offset_base,
@@ -114,7 +113,6 @@ def _create_events(
         {
             "event_type": "github.pr.review_comment",
             "title": f"New comment on PR #{pr}",
-            "summary": f"repo:{repo} pr:{pr} review comment",
             "source": "seed:dummy",
             "source_key": f"{repo}#{pr}",
             "source_offset": offset_base + 1,

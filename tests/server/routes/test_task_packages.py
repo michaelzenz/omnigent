@@ -56,7 +56,6 @@ async def test_create_task_package_lists_as_paused_task(
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
-        summary="repo:acme/widgets pr:123",
     )
 
     created = await client.post(

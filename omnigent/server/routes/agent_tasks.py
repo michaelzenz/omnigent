@@ -117,7 +117,7 @@ class CreateAgentTaskRequest(BaseModel):
     description: str | None = None
     internal_note: str | None = None
     manager_conversation_id: str | None = None
-    state: str = "active"
+    state: str = "idle"
     tags: list[TaskTagInput] = Field(default_factory=list)
 
     @field_validator("title")
@@ -1194,6 +1194,7 @@ def create_agent_tasks_router(
                     task=task,
                     item=item,
                     params=params,
+                    task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
                     conversation_store=conversation_store,

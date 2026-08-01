@@ -13,7 +13,6 @@ export interface TaskEventSummary {
   id: string;
   event_type: string;
   title: string;
-  summary: string | null;
   state: string;
   payload: string | Record<string, unknown> | null;
   created_at: number;
@@ -170,12 +169,21 @@ async function readJsonOrApiError<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function fetchAgentTasks(state = "active"): Promise<AgentTaskSummary[]> {
+export async function fetchAgentTasks(state = "idle"): Promise<AgentTaskSummary[]> {
   const res = await authenticatedFetch(
     `/v1/agent-tasks?state=${encodeURIComponent(state)}&limit=100`,
   );
   const body = await readJson<{ data: AgentTaskSummary[] }>(res);
   return body.data;
+}
+
+/** Active and idle managed tasks (excludes pending packages and archived). */
+export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
+  const [active, idle] = await Promise.all([
+    fetchAgentTasks("active"),
+    fetchAgentTasks("idle"),
+  ]);
+  return [...active, ...idle];
 }
 
 export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard> {

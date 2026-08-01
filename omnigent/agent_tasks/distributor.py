@@ -14,6 +14,7 @@ from omnigent.agent_tasks.scoring import (
     pick_auto_route,
     rank_tasks_for_event_tags,
 )
+from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES, live_tasks
 from omnigent.agent_tasks.secretary_queue import enqueue_secretary_event
 from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
@@ -94,7 +95,7 @@ async def distribute_event(
 
     if event.task_id is not None:
         bound_task = task_store.get(event.task_id)
-        if bound_task is not None and bound_task.state == "active":
+        if bound_task is not None and bound_task.state in _LIVE_TASK_STATES:
             params = _bootstrap_params(secretary_profile)
             return await _finish_route(
                 event=event,
@@ -114,8 +115,8 @@ async def distribute_event(
             owner_user_id=owner_user_id,
         )
 
-    if event.source_session_id:
-        binding = task_event_store.get_binding(event.source_session_id)
+    if event.source_internal_session_id:
+        binding = task_event_store.get_binding(event.source_internal_session_id)
         if binding is not None:
             bound_task = task_store.get(binding.task_id)
             if bound_task is not None:
@@ -133,7 +134,7 @@ async def distribute_event(
                     owner_user_id=owner_user_id,
                 )
 
-    active_tasks = task_store.list(state="active")
+    active_tasks = live_tasks(task_store)
     if not active_tasks:
         return await _stall(
             event=event,
@@ -241,9 +242,10 @@ async def _finish_route(
             owner_user_id=owner_user_id,
         )
 
-    if updated.manager_conversation_id is not None:
+    routed_task = task_store.get(task.id)
+    if routed_task is not None and routed_task.manager_conversation_id is not None:
         await wake_task_manager_for_event(
-            manager_conversation_id=updated.manager_conversation_id,
+            manager_conversation_id=routed_task.manager_conversation_id,
             event=updated,
             conversation_store=conversation_store,
             runner_router=runner_router,

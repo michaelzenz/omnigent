@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ensureSecretarySession,
   fetchAgentTasks,
+  fetchLiveAgentTasks,
   fetchSecretaryProfile,
   fetchTaskDashboard,
   resetSecretarySession,
@@ -15,7 +16,7 @@ import { useChatStore } from "@/store/chatStore";
 export function useAgentTaskList(state = "active") {
   return useQuery({
     queryKey: ["agent-tasks", state],
-    queryFn: () => fetchAgentTasks(state),
+    queryFn: () => (state === "live" ? fetchLiveAgentTasks() : fetchAgentTasks(state)),
     refetchInterval: 10_000,
   });
 }
@@ -76,7 +77,9 @@ export function useResolveTaskItem(taskId: string) {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
       await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "active"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "idle"] });
     },
   });
 }

@@ -14,11 +14,9 @@ _logger = logging.getLogger(__name__)
 
 
 def _format_event_notice(event: TaskEvent) -> str:
-    summary = event.summary or ""
-    summary_block = f"\n{summary}" if summary else ""
     return (
         f"[System: task event {event.id} routed to this manager] "
-        f"{event.title}{summary_block}"
+        f"{event.title}"
     )
 
 

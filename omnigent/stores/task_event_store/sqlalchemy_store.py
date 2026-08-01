@@ -42,20 +42,16 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         id=row.id,
         event_type=row.event_type,
         title=row.title,
-        tags=decode_event_tags(row.id, row.tags),
         state=decode_task_event_state(row.state),
-        priority=row.priority,
         created_at=row.created_at,
+        tags=decode_event_tags(row.id, row.tags),
         task_id=row.task_id,
         payload=row.payload,
         source=row.source,
-        summary=row.summary,
         selected_routing_attempt_id=row.selected_routing_attempt_id,
-        manager_agent_id=row.manager_agent_id,
-        manager_conversation_id=row.manager_conversation_id,
         source_key=row.source_key,
         source_offset=row.source_offset,
-        source_session_id=row.source_session_id,
+        source_internal_session_id=row.source_internal_session_id,
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
@@ -143,12 +139,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         source: str | None = None,
         source_key: str | None = None,
         source_offset: int | None = None,
-        source_session_id: str | None = None,
-        summary: str | None = None,
+        source_internal_session_id: str | None = None,
         state: str = "received",
-        priority: int = 0,
-        manager_agent_id: str | None = None,
-        manager_conversation_id: str | None = None,
         tags: list[TaskEventTag] | None = None,
     ) -> TaskEvent:
         tag_rows = tags or []
@@ -159,19 +151,15 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         row = SqlTaskEvent(
             id=event_id,
             task_id=task_id,
-            manager_agent_id=manager_agent_id,
-            manager_conversation_id=manager_conversation_id,
             event_type=event_type,
             title=title,
             payload=payload,
             source=source,
             source_key=source_key,
             source_offset=source_offset,
-            source_session_id=source_session_id,
+            source_internal_session_id=source_internal_session_id,
             tags=encode_event_tags(normalized_tags),
-            summary=summary,
             state=encode_task_event_state(state),
-            priority=priority,
             created_at=now_epoch(),
             updated_at=None,
             routed_at=None,
@@ -218,7 +206,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         state: str | None = None,
         task_id: str | None = None,
-        manager_agent_id: str | None = None,
     ) -> list[TaskEvent]:
         with self._session() as session:
             stmt = select(SqlTaskEvent).where(SqlTaskEvent.workspace_id == current_workspace_id())
@@ -226,8 +213,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 stmt = stmt.where(SqlTaskEvent.state == encode_task_event_state(state))
             if task_id is not None:
                 stmt = stmt.where(SqlTaskEvent.task_id == task_id)
-            if manager_agent_id is not None:
-                stmt = stmt.where(SqlTaskEvent.manager_agent_id == manager_agent_id)
             stmt = stmt.order_by(desc(SqlTaskEvent.created_at), desc(SqlTaskEvent.id))
             rows = session.execute(stmt).scalars().all()
             return [_event_to_entity(row) for row in rows]
@@ -238,10 +223,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         task_id: str | None = _UNSET,
         state: str | None = None,
-        priority: int | None = None,
         selected_routing_attempt_id: str | None = _UNSET,
-        manager_agent_id: str | None = _UNSET,
-        manager_conversation_id: str | None = _UNSET,
         routed_at: int | None = None,
         processed_at: int | None = None,
     ) -> TaskEvent | None:
@@ -258,21 +240,10 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 if row.state != encoded_state:
                     row.state = encoded_state
                     changed = True
-            if priority is not None and row.priority != priority:
-                row.priority = priority
-                changed = True
             if selected_routing_attempt_id is not _UNSET and (
                 row.selected_routing_attempt_id != selected_routing_attempt_id
             ):
                 row.selected_routing_attempt_id = selected_routing_attempt_id
-                changed = True
-            if manager_agent_id is not _UNSET and row.manager_agent_id != manager_agent_id:
-                row.manager_agent_id = manager_agent_id
-                changed = True
-            if manager_conversation_id is not _UNSET and (
-                row.manager_conversation_id != manager_conversation_id
-            ):
-                row.manager_conversation_id = manager_conversation_id
                 changed = True
             if routed_at is not None and row.routed_at != routed_at:
                 row.routed_at = routed_at

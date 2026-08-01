@@ -8,12 +8,14 @@ from typing import Any
 
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.executions import mark_execution_running, start_execution_for_item
+from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.entities import Task, TaskEventExecution, TaskItem
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_store import TaskStore
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,7 @@ def dispatch_worker_for_item(
     task: Task,
     item: TaskItem,
     params: DispatchParams,
+    task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
@@ -163,6 +166,11 @@ def dispatch_worker_for_item(
         conversation_id=worker_conv.id,
     )
     task_item_store.update_item(item.id, state="running")
+    sync_task_activity_state(
+        task,
+        task_store=task_store,
+        task_item_store=task_item_store,
+    )
     task_event_store.upsert_binding(
         worker_conv.id,
         task.id,

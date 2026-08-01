@@ -117,7 +117,6 @@ def emit_transition(
     pr_number: int,
     event_type: str,
     title: str,
-    summary: str,
     source_offset: int,
     payload: dict[str, Any],
     task_id: str | None = None,
@@ -125,7 +124,6 @@ def emit_transition(
     fields: dict[str, object] = {
         "event_type": event_type,
         "title": title,
-        "summary": summary,
         "source": f"poll_plugin:{plugin_name}",
         "source_key": f"{repo}#{pr_number}",
         "source_offset": source_offset,
@@ -169,8 +167,6 @@ def main() -> int:
         checks = checks_conclusion(snapshot)
         context = target.get("context") if isinstance(target.get("context"), dict) else {}
         task_id = bound_task_id(context)
-        blocked_pr = context.get("blocked_pr")
-        unblocks = f" unblocks:pr:{blocked_pr}" if blocked_pr is not None else ""
 
         if merged_at and not previous.get("mergedAt"):
             emit_transition(
@@ -179,7 +175,6 @@ def main() -> int:
                 pr_number=int(pr_number),
                 event_type="github.pr.merged",
                 title=f"PR #{pr_number} merged in {repo}",
-                summary=f"repo:{repo} pr:{pr_number} merged{unblocks}",
                 source_offset=1,
                 payload={
                     "repo": repo,
@@ -196,7 +191,6 @@ def main() -> int:
                 pr_number=int(pr_number),
                 event_type="github.pr.checks_failed",
                 title=f"PR #{pr_number} checks failed in {repo}",
-                summary=f"repo:{repo} pr:{pr_number} checks:failed{unblocks}",
                 source_offset=2,
                 payload={"repo": repo, "pr_number": pr_number, "context": context},
                 task_id=task_id,
@@ -208,7 +202,6 @@ def main() -> int:
                 pr_number=int(pr_number),
                 event_type="github.pr.checks_passed",
                 title=f"PR #{pr_number} checks passed in {repo}",
-                summary=f"repo:{repo} pr:{pr_number} checks:passed{unblocks}",
                 source_offset=3,
                 payload={"repo": repo, "pr_number": pr_number, "context": context},
                 task_id=task_id,

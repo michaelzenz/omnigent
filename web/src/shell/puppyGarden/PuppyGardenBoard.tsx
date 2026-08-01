@@ -7,7 +7,7 @@ export function PuppyGardenBoard() {
   const { data: pendingTasks, isLoading: pendingLoading, error: pendingError } =
     useAgentTaskList("pending");
   const { data: activeTasks, isLoading: activeLoading, error: activeError } =
-    useAgentTaskList("active");
+    useAgentTaskList("live");
 
   const isLoading = pendingLoading || activeLoading;
   const error = pendingError ?? activeError;
@@ -52,7 +52,7 @@ export function PuppyGardenBoard() {
         ) : null}
         {hasActive ? (
           <section className="space-y-3" data-testid="board-active-tasks">
-            <h2 className="text-sm font-semibold text-emerald-800">Active tasks</h2>
+            <h2 className="text-sm font-semibold text-emerald-800">Tasks</h2>
             {activeTasks?.map((task) => (
               <TaskCard
                 key={task.id}
@@ -64,7 +64,7 @@ export function PuppyGardenBoard() {
             ))}
           </section>
         ) : !hasPending ? (
-          <p className="text-sm text-muted-foreground">No active tasks yet.</p>
+          <p className="text-sm text-muted-foreground">No tasks yet.</p>
         ) : null}
       </div>
     </div>

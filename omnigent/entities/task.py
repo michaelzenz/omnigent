@@ -22,7 +22,7 @@ class Task:
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
     :param internal_note: Agent-facing routing context maintained by the manager.
-    :param state: One of ``"active"``, ``"pending"``, ``"done"``, ``"archived"``.
+    :param state: One of ``"active"``, ``"pending"``, ``"idle"``, ``"archived"``.
     :param manager_conversation_id: Manager session for this task, or ``None``
         before bootstrap.
     :param created_at: Unix epoch seconds at row creation.
@@ -62,28 +62,23 @@ class TaskEvent:
     An inbound event that may be routed to a task manager.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
-    :param task_id: Routed task, or ``None`` before routing completes.
     :param event_type: Machine-readable classifier, e.g. ``"build.finished"``.
     :param title: Human-readable one-liner for the event.
-    :param payload: JSON payload string. ``None`` when unset.
-    :param source: Event source, e.g. ``"github"`` or ``"ci"``.
-    :param tags: Immutable ingress tags used for routing. Empty when unset.
-    :param summary: Extraction done at ingestion for routing. ``None`` when unset.
     :param state: Routing/handling lifecycle state.
-    :param priority: Routing queue priority; higher sorts first.
-    :param selected_routing_attempt_id: Winning routing attempt, or ``None``.
     :param created_at: Unix epoch seconds at row creation.
+    :param tags: Immutable ingress tags used for routing. ``None`` when unset.
+    :param task_id: Routed task, or ``None`` before routing completes.
+    :param payload: JSON payload string. ``None`` when unset.
+    :param source: Event source, e.g. ``"github"`` or ``"ci"``. ``None`` when unset.
+    :param selected_routing_attempt_id: Winning routing attempt, or ``None``.
+    :param source_key: Stable dedupe key within ``source`` (external ingress id or
+        adopted session id for secretary/adoption events). ``None`` when unset.
+    :param source_offset: Ingress cursor (e.g. byte offset), or ``None``.
+    :param source_internal_session_id: Originating PuppyGarden conversation when
+        the event was emitted from an internal session. ``None`` when unset.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     :param routed_at: Unix epoch seconds when routing completed, or ``None``.
     :param processed_at: Unix epoch seconds when the manager finished handling,
-        or ``None``.
-    :param manager_agent_id: Denormalized routed manager agent, or ``None``
-        before routing.
-    :param manager_conversation_id: Denormalized manager session wake target,
-        or ``None`` before routing.
-    :param source_key: Stable external id for ingress dedupe, or ``None``.
-    :param source_offset: Ingress cursor (e.g. byte offset), or ``None``.
-    :param source_session_id: Omnigent session the event originated from,
         or ``None``.
     """
 
@@ -91,19 +86,15 @@ class TaskEvent:
     event_type: str
     title: str
     state: str
-    priority: int
     created_at: int
     tags: list[TaskEventTag] | None = None
     task_id: str | None = None
     payload: str | None = None
     source: str | None = None
-    summary: str | None = None
     selected_routing_attempt_id: str | None = None
-    manager_agent_id: str | None = None
-    manager_conversation_id: str | None = None
     source_key: str | None = None
     source_offset: int | None = None
-    source_session_id: str | None = None
+    source_internal_session_id: str | None = None
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None

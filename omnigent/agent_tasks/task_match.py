@@ -11,13 +11,22 @@ from omnigent.stores.agent_task.tags import merge_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
-_ROUTABLE_TASK_STATES = frozenset({"active", "pending"})
+_ROUTABLE_TASK_STATES = frozenset({"active", "pending", "idle"})
+_LIVE_TASK_STATES = frozenset({"active", "idle"})
 
 
 def routable_tasks(task_store: TaskStore) -> list[Task]:
-    """Return active and pending tasks eligible for event routing."""
+    """Return active, idle, and pending tasks eligible for event routing."""
     tasks: list[Task] = []
     for state in sorted(_ROUTABLE_TASK_STATES):
+        tasks.extend(task_store.list(state=state))
+    return tasks
+
+
+def live_tasks(task_store: TaskStore) -> list[Task]:
+    """Return active and idle tasks that can receive routed events."""
+    tasks: list[Task] = []
+    for state in sorted(_LIVE_TASK_STATES):
         tasks.extend(task_store.list(state=state))
     return tasks
 

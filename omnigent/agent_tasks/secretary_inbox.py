@@ -52,7 +52,6 @@ def event_summary(event: TaskEvent) -> dict[str, Any]:
         "id": event.id,
         "event_type": event.event_type,
         "title": event.title,
-        "summary": event.summary,
         "state": event.state,
         "source": event.source,
         "source_key": event.source_key,

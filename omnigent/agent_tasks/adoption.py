@@ -15,6 +15,7 @@ from omnigent.agent_tasks.manager_agent import (
     resolve_manager_agent_id_for_task,
 )
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
+from omnigent.agent_tasks.task_match import live_tasks
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
 from omnigent.agent_tasks.session_profile import resolve_session_routing_tags
 from omnigent.stores.agent_task.tags import tags_to_payload
@@ -249,7 +250,7 @@ def propose_session_adoption(
         )
     active_tasks = [
         task
-        for task in task_store.list(state="active")
+        for task in live_tasks(task_store)
         if owner_user_id is None
         or task.owner_user_id is None
         or task.owner_user_id == owner_user_id
@@ -272,7 +273,7 @@ def propose_session_adoption(
         event_id,
         SESSION_ADOPTION_PROPOSAL,
         f"Adopt session: {conv.title or session_id}",
-        source_session_id=session_id,
+        source_key=session_id,
         payload=json.dumps(payload),
         source="secretary",
         state="awaiting_user_ack",
@@ -323,7 +324,7 @@ async def adopt_session(
         adopted_event_id,
         SESSION_ADOPTED,
         f"Session adopted: {conv.title if conv is not None else session_id}",
-        source_session_id=session_id,
+        source_key=session_id,
         source="adoption",
         state="received",
     )
@@ -345,9 +346,10 @@ async def adopt_session(
             task_id=task.id,
         )
         processed_proposal = updated if updated is not None else proposal_event
-    if routed.manager_conversation_id is not None:
+    routed_task = task_store.get(task.id)
+    if routed_task is not None and routed_task.manager_conversation_id is not None:
         await wake_task_manager_for_event(
-            manager_conversation_id=routed.manager_conversation_id,
+            manager_conversation_id=routed_task.manager_conversation_id,
             event=routed,
             conversation_store=conversation_store,
             runner_router=runner_router,
@@ -383,6 +385,6 @@ def find_open_adoption_proposal(
     for event in task_event_store.list_events(state="awaiting_user_ack"):
         if event.event_type != SESSION_ADOPTION_PROPOSAL:
             continue
-        if event.source_session_id == session_id:
+        if event.source_key == session_id:
             return event
     return None

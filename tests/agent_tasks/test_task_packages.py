@@ -95,7 +95,6 @@ def test_create_task_package_reconciles_events(stores) -> None:
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
-        summary="repo:acme/widgets pr:123",
         tags=[
             TaskEventTag(event_id=event_id, tag_type="repo", tag="acme/widgets"),
         ],

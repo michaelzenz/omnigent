@@ -77,7 +77,7 @@ async def test_session_adoption_flow(
     proposal = propose_resp.json()
     assert proposal["event_type"] == "session.adoption"
     assert proposal["state"] == "awaiting_user_ack"
-    assert proposal["source_session_id"] == conv.id
+    assert proposal["source_key"] == conv.id
 
     adopt_resp = await client.post(
         f"/v1/agent-tasks/sessions/{conv.id}/adopt",
