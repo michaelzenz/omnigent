@@ -150,7 +150,7 @@ async def test_wake_parent_launches_runner_before_dispatch(
     ok = await sessions_module._wake_parent_for_blocked_child(
         parent.id,
         child,
-        "[System: task event(s) need routing]",
+        "[System: please triage and route these events]",
         conversation_store=conv_store,
         runner_router=None,
     )
@@ -159,4 +159,4 @@ async def test_wake_parent_launches_runner_before_dispatch(
     assert ok is True
     ensure.assert_awaited_once()
     init.assert_awaited_once()
-    assert dispatched == ["[System: task event(s) need routing]"]
+    assert dispatched == ["[System: please triage and route these events]"]

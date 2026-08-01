@@ -15,7 +15,7 @@ Use Bash for every endpoint below. Do not use browser tools for routing work.
 
 ## Trigger
 
-`[System: task event(s) need routing — resolve or escalate]` — one or more events
+`[System: please triage and route these events]` — one or more events
 are in `awaiting_grouping`.
 
 ---

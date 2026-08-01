@@ -168,7 +168,7 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(secretary_setup: d
 
     items = queue_store.list_items(_key(secretary_setup["user_id"]))
     assert len(items) == 1
-    assert "[System: task event(s) need routing" in items[0].payload
+    assert "[System: please triage and route these events]" in items[0].payload
 
 
 @pytest.mark.asyncio

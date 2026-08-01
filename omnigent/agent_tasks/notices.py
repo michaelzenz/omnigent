@@ -60,16 +60,17 @@ def _format_execution_detail(event) -> str:
 def _format_secretary_stall_notice(events: list) -> str:
     """Format the notice the secretary packager hands the dispatcher.
 
-    A batch for one user can mix two kinds of stalled work: routed business events
-    that need triage (``awaiting_grouping``) and orphan sessions that need a
-    routing profile (``session.orphan``). Each gets its own instruction line so
-    the secretary knows which action to take per event.
+    A batch for one user can mix two kinds of stalled work: business events the
+    distributor could not auto-route (``awaiting_grouping``) and orphan sessions
+    that need a routing profile (``session.orphan``). The triage events get a
+    short prompt — the secretary decides how to route — and orphans get the
+    adoption steps. Each gets its own line so the secretary knows which action
+    to take per event.
     """
     orphans = [e for e in events if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
     routed = [e for e in events if e.event_type != SESSION_ORPHAN_EVENT_TYPE]
-    lines = ["[System: task event(s) need routing — resolve or escalate]"]
+    lines = ["[System: please triage and route these events]"]
     if routed:
-        lines.append("List ambiguous inbox, route confident matches via resolve, else board card.")
         for event in routed:
             lines.append(f"- {event.event_type}: {event.title!r} ({event.state})")
     if orphans:
