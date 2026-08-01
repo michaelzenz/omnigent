@@ -83,6 +83,22 @@ async def test_create_and_get_task(
     assert loaded["tags"] == created["tags"]
 
 
+async def test_create_defaults_agent_profile_to_task_manager(
+    client: httpx.AsyncClient,
+    task_manager_agent_id: str,
+) -> None:
+    """Omitting agent_profile_id uses the built-in task-manager profile."""
+    create_resp = await client.post(
+        "/v1/agent-tasks",
+        json={
+            "title": "Default manager task",
+            "tags": [{"tag_type": "domain", "tag": "s3"}],
+        },
+    )
+    assert create_resp.status_code == 200
+    assert create_resp.json()["agent_profile_id"] == task_manager_agent_id
+
+
 async def test_create_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
     """Unknown agent_profile_id returns 404."""
     resp = await client.post(

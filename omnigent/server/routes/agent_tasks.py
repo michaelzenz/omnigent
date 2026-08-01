@@ -118,7 +118,7 @@ class TaskTagInput(BaseModel):
 class CreateAgentTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks``."""
 
-    agent_profile_id: str
+    agent_profile_id: str | None = None
     title: str
     description: str | None = None
     internal_note: str | None = None
@@ -661,14 +661,15 @@ def create_agent_tasks_router(
     async def create_task(request: Request, body: CreateAgentTaskRequest) -> dict[str, Any]:
         """Create a managed task."""
         user_id = require_user(request, auth_provider)
-        await _require_agent_profile(body.agent_profile_id)
+        profile_id = resolve_agent_profile_id(agent_store, body.agent_profile_id)
+        await _require_agent_profile(profile_id)
         task_id = _generate_task_id()
         tags = _tags_from_input(task_id, body.tags)
         task = await asyncio.to_thread(
             task_store.create,
             task_id,
             body.title,
-            agent_profile_id=body.agent_profile_id,
+            agent_profile_id=profile_id,
             owner_user_id=user_id,
             description=body.description,
             internal_note=body.internal_note,
@@ -682,7 +683,6 @@ def create_agent_tasks_router(
     async def list_tasks(
         request: Request,
         state: str | None = None,
-        agent_profile_id: str | None = None,
         limit: int = Query(default=20, ge=1, le=100),
     ) -> dict[str, Any]:
         """List managed tasks visible to the caller."""
@@ -697,8 +697,6 @@ def create_agent_tasks_router(
             task_store.list,
             state=state,
         )
-        if agent_profile_id is not None:
-            tasks = [task for task in tasks if task.agent_profile_id == agent_profile_id]
         tasks = _filter_tasks_for_user(tasks, user_id)[:limit]
         return {
             "object": "list",
