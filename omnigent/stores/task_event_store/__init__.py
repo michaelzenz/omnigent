@@ -6,10 +6,10 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from omnigent.entities import (
+    EventTag,
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
-    EventTag,
 )
 
 _UNSET: Any = object()
@@ -38,6 +38,7 @@ class TaskEventStore(ABC):
         source_internal_session_id: str | None = None,
         state: str = "received",
         tags: list[EventTag] | None = None,
+        owner_user_id: str | None = None,
     ) -> TaskEvent:
         """Insert a new task event."""
 
@@ -75,6 +76,7 @@ class TaskEventStore(ABC):
         state: str | None = None,
         routed_at: int | None = None,
         processed_at: int | None = None,
+        owner_user_id: str | None = _UNSET,
     ) -> TaskEvent | None:
         """Update mutable event fields."""
 

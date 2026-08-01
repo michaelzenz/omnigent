@@ -7,14 +7,13 @@ import logging
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.event_types import is_distributor_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
-from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.scoring import (
     candidate_task_ids_for_event_tags,
     pick_auto_route,
     rank_tasks_for_event_tags,
 )
+from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES, live_tasks
-from omnigent.agent_tasks.secretary_queue import enqueue_secretary_event
 from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
@@ -22,8 +21,8 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
@@ -227,11 +226,12 @@ async def _stall(
     task_event_store: TaskEventStore,
     owner_user_id: str | None,
 ) -> TaskEvent:
-    updated = task_event_store.update_event(event.id, state="awaiting_grouping")
+    effective_owner = owner_user_id if owner_user_id is not None else "__anonymous__"
+    updated = task_event_store.update_event(
+        event.id,
+        state="awaiting_grouping",
+        owner_user_id=effective_owner,
+    )
     if updated is None:
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-    await enqueue_secretary_event(
-        event_id=updated.id,
-        owner_user_id=owner_user_id if owner_user_id is not None else "__anonymous__",
-    )
     return updated

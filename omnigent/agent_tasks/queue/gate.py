@@ -120,6 +120,15 @@ class DispatchGate:
         tracked.quiet_since = quiet_since
         tracked.last_seen = now
 
+    def observe_sync(self, session_id: str, status: str) -> None:
+        """Synchronous adapter for :meth:`observe`, using ``time.monotonic``.
+
+        Lets a status feed push readings into the gate without awaiting.
+        """
+        import time
+
+        self.observe(session_id, status, now=time.monotonic())
+
     def evaluate(
         self,
         session_id: str,

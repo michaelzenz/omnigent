@@ -175,6 +175,31 @@ class AgentQueueStore(ABC):
         re-arms it instead.
         """
 
+    @abstractmethod
+    def set_queue_conversation(
+        self,
+        key: AgentQueueKey,
+        conversation_id: str,
+    ) -> AgentQueue | None:
+        """Cache the delivery target on the queue row.
+
+        Set by the dispatch handler when it resolves the target, so the status feed
+        can reverse-look-up a queue from a session id.
+        """
+
+    @abstractmethod
+    def complete_inflight_for_session(
+        self,
+        session_id: str,
+        *,
+        now: int,
+    ) -> AgentQueueItem | None:
+        """Complete the in-flight item for the queue targeting *session_id*.
+
+        A no-op when the session has no queue or nothing in flight, so it is safe to
+        call for every session status change.
+        """
+
     # ── Control plane ──────────────────────────────────
 
     @abstractmethod

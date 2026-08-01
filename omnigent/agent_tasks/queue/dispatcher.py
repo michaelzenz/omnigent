@@ -19,6 +19,7 @@ Two properties are worth stating explicitly because they shape the code:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -147,6 +148,7 @@ class AgentQueueDispatcher:
             grace_overrides=context.grace_overrides,
         )
         self._semaphore = asyncio.Semaphore(context.pool_size)
+        self._task: asyncio.Task[None] | None = None
 
     @property
     def gate(self) -> DispatchGate:
@@ -196,6 +198,24 @@ class AgentQueueDispatcher:
                 dispatched = 0
             if not dispatched:
                 await asyncio.sleep(SCAN_INTERVAL_S)
+
+    async def start(self) -> None:
+        """Start the background scan loop."""
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.create_task(
+            self.run_forever(),
+            name="agent-queue-dispatcher",
+        )
+
+    async def stop(self) -> None:
+        """Cancel the background scan loop and wait for it to unwind."""
+        if self._task is None:
+            return
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+        self._task = None
 
     async def _drain_one(self, queue: AgentQueue) -> bool:
         """Try to dispatch one item from *queue*. Returns whether one went out."""

@@ -60,27 +60,28 @@ from omnigent.server.performance_metrics import (
     set_request_user_agent_for_access_log,
 )
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
-from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
 from omnigent.server.routes.harnesses import create_harnesses_router
-from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
 from omnigent.server.routes.session_mcp_servers import create_session_mcp_servers_router
 from omnigent.server.routes.session_policies import create_session_policies_router
 from omnigent.server.routes.sessions import (
+    ServerRunnerInfrastructure,
     SessionLiveness,
     announce_hosts_changed,
     create_sessions_router,
-    set_server_runner_router,
     set_server_runner_infrastructure,
-    ServerRunnerInfrastructure,
+    set_server_runner_router,
 )
 from omnigent.server.routes.sharing import create_sharing_router
+from omnigent.server.routes.ssh_connections import create_ssh_connections_router
+from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
+from omnigent.server.routes.timer_items import create_timer_items_router
 from omnigent.server.scheduled import ScheduledTaskScheduler
 from omnigent.server.ws_origin import WebSocketOriginMiddleware
 from omnigent.stores import (
@@ -89,20 +90,20 @@ from omnigent.stores import (
     ConversationStore,
     FileStore,
 )
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
-from omnigent.stores.worker_store import WorkerStore
-from omnigent.stores.task_asset_store import TaskAssetStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.timer_item_store import TimerItemStore
-from omnigent.server.routes.timer_items import create_timer_items_router
+from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
 
@@ -1143,6 +1144,7 @@ def create_app(
     task_asset_store: TaskAssetStore | None = None,
     timer_item_store: TimerItemStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
+    agent_queue_store: AgentQueueStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
@@ -1369,14 +1371,86 @@ def create_app(
 
         set_runner_router(runner_router)
 
-        from omnigent.agent_tasks.secretary_queue import (
-            SecretaryQueueContext,
-            configure_secretary_queue,
-            start_secretary_consumer,
-            stop_secretary_consumer,
+        from omnigent.agent_tasks.queue.dispatcher import (
+            AgentQueueDispatcher,
+            DispatcherContext,
+            StatusReader,
         )
+        from omnigent.agent_tasks.queue.handlers import SecretaryDispatchHandler
+        from omnigent.agent_tasks.queue.packagers import (
+            SecretaryPackager,
+            configure_secretary_packager,
+        )
+        from omnigent.agent_tasks.queue.packagers import (
+            _StatusReader as _PackagerStatusReader,
+        )
+        from omnigent.agent_tasks.queue.status_feed import QueueStatusFeed
 
-        await start_secretary_consumer()
+        # Agent-queue dispatcher + secretary packager. Only wired when both
+        # the queue store and the role profile store are present; tests and
+        # single-process setups that pre-build the store pass it through.
+        _agent_queue_dispatcher: AgentQueueDispatcher | None = None
+        _secretary_packager: SecretaryPackager | None = None
+        if agent_queue_store is not None and task_role_profile_store is not None:
+            secretary_handler = SecretaryDispatchHandler(
+                store=agent_queue_store,
+                task_role_profile_store=task_role_profile_store,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
+
+            class _CacheStatusReader(StatusReader):
+                """Reads the in-process session status cache.
+
+                A *miss* returns ``None`` (not ``"idle"``) so the gate keeps its
+                last reading rather than falsely reading a never-seen session
+                as dispatchable. ``_session_status_from_cache`` collapses a miss
+                to ``"idle"``, which would make every queue dispatchable after a
+                restart, so this reads the raw cache instead.
+                """
+
+                async def status_for(self, session_id: str) -> str | None:
+                    from omnigent.server.routes.sessions import (
+                        _session_status_cache,
+                    )
+
+                    return _session_status_cache.get(session_id)
+
+            class _PackagerCacheReader(_PackagerStatusReader):
+                """Sync raw-cache reader for the packager's idle check."""
+
+                def status_for(self, session_id: str) -> str | None:
+                    from omnigent.server.routes.sessions import (
+                        _session_status_cache,
+                    )
+
+                    return _session_status_cache.get(session_id)
+
+            _agent_queue_dispatcher = AgentQueueDispatcher(
+                DispatcherContext(
+                    store=agent_queue_store,
+                    handlers={"secretary": secretary_handler},
+                    read_status=_CacheStatusReader(),
+                )
+            )
+            _status_feed = QueueStatusFeed(
+                agent_queue_store,
+                on_status=_agent_queue_dispatcher.gate.observe_sync,
+            )
+            from omnigent.server.routes.sessions import configure_queue_status_feed
+
+            configure_queue_status_feed(_status_feed)
+            _secretary_packager = SecretaryPackager(
+                store=agent_queue_store,
+                task_event_store=task_event_store,
+                task_role_profile_store=task_role_profile_store,
+                status_reader=_PackagerCacheReader(),
+            )
+            await _secretary_packager.start()
+            await _agent_queue_dispatcher.start()
+            configure_secretary_packager(_secretary_packager)
+        else:
+            configure_secretary_packager(None)
 
         # Wake a blocked sub-agent's immediate parent: hooks
         # ``pending_elicitations.record_publish`` to post a ``[System: …]``
@@ -1488,7 +1562,14 @@ def create_app(
             from omnigent.server.routes.sessions import cancel_managed_launch_tasks
 
             await cancel_managed_launch_tasks()
-            await stop_secretary_consumer()
+            if _agent_queue_dispatcher is not None:
+                await _agent_queue_dispatcher.stop()
+            if _secretary_packager is not None:
+                await _secretary_packager.stop()
+            configure_secretary_packager(None)
+            from omnigent.server.routes.sessions import configure_queue_status_feed
+
+            configure_queue_status_feed(None)
             _uninstall_subagent_block_notifier()
             set_resource_registry(None)
             set_runner_ws_factory(None)
@@ -2312,11 +2393,13 @@ def create_app(
             prefix="/v1",
             tags=["task_events"],
         )
-        from omnigent.agent_tasks.completion import TaskCompletionContext, configure_task_completion
-        from omnigent.agent_tasks.adoption import SessionAdoptionContext, configure_session_adoption
-        from omnigent.agent_tasks.secretary_queue import (
-            SecretaryQueueContext,
-            configure_secretary_queue,
+        from omnigent.agent_tasks.adoption import (
+            SessionAdoptionContext,
+            configure_session_adoption,
+        )
+        from omnigent.agent_tasks.completion import (
+            TaskCompletionContext,
+            configure_task_completion,
         )
 
         configure_task_completion(
@@ -2340,17 +2423,6 @@ def create_app(
                 runner_router=runner_router,
             )
         )
-        if task_role_profile_store is not None:
-            configure_secretary_queue(
-                SecretaryQueueContext(
-                    task_event_store=task_event_store,
-                    conversation_store=conversation_store,
-                    task_role_profile_store=task_role_profile_store,
-                    runner_router=runner_router,
-                )
-            )
-        else:
-            configure_secretary_queue(None)
     if timer_item_store is not None:
         app.include_router(
             create_timer_items_router(

@@ -86,6 +86,7 @@ class TaskEvent:
     title: str
     state: str
     created_at: int
+    owner_user_id: str | None = None
     tags: list[EventTag] | None = None
     task_id: str | None = None
     payload: str | None = None

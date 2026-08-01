@@ -3152,6 +3152,9 @@ def server(
     from omnigent.server.app import create_app
     from omnigent.server.auth import create_auth_provider
     from omnigent.server.server_config import config_str_list
+    from omnigent.stores.agent_queue_store.sqlalchemy_store import (
+        SqlAlchemyAgentQueueStore,
+    )
     from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
     from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
     from omnigent.stores.conversation_store.sqlalchemy_store import (
@@ -3159,15 +3162,15 @@ def server(
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
     from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
+    from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
     from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
         SqlAlchemyTaskRoleProfileStore,
     )
-    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
-    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
-    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
-    from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
-    from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
     from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+    from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
+    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
     cfg = _load_config(config_path)
 
@@ -3202,6 +3205,7 @@ def server(
     task_asset_store = SqlAlchemyTaskAssetStore(db_uri)
     timer_item_store = SqlAlchemyTimerItemStore(db_uri)
     task_role_profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    agent_queue_store = SqlAlchemyAgentQueueStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -3364,6 +3368,7 @@ def server(
         task_asset_store=task_asset_store,
         timer_item_store=timer_item_store,
         task_role_profile_store=task_role_profile_store,
+        agent_queue_store=agent_queue_store,
         auth_provider=auth_provider,
         host_store=host_store,
         account_store=account_store,

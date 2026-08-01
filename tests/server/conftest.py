@@ -36,8 +36,9 @@ from omnigent.runtime import init as init_runtime
 from omnigent.runtime import pending_elicitations
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server import _elicitation_registry, presence
-from omnigent.server.app import create_app, _ensure_default_task_agents
+from omnigent.server.app import _ensure_default_task_agents, create_app
 from omnigent.server.routes import sessions as sessions_routes
+from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
@@ -46,12 +47,12 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
-from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
+from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
-from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
-from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 # ── Controllable mock LLM ─────────────────────────────
@@ -611,6 +612,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         task_asset_store=SqlAlchemyTaskAssetStore(db_uri),
         timer_item_store=SqlAlchemyTimerItemStore(db_uri),
         task_role_profile_store=SqlAlchemyTaskRoleProfileStore(db_uri),
+        agent_queue_store=SqlAlchemyAgentQueueStore(db_uri),
         host_store=HostStore(db_uri),
     )
 

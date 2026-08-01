@@ -34,7 +34,10 @@ import weakref
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from omnigent.agent_tasks.queue.status_feed import QueueStatusFeed
 
 import cachetools
 import httpx
@@ -57,7 +60,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from omnigent.ambient_codex import AmbientCodexCursor, HOST_AMBIENT_ID_HEADER
+from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER, AmbientCodexCursor
 from omnigent.codex_native_elicitation import codex_elicitation_id
 from omnigent.cost_plan import (
     COST_CONTROL_LABEL_NAMESPACE,
@@ -954,6 +957,19 @@ _WATCHER_TASKS: set[asyncio.Task[None]] = set()
 # Per-session status cache updated by the runner SSE relay.
 # Used by _get_session_snapshot.
 _session_status_cache: dict[str, str] = {}
+
+# Bridge from session status changes to the agent queue system. Set by
+# ``configure_queue_status_feed`` at app startup; the publish path calls
+# ``notify`` for every status change so non-worker roles (secretary, manager)
+# get their in-flight item completed when the session returns to idle/failed.
+_queue_status_feed: QueueStatusFeed | None = None
+
+
+def configure_queue_status_feed(feed: QueueStatusFeed | None) -> None:
+    """Register or clear the global queue status feed."""
+    global _queue_status_feed
+    _queue_status_feed = feed
+
 
 # Per-session in-flight response id, tracked alongside _session_status_cache.
 # Set when a running/waiting status edge carries a response_id (native Claude's
@@ -5341,11 +5357,7 @@ def _parse_ambient_track_cursor(data: dict[str, object], *, event_type: str) -> 
         )
     source_path = data.get("source_path")
     rollout_path = data.get("rollout_path")
-    path = (
-        source_path
-        if isinstance(source_path, str) and source_path.strip()
-        else rollout_path
-    )
+    path = source_path if isinstance(source_path, str) and source_path.strip() else rollout_path
     if not isinstance(path, str) or not path.strip():
         raise OmnigentError(
             f"{event_type} requires non-empty string data.source_path or data.rollout_path",
@@ -20681,6 +20693,8 @@ def create_sessions_router(
                     status,
                     output=output_text,
                 )
+            if _queue_status_feed is not None:
+                await _queue_status_feed.notify(session_id, status)
             forward_body = body.model_dump()
             forward_body["data"] = await _enrich_idle_status_with_subagent_output(
                 forward_body["data"], status, session_id, conversation_store

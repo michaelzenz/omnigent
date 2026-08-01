@@ -13,24 +13,24 @@ from pydantic import BaseModel, Field, field_validator
 from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
 from omnigent.agent_tasks.distributor import distribute_event
-from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
 from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
+from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
 from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
-from omnigent.stores.agent_task.tags import tags_to_payload
-from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt, EventTag
+from omnigent.entities import EventTag, Task, TaskEvent, TaskEventRoutingAttempt
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.stores.agent_store import AgentStore
+from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
@@ -263,6 +263,7 @@ def create_task_events_router(
                 task_id=body.task_id,
                 state="received",
                 tags=tags,
+                owner_user_id=_effective_user_id(user_id),
             )
 
         created = await asyncio.to_thread(_create)
@@ -329,6 +330,7 @@ def create_task_events_router(
                 f"Cannot complete event in state {event.state!r}",
                 code=ErrorCode.CONFLICT,
             )
+
         def _complete() -> TaskEvent:
             updated = task_event_store.update_event(
                 event_id,

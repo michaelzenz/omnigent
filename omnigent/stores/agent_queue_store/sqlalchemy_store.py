@@ -452,6 +452,49 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             session.flush()
             return reclaimed
 
+    def set_queue_conversation(
+        self,
+        key: AgentQueueKey,
+        conversation_id: str,
+    ) -> AgentQueue | None:
+        with self._session() as session:
+            row = self._get_queue_row(session, key)
+            if row is None:
+                return None
+            row.conversation_id = conversation_id
+            row.updated_at = now_epoch()
+            session.flush()
+            return _queue_to_entity(row)
+
+    def complete_inflight_for_session(
+        self,
+        session_id: str,
+        *,
+        now: int,
+    ) -> AgentQueueItem | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlAgentQueue)
+                .where(SqlAgentQueue.workspace_id == current_workspace_id())
+                .where(SqlAgentQueue.conversation_id == session_id)
+                .where(SqlAgentQueue.inflight_item_id.is_not(None))
+                .limit(1)
+            )
+            queue = session.execute(stmt).scalars().first()
+            if queue is None:
+                return None
+            item_id = queue.inflight_item_id
+            queue.inflight_item_id = None
+            queue.inflight_since = None
+            queue.updated_at = now
+            item = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
+            if item is not None and item.state == encode_agent_queue_item_state("dispatched"):
+                item.state = encode_agent_queue_item_state("done")
+                item.completed_at = now
+                item.updated_at = now
+            session.flush()
+            return _item_to_entity(item) if item is not None else None
+
     # ── Control plane ──────────────────────────────────
 
     def get_queue(self, key: AgentQueueKey) -> AgentQueue | None:

@@ -1513,6 +1513,7 @@ class SqlTaskEvent(OmnigentBase):
     source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
     source_internal_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tags: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     created_at: Mapped[int] = mapped_column(Integer)
@@ -1902,6 +1903,11 @@ class SqlAgentQueue(OmnigentBase):
             "state",
             "next_due_at",
             "lease_expires_at",
+        ),
+        Index(
+            "ix_agent_queues_conversation_id",
+            "workspace_id",
+            "conversation_id",
         ),
     )
 

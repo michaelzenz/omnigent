@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, delete, desc, select
+from sqlalchemy import asc, desc, select
 
 from omnigent.db.db_models import (
     SqlTaskEvent,
@@ -20,10 +20,10 @@ from omnigent.db.enum_codecs import (
 )
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import (
+    EventTag,
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
-    EventTag,
 )
 from omnigent.stores.agent_task.tags import decode_event_tags, encode_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
@@ -45,6 +45,7 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         source_key=row.source_key,
         source_offset=row.source_offset,
         source_internal_session_id=row.source_internal_session_id,
+        owner_user_id=row.owner_user_id,
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
@@ -103,6 +104,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         source_internal_session_id: str | None = None,
         state: str = "received",
         tags: list[EventTag] | None = None,
+        owner_user_id: str | None = None,
     ) -> TaskEvent:
         row = SqlTaskEvent(
             id=event_id,
@@ -114,6 +116,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             source_key=source_key,
             source_offset=source_offset,
             source_internal_session_id=source_internal_session_id,
+            owner_user_id=owner_user_id,
             tags=encode_event_tags(tags or []),
             state=encode_task_event_state(state),
             created_at=now_epoch(),
@@ -184,6 +187,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         state: str | None = None,
         routed_at: int | None = None,
         processed_at: int | None = None,
+        owner_user_id: str | None = _UNSET,
     ) -> TaskEvent | None:
         with self._session() as session:
             row = session.get(SqlTaskEvent, (current_workspace_id(), event_id))
@@ -192,6 +196,9 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             changed = False
             if task_id is not _UNSET and row.task_id != task_id:
                 row.task_id = task_id
+                changed = True
+            if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
+                row.owner_user_id = owner_user_id
                 changed = True
             if state is not None:
                 encoded_state = encode_task_event_state(state)
