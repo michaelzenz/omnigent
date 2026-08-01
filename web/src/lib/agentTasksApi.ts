@@ -123,7 +123,7 @@ function agentRolePath(role: string, suffix: string): string {
 
 export interface SecretaryProfile {
   role?: string;
-  agent_id: string;
+  agent_profile_id: string;
   conversation_id: string | null;
   model: string;
   harness: string;

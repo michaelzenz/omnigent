@@ -86,10 +86,10 @@ def get_or_create_secretary_profile(
     if host_id is None:
         raise OmnigentError(NO_HOST_AVAILABLE_MESSAGE, code=ErrorCode.INVALID_INPUT)
 
-    agent_id = resolve_task_agent_id(agent_store, TASK_SECRETARY_AGENT_NAME)
+    agent_profile_id = resolve_task_agent_id(agent_store, TASK_SECRETARY_AGENT_NAME)
     return secretary_profile_store.upsert(
         profile_user_id,
-        agent_id=agent_id,
+        agent_profile_id=agent_profile_id,
         host_id=host_id,
         harness=DEFAULT_SECRETARY_HARNESS,
         model=DEFAULT_SECRETARY_MODEL,
@@ -97,15 +97,15 @@ def get_or_create_secretary_profile(
     )
 
 
-def resolve_secretary_agent_id(
+def resolve_secretary_profile_id(
     agent_store: AgentStore,
     profile: UserSecretaryProfile,
 ) -> str:
-    """Prefer the packaged task-secretary builtin over a stale profile agent id."""
+    """Prefer the packaged task-secretary builtin over a stale profile id."""
     return resolve_task_agent_id(
         agent_store,
         TASK_SECRETARY_AGENT_NAME,
-        fallback_agent_id=profile.agent_id,
+        fallback_agent_id=profile.agent_profile_id,
     )
 
 
@@ -161,7 +161,7 @@ def bootstrap_secretary_conversation(
         model=profile.model,
         secretary_profile=profile,
     )
-    agent_id = resolve_secretary_agent_id(agent_store, profile)
+    agent_id = resolve_secretary_profile_id(agent_store, profile)
     terminal_launch_args = _secretary_terminal_launch_args(
         agent_store,
         agent_id,

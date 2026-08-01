@@ -11,7 +11,7 @@ class UserSecretaryProfile:
     Secretary agent settings and live session binding for one user.
 
     :param user_id: Owning user identifier.
-    :param agent_id: Secretary agent template to spawn.
+    :param agent_profile_id: Secretary agent profile to spawn.
     :param harness: Brain harness override, e.g. ``"cursor"``.
     :param model: Model override, e.g. ``"composer-2.5"``.
     :param conversation_id: Live secretary session, or ``None`` before spawn.
@@ -22,7 +22,7 @@ class UserSecretaryProfile:
     """
 
     user_id: str
-    agent_id: str
+    agent_profile_id: str
     harness: str
     model: str
     created_at: int

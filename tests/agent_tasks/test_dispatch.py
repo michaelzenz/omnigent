@@ -24,7 +24,7 @@ def test_compose_worker_instructions_note_only() -> None:
 def test_resolve_dispatch_params_includes_internal_note() -> None:
     params = resolve_dispatch_params(
         payload={
-            "worker_agent_id": "worker-1",
+            "worker_profile_id": "worker-1",
             "title": "Fix CI",
             "instructions": "Run tests",
             "internal_note": "Failed on main at abc123",

@@ -13,8 +13,8 @@ from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.agent_tasks.manager_agent import (
-    resolve_manager_agent_id,
-    resolve_manager_agent_id_for_task,
+    resolve_manager_profile_id,
+    resolve_manager_profile_id_for_task,
 )
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
 from omnigent.agent_tasks.task_match import live_tasks
@@ -224,7 +224,7 @@ def _candidate_payload(
             "task_id": task.id,
             "title": task.title,
             "score": round(score, 4),
-            "manager_agent_id": resolve_manager_agent_id_for_task(
+            "agent_profile_id": resolve_manager_profile_id_for_task(
                 task,
                 agent_store=agent_store,
                 conversation_store=conversation_store,
@@ -330,11 +330,6 @@ async def adopt_session(
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
 
-    manager_agent_id = resolve_manager_agent_id_for_task(
-        task,
-        agent_store=agent_store,
-        conversation_store=conversation_store,
-    )
     assert conv is not None
     worker_store.create_worker(
         _generate_worker_id(),

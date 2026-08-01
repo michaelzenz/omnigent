@@ -1761,7 +1761,7 @@ class SqlUserSecretaryProfile(OmnigentBase):
         default=current_workspace_id,
     )
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(128), nullable=False)

@@ -20,7 +20,7 @@ _UNSET: Any = object()
 def _to_entity(row: SqlUserSecretaryProfile) -> UserSecretaryProfile:
     return UserSecretaryProfile(
         user_id=row.user_id,
-        agent_id=row.agent_id,
+        agent_profile_id=row.agent_profile_id,
         harness=row.harness,
         model=row.model,
         conversation_id=row.conversation_id,
@@ -50,7 +50,7 @@ class SqlAlchemySecretaryProfileStore(SecretaryProfileStore):
         self,
         user_id: str,
         *,
-        agent_id: str | None = None,
+        agent_profile_id: str | None = None,
         conversation_id: str | None = None,
         harness: str | None = None,
         model: str | None = None,
@@ -62,11 +62,13 @@ class SqlAlchemySecretaryProfileStore(SecretaryProfileStore):
             row = session.get(SqlUserSecretaryProfile, (current_workspace_id(), user_id))
             now = now_epoch()
             if row is None:
-                if agent_id is None:
-                    raise ValueError("agent_id is required when creating a secretary profile")
+                if agent_profile_id is None:
+                    raise ValueError(
+                        "agent_profile_id is required when creating a secretary profile"
+                    )
                 row = SqlUserSecretaryProfile(
                     user_id=user_id,
-                    agent_id=agent_id,
+                    agent_profile_id=agent_profile_id,
                     harness=harness or DEFAULT_SECRETARY_HARNESS,
                     model=model or DEFAULT_SECRETARY_MODEL,
                     conversation_id=conversation_id,
@@ -77,8 +79,8 @@ class SqlAlchemySecretaryProfileStore(SecretaryProfileStore):
                 )
                 session.add(row)
             else:
-                if agent_id is not None:
-                    row.agent_id = agent_id
+                if agent_profile_id is not None:
+                    row.agent_profile_id = agent_profile_id
                 if harness is not None:
                     row.harness = harness
                 if model is not None:

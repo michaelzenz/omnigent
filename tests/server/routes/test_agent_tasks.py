@@ -263,6 +263,9 @@ async def _put_secretary_profile(client: httpx.AsyncClient, secretary_agent_id: 
         workspace="/tmp/secretary",
     )
     assert profile_resp.status_code == 200
+    body = profile_resp.json()
+    assert body["agent_profile_id"] == secretary_agent_id
+    assert "agent_id" not in body
 
 
 async def test_ensure_secretary_session_seeds_prompt(

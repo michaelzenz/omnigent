@@ -22,7 +22,7 @@ class SecretaryProfileStore(ABC):
         self,
         user_id: str,
         *,
-        agent_id: str | None = None,
+        agent_profile_id: str | None = None,
         conversation_id: str | None = None,
         harness: str | None = None,
         model: str | None = None,

@@ -22,7 +22,7 @@ Task items are the user-facing backlog unit (Puppy Garden INBOX).
 
 ## Task items
 
-Create or update items with `worker_agent_id`, `title`, `instructions`, `host_id`,
+Create or update items with `worker_profile_id`, `title`, `instructions`, `host_id`,
 `workspace`, `harness`, and `model`.
 
 - **Needs user approval** → submit item for inbox (`awaiting_user_ack`)

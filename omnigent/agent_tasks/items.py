@@ -48,10 +48,9 @@ def _item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
 
 
 def _profile_id_from_payload(payload: dict[str, Any]) -> str | None:
-    for key in ("worker_profile_id", "worker_agent_id"):
-        value = payload.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
+    value = payload.get("worker_profile_id")
+    if value is not None and str(value).strip():
+        return str(value).strip()
     return None
 
 

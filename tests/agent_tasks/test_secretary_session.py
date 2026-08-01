@@ -43,7 +43,7 @@ def test_get_or_create_secretary_profile_uses_first_live_host(db_uri: str) -> No
     )
 
     assert profile.host_id == host_id
-    assert profile.agent_id == agent_id
+    assert profile.agent_profile_id == agent_id
 
 
 def test_get_or_create_secretary_profile_fails_without_live_host(db_uri: str) -> None:

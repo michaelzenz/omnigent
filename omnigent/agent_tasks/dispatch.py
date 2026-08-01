@@ -68,10 +68,9 @@ def _resolve_worker_profile_id(
 ) -> str | None:
     if worker_profile_id is not None and str(worker_profile_id).strip():
         return str(worker_profile_id).strip()
-    for key in ("worker_profile_id", "worker_agent_id"):
-        value = payload.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
+    value = payload.get("worker_profile_id")
+    if value is not None and str(value).strip():
+        return str(value).strip()
     return None
 
 

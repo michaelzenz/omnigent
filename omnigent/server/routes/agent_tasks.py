@@ -513,7 +513,7 @@ def _agent_role_profile_to_response(
         "object": "agent.task.role_profile",
         "role": role,
         "user_id": profile.user_id,
-        "agent_id": profile.agent_id,
+        "agent_profile_id": profile.agent_profile_id,
         "conversation_id": profile.conversation_id,
         "harness": profile.harness,
         "model": profile.model,
@@ -751,7 +751,7 @@ def create_agent_tasks_router(
             profile = await asyncio.to_thread(
                 secretary_profile_store.upsert,
                 _effective_user_id(user_id),
-                agent_id=body.agent_profile_id,
+                agent_profile_id=body.agent_profile_id,
                 harness=body.harness,
                 model=body.model,
                 host_id=body.host_id,

@@ -53,6 +53,11 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     assert "search_text" not in task_columns
     assert "agent_profile_id" in task_columns
     assert "manager_agent_id" not in task_columns
+    secretary_columns = {
+        column["name"] for column in sa.inspect(db_engine).get_columns("user_secretary_profiles")
+    }
+    assert "agent_profile_id" in secretary_columns
+    assert "agent_id" not in secretary_columns
 
 
 def test_tasks_state_check_enforced(db_engine: Engine) -> None:
