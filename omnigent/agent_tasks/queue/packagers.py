@@ -30,16 +30,21 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
+from omnigent.agent_tasks.agent_builtins import (
+    TASK_MANAGER_ROLE,
+    TASK_SECRETARY_ROLE,
+)
 from omnigent.agent_tasks.constants import (
+    MANAGER_BATCH_MAX_SIZE,
     SECRETARY_BATCH_MAX_SIZE,
 )
-from omnigent.agent_tasks.wake import _format_secretary_stall_notice
+from omnigent.agent_tasks.wake import _format_manager_notice, _format_secretary_stall_notice
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
 
@@ -252,6 +257,104 @@ class SecretaryPackager(Packager):
             )
             return None
         notice = _format_secretary_stall_notice(events)
+        return self._store.enqueue(
+            uuid.uuid4().hex,
+            key,
+            "notice",
+            source_ids=[event.id for event in events],
+            payload=notice,
+        )
+
+
+# ── Manager packager ────────────────────────────────
+
+
+class ManagerPackager(Packager):
+    """Stage-1 packager for routed task events.
+
+    Scans ``routed`` events each tick — these are events the distributor (or the
+    secretary resolve path) already bound to a task, plus ``worker.execution.finished``
+    events the completion hook emits when a worker settles. They are grouped by
+    ``(owner, task_id)`` and evaluated against the same batching matrix as the
+    secretary. The agent-idle check reads the task's ``manager_conversation_id``
+    and looks up its raw status; a task with no manager session yet is treated as
+    not idle, so events stay routed until bootstrap.
+    """
+
+    def __init__(
+        self,
+        store: AgentQueueStore,
+        task_event_store: TaskEventStore,
+        task_store: TaskStore,
+        status_reader: _StatusReader,
+        *,
+        poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
+        batch_size: int = MANAGER_BATCH_MAX_SIZE,
+        age_threshold_s: float = DEFAULT_PACKAGER_AGE_THRESHOLD_S,
+    ) -> None:
+        super().__init__(
+            store,
+            poll_interval_s=poll_interval_s,
+            batch_size=batch_size,
+            age_threshold_s=age_threshold_s,
+        )
+        self._task_event_store = task_event_store
+        self._task_store = task_store
+        self._status_reader = status_reader
+
+    @property
+    def role(self) -> str:
+        return TASK_MANAGER_ROLE
+
+    def _collect_pending(self) -> list[_PendingBatch]:
+        events = self._task_event_store.list_events(state="routed")
+        if not events:
+            return []
+        # Group by (owner, task_id). Routed events always carry a task_id; any
+        # without one is not a manager concern and is skipped.
+        grouped: dict[tuple[str, str], list[TaskEvent]] = {}
+        for event in events:
+            if event.task_id is None:
+                continue
+            owner = event.owner_user_id or "__anonymous__"
+            grouped.setdefault((owner, event.task_id), []).append(event)
+        batches: list[_PendingBatch] = []
+        for (owner, task_id), task_events in grouped.items():
+            key = AgentQueueKey(
+                role=TASK_MANAGER_ROLE,
+                owner_user_id=owner,
+                scope_id=task_id,
+            )
+            claimed = self._store.list_claimed_source_ids(
+                TASK_MANAGER_ROLE,
+                owner,
+                scope_id=task_id,
+            )
+            unclaimed = [e for e in task_events if e.id not in claimed]
+            if unclaimed:
+                batches.append(_PendingBatch(key=key, events=unclaimed))
+        return batches
+
+    def _is_idle(self, key: AgentQueueKey) -> bool:
+        if key.scope_id is None:
+            return False
+        task = self._task_store.get(key.scope_id)
+        if task is None or task.manager_conversation_id is None:
+            return False
+        return self._status_reader.status_for(task.manager_conversation_id) == "idle"
+
+    def _flush(self, key: AgentQueueKey, events: list[TaskEvent]) -> AgentQueueItem | None:
+        if key.scope_id is None:
+            return None
+        task = self._task_store.get(key.scope_id)
+        if task is None or task.manager_conversation_id is None:
+            _logger.debug(
+                "manager packager: no live manager session for task %s; %d events stay routed",
+                key.scope_id,
+                len(events),
+            )
+            return None
+        notice = _format_manager_notice(events)
         return self._store.enqueue(
             uuid.uuid4().hex,
             key,

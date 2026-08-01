@@ -1376,8 +1376,12 @@ def create_app(
             DispatcherContext,
             StatusReader,
         )
-        from omnigent.agent_tasks.queue.handlers import SecretaryDispatchHandler
+        from omnigent.agent_tasks.queue.handlers import (
+            ManagerDispatchHandler,
+            SecretaryDispatchHandler,
+        )
         from omnigent.agent_tasks.queue.packagers import (
+            ManagerPackager,
             SecretaryPackager,
             configure_secretary_packager,
         )
@@ -1386,11 +1390,12 @@ def create_app(
         )
         from omnigent.agent_tasks.queue.status_feed import QueueStatusFeed
 
-        # Agent-queue dispatcher + secretary packager. Only wired when both
-        # the queue store and the role profile store are present; tests and
+        # Agent-queue dispatcher + role packagers. Only wired when both the
+        # queue store and the role profile store are present; tests and
         # single-process setups that pre-build the store pass it through.
         _agent_queue_dispatcher: AgentQueueDispatcher | None = None
         _secretary_packager: SecretaryPackager | None = None
+        _manager_packager: ManagerPackager | None = None
         if agent_queue_store is not None and task_role_profile_store is not None:
             secretary_handler = SecretaryDispatchHandler(
                 store=agent_queue_store,
@@ -1398,6 +1403,14 @@ def create_app(
                 conversation_store=conversation_store,
                 runner_router=runner_router,
             )
+            manager_handler: ManagerDispatchHandler | None = None
+            if task_store is not None:
+                manager_handler = ManagerDispatchHandler(
+                    store=agent_queue_store,
+                    task_store=task_store,
+                    conversation_store=conversation_store,
+                    runner_router=runner_router,
+                )
 
             class _CacheStatusReader(StatusReader):
                 """Reads the in-process session status cache.
@@ -1429,7 +1442,10 @@ def create_app(
             _agent_queue_dispatcher = AgentQueueDispatcher(
                 DispatcherContext(
                     store=agent_queue_store,
-                    handlers={"secretary": secretary_handler},
+                    handlers={
+                        "secretary": secretary_handler,
+                        **({"manager": manager_handler} if manager_handler is not None else {}),
+                    },
                     read_status=_CacheStatusReader(),
                 )
             )
@@ -1446,7 +1462,16 @@ def create_app(
                 task_role_profile_store=task_role_profile_store,
                 status_reader=_PackagerCacheReader(),
             )
+            if task_store is not None:
+                _manager_packager = ManagerPackager(
+                    store=agent_queue_store,
+                    task_event_store=task_event_store,
+                    task_store=task_store,
+                    status_reader=_PackagerCacheReader(),
+                )
             await _secretary_packager.start()
+            if _manager_packager is not None:
+                await _manager_packager.start()
             await _agent_queue_dispatcher.start()
             configure_secretary_packager(_secretary_packager)
         else:
@@ -1564,6 +1589,8 @@ def create_app(
             await cancel_managed_launch_tasks()
             if _agent_queue_dispatcher is not None:
                 await _agent_queue_dispatcher.stop()
+            if _manager_packager is not None:
+                await _manager_packager.stop()
             if _secretary_packager is not None:
                 await _secretary_packager.stop()
             configure_secretary_packager(None)

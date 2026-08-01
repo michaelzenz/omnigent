@@ -4,6 +4,11 @@ from __future__ import annotations
 
 SESSION_EVENT_PREFIX = "session."
 
+# An orphan-session event: a session that needs a routing profile and an adoption
+# proposal. Born ``awaiting_grouping`` so the secretary packager polls it like any
+# other stalled event, instead of a direct wake.
+SESSION_ORPHAN_EVENT_TYPE = "session.orphan"
+
 
 def is_session_internal_event(event_type: str) -> bool:
     """Return whether an event belongs to the session adoption lane."""

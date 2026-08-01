@@ -1,145 +1,83 @@
-"""Best-effort wake delivery for managed task managers and secretaries."""
+"""Notice formatting for the agent queue packagers.
+
+The manager and secretary are no longer woken directly — routed events (and the
+``worker.execution.finished`` event the completion hook emits) are polled by the
+role packagers. This module holds only the notice text the packagers render at
+send time.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 
-from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
-from omnigent.entities import TaskEvent, TaskEventExecution
-from omnigent.runner.routing import RunnerRouter
-from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
-from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
 
 _logger = logging.getLogger(__name__)
 
-
-def _format_event_notice(event: TaskEvent) -> str:
-    return f"[System: task event {event.id} routed to this manager] {event.title}"
+WORKER_EXECUTION_FINISHED_EVENT_TYPE = "worker.execution.finished"
 
 
-async def wake_task_manager_for_execution(
-    *,
-    manager_conversation_id: str,
-    execution: TaskEventExecution,
-    event: TaskEvent | None,
-    conversation_store: ConversationStore,
-    runner_router: RunnerRouter | None,
-    task_item_store: TaskItemStore | None = None,
-) -> bool:
-    """Wake the task manager when a worker execution reaches a terminal state."""
-    from omnigent.stores.task_item_store import TaskItemStore as _TaskItemStore
+def _format_manager_notice(events: list) -> str:
+    """Format the notice the manager packager hands the dispatcher.
 
-    _ = _TaskItemStore
-    conv = conversation_store.get_conversation(manager_conversation_id)
-    if conv is None:
-        _logger.warning(
-            "task manager wake skipped: conversation %s missing for execution %s",
-            manager_conversation_id,
-            execution.id,
-        )
-        return False
-    item_title = execution.task_item_id
-    if task_item_store is not None:
-        item = task_item_store.get_item(execution.task_item_id)
-        if item is not None:
-            item_title = item.title
-    elif event is not None:
-        item_title = event.title
-    summary = execution.result_summary or execution.error or ""
-    summary_block = f"\n{summary}" if summary else ""
-    notice = (
-        f"[System: worker execution {execution.id} {execution.status} "
-        f"for item {item_title}]{summary_block}"
-    )
-    return await _wake_parent_for_blocked_child(
-        manager_conversation_id,
-        conv,
-        notice,
-        conversation_store=conversation_store,
-        runner_router=runner_router,
-    )
-
-
-async def wake_task_manager_for_event(
-    *,
-    manager_conversation_id: str,
-    event: TaskEvent,
-    conversation_store: ConversationStore,
-    runner_router: RunnerRouter | None,
-) -> bool:
+    One notice per task per dispatch, listing every routed event the manager has
+    not yet reconciled. A ``worker.execution.finished`` event carries its
+    outcome in the JSON ``payload``; any other routed event is shown by type and
+    title, matching the old per-event wake text.
     """
-    Inject a synthetic user message into the manager session.
-
-    Best-effort: transport failures are logged and reported as ``False``.
-    """
-    conv = conversation_store.get_conversation(manager_conversation_id)
-    if conv is None:
-        _logger.warning(
-            "task manager wake skipped: conversation %s missing for event %s",
-            manager_conversation_id,
-            event.id,
-        )
-        return False
-    return await _wake_parent_for_blocked_child(
-        manager_conversation_id,
-        conv,
-        _format_event_notice(event),
-        conversation_store=conversation_store,
-        runner_router=runner_router,
-    )
-
-
-def _format_secretary_stall_notice(events: list[TaskEvent]) -> str:
     lines = [
-        "[System: task event(s) need routing — resolve or escalate]",
-        "List ambiguous inbox, route confident matches via resolve, else board card.",
+        f"[System: {len(events)} event(s) routed to this task — triage or act]",
     ]
     for event in events:
-        lines.append(f"- {event.event_type}: {event.title!r} ({event.state})")
+        if event.event_type == WORKER_EXECUTION_FINISHED_EVENT_TYPE:
+            detail = _format_execution_detail(event)
+            lines.append(f"- {event.event_type}: {detail}")
+        else:
+            lines.append(f"- {event.event_type}: {event.title!r} (routed)")
     return "\n".join(lines)
 
 
-def _format_orphan_session_notice(session_ids: list[str]) -> str:
-    lines = [
-        f"[System: {len(session_ids)} new session(s) need routing profiles]",
-        "Read each session, write omnigent.task.routing_repo (and optional "
-        "omnigent.task.routing_intent), then call propose-adoption. User must "
-        "accept before adopt.",
-    ]
-    for session_id in session_ids[:10]:
-        lines.append(f"- session {session_id}")
-    if len(session_ids) > 10:
-        lines.append(f"- ... and {len(session_ids) - 10} more")
-    return "\n".join(lines)
+def _format_execution_detail(event) -> str:
+    """Render a worker.execution.finished event's payload as a one-liner."""
+    item_title = event.title
+    status = "finished"
+    summary = ""
+    if event.payload:
+        try:
+            payload = json.loads(event.payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+        if isinstance(payload, dict):
+            item_title = payload.get("item_title") or item_title
+            status = payload.get("status") or status
+            summary = (payload.get("result_summary") or payload.get("error") or "").strip()
+    summary_block = f" — {summary}" if summary else ""
+    return f"Worker execution {status} for item {item_title!r}{summary_block}"
 
 
-async def wake_secretary_for_orphan_sessions(
-    *,
-    user_id: str,
-    session_ids: list[str],
-    task_role_profile_store: TaskRoleProfileStore,
-    conversation_store: ConversationStore,
-    runner_router: RunnerRouter | None,
-) -> bool:
-    """Wake the secretary when orphan sessions need routing search text."""
-    if not session_ids:
-        return False
-    profile = task_role_profile_store.get(user_id, TASK_SECRETARY_ROLE)
-    if profile is None or profile.conversation_id is None:
-        _logger.warning(
-            "orphan session wake skipped: no live secretary for user %s",
-            user_id,
+def _format_secretary_stall_notice(events: list) -> str:
+    """Format the notice the secretary packager hands the dispatcher.
+
+    A batch for one user can mix two kinds of stalled work: routed business events
+    that need triage (``awaiting_grouping``) and orphan sessions that need a
+    routing profile (``session.orphan``). Each gets its own instruction line so
+    the secretary knows which action to take per event.
+    """
+    orphans = [e for e in events if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
+    routed = [e for e in events if e.event_type != SESSION_ORPHAN_EVENT_TYPE]
+    lines = ["[System: task event(s) need routing — resolve or escalate]"]
+    if routed:
+        lines.append("List ambiguous inbox, route confident matches via resolve, else board card.")
+        for event in routed:
+            lines.append(f"- {event.event_type}: {event.title!r} ({event.state})")
+    if orphans:
+        lines.append(
+            "Read each orphan session, write omnigent.task.routing_repo (and "
+            "optional omnigent.task.routing_intent), then call propose-adoption. "
+            "User must accept before adopt."
         )
-        return False
-    conv = conversation_store.get_conversation(profile.conversation_id)
-    if conv is None:
-        return False
-    notice = _format_orphan_session_notice(session_ids)
-    return await _wake_parent_for_blocked_child(
-        profile.conversation_id,
-        conv,
-        notice,
-        conversation_store=conversation_store,
-        runner_router=runner_router,
-    )
+        for event in orphans:
+            session_id = event.source_key or "?"
+            lines.append(f"- session.orphan: {event.title!r} ({session_id})")
+    return "\n".join(lines)

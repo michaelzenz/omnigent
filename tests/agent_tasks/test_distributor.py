@@ -9,13 +9,12 @@ import pytest
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.distributor import distribute_event
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import TaskTag
-from omnigent.entities import EventTag
+from omnigent.entities import EventTag, TaskTag
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
@@ -97,7 +96,6 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
-        runner_router=None,
         role_profile=profile,
     )
     assert updated.state == "routed"
@@ -130,7 +128,6 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
         worker_store=worker_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
-        runner_router=None,
         task_role_profile_store=secretary_store,
         owner_user_id="__anonymous__",
     )
@@ -154,7 +151,6 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
-        runner_router=None,
     )
     assert updated.state == "received"
 
@@ -187,7 +183,6 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         agent_store=stores["agent_store"],
-        runner_router=None,
         role_profile=profile,
     )
     assert updated.state == "routed"

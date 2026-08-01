@@ -7,8 +7,8 @@ import uuid
 import pytest
 
 from omnigent.agent_tasks.adoption import (
-    SESSION_ADOPTION_PROPOSAL,
     SESSION_ADOPTED,
+    SESSION_ADOPTION_PROPOSAL,
     adopt_session,
     is_orphan_candidate,
     propose_session_adoption,
@@ -36,7 +36,9 @@ def _uid(seed: str) -> str:
 
 
 @pytest.fixture()
-def stores(db_uri: str) -> tuple[
+def stores(
+    db_uri: str,
+) -> tuple[
     SqlAlchemyConversationStore,
     SqlAlchemyTaskStore,
     SqlAlchemyTaskEventStore,
@@ -71,13 +73,23 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, worker_store, agent_store, manager_agent_id = stores
+    (
+        conversation_store,
+        task_store,
+        task_event_store,
+        worker_store,
+        agent_store,
+        manager_agent_id,
+    ) = stores
     conv = conversation_store.create_conversation(title="Orphan", agent_id=manager_agent_id)
-    assert is_orphan_candidate(
-        conv,
-        task_store=task_store,
-        worker_store=worker_store,
-    ) is True
+    assert (
+        is_orphan_candidate(
+            conv,
+            task_store=task_store,
+            worker_store=worker_store,
+        )
+        is True
+    )
 
     task = task_store.create(_uid("task-bound"), "Bound task", agent_profile_id=manager_agent_id)
     worker_store.create_worker(
@@ -87,20 +99,26 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
         kind=WORKER_KIND_EXTERNAL,
         session_id=conv.id,
     )
-    assert is_orphan_candidate(
-        conv,
-        task_store=task_store,
-        worker_store=worker_store,
-    ) is False
+    assert (
+        is_orphan_candidate(
+            conv,
+            task_store=task_store,
+            worker_store=worker_store,
+        )
+        is False
+    )
 
     orphan = conversation_store.create_conversation(title="Dismissed", agent_id=manager_agent_id)
     conversation_store.set_labels(orphan.id, {ADOPTION_DISMISSED_LABEL: "1"})
     dismissed = conversation_store.get_conversation(orphan.id)
-    assert is_orphan_candidate(
-        dismissed,
-        task_store=task_store,
-        worker_store=worker_store,
-    ) is False
+    assert (
+        is_orphan_candidate(
+            dismissed,
+            task_store=task_store,
+            worker_store=worker_store,
+        )
+        is False
+    )
 
 
 def test_propose_session_adoption_requires_routing_tags(
@@ -113,7 +131,14 @@ def test_propose_session_adoption_requires_routing_tags(
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, worker_store, agent_store, manager_agent_id = stores
+    (
+        conversation_store,
+        task_store,
+        task_event_store,
+        worker_store,
+        agent_store,
+        manager_agent_id,
+    ) = stores
     conv = conversation_store.create_conversation(title="Needs tags", agent_id=manager_agent_id)
     with pytest.raises(OmnigentError):
         propose_session_adoption(
@@ -136,8 +161,17 @@ async def test_propose_and_adopt_session(
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, worker_store, agent_store, manager_agent_id = stores
-    conv = conversation_store.create_conversation(title="Upload retries", agent_id=manager_agent_id)
+    (
+        conversation_store,
+        task_store,
+        task_event_store,
+        worker_store,
+        agent_store,
+        manager_agent_id,
+    ) = stores
+    conv = conversation_store.create_conversation(
+        title="Upload retries", agent_id=manager_agent_id
+    )
     conversation_store.set_labels(conv.id, {ROUTING_REPO_LABEL: "omnigent-fork"})
     task_id = _uid("task-upload")
     task = task_store.create(
@@ -173,7 +207,6 @@ async def test_propose_and_adopt_session(
         worker_store=worker_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
-        runner_router=None,
         params=params,
         proposal_event=proposal,
     )
@@ -196,7 +229,14 @@ def test_reject_session_adoption_sets_dismiss_label(
         str,
     ],
 ) -> None:
-    conversation_store, task_store, task_event_store, worker_store, agent_store, manager_agent_id = stores
+    (
+        conversation_store,
+        task_store,
+        task_event_store,
+        worker_store,
+        agent_store,
+        manager_agent_id,
+    ) = stores
     conv = conversation_store.create_conversation(title="Stay orphan", agent_id=manager_agent_id)
     conversation_store.set_labels(conv.id, {ROUTING_REPO_LABEL: "misc-repo"})
     proposal = propose_session_adoption(

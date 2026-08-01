@@ -18,7 +18,6 @@ from omnigent.agent_tasks.adoption import (
     SESSION_ADOPTION_PROPOSAL,
     adopt_session,
     find_open_adoption_proposal,
-    flush_pending_orphan_sessions,
     propose_session_adoption,
     reject_session_adoption,
 )
@@ -860,7 +859,8 @@ def create_agent_tasks_router(
                     conversation_id,
                     conversation_store,
                 )
-                await flush_pending_orphan_sessions(effective_user_id)
+                # Orphan sessions are now durable ``session.orphan`` events the
+                # secretary packager polls, so there is nothing to flush here.
                 return _agent_role_session_to_response(
                     role,
                     conversation_id=conversation_id,
@@ -1532,7 +1532,6 @@ def create_agent_tasks_router(
                 task_event_store,
                 session_id,
             )
-            runner_router = getattr(request.app.state, "runner_router", None)
             proposal_event, adopted_event = await adopt_session(
                 session_id=session_id,
                 task_id=body.task_id,
@@ -1541,7 +1540,6 @@ def create_agent_tasks_router(
                 worker_store=worker_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
-                runner_router=runner_router,
                 params=params,
                 proposal_event=proposal,
             )

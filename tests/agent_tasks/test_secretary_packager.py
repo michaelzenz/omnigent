@@ -213,7 +213,6 @@ async def test_stall_via_distributor_is_picked_up_by_poll(secretary_setup: dict)
         worker_store=secretary_setup["worker_store"],
         conversation_store=secretary_setup["conversation_store"],
         agent_store=secretary_setup["agent_store"],
-        runner_router=None,
         owner_user_id=secretary_setup["user_id"],
     )
     assert updated.state == "awaiting_grouping"
@@ -288,6 +287,53 @@ async def test_no_live_secretary_holds_events(secretary_setup: dict) -> None:
 def test_defaults_are_configurable_constants() -> None:
     assert DEFAULT_PACKAGER_POLL_INTERVAL_S == 5.0
     assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 15
+
+
+@pytest.mark.asyncio
+async def test_orphan_session_event_is_packaged_like_any_stall(
+    secretary_setup: dict,
+) -> None:
+    """An orphan session becomes an awaiting_grouping event the packager polls."""
+    from omnigent.agent_tasks.adoption import (
+        SessionAdoptionContext,
+        configure_session_adoption,
+        enqueue_orphan_session,
+    )
+    from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
+
+    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
+    packager: SecretaryPackager = secretary_setup["packager"]
+    secretary_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    configure_session_adoption(
+        SessionAdoptionContext(
+            task_store=secretary_setup["task_store"],
+            task_event_store=event_store,
+            worker_store=secretary_setup["worker_store"],
+            conversation_store=secretary_setup["conversation_store"],
+        )
+    )
+    conv = secretary_setup["conversation_store"].create_conversation(
+        title="Mystery session",
+        agent_id=secretary_setup["agent_store"].get_by_name("task-manager-agent").id,
+        host_id=_uid("host_orphan"),
+        workspace="/tmp/mystery",
+    )
+    await enqueue_orphan_session(conv.id, owner_user_id=secretary_setup["user_id"])
+    packager.scan_once_sync()
+
+    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    assert len(items) == 1
+    assert "session.orphan" in items[0].payload
+    assert "Mystery session" in items[0].payload
+    assert "routing_repo" in items[0].payload  # orphan-specific guidance
+    # The packaged source is the orphan event, not the session id directly.
+    orphan_events = event_store.list_events(
+        state="awaiting_grouping", event_type=SESSION_ORPHAN_EVENT_TYPE
+    )
+    assert items[0].source_ids == [orphan_events[0].id]
 
 
 def test_get_secretary_packager_returns_configured(secretary_setup: dict) -> None:

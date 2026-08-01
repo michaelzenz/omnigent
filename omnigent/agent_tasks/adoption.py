@@ -8,35 +8,29 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
-from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
-from omnigent.agent_tasks.routing import route_event_to_task
-from omnigent.agent_tasks.session_task import task_for_session
-from omnigent.agent_tasks.workers import _generate_worker_id
+from omnigent.agent_tasks.bootstrap import BootstrapParams
+from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
 from omnigent.agent_tasks.manager_agent import (
-    resolve_manager_profile_id,
     resolve_manager_profile_id_for_task,
 )
+from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
-from omnigent.agent_tasks.task_match import live_tasks
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
 from omnigent.agent_tasks.session_profile import resolve_session_routing_tags
-from omnigent.stores.agent_task.tags import tags_to_payload
-from omnigent.agent_tasks.wake import (
-    wake_secretary_for_orphan_sessions,
-    wake_task_manager_for_event,
-)
+from omnigent.agent_tasks.session_task import task_for_session
+from omnigent.agent_tasks.task_match import live_tasks
+from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.conversation import Conversation
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
+from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
 
@@ -44,10 +38,6 @@ _logger = logging.getLogger(__name__)
 
 SESSION_ADOPTION_PROPOSAL = "session.adoption"
 SESSION_ADOPTED = "session.adopted"
-
-_PENDING_BY_USER: dict[str, list[str]] = {}
-_DEBOUNCE_HANDLES: dict[str, Any] = {}
-_DEBOUNCE_SECONDS = 2.0
 
 # Orphan adoption on import/session-create is off until secretary UX is ready.
 _ORPHAN_SESSION_ADOPTION_ENABLED = False
@@ -112,11 +102,14 @@ def is_orphan_candidate(
         return False
     if conv.kind == "sub_agent":
         return False
-    if task_for_session(
-        conv.id,
-        task_store=task_store,
-        worker_store=worker_store,
-    ) is not None:
+    if (
+        task_for_session(
+            conv.id,
+            task_store=task_store,
+            worker_store=worker_store,
+        )
+        is not None
+    ):
         return False
     if conv.labels.get(ADOPTION_DISMISSED_LABEL) == "1":
         return False
@@ -148,9 +141,14 @@ async def enqueue_orphan_session(
     owner_user_id: str,
 ) -> bool:
     """
-    Queue an orphan session for secretary routing-profile work.
+    Record an orphan session for secretary routing-profile work.
 
-    :returns: ``True`` when the session was queued.
+    Creates a ``session.orphan`` task event in ``awaiting_grouping`` state,
+    attributed to the owner. The secretary packager polls it like any other
+    stalled event, so this is durable across restarts and needs no in-memory
+    queue or direct wake.
+
+    :returns: ``True`` when a new orphan event was created.
     """
     if _context is None:
         return False
@@ -161,57 +159,34 @@ async def enqueue_orphan_session(
         worker_store=_context.worker_store,
     ):
         return False
-    pending = _PENDING_BY_USER.setdefault(owner_user_id, [])
-    if session_id not in pending:
-        pending.append(session_id)
-    await _schedule_secretary_wake(owner_user_id)
+    assert conv is not None
+    if find_open_orphan_event(_context.task_event_store, session_id) is not None:
+        return False
+    title = f"Adopt session: {conv.title or session_id}"
+    _context.task_event_store.create_event(
+        uuid.uuid4().hex,
+        SESSION_ORPHAN_EVENT_TYPE,
+        title,
+        source="adoption",
+        source_key=session_id,
+        state="awaiting_grouping",
+        owner_user_id=owner_user_id,
+    )
     return True
 
 
-async def flush_pending_orphan_sessions(owner_user_id: str) -> None:
-    """Wake the secretary for any queued orphan sessions for one user."""
-    if _context is None or _context.task_role_profile_store is None:
-        return
-    session_ids = _PENDING_BY_USER.pop(owner_user_id, [])
-    if not session_ids:
-        return
-    await wake_secretary_for_orphan_sessions(
-        user_id=owner_user_id,
-        session_ids=session_ids,
-        task_role_profile_store=_context.task_role_profile_store,
-        conversation_store=_context.conversation_store,
-        runner_router=_context.runner_router,
-    )
-
-
-async def _schedule_secretary_wake(owner_user_id: str) -> None:
-    if _context is None:
-        return
-    profile = (
-        _context.task_role_profile_store.get(owner_user_id, TASK_SECRETARY_ROLE)
-        if _context.task_role_profile_store is not None
-        else None
-    )
-    if profile is None or profile.conversation_id is None:
-        _logger.info(
-            "orphan session queued for user %s; secretary session not ready",
-            owner_user_id,
-        )
-        return
-    existing = _DEBOUNCE_HANDLES.get(owner_user_id)
-    if existing is not None and not existing.done():
-        return
-
-    async def _debounced() -> None:
-        import asyncio
-
-        await asyncio.sleep(_DEBOUNCE_SECONDS)
-        await flush_pending_orphan_sessions(owner_user_id)
-        _DEBOUNCE_HANDLES.pop(owner_user_id, None)
-
-    import asyncio
-
-    _DEBOUNCE_HANDLES[owner_user_id] = asyncio.create_task(_debounced())
+def find_open_orphan_event(
+    task_event_store: TaskEventStore,
+    session_id: str,
+) -> TaskEvent | None:
+    """Return the open ``session.orphan`` event for a session, if any."""
+    for event in task_event_store.list_events(
+        state="awaiting_grouping",
+        event_type=SESSION_ORPHAN_EVENT_TYPE,
+    ):
+        if event.source_key == session_id:
+            return event
+    return None
 
 
 def _candidate_payload(
@@ -288,7 +263,7 @@ def propose_session_adoption(
     payload["session_id"] = session_id
     payload["routing_tags"] = tags_to_payload(routing_tags)
     event_id = uuid.uuid4().hex
-    return task_event_store.create_event(
+    proposal = task_event_store.create_event(
         event_id,
         SESSION_ADOPTION_PROPOSAL,
         f"Adopt session: {conv.title or session_id}",
@@ -297,6 +272,15 @@ def propose_session_adoption(
         source="secretary",
         state="received",
     )
+    # The secretary has produced a proposal, so the orphan trigger event is done.
+    orphan = find_open_orphan_event(task_event_store, session_id)
+    if orphan is not None:
+        task_event_store.update_event(
+            orphan.id,
+            state="reconciled",
+            processed_at=now_epoch(),
+        )
+    return proposal
 
 
 async def adopt_session(
@@ -308,7 +292,6 @@ async def adopt_session(
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    runner_router: RunnerRouter | None,
     params: BootstrapParams,
     proposal_event: TaskEvent | None = None,
 ) -> tuple[TaskEvent, TaskEvent]:
@@ -366,14 +349,7 @@ async def adopt_session(
             task_id=task.id,
         )
         processed_proposal = updated if updated is not None else proposal_event
-    routed_task = task_store.get(task.id)
-    if routed_task is not None and routed_task.manager_conversation_id is not None:
-        await wake_task_manager_for_event(
-            manager_conversation_id=routed_task.manager_conversation_id,
-            event=routed,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
-        )
+    _ = task_store.get(task.id)  # the event is now routed; the manager packager picks it up.
     return processed_proposal or routed, routed
 
 

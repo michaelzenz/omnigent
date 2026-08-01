@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.routing import route_event_to_task
-from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -53,7 +51,6 @@ async def resolve_task_event(
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    runner_router: RunnerRouter | None,
     task: Task,
     resolved_by_user_id: str | None = None,
     host_id: str | None = None,
@@ -61,9 +58,12 @@ async def resolve_task_event(
     harness: str | None = None,
     model: str | None = None,
     role_profile: UserTaskRoleProfile | None = None,
-    wake: bool = True,
 ) -> TaskEvent:
-    """Route a stalled event to a task manager, bootstrapping when needed."""
+    """Route a stalled event to a task manager, bootstrapping when needed.
+
+    The event lands in ``routed`` state; the manager packager picks it up on its
+    next poll, so this no longer wakes the manager directly.
+    """
     if event.state not in _ROUTE_TO_TASK_STATES:
         raise OmnigentError(
             f"Cannot route event in state {event.state!r}",
@@ -77,7 +77,7 @@ async def resolve_task_event(
         model=model,
         role_profile=role_profile,
     )
-    updated = route_event_to_task(
+    return route_event_to_task(
         event=event,
         task=task,
         task_store=task_store,
@@ -87,12 +87,3 @@ async def resolve_task_event(
         params=params,
         routing_reason="secretary-resolve",
     )
-    routed_task = task_store.get(task.id)
-    if wake and routed_task is not None and routed_task.manager_conversation_id is not None:
-        await wake_task_manager_for_event(
-            manager_conversation_id=routed_task.manager_conversation_id,
-            event=updated,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
-        )
-    return updated

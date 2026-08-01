@@ -22,7 +22,6 @@ from omnigent.db.utils import now_epoch
 from omnigent.entities import EventTag, Task, TaskEvent, TaskEventRoutingAttempt
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.stores.agent_store import AgentStore
@@ -197,9 +196,6 @@ def create_task_events_router(
             task_role_profile_store.get, effective_user_id, TASK_SECRETARY_ROLE
         )
 
-    def _runner_router(request: Request) -> RunnerRouter | None:
-        return getattr(request.app.state, "runner_router", None)
-
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
 
@@ -274,7 +270,6 @@ def create_task_events_router(
             worker_store=worker_store,
             conversation_store=conversation_store,
             agent_store=agent_store,
-            runner_router=_runner_router(request),
             task_role_profile_store=task_role_profile_store,
             role_profile=profile,
             owner_user_id=_effective_user_id(user_id),
@@ -356,7 +351,6 @@ def create_task_events_router(
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         _require_task_access(task, user_id)
         profile = await _load_secretary_profile(user_id)
-        runner_router = _runner_router(request)
         resolved: list[dict[str, Any]] = []
         for event_id in body.event_ids:
             event = await _get_event_or_404(event_id)
@@ -366,7 +360,6 @@ def create_task_events_router(
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
-                runner_router=runner_router,
                 task=task,
                 resolved_by_user_id=user_id,
                 host_id=body.host_id,

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 
 from omnigent.agent_tasks.executions import complete_execution
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
-from omnigent.agent_tasks.wake import wake_task_manager_for_execution
-from omnigent.entities import Task
+from omnigent.agent_tasks.wake import WORKER_EXECUTION_FINISHED_EVENT_TYPE
+from omnigent.db.utils import now_epoch
+from omnigent.entities import Task, TaskEventExecution
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -55,7 +58,14 @@ async def notify_worker_session_status(
     output: str | None = None,
 ) -> bool:
     """
-    Update task execution state and wake the manager when a worker session settles.
+    Update task execution state and emit a manager-facing event when a worker
+    session settles.
+
+    The manager is no longer woken directly. Instead a ``worker.execution.finished``
+    event is created pre-routed to the task, and the manager packager picks it up
+    on its next poll — the same durable pipe every other routed event uses. The
+    emission is best-effort: a failure is logged and never blocks the execution
+    and item state updates that already succeeded above.
 
     :returns: ``True`` when a managed worker session was handled.
     """
@@ -94,14 +104,60 @@ async def notify_worker_session_status(
             task_store=_context.task_store,
             task_item_store=_context.task_item_store,
         )
-    if task is None or task.manager_conversation_id is None:
+    if task is None:
         return True
-    await wake_task_manager_for_execution(
-        manager_conversation_id=task.manager_conversation_id,
-        execution=completed,
-        event=None,
-        conversation_store=_context.conversation_store,
-        runner_router=_context.runner_router,
-        task_item_store=_context.task_item_store,
-    )
+    _emit_worker_execution_finished_event(task=task, execution=completed)
     return True
+
+
+def _emit_worker_execution_finished_event(
+    *,
+    task: Task,
+    execution: TaskEventExecution,
+) -> None:
+    """Create a pre-routed event so the manager packager notices the worker settled.
+
+    Born ``routed`` to the task with the owner attributed, so the manager packager
+    polls it like any other routed event. ``source_key`` is the execution id, so a
+    duplicate completion edge cannot double-emit.
+    """
+    assert _context is not None
+    item_title = execution.task_item_id
+    item = _context.task_item_store.get_item(execution.task_item_id)
+    if item is not None:
+        item_title = item.title
+    payload = json.dumps(
+        {
+            "execution_id": execution.id,
+            "status": execution.status,
+            "task_item_id": execution.task_item_id,
+            "item_title": item_title,
+            "result_summary": execution.result_summary,
+            "error": execution.error,
+        }
+    )
+    title = f"Worker execution {execution.status} for item {item_title}"
+    owner = task.owner_user_id or "__anonymous__"
+    try:
+        event = _context.task_event_store.create_event(
+            uuid.uuid4().hex,
+            WORKER_EXECUTION_FINISHED_EVENT_TYPE,
+            title,
+            task_id=task.id,
+            source="worker",
+            source_key=execution.id,
+            state="routed",
+            payload=payload,
+            owner_user_id=owner,
+        )
+        _context.task_event_store.update_event(
+            event.id,
+            routed_at=now_epoch(),
+        )
+    except Exception:
+        _logger.exception(
+            "failed to emit %s event for execution %s on task %s",
+            WORKER_EXECUTION_FINISHED_EVENT_TYPE,
+            execution.id,
+            task.id,
+        )

@@ -14,11 +14,9 @@ from omnigent.agent_tasks.scoring import (
 )
 from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES, live_tasks
-from omnigent.agent_tasks.wake import wake_task_manager_for_event
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -47,7 +45,6 @@ async def distribute_event(
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    runner_router: RunnerRouter | None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     role_profile: UserTaskRoleProfile | None = None,
     owner_user_id: str | None = None,
@@ -73,7 +70,6 @@ async def distribute_event(
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
-                runner_router=runner_router,
                 params=params,
                 task_role_profile_store=task_role_profile_store,
                 owner_user_id=owner_user_id,
@@ -100,7 +96,6 @@ async def distribute_event(
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
                 agent_store=agent_store,
-                runner_router=runner_router,
                 params=params,
                 task_role_profile_store=task_role_profile_store,
                 owner_user_id=owner_user_id,
@@ -152,7 +147,6 @@ async def distribute_event(
             task_event_store=task_event_store,
             conversation_store=conversation_store,
             agent_store=agent_store,
-            runner_router=runner_router,
             params=params,
             task_role_profile_store=task_role_profile_store,
             owner_user_id=owner_user_id,
@@ -175,7 +169,6 @@ async def _finish_route(
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    runner_router: RunnerRouter | None,
     params: BootstrapParams,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     owner_user_id: str | None = None,
@@ -210,13 +203,7 @@ async def _finish_route(
         )
 
     routed_task = task_store.get(task.id)
-    if routed_task is not None and routed_task.manager_conversation_id is not None:
-        await wake_task_manager_for_event(
-            manager_conversation_id=routed_task.manager_conversation_id,
-            event=updated,
-            conversation_store=conversation_store,
-            runner_router=runner_router,
-        )
+    _ = routed_task  # the event is now routed; the manager packager picks it up.
     return updated
 
 
