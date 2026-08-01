@@ -24,7 +24,7 @@ active and the manager reconciles routed work.
 1. **Empty task state** — no active tasks, no open pending packages, no
    stalled events in `awaiting_grouping` (wipe DB or use a clean server).
 2. Server and host running (`uv run omnigent server`, `uv run omnigent host`).
-3. Task secretary session live (`POST /v1/agent-tasks/secretary/session`). This
+3. Task secretary session live (`POST /v1/agent-tasks/roles/secretary/session`). This
    also launches the session runner when a host is connected (no separate
    `POST /v1/hosts/{hostId}/runners` step).
 

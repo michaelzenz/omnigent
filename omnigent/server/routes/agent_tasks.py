@@ -22,7 +22,11 @@ from omnigent.agent_tasks.adoption import (
     propose_session_adoption,
     reject_session_adoption,
 )
-from omnigent.agent_tasks.agent_builtins import TASK_WORKER_AGENT_NAME, resolve_task_agent_id
+from omnigent.agent_tasks.agent_builtins import (
+    SUPPORTED_TASK_AGENT_ROLES,
+    TASK_WORKER_AGENT_NAME,
+    resolve_task_agent_id,
+)
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
     DEFAULT_SECRETARY_HARNESS,
@@ -176,10 +180,10 @@ class PutTaskTagsRequest(BaseModel):
     tags: list[TaskTagInput] = Field(default_factory=list)
 
 
-class PutSecretaryProfileRequest(BaseModel):
-    """Request body for ``PUT /v1/agent-tasks/secretary/profile``."""
+class PutAgentRoleProfileRequest(BaseModel):
+    """Request body for ``PUT /v1/agent-tasks/roles/{role}/profile``."""
 
-    agent_id: str
+    agent_profile_id: str
     harness: str = DEFAULT_SECRETARY_HARNESS
     model: str = DEFAULT_SECRETARY_MODEL
     host_id: str | None = None
@@ -491,9 +495,23 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
     return result
 
 
-def _secretary_profile_to_response(profile: UserSecretaryProfile) -> dict[str, Any]:
+def _require_task_agent_role(role: str) -> str:
+    normalized = role.strip().lower()
+    if normalized not in SUPPORTED_TASK_AGENT_ROLES:
+        raise OmnigentError(
+            f"Unsupported task agent role: {role}",
+            code=ErrorCode.NOT_FOUND,
+        )
+    return normalized
+
+
+def _agent_role_profile_to_response(
+    role: str,
+    profile: UserSecretaryProfile,
+) -> dict[str, Any]:
     return {
-        "object": "agent.task.secretary_profile",
+        "object": "agent.task.role_profile",
+        "role": role,
         "user_id": profile.user_id,
         "agent_id": profile.agent_id,
         "conversation_id": profile.conversation_id,
@@ -503,6 +521,20 @@ def _secretary_profile_to_response(profile: UserSecretaryProfile) -> dict[str, A
         "workspace": profile.workspace,
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
+    }
+
+
+def _agent_role_session_to_response(
+    role: str,
+    *,
+    conversation_id: str,
+    created: bool,
+) -> dict[str, Any]:
+    return {
+        "object": "agent.task.role_session",
+        "role": role,
+        "conversation_id": conversation_id,
+        "created": created,
     }
 
 
@@ -698,37 +730,44 @@ def create_agent_tasks_router(
 
     if secretary_profile_store is not None:
 
-        @router.get("/agent-tasks/secretary/profile")
-        async def get_secretary_profile(request: Request) -> dict[str, Any]:
-            """Return the caller's secretary profile."""
+        @router.get("/agent-tasks/roles/{role}/profile")
+        async def get_agent_role_profile(request: Request, role: str) -> dict[str, Any]:
+            """Return the caller's profile for a managed task agent role."""
+            role = _require_task_agent_role(role)
             user_id = require_user(request, auth_provider)
             profile = await _load_secretary_profile(user_id)
-            return _secretary_profile_to_response(profile)
+            return _agent_role_profile_to_response(role, profile)
 
-        @router.put("/agent-tasks/secretary/profile")
-        async def put_secretary_profile(
+        @router.put("/agent-tasks/roles/{role}/profile")
+        async def put_agent_role_profile(
             request: Request,
-            body: PutSecretaryProfileRequest,
+            role: str,
+            body: PutAgentRoleProfileRequest,
         ) -> dict[str, Any]:
-            """Create or update the caller's secretary profile."""
+            """Create or update the caller's profile for a managed task agent role."""
+            role = _require_task_agent_role(role)
             user_id = require_user(request, auth_provider)
-            await _require_agent_profile(body.agent_id)
+            await _require_agent_profile(body.agent_profile_id)
             profile = await asyncio.to_thread(
                 secretary_profile_store.upsert,
                 _effective_user_id(user_id),
-                agent_id=body.agent_id,
+                agent_id=body.agent_profile_id,
                 harness=body.harness,
                 model=body.model,
                 host_id=body.host_id,
                 workspace=body.workspace,
             )
-            return _secretary_profile_to_response(profile)
+            return _agent_role_profile_to_response(role, profile)
 
         if conversation_store is not None:
 
-            @router.post("/agent-tasks/secretary/session")
-            async def ensure_secretary_session(request: Request) -> dict[str, Any]:
-                """Ensure the caller has a live secretary session."""
+            @router.post("/agent-tasks/roles/{role}/session")
+            async def ensure_agent_role_session(
+                request: Request,
+                role: str,
+            ) -> dict[str, Any]:
+                """Ensure the caller has a live session for a managed task agent role."""
+                role = _require_task_agent_role(role)
                 user_id = require_user(request, auth_provider)
                 effective_user_id = _effective_user_id(user_id)
                 profile = await _load_secretary_profile(user_id)
@@ -745,11 +784,11 @@ def create_agent_tasks_router(
                         conversation_store,
                     )
                     await flush_pending_orphan_sessions(effective_user_id)
-                    return {
-                        "object": "agent.task.secretary_session",
-                        "conversation_id": existing.id,
-                        "created": False,
-                    }
+                    return _agent_role_session_to_response(
+                        role,
+                        conversation_id=existing.id,
+                        created=False,
+                    )
                 conversation_id = await asyncio.to_thread(
                     bootstrap_secretary_conversation,
                     conversation_store=conversation_store,
@@ -768,15 +807,19 @@ def create_agent_tasks_router(
                     conversation_store,
                 )
                 await flush_pending_orphan_sessions(effective_user_id)
-                return {
-                    "object": "agent.task.secretary_session",
-                    "conversation_id": conversation_id,
-                    "created": True,
-                }
+                return _agent_role_session_to_response(
+                    role,
+                    conversation_id=conversation_id,
+                    created=True,
+                )
 
-            @router.post("/agent-tasks/secretary/session/reset")
-            async def reset_secretary_session(request: Request) -> dict[str, Any]:
-                """Delete the current secretary session and create a fresh one."""
+            @router.post("/agent-tasks/roles/{role}/session/reset")
+            async def reset_agent_role_session(
+                request: Request,
+                role: str,
+            ) -> dict[str, Any]:
+                """Delete the current role session and create a fresh one."""
+                role = _require_task_agent_role(role)
                 user_id = require_user(request, auth_provider)
                 effective_user_id = _effective_user_id(user_id)
                 profile = await _load_secretary_profile(user_id)
@@ -809,11 +852,11 @@ def create_agent_tasks_router(
                     conversation_store,
                 )
                 await flush_pending_orphan_sessions(effective_user_id)
-                return {
-                    "object": "agent.task.secretary_session",
-                    "conversation_id": conversation_id,
-                    "created": True,
-                }
+                return _agent_role_session_to_response(
+                    role,
+                    conversation_id=conversation_id,
+                    created=True,
+                )
 
     @router.get("/agent-tasks/{task_id}")
     async def get_task(request: Request, task_id: str) -> dict[str, Any]:

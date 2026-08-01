@@ -7,7 +7,11 @@ import uuid
 import httpx
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
+from omnigent.agent_tasks.agent_builtins import (
+    TASK_MANAGER_AGENT_NAME,
+    TASK_SECRETARY_ROLE,
+    resolve_task_agent_id,
+)
 from omnigent.agent_tasks.secretary_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
@@ -16,6 +20,12 @@ from omnigent.entities import EventTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+from tests.server.routes.agent_task_api import (
+    agent_role_profile_url,
+    agent_role_session_reset_url,
+    agent_role_session_url,
+    put_agent_role_profile,
+)
 
 
 def _uid(seed: str) -> str:
@@ -213,21 +223,23 @@ async def test_delete_archives_task(
     assert get_resp.json()["state"] == "archived"
 
 
+async def test_unknown_task_agent_role_returns_404(client: httpx.AsyncClient) -> None:
+    profile_resp = await client.get(agent_role_profile_url("manager"))
+    assert profile_resp.status_code == 404
+
+
 async def test_secretary_profile_and_bootstrap(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
     secretary_agent_id: str,
 ) -> None:
     """Secretary profile defaults feed manager bootstrap."""
-    profile_resp = await client.put(
-        "/v1/agent-tasks/secretary/profile",
-        json={
-            "agent_id": secretary_agent_id,
-            "host_id": _uid("secretary_host"),
-            "workspace": "/tmp/secretary",
-            "harness": "cursor",
-            "model": "composer-2.5",
-        },
+    profile_resp = await put_agent_role_profile(
+        client,
+        role=TASK_SECRETARY_ROLE,
+        agent_profile_id=secretary_agent_id,
+        host_id=_uid("secretary_host"),
+        workspace="/tmp/secretary",
     )
     assert profile_resp.status_code == 200
     assert profile_resp.json()["harness"] == "cursor"
@@ -243,15 +255,12 @@ async def test_secretary_profile_and_bootstrap(
 
 
 async def _put_secretary_profile(client: httpx.AsyncClient, secretary_agent_id: str) -> None:
-    profile_resp = await client.put(
-        "/v1/agent-tasks/secretary/profile",
-        json={
-            "agent_id": secretary_agent_id,
-            "host_id": _uid("secretary_host"),
-            "workspace": "/tmp/secretary",
-            "harness": "cursor",
-            "model": "composer-2.5",
-        },
+    profile_resp = await put_agent_role_profile(
+        client,
+        role=TASK_SECRETARY_ROLE,
+        agent_profile_id=secretary_agent_id,
+        host_id=_uid("secretary_host"),
+        workspace="/tmp/secretary",
     )
     assert profile_resp.status_code == 200
 
@@ -262,7 +271,7 @@ async def test_ensure_secretary_session_seeds_prompt(
 ) -> None:
     await _put_secretary_profile(client, secretary_agent_id)
 
-    ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
+    ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_resp.status_code == 200
     body = ensure_resp.json()
     assert body["created"] is True
@@ -278,10 +287,10 @@ async def test_ensure_secretary_session_seeds_prompt(
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
     assert "secretary" in items_resp.text.lower()
 
-    profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
+    profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
     assert profile_resp.json()["conversation_id"] == conversation_id
 
-    ensure_again = await client.post("/v1/agent-tasks/secretary/session")
+    ensure_again = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_again.status_code == 200
     assert ensure_again.json()["created"] is False
     assert ensure_again.json()["conversation_id"] == conversation_id
@@ -292,10 +301,10 @@ async def test_reset_secretary_session_reseeds_prompt(
     secretary_agent_id: str,
 ) -> None:
     await _put_secretary_profile(client, secretary_agent_id)
-    first = await client.post("/v1/agent-tasks/secretary/session")
+    first = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     first_id = first.json()["conversation_id"]
 
-    reset_resp = await client.post("/v1/agent-tasks/secretary/session/reset")
+    reset_resp = await client.post(agent_role_session_reset_url(TASK_SECRETARY_ROLE))
     assert reset_resp.status_code == 200
     reset_body = reset_resp.json()
     assert reset_body["created"] is True
@@ -311,7 +320,7 @@ async def test_reset_secretary_session_reseeds_prompt(
     assert "docs/agent-tasks/README.md" in items_resp.text
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
 
-    profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
+    profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
     assert profile_resp.json()["conversation_id"] == reset_body["conversation_id"]
 
 
@@ -323,12 +332,12 @@ async def test_ensure_secretary_session_auto_provisions_profile(
     host_id = _uid("auto_secretary_host")
     HostStore(db_uri).upsert_on_connect(host_id, "auto-secretary-host", RESERVED_USER_LOCAL)
 
-    ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
+    ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_resp.status_code == 200
     body = ensure_resp.json()
     assert body["created"] is True
 
-    profile_resp = await client.get("/v1/agent-tasks/secretary/profile")
+    profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
     assert profile_resp.status_code == 200
     profile = profile_resp.json()
     assert profile["host_id"] == host_id
@@ -339,6 +348,6 @@ async def test_ensure_secretary_session_fails_when_no_host_available(
     client: httpx.AsyncClient,
 ) -> None:
     """Auto-provision refuses to create a profile when no live host exists."""
-    ensure_resp = await client.post("/v1/agent-tasks/secretary/session")
+    ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_resp.status_code == 400
     assert ensure_resp.json()["error"]["message"] == NO_HOST_AVAILABLE_MESSAGE

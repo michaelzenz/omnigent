@@ -66,7 +66,7 @@ Lands in `routed` for manager reconciliation into task items.
 |------|------|
 | `POST /v1/imports` success | Poller path; owner = `host.owner` |
 | `POST /v1/sessions` create | User-started Omnigent sessions |
-| `POST /v1/agent-tasks/secretary/session` | Flush queued orphan sessions |
+| `POST /v1/agent-tasks/roles/{role}/session` | Flush queued orphan sessions |
 
 Excluded: task-spawned sessions (`bootstrap`, `dispatch`).
 

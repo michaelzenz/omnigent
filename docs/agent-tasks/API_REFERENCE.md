@@ -59,14 +59,16 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | GET | `/v1/agent-tasks/board/pending` |
 | POST | `/v1/fyi-clusters/{id}/resolve` |
 
-## Secretary
+## Task agent roles
+
+`{role}` is a managed task agent role slug (today: `secretary`).
 
 | Method | Path |
 |--------|------|
-| GET | `/v1/agent-tasks/secretary/profile` |
-| PUT | `/v1/agent-tasks/secretary/profile` |
-| POST | `/v1/agent-tasks/secretary/session` |
-| POST | `/v1/agent-tasks/secretary/session/reset` |
+| GET | `/v1/agent-tasks/roles/{role}/profile` |
+| PUT | `/v1/agent-tasks/roles/{role}/profile` |
+| POST | `/v1/agent-tasks/roles/{role}/session` |
+| POST | `/v1/agent-tasks/roles/{role}/session/reset` |
 
 ## Session adoption
 

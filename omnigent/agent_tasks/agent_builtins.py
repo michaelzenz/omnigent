@@ -9,6 +9,9 @@ if TYPE_CHECKING:
     from omnigent.stores.agent_store import AgentStore
 
 TASK_SECRETARY_AGENT_NAME = "task-secretary"
+TASK_SECRETARY_ROLE = "secretary"
+
+SUPPORTED_TASK_AGENT_ROLES: frozenset[str] = frozenset({TASK_SECRETARY_ROLE})
 TASK_DISTRIBUTOR_AGENT_NAME = "task-distributor"
 TASK_MANAGER_AGENT_NAME = "task-manager"
 TASK_WORKER_AGENT_NAME = "task-worker"

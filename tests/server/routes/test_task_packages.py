@@ -8,7 +8,6 @@ import httpx
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
-from omnigent.entities import EventTag, TaskTag
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -185,38 +184,56 @@ async def test_skip_inbox_items_keeps_paused_task(
     assert task.state == "pending"
 
 
-async def test_match_tasks_includes_paused_task(
+async def test_reconcile_events_extends_package_item(
     client: httpx.AsyncClient,
     manager_agent_id: str,
     db_uri: str,
 ) -> None:
-    """Pending tasks are eligible match candidates."""
-    task_store = SqlAlchemyTaskStore(db_uri)
+    """POST reconcile-events attaches ambiguous events to a pending package item."""
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    paused_id = _uid("paused-route-task")
-    task_store.create(
-        paused_id,
-        "omnigent-fork",
-        agent_profile_id=manager_agent_id,
-        state="pending",
-        internal_note="repo:omnigent-fork",
-        tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
-    )
-    event_id = _uid("match-route-event")
-    event_store.create_event(
-        event_id,
-        "github.pr.checks_failed",
-        "PR checks failed",
-        state="awaiting_grouping",
-        tags=[EventTag(tag_type="repo", tag="omnigent-fork")],
-    )
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    first_event = _uid("reconcile-event-1")
+    second_event = _uid("reconcile-event-2")
+    for event_id in (first_event, second_event):
+        event_store.create_event(
+            event_id,
+            "build.finished",
+            "Flaky upload",
+            state="awaiting_grouping",
+        )
 
-    matched = await client.post(
-        "/v1/task-events/match-tasks",
-        json={"event_ids": [event_id]},
+    package = await client.post(
+        "/v1/agent-tasks/packages",
+        json={
+            "title": "Upload retries",
+            "agent_profile_id": manager_agent_id,
+            "items": [
+                {
+                    "title": "First failure",
+                    "event_ids": [first_event],
+                    "instructions": "Investigate",
+                },
+            ],
+        },
     )
-    assert matched.status_code == 200
-    candidates = matched.json()["candidates"]
-    assert candidates
-    assert candidates[0]["task_id"] == paused_id
-    assert candidates[0]["state"] == "pending"
+    assert package.status_code == 200
+    task_id = package.json()["id"]
+    item_id = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0].id
+
+    reconciled = await client.post(
+        f"/v1/agent-tasks/{task_id}/reconcile-events",
+        json={
+            "title": "First failure",
+            "event_ids": [second_event],
+            "description": "Same upload path failed again",
+            "instructions": "Investigate both failures together",
+            "internal_note": "linked to first inbox item",
+            "item_id": item_id,
+        },
+    )
+    assert reconciled.status_code == 200
+    assert reconciled.json()["id"] == item_id
+    assert event_store.get_event(second_event) is not None
+    assert event_store.get_event(second_event).state == "reconciled"
+    links = item_store.list_events_for_item(item_id)
+    assert {link.event_id for link in links} == {first_event, second_event}

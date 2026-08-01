@@ -115,7 +115,14 @@ export interface DispatchPayload {
   model?: string;
 }
 
+export const TASK_SECRETARY_ROLE = "secretary";
+
+function agentRolePath(role: string, suffix: string): string {
+  return `/v1/agent-tasks/roles/${encodeURIComponent(role)}/${suffix}`;
+}
+
 export interface SecretaryProfile {
+  role?: string;
   agent_id: string;
   conversation_id: string | null;
   model: string;
@@ -125,6 +132,7 @@ export interface SecretaryProfile {
 }
 
 export interface SecretarySession {
+  role?: string;
   conversation_id: string;
   created: boolean;
 }
@@ -189,23 +197,35 @@ export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard>
   return readJson<TaskDashboard>(res);
 }
 
-export async function fetchSecretaryProfile(): Promise<SecretaryProfile> {
-  const res = await authenticatedFetch("/v1/agent-tasks/secretary/profile");
+export async function fetchAgentRoleProfile(role: string): Promise<SecretaryProfile> {
+  const res = await authenticatedFetch(agentRolePath(role, "profile"));
   return readJsonOrApiError<SecretaryProfile>(res);
 }
 
-export async function ensureSecretarySession(): Promise<SecretarySession> {
-  const res = await authenticatedFetch("/v1/agent-tasks/secretary/session", {
+export async function ensureAgentRoleSession(role: string): Promise<SecretarySession> {
+  const res = await authenticatedFetch(agentRolePath(role, "session"), {
     method: "POST",
   });
   return readJsonOrApiError<SecretarySession>(res);
 }
 
-export async function resetSecretarySession(): Promise<SecretarySession> {
-  const res = await authenticatedFetch("/v1/agent-tasks/secretary/session/reset", {
+export async function resetAgentRoleSession(role: string): Promise<SecretarySession> {
+  const res = await authenticatedFetch(agentRolePath(role, "session/reset"), {
     method: "POST",
   });
   return readJsonOrApiError<SecretarySession>(res);
+}
+
+export async function fetchSecretaryProfile(): Promise<SecretaryProfile> {
+  return fetchAgentRoleProfile(TASK_SECRETARY_ROLE);
+}
+
+export async function ensureSecretarySession(): Promise<SecretarySession> {
+  return ensureAgentRoleSession(TASK_SECRETARY_ROLE);
+}
+
+export async function resetSecretarySession(): Promise<SecretarySession> {
+  return resetAgentRoleSession(TASK_SECRETARY_ROLE);
 }
 
 export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item";

@@ -7,9 +7,14 @@ import uuid
 import httpx
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
+from omnigent.agent_tasks.agent_builtins import (
+    TASK_MANAGER_AGENT_NAME,
+    TASK_SECRETARY_ROLE,
+    resolve_task_agent_id,
+)
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from tests.server.routes.agent_task_api import put_agent_role_profile
 
 
 def _uid(seed: str) -> str:
@@ -23,15 +28,12 @@ async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
 
 
 async def _secretary_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
-    await client.put(
-        "/v1/agent-tasks/secretary/profile",
-        json={
-            "agent_id": manager_agent_id,
-            "host_id": _uid("host_ingress"),
-            "workspace": "/tmp/ingress-test",
-            "harness": "cursor",
-            "model": "composer-2.5",
-        },
+    await put_agent_role_profile(
+        client,
+        role=TASK_SECRETARY_ROLE,
+        agent_profile_id=manager_agent_id,
+        host_id=_uid("host_ingress"),
+        workspace="/tmp/ingress-test",
     )
 
 
