@@ -36,10 +36,7 @@ def _item_to_entity(row: SqlTaskItem) -> TaskItem:
         description=row.description,
         instructions=row.instructions,
         internal_note=row.internal_note,
-        worker_agent_id=row.worker_agent_id,
-        host_id=row.host_id,
-        workspace=row.workspace,
-        priority=row.priority,
+        worker_id=row.worker_id,
         created_by=row.created_by,
         updated_at=row.updated_at,
     )
@@ -84,10 +81,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         description: str | None = None,
         instructions: str | None = None,
         internal_note: str | None = None,
-        worker_agent_id: str | None = None,
-        host_id: str | None = None,
-        workspace: str | None = None,
-        priority: int = 0,
+        worker_id: str | None = None,
         created_by: str = "manager",
     ) -> TaskItem:
         row = SqlTaskItem(
@@ -98,10 +92,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             description=description,
             instructions=instructions,
             internal_note=internal_note,
-            worker_agent_id=worker_agent_id,
-            host_id=host_id,
-            workspace=workspace,
-            priority=priority,
+            worker_id=worker_id,
             created_by=created_by,
             created_at=now_epoch(),
             updated_at=None,
@@ -169,7 +160,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             if state is not None:
                 stmt = stmt.where(SqlTaskItem.state == encode_task_item_state(state))
             stmt = stmt.order_by(
-                desc(SqlTaskItem.priority),
                 asc(SqlTaskItem.created_at),
                 asc(SqlTaskItem.id),
             )
@@ -185,10 +175,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         instructions: str | None = _UNSET,
         description: str | None = _UNSET,
         internal_note: str | None = _UNSET,
-        worker_agent_id: str | None = _UNSET,
-        host_id: str | None = _UNSET,
-        workspace: str | None = _UNSET,
-        priority: int | None = None,
+        worker_id: str | None = _UNSET,
         task_id: str | None = None,
     ) -> TaskItem | None:
         with self._session() as session:
@@ -207,14 +194,8 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 row.description = description
             if internal_note is not _UNSET:
                 row.internal_note = internal_note
-            if worker_agent_id is not _UNSET:
-                row.worker_agent_id = worker_agent_id
-            if host_id is not _UNSET:
-                row.host_id = host_id
-            if workspace is not _UNSET:
-                row.workspace = workspace
-            if priority is not None:
-                row.priority = priority
+            if worker_id is not _UNSET:
+                row.worker_id = worker_id
             row.updated_at = now_epoch()
             session.flush()
             return _item_to_entity(row)

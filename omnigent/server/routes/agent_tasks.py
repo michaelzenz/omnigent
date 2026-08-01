@@ -30,6 +30,7 @@ from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_WORKSPACE,
 )
 from omnigent.agent_tasks.dashboard import build_task_dashboard
+from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
@@ -81,6 +82,7 @@ from omnigent.stores.secretary_profile_store import SecretaryProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_asset_store import TaskAssetStore
+from omnigent.stores.worker_store import WorkerStore
 from omnigent.stores.task_store import TaskStore
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
@@ -200,10 +202,7 @@ class CreateTaskItemRequest(BaseModel):
     description: str | None = None
     instructions: str | None = None
     internal_note: str | None = None
-    worker_agent_id: str | None = None
-    host_id: str | None = None
-    workspace: str | None = None
-    priority: int = 0
+    worker_profile_id: str | None = None
     state: str = "draft"
     event_ids: list[str] = Field(default_factory=list)
     submit_for_user_ack: bool = False
@@ -223,7 +222,6 @@ class CreateTaskAssetRequest(BaseModel):
     kind: Literal["url"] = "url"
     title: str
     url: str
-    sort_order: int = 0
 
     @field_validator("title", "url")
     @classmethod
@@ -251,7 +249,7 @@ class ReconcileEventsRequest(BaseModel):
 class DispatchTaskItemRequest(BaseModel):
     """Request body for ``POST /v1/task-items/{item_id}/dispatch``."""
 
-    worker_agent_id: str | None = None
+    worker_profile_id: str | None = None
     title: str | None = None
     instructions: str | None = None
     host_id: str | None = None
@@ -274,9 +272,7 @@ class UpdateTaskItemRequest(BaseModel):
     description: str | None = None
     instructions: str | None = None
     internal_note: str | None = None
-    worker_agent_id: str | None = None
-    host_id: str | None = None
-    workspace: str | None = None
+    worker_profile_id: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -410,7 +406,7 @@ class ResolveFyiClusterRequest(BaseModel):
     suggested_task_id: str | None = None
     proposed_task_title: str | None = None
     proposed_task_internal_note: str | None = None
-    worker_agent_id: str | None = None
+    worker_profile_id: str | None = None
     model: str | None = None
     host_id: str | None = None
     workspace: str | None = None
@@ -541,7 +537,6 @@ def _asset_to_response(asset: TaskAsset) -> dict[str, Any]:
         "kind": asset.kind,
         "title": asset.title,
         "url": asset.url,
-        "sort_order": asset.sort_order,
         "created_at": asset.created_at,
     }
 
@@ -556,10 +551,7 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
         "description": item.description,
         "instructions": item.instructions,
         "internal_note": item.internal_note,
-        "worker_agent_id": item.worker_agent_id,
-        "host_id": item.host_id,
-        "workspace": item.workspace,
-        "priority": item.priority,
+        "worker_id": item.worker_id,
         "created_by": item.created_by,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -570,6 +562,7 @@ def create_agent_tasks_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
+    worker_store: WorkerStore,
     task_asset_store: TaskAssetStore,
     agent_store: AgentStore,
     conversation_store: ConversationStore | None = None,
@@ -952,6 +945,7 @@ def create_agent_tasks_router(
                 task,
                 task_event_store,
                 task_item_store,
+                worker_store,
                 task_asset_store,
             )
 
@@ -967,12 +961,10 @@ def create_agent_tasks_router(
 
             def _create() -> TaskAsset:
                 return task_asset_store.create_asset(
-                    _generate_task_id(),
                     task_id,
                     kind=body.kind,
                     title=body.title,
                     url=body.url,
-                    sort_order=body.sort_order,
                 )
 
             created = await asyncio.to_thread(_create)
@@ -1011,16 +1003,14 @@ def create_agent_tasks_router(
                 item = create_task_item(
                     task=task,
                     task_item_store=task_item_store,
+                    worker_store=worker_store,
                     task_event_store=task_event_store,
                     title=body.title,
                     state=body.state,
                     description=body.description,
                     instructions=body.instructions,
                     internal_note=body.internal_note,
-                    worker_agent_id=body.worker_agent_id,
-                    host_id=body.host_id,
-                    workspace=body.workspace,
-                    priority=body.priority,
+                    worker_profile_id=body.worker_profile_id,
                     event_ids=body.event_ids or None,
                 )
                 if body.submit_for_user_ack and item.state == "draft":
@@ -1099,6 +1089,7 @@ def create_agent_tasks_router(
                     task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
+                    worker_store=worker_store,
                     conversation_store=conversation_store,
                     agent_store=agent_store,
                     edited_payload=body.edited_payload,
@@ -1141,13 +1132,12 @@ def create_agent_tasks_router(
                 return patch_task_item(
                     item=item,
                     task_item_store=task_item_store,
+                    worker_store=worker_store,
                     title=body.title,
                     description=body.description,
                     instructions=body.instructions,
                     internal_note=body.internal_note,
-                    worker_agent_id=body.worker_agent_id,
-                    host_id=body.host_id,
-                    workspace=body.workspace,
+                    worker_profile_id=body.worker_profile_id,
                 )
 
             updated = await asyncio.to_thread(_patch)
@@ -1169,17 +1159,17 @@ def create_agent_tasks_router(
                     secretary_profile_store.get,
                     _effective_user_id(user_id),
                 )
+            worker = worker_for_item(item, worker_store=worker_store)
             payload = {
-                "worker_agent_id": item.worker_agent_id,
+                "worker_profile_id": body.worker_profile_id
+                or (worker.profile_id if worker is not None else None),
                 "title": item.title,
                 "instructions": item.instructions or "",
                 "internal_note": item.internal_note,
-                "host_id": item.host_id,
-                "workspace": item.workspace,
             }
             params = resolve_dispatch_params(
                 payload=payload,
-                worker_agent_id=body.worker_agent_id,
+                worker_profile_id=body.worker_profile_id,
                 title=body.title,
                 instructions=body.instructions,
                 host_id=body.host_id,
@@ -1197,6 +1187,7 @@ def create_agent_tasks_router(
                     task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
+                    worker_store=worker_store,
                     conversation_store=conversation_store,
                 )
 
@@ -1280,6 +1271,7 @@ def create_agent_tasks_router(
                     task_store=task_store,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
+                    worker_store=worker_store,
                 )
 
             task = await asyncio.to_thread(_create)
@@ -1309,6 +1301,7 @@ def create_agent_tasks_router(
                     ),
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
+                    worker_store=worker_store,
                 )
                 if created is None:
                     raise OmnigentError(
@@ -1410,11 +1403,12 @@ def create_agent_tasks_router(
                 task_store=task_store,
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
+                worker_store=worker_store,
                 agent_store=agent_store,
                 routing_title=body.routing_title,
                 routing_instructions=body.routing_instructions,
                 suggested_task_id=body.suggested_task_id,
-                worker_agent_id=body.worker_agent_id,
+                worker_profile_id=body.worker_profile_id,
                 model=body.model,
                 host_id=body.host_id,
                 workspace=body.workspace,

@@ -16,16 +16,14 @@ class TaskAssetStore(ABC):
     @abstractmethod
     def create_asset(
         self,
-        asset_id: str,
         task_id: str,
         *,
         kind: str,
         title: str,
         url: str | None = None,
-        sort_order: int = 0,
     ) -> TaskAsset:
         """Insert a task asset."""
 
     @abstractmethod
     def list_assets_for_task(self, task_id: str) -> list[TaskAsset]:
-        """List assets for one task ordered by sort_order, created_at."""
+        """List assets for one task ordered by id."""

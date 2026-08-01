@@ -70,9 +70,7 @@ describe("TaskCard", () => {
             instructions: "Route this to someone",
             internal_note: null,
             state: "awaiting_user_ack",
-            worker_agent_id: null,
-            host_id: null,
-            workspace: null,
+            worker_id: null,
             created_at: 1,
             updated_at: null,
           },
@@ -81,7 +79,9 @@ describe("TaskCard", () => {
         assets: [],
         workers: [
           {
-            worker_agent_id: "worker-1",
+            worker_id: "worker-1",
+            profile_id: "worker-1",
+            session_id: null,
             state: "active",
             situation: "Running: Investigate failure",
             rows: [
@@ -163,7 +163,9 @@ describe("TaskCard", () => {
         ]}
         workers={[
           {
-            worker_agent_id: "worker-1",
+            worker_id: "worker-1",
+            profile_id: "worker-1",
+            session_id: null,
             state: "idle",
             situation: "Idle",
             rows: [
@@ -178,7 +180,9 @@ describe("TaskCard", () => {
                   instructions: "Do the thing",
                   internal_note: null,
                   state: "queued",
-                  worker_agent_id: "worker-1",
+                  worker_id: "worker-1",
+            profile_id: "worker-1",
+            session_id: null,
                   host_id: null,
                   workspace: null,
                   created_at: 3,
@@ -222,7 +226,9 @@ describe("TaskCard", () => {
 
   it("always scrolls the worker lane list", () => {
     const workers = Array.from({ length: 5 }, (_, index) => ({
-      worker_agent_id: `worker-${index}`,
+      worker_id: `worker-${index}`,
+      profile_id: `worker-${index}`,
+      session_id: null,
       state: "new" as const,
       situation: "New",
       rows: [],
@@ -262,9 +268,7 @@ describe("TaskCard", () => {
             instructions: "Route this to someone",
             internal_note: null,
             state: "awaiting_user_ack",
-            worker_agent_id: null,
-            host_id: null,
-            workspace: null,
+            worker_id: null,
             created_at: 1,
             updated_at: null,
           },

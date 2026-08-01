@@ -24,6 +24,7 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WorkerStore
 
 FyiResolution = Literal["dismiss_fyi", "promote_to_routing"]
 
@@ -149,11 +150,12 @@ def resolve_fyi_cluster(
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     agent_store: AgentStore,
     routing_title: str | None = None,
     routing_instructions: str | None = None,
     suggested_task_id: str | None = None,
-    worker_agent_id: str | None = None,
+    worker_profile_id: str | None = None,
     model: str | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
@@ -207,6 +209,7 @@ def resolve_fyi_cluster(
                 ),
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
+                worker_store=worker_store,
             )
             if item is None:
                 raise OmnigentError(
@@ -233,6 +236,7 @@ def resolve_fyi_cluster(
         task_store=task_store,
         task_item_store=task_item_store,
         task_event_store=task_event_store,
+        worker_store=worker_store,
         internal_note=proposed_task_internal_note,
     )
     items = task_item_store.list_items_for_task(task.id, state="awaiting_user_ack")

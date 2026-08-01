@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.event_types import is_distributor_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
-from omnigent.agent_tasks.manager_agent import resolve_manager_agent_id
 from omnigent.agent_tasks.scoring import (
     candidate_task_ids_for_event_tags,
     pick_auto_route,
@@ -37,32 +35,6 @@ def _bootstrap_params(secretary_profile: UserSecretaryProfile | None) -> Bootstr
         harness=secretary_profile.harness if secretary_profile else None,
         model=secretary_profile.model if secretary_profile else None,
         secretary_profile=secretary_profile,
-    )
-
-
-def _generate_attempt_id() -> str:
-    return uuid.uuid4().hex
-
-
-def _record_auto_route_attempt(
-    *,
-    event_id: str,
-    task: Task,
-    rank: int,
-    score: float,
-    task_event_store: TaskEventStore,
-    agent_store: AgentStore,
-) -> None:
-    """Persist the winning auto-route choice for monitoring."""
-    manager_agent_id = resolve_manager_agent_id(agent_store)
-    task_event_store.create_routing_attempt(
-        _generate_attempt_id(),
-        event_id,
-        task.id,
-        manager_agent_id,
-        rank,
-        score=score,
-        decision="selected",
     )
 
 
@@ -108,6 +80,7 @@ async def distribute_event(
                 params=params,
                 secretary_profile_store=secretary_profile_store,
                 owner_user_id=owner_user_id,
+                routing_reason="explicit-task",
             )
         return await _stall(
             event=event,
@@ -132,6 +105,7 @@ async def distribute_event(
                     params=params,
                     secretary_profile_store=secretary_profile_store,
                     owner_user_id=owner_user_id,
+                    routing_reason="session-binding",
                 )
 
     active_tasks = live_tasks(task_store)
@@ -166,21 +140,11 @@ async def distribute_event(
     )
     auto_task = pick_auto_route(ranked)
     if auto_task is not None:
-        auto_rank = 1
         auto_score = 0.0
-        for rank, (task, score) in enumerate(ranked, start=1):
+        for task, score in ranked:
             if task.id == auto_task.id:
-                auto_rank = rank
                 auto_score = score
                 break
-        _record_auto_route_attempt(
-            event_id=event.id,
-            task=auto_task,
-            rank=auto_rank,
-            score=auto_score,
-            task_event_store=task_event_store,
-            agent_store=agent_store,
-        )
         params = _bootstrap_params(secretary_profile)
         return await _finish_route(
             event=event,
@@ -193,6 +157,8 @@ async def distribute_event(
             params=params,
             secretary_profile_store=secretary_profile_store,
             owner_user_id=owner_user_id,
+            routing_reason=f"auto-route score={auto_score:.4f}",
+            routing_score=auto_score,
         )
 
     return await _stall(
@@ -214,7 +180,8 @@ async def _finish_route(
     params: BootstrapParams,
     secretary_profile_store: SecretaryProfileStore | None = None,
     owner_user_id: str | None = None,
-    selected_attempt_id: str | None = None,
+    routing_reason: str | None = None,
+    routing_score: float | None = None,
 ) -> TaskEvent:
     try:
         updated = route_event_to_task(
@@ -225,7 +192,8 @@ async def _finish_route(
             conversation_store=conversation_store,
             agent_store=agent_store,
             params=params,
-            selected_attempt_id=selected_attempt_id,
+            routing_reason=routing_reason,
+            routing_score=routing_score,
         )
     except OmnigentError as exc:
         if exc.code != ErrorCode.INVALID_INPUT:

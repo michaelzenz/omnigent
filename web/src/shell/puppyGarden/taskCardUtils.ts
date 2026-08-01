@@ -1,4 +1,4 @@
-import type { DispatchPayload, TaskExecutionSummary, TaskWorkerGroup } from "@/lib/agentTasksApi";
+import type { DispatchPayload, TaskExecutionSummary, TaskItemSummary, TaskWorkerGroup, TaskWorkerLane } from "@/lib/agentTasksApi";
 
 export type WorkStateLabel = "To Run" | "Running" | "Done";
 
@@ -91,10 +91,6 @@ function workerGroupRank(group: TaskWorkerGroup): number {
   return 2;
 }
 
-export function sortWorkerGroups(groups: TaskWorkerGroup[]): TaskWorkerGroup[] {
-  return [...groups].sort((a, b) => workerGroupRank(a) - workerGroupRank(b));
-}
-
 /** Folded worker cards show only in-flight executions. */
 export function getFoldedExecutions(executions: TaskExecutionSummary[]): TaskExecutionSummary[] {
   return sortExecutions(executions).filter((execution) => execution.status === "running");
@@ -117,6 +113,18 @@ export function findExecution(
   return null;
 }
 
+export function sortWorkerGroups(groups: TaskWorkerGroup[]): TaskWorkerGroup[] {
+  return [...groups].sort((a, b) => workerGroupRank(a) - workerGroupRank(b));
+}
+
+export function profileIdForItem(
+  item: TaskItemSummary,
+  workers: TaskWorkerLane[],
+): string | undefined {
+  if (item.worker_id == null) return undefined;
+  return workers.find((lane) => lane.worker_id === item.worker_id)?.profile_id;
+}
+
 export function buildWorkerOptions(
   workerAgentIds: string[],
   proposalPayload: DispatchPayload,
@@ -130,7 +138,7 @@ export function buildWorkerOptions(
     byId.set(workerAgentId, { workerAgentId, model });
   };
 
-  add(proposalPayload.worker_agent_id, proposalPayload.model ?? defaultModel);
+  add(proposalPayload.worker_profile_id, proposalPayload.model ?? defaultModel);
   for (const workerAgentId of workerAgentIds) {
     add(workerAgentId, defaultModel);
   }
@@ -158,7 +166,7 @@ export function proposalHasEdits(
   },
 ): boolean {
   return (
-    baseline.worker_agent_id !== current.workerAgentId ||
+    baseline.worker_profile_id !== current.workerAgentId ||
     (baseline.title ?? "") !== current.title ||
     (baseline.description ?? "") !== current.description ||
     (baseline.instructions ?? "") !== current.instructions ||

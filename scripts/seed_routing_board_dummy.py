@@ -156,8 +156,8 @@ def _create_task_package(
     )
     task_id = package["id"]
     print(f"  task package {title!r} → {task_id[:8]}…")
-    for sort_order, (asset_title, url) in enumerate(asset_urls or ()):
-        _create_task_asset(task_id, asset_title, url, sort_order=sort_order)
+    for asset_title, url in asset_urls or ():
+        _create_task_asset(task_id, asset_title, url)
     return task_id
 
 
@@ -179,7 +179,7 @@ def _create_fyi_cluster(
     print(f"  fyi cluster {headline!r} → {cluster['id'][:8]}…")
 
 
-def _create_task_asset(task_id: str, title: str, url: str, *, sort_order: int = 0) -> str:
+def _create_task_asset(task_id: str, title: str, url: str) -> int:
     asset = _request(
         "POST",
         f"/v1/agent-tasks/{task_id}/assets",
@@ -187,10 +187,9 @@ def _create_task_asset(task_id: str, title: str, url: str, *, sort_order: int = 
             "kind": "url",
             "title": title,
             "url": url,
-            "sort_order": sort_order,
         },
     )
-    print(f"  asset {title!r} → {asset['id'][:8]}…")
+    print(f"  asset {title!r} → {asset['id']}")
     return asset["id"]
 
 
@@ -318,19 +317,16 @@ def _seed_rich_ci_task(ci_task: str, *, worker_agent_id: str, worker2_agent_id: 
         ci_task,
         "PR #891",
         "https://github.com/databricks/omnigent-fork/pull/891",
-        sort_order=0,
     )
     _create_task_asset(
         ci_task,
         "CI workflow (main)",
         "https://github.com/databricks/omnigent-fork/actions",
-        sort_order=1,
     )
     _create_task_asset(
         ci_task,
         "Latest failing run",
         "https://github.com/databricks/omnigent-fork/actions/runs/1234567890",
-        sort_order=2,
     )
 
 
@@ -419,7 +415,6 @@ def _seed_twenty_worker_task(*, agent_profile_id: str) -> str:
             task_id,
             f"Load test link {asset_index:02d}",
             f"https://example.com/load-test/{asset_index:02d}",
-            sort_order=asset_index - 1,
         )
     dash = _request("GET", f"/v1/agent-tasks/{task_id}/dashboard")
     workers = len(dash.get("workers", []))

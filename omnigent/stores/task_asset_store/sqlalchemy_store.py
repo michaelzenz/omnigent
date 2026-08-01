@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import asc, select
+from sqlalchemy import asc, func, select
 
 from omnigent.db.db_models import SqlTaskAsset, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
@@ -17,7 +17,6 @@ def _asset_to_entity(row: SqlTaskAsset) -> TaskAsset:
         kind=row.kind,
         title=row.title,
         url=row.url,
-        sort_order=row.sort_order,
         created_at=row.created_at,
     )
 
@@ -32,24 +31,28 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
 
     def create_asset(
         self,
-        asset_id: str,
         task_id: str,
         *,
         kind: str,
         title: str,
         url: str | None = None,
-        sort_order: int = 0,
     ) -> TaskAsset:
         now = now_epoch()
+        workspace_id = current_workspace_id()
         with self._session() as session:
+            next_id = session.scalar(
+                select(func.coalesce(func.max(SqlTaskAsset.id), 0) + 1).where(
+                    SqlTaskAsset.workspace_id == workspace_id,
+                ),
+            )
+            assert next_id is not None
             row = SqlTaskAsset(
-                workspace_id=current_workspace_id(),
-                id=asset_id,
+                workspace_id=workspace_id,
+                id=next_id,
                 task_id=task_id,
                 kind=kind,
                 title=title,
                 url=url,
-                sort_order=sort_order,
                 created_at=now,
             )
             session.add(row)
@@ -63,7 +66,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 select(SqlTaskAsset)
                 .where(SqlTaskAsset.workspace_id == current_workspace_id())
                 .where(SqlTaskAsset.task_id == task_id)
-                .order_by(asc(SqlTaskAsset.sort_order), asc(SqlTaskAsset.created_at), asc(SqlTaskAsset.id))
+                .order_by(asc(SqlTaskAsset.id))
             )
             rows = session.scalars(stmt).all()
             return [_asset_to_entity(row) for row in rows]

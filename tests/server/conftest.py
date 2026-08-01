@@ -52,6 +52,7 @@ from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemS
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 # ── Controllable mock LLM ─────────────────────────────
 
@@ -606,6 +607,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         task_store=SqlAlchemyTaskStore(db_uri),
         task_event_store=SqlAlchemyTaskEventStore(db_uri),
         task_item_store=SqlAlchemyTaskItemStore(db_uri),
+        worker_store=SqlAlchemyWorkerStore(db_uri),
         task_asset_store=SqlAlchemyTaskAssetStore(db_uri),
         timer_item_store=SqlAlchemyTimerItemStore(db_uri),
         secretary_profile_store=SqlAlchemySecretaryProfileStore(db_uri),

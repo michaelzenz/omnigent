@@ -84,12 +84,12 @@ function WorkerGroup({
   const visibleExecutions = expanded || !canToggle ? executions : foldedExecutions;
   const hiddenCount = expanded ? 0 : executions.length - visibleExecutions.length;
   const shouldScrollItems = expanded && executions.length > WORK_ITEM_SCROLL_THRESHOLD;
-  const workerName = workerDisplayName(group.worker_agent_id, agents);
+  const workerName = workerDisplayName(group.profile_id, agents);
 
   return (
     <article
       className="rounded-md border border-border bg-background p-2 shadow-sm"
-      data-testid={`worker-group-${group.worker_agent_id}`}
+      data-testid={`worker-group-${group.profile_id}`}
       data-expanded={expanded ? "true" : "false"}
     >
       {canToggle ? (
@@ -99,7 +99,7 @@ function WorkerGroup({
           onClick={() => setExpanded((open) => !open)}
           aria-expanded={expanded}
           aria-label={expanded ? `Collapse ${workerName} queue` : `Expand ${workerName} queue`}
-          data-testid={`worker-group-toggle-${group.worker_agent_id}`}
+          data-testid={`worker-group-toggle-${group.profile_id}`}
         >
           {expanded ? (
             <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -127,8 +127,8 @@ function WorkerGroup({
           )}
           data-testid={
             shouldScrollItems
-              ? `worker-items-scroll-${group.worker_agent_id}`
-              : `worker-items-${group.worker_agent_id}`
+              ? `worker-items-scroll-${group.profile_id}`
+              : `worker-items-${group.profile_id}`
           }
         >
           {visibleExecutions.map((execution) => (
@@ -171,7 +171,7 @@ export function TaskCardWork({
         >
           {groups.map((group) => (
             <WorkerGroup
-              key={group.worker_agent_id}
+              key={group.profile_id}
               group={group}
               agents={agents}
               selectedExecutionId={selectedExecutionId}

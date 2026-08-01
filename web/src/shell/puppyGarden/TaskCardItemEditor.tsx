@@ -13,9 +13,10 @@ import {
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useResolveTaskItem, useUpdateTaskItem } from "@/hooks/useAgentTasks";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
-import type { DispatchPayload, TaskItemSummary } from "@/lib/agentTasksApi";
+import type { DispatchPayload, TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import {
   buildWorkerOptions,
+  profileIdForItem,
   proposalHasEdits,
   workerOptionLabel,
   type WorkerOption,
@@ -29,9 +30,12 @@ interface ItemEditorState {
   instructions: string;
 }
 
-function itemProposalPayload(item: TaskItemSummary): DispatchPayload & { description?: string } {
+function itemProposalPayload(
+  item: TaskItemSummary,
+  workerLanes: TaskWorkerLane[],
+): DispatchPayload & { description?: string } {
   return {
-    worker_agent_id: item.worker_agent_id ?? undefined,
+    worker_profile_id: profileIdForItem(item, workerLanes),
     title: item.title,
     description: item.description ?? "",
     instructions: item.instructions ?? "",
@@ -41,10 +45,11 @@ function itemProposalPayload(item: TaskItemSummary): DispatchPayload & { descrip
 function initialEditorState(
   item: TaskItemSummary,
   workerOptions: WorkerOption[],
+  workerLanes: TaskWorkerLane[],
   defaultModel: string,
 ): ItemEditorState {
   const workerAgentId =
-    item.worker_agent_id ?? workerOptions[0]?.workerAgentId ?? "";
+    profileIdForItem(item, workerLanes) ?? workerOptions[0]?.workerAgentId ?? "";
   const model =
     workerOptions.find((option) => option.workerAgentId === workerAgentId)?.model ??
     workerOptions[0]?.model ??
@@ -62,6 +67,7 @@ interface TaskCardItemEditorProps {
   taskId: string;
   item: TaskItemSummary;
   workerAgentIds: string[];
+  workerLanes: TaskWorkerLane[];
   agents: AvailableAgent[];
   defaultModel: string;
   mode: "ack" | "edit";
@@ -71,6 +77,7 @@ export function TaskCardItemEditor({
   taskId,
   item,
   workerAgentIds,
+  workerLanes,
   agents,
   defaultModel,
   mode,
@@ -80,8 +87,8 @@ export function TaskCardItemEditor({
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
 
   const workerOptions = useMemo(
-    () => buildWorkerOptions(workerAgentIds, itemProposalPayload(item), defaultModel),
-    [workerAgentIds, item, defaultModel],
+    () => buildWorkerOptions(workerAgentIds, itemProposalPayload(item, workerLanes), defaultModel),
+    [workerAgentIds, workerLanes, item, defaultModel],
   );
 
   const agentNameById = useMemo(
@@ -90,17 +97,17 @@ export function TaskCardItemEditor({
   );
 
   const [editor, setEditor] = useState(() =>
-    initialEditorState(item, workerOptions, defaultModel),
+    initialEditorState(item, workerOptions, workerLanes, defaultModel),
   );
 
   useEffect(() => {
-    setEditor(initialEditorState(item, workerOptions, defaultModel));
-  }, [item.id, workerOptions, defaultModel]);
+    setEditor(initialEditorState(item, workerOptions, workerLanes, defaultModel));
+  }, [item.id, workerOptions, workerLanes, defaultModel]);
 
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12, item.id);
 
   const baseline = {
-    ...itemProposalPayload(item),
+    ...itemProposalPayload(item, workerLanes),
     model:
       workerOptions.find((option) => option.workerAgentId === editor.workerAgentId)?.model ??
       defaultModel,
@@ -120,7 +127,7 @@ export function TaskCardItemEditor({
     const edited =
       resolution === "edit_and_dispatch"
         ? ({
-            worker_agent_id: editor.workerAgentId,
+            worker_profile_id: editor.workerAgentId,
             model: editor.model,
             title: editor.title,
             description: editor.description,
@@ -144,7 +151,7 @@ export function TaskCardItemEditor({
     await updateItem.mutateAsync({
       taskItemId: item.id,
       body: {
-        worker_agent_id: editor.workerAgentId,
+        worker_profile_id: editor.workerAgentId,
         title: editor.title,
         description: editor.description,
         instructions: editor.instructions,

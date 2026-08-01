@@ -9,6 +9,7 @@ from typing import Any
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.executions import mark_execution_running, start_execution_for_item
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
+from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
 from omnigent.entities import Task, TaskEventExecution, TaskItem
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -16,13 +17,14 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WorkerStore
 
 
 @dataclass(frozen=True)
 class DispatchParams:
     """Resolved worker dispatch inputs."""
 
-    worker_agent_id: str
+    worker_profile_id: str
     title: str
     instructions: str
     host_id: str
@@ -59,10 +61,24 @@ def compose_worker_instructions(
     return worker_text
 
 
+def _resolve_worker_profile_id(
+    *,
+    payload: dict[str, Any],
+    worker_profile_id: str | None,
+) -> str | None:
+    if worker_profile_id is not None and str(worker_profile_id).strip():
+        return str(worker_profile_id).strip()
+    for key in ("worker_profile_id", "worker_agent_id"):
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
 def resolve_dispatch_params(
     *,
     payload: dict[str, Any],
-    worker_agent_id: str | None = None,
+    worker_profile_id: str | None = None,
     title: str | None = None,
     instructions: str | None = None,
     host_id: str | None = None,
@@ -72,15 +88,18 @@ def resolve_dispatch_params(
     secretary_profile: UserSecretaryProfile | None = None,
 ) -> DispatchParams:
     """Merge explicit dispatch fields with payload and profile defaults."""
-    resolved_worker = worker_agent_id or payload.get("worker_agent_id")
+    resolved_profile = _resolve_worker_profile_id(
+        payload=payload,
+        worker_profile_id=worker_profile_id,
+    )
     resolved_title = title or payload.get("title")
     resolved_instructions = compose_worker_instructions(
         instructions=instructions if instructions is not None else payload.get("instructions"),
         internal_note=payload.get("internal_note"),
     )
-    if not resolved_worker or not resolved_title or not resolved_instructions:
+    if not resolved_profile or not resolved_title or not resolved_instructions:
         raise OmnigentError(
-            "worker_agent_id, title, and instructions are required",
+            "worker_profile_id, title, and instructions are required",
             code=ErrorCode.INVALID_INPUT,
         )
     bootstrap = resolve_bootstrap_params(
@@ -91,7 +110,7 @@ def resolve_dispatch_params(
         secretary_profile=secretary_profile,
     )
     return DispatchParams(
-        worker_agent_id=str(resolved_worker),
+        worker_profile_id=resolved_profile,
         title=str(resolved_title),
         instructions=str(resolved_instructions),
         host_id=bootstrap.host_id,
@@ -109,6 +128,7 @@ def dispatch_worker_for_item(
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     conversation_store: ConversationStore,
 ) -> tuple[TaskEventExecution, str]:
     """Spawn a worker sub-agent session for one task item."""
@@ -133,6 +153,22 @@ def dispatch_worker_for_item(
         )
     manager_agent_id = manager_conv.agent_id
 
+    worker = worker_for_item(item, worker_store=worker_store)
+    if worker is None:
+        item, worker = assign_worker_profile(
+            item=item,
+            profile_id=params.worker_profile_id,
+            worker_store=worker_store,
+            task_item_store=task_item_store,
+        )
+    elif worker.profile_id != params.worker_profile_id:
+        item, worker = assign_worker_profile(
+            item=item,
+            profile_id=params.worker_profile_id,
+            worker_store=worker_store,
+            task_item_store=task_item_store,
+        )
+
     linked_events = task_item_store.list_events_for_item(item.id)
     trigger_event_id = linked_events[0].event_id if linked_events else None
 
@@ -140,7 +176,7 @@ def dispatch_worker_for_item(
         kind="sub_agent",
         title=params.title,
         parent_conversation_id=task.manager_conversation_id,
-        agent_id=params.worker_agent_id,
+        agent_id=worker.profile_id,
         runner_id=manager_conv.runner_id,
         host_id=params.host_id,
         workspace=params.workspace,
@@ -150,11 +186,12 @@ def dispatch_worker_for_item(
         harness_override=params.harness,
         model_override=params.model,
     )
+    worker_store.update_worker(worker.id, session_id=worker_conv.id)
     execution = start_execution_for_item(
         task=task,
         item=item,
         manager_agent_id=manager_agent_id,
-        worker_agent_id=params.worker_agent_id,
+        worker_agent_id=worker.profile_id,
         task_event_store=task_event_store,
         event_id=trigger_event_id,
         conversation_id=worker_conv.id,

@@ -6,8 +6,7 @@ Several low-cardinality closed-set columns (``conversations.kind``,
 ``hosts.status``, ``agents.kind``, ``scheduled_tasks.state``,
 ``scheduled_tasks.execution_target``,
 ``scheduled_task_runs.status``, ``tasks.state``,
-``task_events.state``, ``task_event_routing_attempts.decision``,
-``task_event_executions.status``) are stored as
+``task_events.state``, ``task_event_executions.status``) are stored as
 integer codes rather
 than their string names — smaller rows and a tighter ``CHECK`` than a
 free ``VARCHAR``. The string names remain the
@@ -152,14 +151,6 @@ TIMER_ITEM_STATE: dict[str, int] = {
     "running": 2,
     "done": 3,
     "failed": 4,
-}
-
-TASK_EVENT_ROUTING_DECISION: dict[str, int] = {
-    "proposed": 1,
-    "accepted": 2,
-    "rejected": 3,
-    "selected": 4,
-    "not_selected": 5,
 }
 
 TASK_EVENT_EXECUTION_STATUS: dict[str, int] = {
@@ -381,24 +372,6 @@ def encode_task_event_state(name: str) -> int:
 def decode_task_event_state(code: int) -> str:
     """Decode a ``task_events.state`` int code to its name."""
     return _decode(TASK_EVENT_STATE, code, field="task_events.state")
-
-
-def encode_task_event_routing_decision(name: str) -> int:
-    """Encode a ``task_event_routing_attempts.decision`` name to its int code."""
-    return _encode(
-        TASK_EVENT_ROUTING_DECISION,
-        name,
-        field="task_event_routing_attempts.decision",
-    )
-
-
-def decode_task_event_routing_decision(code: int) -> str:
-    """Decode a ``task_event_routing_attempts.decision`` int code to its name."""
-    return _decode(
-        TASK_EVENT_ROUTING_DECISION,
-        code,
-        field="task_event_routing_attempts.decision",
-    )
 
 
 def encode_task_event_execution_status(name: str) -> int:

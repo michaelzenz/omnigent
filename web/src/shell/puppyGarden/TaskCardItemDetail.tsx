@@ -14,11 +14,12 @@ import {
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useUpdateTaskItem } from "@/hooks/useAgentTasks";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
-import type { TaskExecutionSummary, TaskItemSummary } from "@/lib/agentTasksApi";
+import type { TaskExecutionSummary, TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { relativeTime } from "@/lib/relativeTime";
 import {
   buildWorkerOptions,
   isExecutionEditable,
+  profileIdForItem,
   proposalHasEdits,
   workerOptionLabel,
   type WorkerOption,
@@ -29,6 +30,7 @@ interface TaskCardItemDetailProps {
   taskId: string;
   execution: TaskExecutionSummary;
   workerAgentIds: string[];
+  workerLanes: TaskWorkerLane[];
   agents: AvailableAgent[];
   defaultModel: string;
   onClose: () => void;
@@ -45,9 +47,11 @@ interface ItemEditorState {
 function itemEditorState(
   item: TaskItemSummary,
   workerOptions: WorkerOption[],
+  workerLanes: TaskWorkerLane[],
   defaultModel: string,
 ): ItemEditorState {
-  const workerAgentId = item.worker_agent_id ?? workerOptions[0]?.workerAgentId ?? "";
+  const workerAgentId =
+    profileIdForItem(item, workerLanes) ?? workerOptions[0]?.workerAgentId ?? "";
   const model =
     workerOptions.find((option) => option.workerAgentId === workerAgentId)?.model ??
     workerOptions[0]?.model ??
@@ -65,6 +69,7 @@ export function TaskCardItemDetail({
   taskId,
   execution,
   workerAgentIds,
+  workerLanes,
   agents,
   defaultModel,
   onClose,
@@ -80,7 +85,7 @@ export function TaskCardItemDetail({
         ? buildWorkerOptions(
             workerAgentIds,
             {
-              worker_agent_id: item.worker_agent_id ?? undefined,
+              worker_profile_id: profileIdForItem(item, workerLanes),
               title: item.title,
               description: item.description ?? "",
               instructions: item.instructions ?? "",
@@ -88,7 +93,7 @@ export function TaskCardItemDetail({
             defaultModel,
           )
         : [],
-    [workerAgentIds, item, defaultModel],
+    [workerAgentIds, workerLanes, item, defaultModel],
   );
 
   const agentNameById = useMemo(
@@ -97,14 +102,14 @@ export function TaskCardItemDetail({
   );
 
   const [editor, setEditor] = useState<ItemEditorState | null>(
-    item ? itemEditorState(item, workerOptions, defaultModel) : null,
+    item ? itemEditorState(item, workerOptions, workerLanes, defaultModel) : null,
   );
 
   useEffect(() => {
     if (item) {
-      setEditor(itemEditorState(item, workerOptions, defaultModel));
+      setEditor(itemEditorState(item, workerOptions, workerLanes, defaultModel));
     }
-  }, [item?.id, workerOptions, defaultModel]);
+  }, [item?.id, workerOptions, workerLanes, defaultModel]);
 
   useAutoGrowTextarea(instructionsRef, editor?.instructions ?? "", 12, execution.id);
 
@@ -125,7 +130,7 @@ export function TaskCardItemDetail({
   }
 
   const baseline = {
-    worker_agent_id: item.worker_agent_id ?? undefined,
+    worker_profile_id: profileIdForItem(item, workerLanes),
     title: item.title,
     description: item.description ?? "",
     instructions: item.instructions ?? "",
@@ -153,7 +158,7 @@ export function TaskCardItemDetail({
     await updateItem.mutateAsync({
       taskItemId: item.id,
       body: {
-        worker_agent_id: editor.workerAgentId,
+        worker_profile_id: editor.workerAgentId,
         title: editor.title,
         description: editor.description,
         instructions: editor.instructions,
@@ -162,11 +167,11 @@ export function TaskCardItemDetail({
   };
 
   const subtitle = executionSubtitle(execution);
-  const workerId = item.worker_agent_id ?? "";
+  const workerProfileId = profileIdForItem(item, workerLanes) ?? "";
   const workerName =
-    agentNameById.get(workerId) ??
-    agents.find((agent) => agent.id === workerId)?.name ??
-    workerId;
+    agentNameById.get(workerProfileId) ??
+    agents.find((agent) => agent.id === workerProfileId)?.name ??
+    workerProfileId;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col p-2" data-testid="task-item-detail">

@@ -10,16 +10,13 @@ from omnigent.db.db_models import (
     SqlTaskEvent,
     SqlTaskEventExecution,
     SqlTaskEventRoutingAttempt,
-    SqlTaskEventRoutingResolution,
     SqlTaskSessionBinding,
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import (
     decode_task_event_execution_status,
-    decode_task_event_routing_decision,
     decode_task_event_state,
     encode_task_event_execution_status,
-    encode_task_event_routing_decision,
     encode_task_event_state,
 )
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
@@ -27,7 +24,6 @@ from omnigent.entities import (
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
-    TaskEventRoutingResolution,
     EventTag,
     TaskSessionBinding,
 )
@@ -48,7 +44,6 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         task_id=row.task_id,
         payload=row.payload,
         source=row.source,
-        selected_routing_attempt_id=row.selected_routing_attempt_id,
         source_key=row.source_key,
         source_offset=row.source_offset,
         source_internal_session_id=row.source_internal_session_id,
@@ -63,27 +58,9 @@ def _attempt_to_entity(row: SqlTaskEventRoutingAttempt) -> TaskEventRoutingAttem
         id=row.id,
         event_id=row.event_id,
         candidate_task_id=row.candidate_task_id,
-        candidate_manager_agent_id=row.candidate_manager_agent_id,
-        rank=row.rank,
-        decision=decode_task_event_routing_decision(row.decision),
         proposed_at=row.proposed_at,
         score=row.score,
-        manager_reason=row.manager_reason,
-        responded_at=row.responded_at,
-        selected_at=row.selected_at,
-    )
-
-
-def _resolution_to_entity(row: SqlTaskEventRoutingResolution) -> TaskEventRoutingResolution:
-    return TaskEventRoutingResolution(
-        id=row.id,
-        event_id=row.event_id,
-        selected_attempt_id=row.selected_attempt_id,
-        selected_task_id=row.selected_task_id,
-        selected_manager_agent_id=row.selected_manager_agent_id,
-        created_at=row.created_at,
-        resolved_by_user_id=row.resolved_by_user_id,
-        resolution_note=row.resolution_note,
+        reason=row.reason,
     )
 
 
@@ -218,7 +195,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         task_id: str | None = _UNSET,
         state: str | None = None,
-        selected_routing_attempt_id: str | None = _UNSET,
         routed_at: int | None = None,
         processed_at: int | None = None,
     ) -> TaskEvent | None:
@@ -235,11 +211,6 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 if row.state != encoded_state:
                     row.state = encoded_state
                     changed = True
-            if selected_routing_attempt_id is not _UNSET and (
-                row.selected_routing_attempt_id != selected_routing_attempt_id
-            ):
-                row.selected_routing_attempt_id = selected_routing_attempt_id
-                changed = True
             if routed_at is not None and row.routed_at != routed_at:
                 row.routed_at = routed_at
                 changed = True
@@ -262,55 +233,21 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         attempt_id: str,
         event_id: str,
         candidate_task_id: str,
-        candidate_manager_agent_id: str,
-        rank: int,
         *,
         score: float | None = None,
-        decision: str = "proposed",
-        manager_reason: str | None = None,
+        reason: str | None = None,
         proposed_at: int | None = None,
-        responded_at: int | None = None,
-        selected_at: int | None = None,
     ) -> TaskEventRoutingAttempt:
         row = SqlTaskEventRoutingAttempt(
             id=attempt_id,
             event_id=event_id,
             candidate_task_id=candidate_task_id,
-            candidate_manager_agent_id=candidate_manager_agent_id,
-            rank=rank,
             score=score,
-            decision=encode_task_event_routing_decision(decision),
-            manager_reason=manager_reason,
+            reason=reason,
             proposed_at=proposed_at if proposed_at is not None else now_epoch(),
-            responded_at=responded_at,
-            selected_at=selected_at,
         )
         with self._session() as session:
             session.add(row)
-            session.flush()
-            return _attempt_to_entity(row)
-
-    def update_routing_attempt(
-        self,
-        attempt_id: str,
-        *,
-        decision: str | None = None,
-        manager_reason: str | None = None,
-        responded_at: int | None = None,
-        selected_at: int | None = None,
-    ) -> TaskEventRoutingAttempt | None:
-        with self._session() as session:
-            row = session.get(SqlTaskEventRoutingAttempt, (current_workspace_id(), attempt_id))
-            if row is None:
-                return None
-            if decision is not None:
-                row.decision = encode_task_event_routing_decision(decision)
-            if manager_reason is not None:
-                row.manager_reason = manager_reason
-            if responded_at is not None:
-                row.responded_at = responded_at
-            if selected_at is not None:
-                row.selected_at = selected_at
             session.flush()
             return _attempt_to_entity(row)
 
@@ -320,54 +257,13 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 select(SqlTaskEventRoutingAttempt)
                 .where(SqlTaskEventRoutingAttempt.workspace_id == current_workspace_id())
                 .where(SqlTaskEventRoutingAttempt.event_id == event_id)
-                .order_by(asc(SqlTaskEventRoutingAttempt.rank), asc(SqlTaskEventRoutingAttempt.id))
+                .order_by(
+                    asc(SqlTaskEventRoutingAttempt.proposed_at),
+                    asc(SqlTaskEventRoutingAttempt.id),
+                )
             )
             rows = session.execute(stmt).scalars().all()
             return [_attempt_to_entity(row) for row in rows]
-
-    def create_resolution(
-        self,
-        resolution_id: str,
-        event_id: str,
-        selected_attempt_id: str,
-        selected_task_id: str,
-        selected_manager_agent_id: str,
-        *,
-        resolved_by_user_id: str | None = None,
-        resolution_note: str | None = None,
-        created_at: int | None = None,
-    ) -> TaskEventRoutingResolution:
-        row = SqlTaskEventRoutingResolution(
-            id=resolution_id,
-            event_id=event_id,
-            selected_attempt_id=selected_attempt_id,
-            selected_task_id=selected_task_id,
-            selected_manager_agent_id=selected_manager_agent_id,
-            resolved_by_user_id=resolved_by_user_id,
-            resolution_note=resolution_note,
-            created_at=created_at if created_at is not None else now_epoch(),
-        )
-        with self._session() as session:
-            session.add(row)
-            session.flush()
-            return _resolution_to_entity(row)
-
-    def get_resolution(self, event_id: str) -> TaskEventRoutingResolution | None:
-        with self._session() as session:
-            stmt = (
-                select(SqlTaskEventRoutingResolution)
-                .where(SqlTaskEventRoutingResolution.workspace_id == current_workspace_id())
-                .where(SqlTaskEventRoutingResolution.event_id == event_id)
-                .order_by(
-                    desc(SqlTaskEventRoutingResolution.created_at),
-                    desc(SqlTaskEventRoutingResolution.id),
-                )
-                .limit(1)
-            )
-            row = session.execute(stmt).scalars().first()
-            if row is None:
-                return None
-            return _resolution_to_entity(row)
 
     def create_execution(
         self,

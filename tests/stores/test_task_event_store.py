@@ -46,7 +46,7 @@ def test_create_event_and_get_by_source_dedupes(store: SqlAlchemyTaskEventStore)
     ]
 
 
-def test_routing_attempts_and_resolution(store: SqlAlchemyTaskEventStore) -> None:
+def test_routing_attempts_round_trip(store: SqlAlchemyTaskEventStore) -> None:
     event_id = _uid("event_route")
     attempt_id = _uid("attempt_1")
     store.create_event(event_id=event_id, event_type="note.added", title="New note")
@@ -54,22 +54,13 @@ def test_routing_attempts_and_resolution(store: SqlAlchemyTaskEventStore) -> Non
         attempt_id=attempt_id,
         event_id=event_id,
         candidate_task_id=_uid("task_1"),
-        candidate_manager_agent_id=_uid("mgr_1"),
-        rank=1,
-        decision="accepted",
+        score=0.75,
+        reason="auto-route score=0.7500",
     )
-    assert attempt.decision == "accepted"
+    assert attempt.reason == "auto-route score=0.7500"
     attempts = store.list_routing_attempts(event_id)
     assert len(attempts) == 1
-    resolution = store.create_resolution(
-        resolution_id=_uid("resolution_1"),
-        event_id=event_id,
-        selected_attempt_id=attempt_id,
-        selected_task_id=_uid("task_1"),
-        selected_manager_agent_id=_uid("mgr_1"),
-        resolved_by_user_id="alice@example.com",
-    )
-    assert store.get_resolution(event_id) == resolution
+    assert attempts[0].candidate_task_id == _uid("task_1")
 
 
 def test_execution_lookup_by_conversation_id(store: SqlAlchemyTaskEventStore) -> None:

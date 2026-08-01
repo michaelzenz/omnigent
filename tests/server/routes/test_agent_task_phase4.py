@@ -19,6 +19,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
 def _uid(seed: str) -> str:
@@ -48,11 +49,11 @@ def _bootstrap_body() -> dict[str, str]:
     }
 
 
-def _item_payload(worker_agent_id: str) -> dict[str, str]:
+def _item_payload(worker_profile_id: str) -> dict[str, str]:
     return {
         "title": "Investigate failure",
         "instructions": "Read logs and summarize the root cause.",
-        "worker_agent_id": worker_agent_id,
+        "worker_profile_id": worker_profile_id,
         **_bootstrap_body(),
     }
 
@@ -114,7 +115,7 @@ async def test_dispatch_and_dashboard(
     dashboard = dashboard_resp.json()
     assert dashboard["derived"]["has_running_workers"] is True
     assert len(dashboard["workers"]) == 1
-    assert dashboard["workers"][0]["worker_agent_id"] == worker_agent_id
+    assert dashboard["workers"][0]["profile_id"] == worker_agent_id
     assert dashboard["workers"][0]["executions"][0]["task_item_id"] == item_id
 
 
@@ -138,7 +139,7 @@ async def test_item_accept_dispatches_worker(
 
     resolve_resp = await client.post(
         f"/v1/task-items/{item_id}/resolve",
-        json={"resolution": "accept_item"},
+        json={"resolution": "accept_item", "edited_payload": _bootstrap_body()},
     )
     assert resolve_resp.status_code == 200
     resolved = resolve_resp.json()
@@ -168,6 +169,7 @@ async def test_item_edit_and_dispatch(
             "resolution": "edit_and_dispatch",
             "edited_payload": {
                 "instructions": "Apply the patch and run unit tests only.",
+                **_bootstrap_body(),
             },
         },
     )
@@ -215,6 +217,7 @@ async def test_worker_completion_hook(
     event_store = SqlAlchemyTaskEventStore(db_uri)
     item_store = SqlAlchemyTaskItemStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
 
     task_id = _uid("task_complete")
     event_id = _uid("event_complete")
@@ -234,12 +237,13 @@ async def test_worker_completion_hook(
         task_id=task_id,
         state="routed",
     )
+    worker = worker_store.create_worker(_uid("worker_complete"), task_id, worker_agent_id)
     item_store.create_item(
         task_item_id,
         task_id,
         "Completion item",
         state="running",
-        worker_agent_id=worker_agent_id,
+        worker_id=worker.id,
     )
     worker_conv = conversation_store.create_conversation(
         kind="sub_agent",

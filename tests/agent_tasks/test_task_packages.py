@@ -22,6 +22,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
 def _uid(seed: str) -> str:
@@ -34,6 +35,7 @@ def stores(db_uri: str):
         "task": SqlAlchemyTaskStore(db_uri),
         "event": SqlAlchemyTaskEventStore(db_uri),
         "item": SqlAlchemyTaskItemStore(db_uri),
+        "worker": SqlAlchemyWorkerStore(db_uri),
         "agent": SqlAlchemyAgentStore(db_uri),
         "conversation": SqlAlchemyConversationStore(db_uri),
     }
@@ -114,6 +116,7 @@ def test_create_task_package_reconciles_events(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=stores["worker"],
     )
     assert task.state == "pending"
     items = item_store.list_items_for_task(task.id, state="awaiting_user_ack")
@@ -155,6 +158,7 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=stores["worker"],
     )
     first_item = item_store.list_items_for_task(task.id)[0]
     extended = reconcile_events_to_task(
@@ -166,6 +170,7 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
         ),
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=stores["worker"],
     )
     assert extended is not None
     assert extended.id == first_item.id
@@ -198,7 +203,9 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=stores["worker"],
     )
+    worker_store = stores["worker"]
     item = item_store.list_items_for_task(task.id, state="awaiting_user_ack")[0]
     updated, execution = resolve_task_item(
         item=item,
@@ -207,10 +214,11 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=worker_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
         edited_payload={
-            "worker_agent_id": worker_id,
+            "worker_profile_id": worker_id,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-task-test",
             "harness": "cursor",
@@ -252,7 +260,9 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=stores["worker"],
     )
+    worker_store = stores["worker"]
     for item in item_store.list_items_for_task(task.id, state="awaiting_user_ack"):
         updated, execution = resolve_task_item(
             item=item,
@@ -261,6 +271,7 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
             task_store=task_store,
             task_item_store=item_store,
             task_event_store=event_store,
+            worker_store=worker_store,
             conversation_store=conversation_store,
             agent_store=agent_store,
         )
@@ -294,6 +305,7 @@ def test_reject_task_package(stores) -> None:
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
+        worker_store=stores["worker"],
     )
     archived = reject_task_package(
         task=reject_task,

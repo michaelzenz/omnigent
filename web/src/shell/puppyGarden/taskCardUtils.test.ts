@@ -210,7 +210,7 @@ describe("taskCardUtils", () => {
   it("finds execution by id across worker groups", () => {
     const workers = [
       {
-        worker_agent_id: "w1",
+        profile_id: "w1",
         executions: [
           {
             id: "exec-1",
@@ -243,7 +243,7 @@ describe("taskCardUtils", () => {
   it("builds worker options from proposal and task history", () => {
     const options = buildWorkerOptions(
       ["worker-b"],
-      { worker_agent_id: "worker-a", model: "composer-2.5" },
+      { worker_profile_id: "worker-a", model: "composer-2.5" },
       "gpt-5",
     );
     expect(options).toEqual([
@@ -254,7 +254,7 @@ describe("taskCardUtils", () => {
 
   it("detects proposal edits", () => {
     const baseline = {
-      worker_agent_id: "worker-a",
+      worker_profile_id: "worker-a",
       title: "Title",
       description: "",
       instructions: "Do thing",

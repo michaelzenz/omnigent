@@ -87,6 +87,7 @@ async def resolve_task_event(
         conversation_store=conversation_store,
         agent_store=agent_store,
         params=params,
+        routing_reason="secretary-resolve",
     )
     routed_task = task_store.get(task.id)
     if wake and routed_task is not None and routed_task.manager_conversation_id is not None:

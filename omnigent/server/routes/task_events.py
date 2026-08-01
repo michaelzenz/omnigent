@@ -138,7 +138,6 @@ def _event_to_response(event: TaskEvent) -> dict[str, Any]:
         "tags": tags_to_payload(event.tags or []),
         "state": event.state,
         "task_id": event.task_id,
-        "selected_routing_attempt_id": event.selected_routing_attempt_id,
         "created_at": event.created_at,
         "updated_at": event.updated_at,
         "routed_at": event.routed_at,
@@ -152,14 +151,9 @@ def _attempt_to_response(attempt: TaskEventRoutingAttempt) -> dict[str, Any]:
         "object": "agent.task.routing_attempt",
         "event_id": attempt.event_id,
         "candidate_task_id": attempt.candidate_task_id,
-        "candidate_manager_agent_id": attempt.candidate_manager_agent_id,
-        "rank": attempt.rank,
         "score": attempt.score,
-        "decision": attempt.decision,
-        "manager_reason": attempt.manager_reason,
+        "reason": attempt.reason,
         "proposed_at": attempt.proposed_at,
-        "responded_at": attempt.responded_at,
-        "selected_at": attempt.selected_at,
     }
 
 

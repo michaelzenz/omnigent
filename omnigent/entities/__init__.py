@@ -36,12 +36,12 @@ from omnigent.entities.task import (
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
-    TaskEventRoutingResolution,
     EventTag,
     TaskItem,
     TaskItemEvent,
     TaskSessionBinding,
     TaskTag,
+    Worker,
 )
 from omnigent.entities.timer import TimerItem
 from omnigent.entities.session_resources import (
@@ -89,12 +89,12 @@ __all__ = [
     "TaskEvent",
     "TaskEventExecution",
     "TaskEventRoutingAttempt",
-    "TaskEventRoutingResolution",
     "EventTag",
     "TaskItem",
     "TaskItemEvent",
     "TaskSessionBinding",
     "TaskTag",
+    "Worker",
     "TimerItem",
     "UserSecretaryProfile",
     "TerminalCommandData",

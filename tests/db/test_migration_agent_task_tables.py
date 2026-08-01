@@ -35,7 +35,6 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
         "task_tags",
         "task_events",
         "task_event_routing_attempts",
-        "task_event_routing_resolutions",
         "task_event_executions",
         "task_items",
         "task_item_events",
@@ -47,6 +46,7 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     assert "summary" not in columns
     assert "source_internal_session_id" in columns
     assert "source_session_id" not in columns
+    assert "selected_routing_attempt_id" not in columns
     assert "search_text" not in columns
     assert "task_event_tags" not in tables
     task_columns = {column["name"] for column in sa.inspect(db_engine).get_columns("tasks")}
@@ -123,26 +123,6 @@ def test_task_events_state_10_allowed(db_engine: Engine) -> None:
             ),
             {"id": bytes.fromhex("44444444444444444444444444444444")},
         )
-
-
-def test_task_event_routing_attempts_decision_check_enforced(db_engine: Engine) -> None:
-    """Invalid routing decision codes are rejected."""
-    with db_engine.begin() as conn:
-        with pytest.raises(IntegrityError):
-            conn.execute(
-                sa.text(
-                    "INSERT INTO task_event_routing_attempts "
-                    "(workspace_id, id, event_id, candidate_task_id, "
-                    "candidate_manager_agent_id, rank, decision, proposed_at) "
-                    "VALUES (0, :id, :event_id, :task_id, :manager_id, 1, 99, 1)"
-                ),
-                {
-                    "id": bytes.fromhex("22222222222222222222222222222222"),
-                    "event_id": bytes.fromhex("11111111111111111111111111111111"),
-                    "task_id": bytes.fromhex("33333333333333333333333333333333"),
-                    "manager_id": bytes.fromhex("44444444444444444444444444444444"),
-                },
-            )
 
 
 def test_task_event_executions_status_check_enforced(db_engine: Engine) -> None:

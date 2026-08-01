@@ -26,9 +26,7 @@ export interface TaskItemSummary {
   instructions: string | null;
   internal_note: string | null;
   state: string;
-  worker_agent_id: string | null;
-  host_id: string | null;
-  workspace: string | null;
+  worker_id: string | null;
   created_at: number;
   updated_at: number | null;
 }
@@ -68,7 +66,9 @@ export type TaskWorkerRow = TaskWorkerRowItem | TaskWorkerRowExecution;
 export type TaskWorkerLaneState = "new" | "active" | "idle";
 
 export interface TaskWorkerLane {
-  worker_agent_id: string;
+  worker_id: string;
+  profile_id: string;
+  session_id: string | null;
   state: TaskWorkerLaneState;
   situation: string;
   rows: TaskWorkerRow[];
@@ -77,16 +77,15 @@ export interface TaskWorkerLane {
 
 /** @deprecated Use TaskWorkerLane */
 export interface TaskWorkerGroup {
-  worker_agent_id: string;
+  profile_id: string;
   executions: TaskExecutionSummary[];
 }
 
 export interface TaskAssetSummary {
-  id: string;
+  id: number;
   kind: "url";
   title: string;
   url: string | null;
-  sort_order: number;
   created_at: number;
 }
 
@@ -108,7 +107,7 @@ export interface TaskDashboard {
 }
 
 export interface DispatchPayload {
-  worker_agent_id?: string;
+  worker_profile_id?: string;
   title?: string;
   instructions?: string;
   host_id?: string;

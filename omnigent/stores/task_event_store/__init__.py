@@ -9,7 +9,6 @@ from omnigent.entities import (
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
-    TaskEventRoutingResolution,
     EventTag,
     TaskSessionBinding,
 )
@@ -76,7 +75,6 @@ class TaskEventStore(ABC):
         *,
         task_id: str | None = _UNSET,
         state: str | None = None,
-        selected_routing_attempt_id: str | None = _UNSET,
         routed_at: int | None = None,
         processed_at: int | None = None,
     ) -> TaskEvent | None:
@@ -94,52 +92,16 @@ class TaskEventStore(ABC):
         attempt_id: str,
         event_id: str,
         candidate_task_id: str,
-        candidate_manager_agent_id: str,
-        rank: int,
         *,
         score: float | None = None,
-        decision: str = "proposed",
-        manager_reason: str | None = None,
+        reason: str | None = None,
         proposed_at: int | None = None,
-        responded_at: int | None = None,
-        selected_at: int | None = None,
     ) -> TaskEventRoutingAttempt:
         """Insert one routing attempt row."""
 
     @abstractmethod
-    def update_routing_attempt(
-        self,
-        attempt_id: str,
-        *,
-        decision: str | None = None,
-        manager_reason: str | None = None,
-        responded_at: int | None = None,
-        selected_at: int | None = None,
-    ) -> TaskEventRoutingAttempt | None:
-        """Update one routing attempt row."""
-
-    @abstractmethod
     def list_routing_attempts(self, event_id: str) -> list[TaskEventRoutingAttempt]:
-        """List routing attempts for an event ordered by ``rank ASC, id ASC``."""
-
-    @abstractmethod
-    def create_resolution(
-        self,
-        resolution_id: str,
-        event_id: str,
-        selected_attempt_id: str,
-        selected_task_id: str,
-        selected_manager_agent_id: str,
-        *,
-        resolved_by_user_id: str | None = None,
-        resolution_note: str | None = None,
-        created_at: int | None = None,
-    ) -> TaskEventRoutingResolution:
-        """Record the user's final routing choice."""
-
-    @abstractmethod
-    def get_resolution(self, event_id: str) -> TaskEventRoutingResolution | None:
-        """Return the latest resolution for an event, if any."""
+        """List routing attempts for an event ordered by ``proposed_at ASC, id ASC``."""
 
     # ── Executions ───────────────────────────────────────────────
 

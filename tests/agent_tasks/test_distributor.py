@@ -99,8 +99,8 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
     assert updated.task_id == stores["task_id"]
     attempts = event_store.list_routing_attempts(event_id)
     assert len(attempts) == 1
-    assert attempts[0].decision == "selected"
     assert attempts[0].candidate_task_id == stores["task_id"]
+    assert attempts[0].reason == "auto-route score=1.0000"
 
 
 @pytest.mark.asyncio
@@ -183,4 +183,5 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
     assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]
     attempts = event_store.list_routing_attempts(event_id)
-    assert attempts == []
+    assert len(attempts) == 1
+    assert attempts[0].reason == "explicit-task"

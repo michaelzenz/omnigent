@@ -125,7 +125,7 @@ async def test_resolve_inbox_item_activates_paused_package(
         json={
             "resolution": "edit_and_dispatch",
             "edited_payload": {
-                "worker_agent_id": worker_agent_id,
+                "worker_profile_id": worker_agent_id,
                 **_bootstrap_body(),
             },
         },

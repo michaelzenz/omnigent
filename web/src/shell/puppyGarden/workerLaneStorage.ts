@@ -5,8 +5,8 @@ export const INBOX_LANE_ID = "__inbox__";
 
 const LAST_WORKER_KEY_PREFIX = "puppy-garden:last-worker:";
 
-export function isInboxLane(workerAgentId: string): boolean {
-  return workerAgentId === INBOX_LANE_ID;
+export function isInboxLane(workerId: string): boolean {
+  return workerId === INBOX_LANE_ID;
 }
 
 export function buildInboxLane(inboxItems: TaskItemSummary[]): TaskWorkerLane | null {
@@ -20,7 +20,9 @@ export function buildInboxLane(inboxItems: TaskItemSummary[]): TaskWorkerLane | 
   rows.sort((a, b) => b.sort_at - a.sort_at);
   const count = inboxItems.length;
   return {
-    worker_agent_id: INBOX_LANE_ID,
+    worker_id: INBOX_LANE_ID,
+    profile_id: INBOX_LANE_ID,
+    session_id: null,
     state: "new",
     situation: count === 1 ? "1 unassigned" : `${count} unassigned`,
     rows,
@@ -37,9 +39,9 @@ export function readLastExpandedWorker(taskId: string): string | null {
   return localStorage.getItem(lastExpandedWorkerStorageKey(taskId));
 }
 
-export function writeLastExpandedWorker(taskId: string, workerAgentId: string): void {
+export function writeLastExpandedWorker(taskId: string, workerId: string): void {
   if (typeof localStorage === "undefined") return;
-  localStorage.setItem(lastExpandedWorkerStorageKey(taskId), workerAgentId);
+  localStorage.setItem(lastExpandedWorkerStorageKey(taskId), workerId);
 }
 
 export function workerLaneStateLabel(state: TaskWorkerLaneState): string {

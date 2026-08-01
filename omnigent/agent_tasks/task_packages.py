@@ -20,6 +20,7 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WorkerStore
 
 _CLAIMABLE_EVENT_STATES = frozenset(AMBIGUOUS_EVENT_STATES)
 
@@ -75,6 +76,7 @@ def reconcile_events_to_task(
     spec: PackageItemSpec,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
 ) -> TaskItem | None:
     """Create or extend a task item on a pending package and reconcile events."""
     _require_pending_package_task(task)
@@ -116,6 +118,7 @@ def reconcile_events_to_task(
     return create_task_item(
         task=task,
         task_item_store=task_item_store,
+        worker_store=worker_store,
         task_event_store=task_event_store,
         title=spec.title,
         description=spec.description,
@@ -136,6 +139,7 @@ def create_task_package(
     task_store: TaskStore,
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
     task_id: str | None = None,
     internal_note: str | None = None,
     description: str | None = None,
@@ -171,6 +175,7 @@ def create_task_package(
             spec=spec,
             task_item_store=task_item_store,
             task_event_store=task_event_store,
+            worker_store=worker_store,
         )
         if created is None:
             raise OmnigentError(

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem
+from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem, Worker
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_asset_store import TaskAssetStore
+from omnigent.stores.worker_store import WorkerStore
 
 _RUNNING_EXECUTION_STATUSES = frozenset({"queued", "running"})
 _TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
@@ -19,6 +20,7 @@ def build_task_dashboard(
     task: Task,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
+    worker_store: WorkerStore,
     task_asset_store: TaskAssetStore | None = None,
 ) -> dict[str, Any]:
     """Build a card-shaped snapshot for one managed task."""
@@ -26,22 +28,32 @@ def build_task_dashboard(
     inbox_items = [
         item
         for item in items
-        if item.state == "awaiting_user_ack" and not item.worker_agent_id
+        if item.worker_id is None and item.state == "awaiting_user_ack"
     ]
     reconcile_queue = task_event_store.list_events(state="routed", task_id=task.id)
     executions = task_event_store.list_executions_for_task(task.id)
     item_by_id = {item.id: item for item in items}
+    workers = worker_store.list_workers_for_task(task.id)
+    worker_by_id = {worker.id: worker for worker in workers}
 
-    worker_ids: set[str] = set()
+    worker_ids = set(worker_by_id)
     for item in items:
-        if item.worker_agent_id:
-            worker_ids.add(item.worker_agent_id)
+        if item.worker_id is not None:
+            worker_ids.add(item.worker_id)
     for execution in executions:
-        worker_ids.add(execution.worker_agent_id)
+        item = item_by_id.get(execution.task_item_id)
+        if item is not None and item.worker_id is not None:
+            worker_ids.add(item.worker_id)
 
     workers = [
-        _worker_lane(worker_id, items, executions, item_by_id)
+        _worker_lane(
+            worker_by_id[worker_id],
+            items,
+            executions,
+            item_by_id,
+        )
         for worker_id in sorted(worker_ids)
+        if worker_id in worker_by_id
     ]
     workers.sort(key=_worker_lane_rank)
 
@@ -75,11 +87,11 @@ def build_task_dashboard(
 
 def _worker_lane_rank(lane: dict[str, Any]) -> tuple[int, str]:
     order = {"active": 0, "new": 1, "idle": 2}
-    return (order.get(lane["state"], 3), lane["worker_agent_id"])
+    return (order.get(lane["state"], 3), lane["worker_id"])
 
 
 def _worker_lane(
-    worker_agent_id: str,
+    worker: Worker,
     items: list[TaskItem],
     executions: list[TaskEventExecution],
     item_by_id: dict[str, TaskItem],
@@ -87,10 +99,13 @@ def _worker_lane(
     worker_items = [
         item
         for item in items
-        if item.worker_agent_id == worker_agent_id and item.state in _WORKER_LANE_ITEM_STATES
+        if item.worker_id == worker.id and item.state in _WORKER_LANE_ITEM_STATES
     ]
     worker_executions = [
-        execution for execution in executions if execution.worker_agent_id == worker_agent_id
+        execution
+        for execution in executions
+        if item_by_id.get(execution.task_item_id) is not None
+        and item_by_id[execution.task_item_id].worker_id == worker.id
     ]
     has_ever_executed = len(worker_executions) > 0
     covered_item_ids: set[str] = set()
@@ -163,11 +178,12 @@ def _worker_lane(
     )
 
     return {
-        "worker_agent_id": worker_agent_id,
+        "worker_id": worker.id,
+        "profile_id": worker.profile_id,
+        "session_id": worker.session_id,
         "state": state,
         "situation": situation,
         "rows": rows,
-        # Legacy field for callers that still read executions directly.
         "executions": [
             _execution_summary(execution, item_by_id.get(execution.task_item_id))
             for execution in worker_executions
@@ -244,7 +260,6 @@ def _asset_summary(asset: TaskAsset) -> dict[str, Any]:
         "kind": asset.kind,
         "title": asset.title,
         "url": asset.url,
-        "sort_order": asset.sort_order,
         "created_at": asset.created_at,
     }
 
@@ -257,9 +272,7 @@ def _item_summary(item: TaskItem) -> dict[str, Any]:
         "instructions": item.instructions,
         "internal_note": item.internal_note,
         "state": item.state,
-        "worker_agent_id": item.worker_agent_id,
-        "host_id": item.host_id,
-        "workspace": item.workspace,
+        "worker_id": item.worker_id,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }

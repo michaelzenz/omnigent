@@ -20,7 +20,7 @@ export function TaskCardSidePanel({
   selectedExecution,
   onClearSelection,
 }: TaskCardSidePanelProps) {
-  const workerAgentIds = dashboard.workers.map((group) => group.worker_agent_id);
+  const workerProfileIds = dashboard.workers.map((group) => group.profile_id);
 
   if (selectedExecution) {
     return (
@@ -28,7 +28,8 @@ export function TaskCardSidePanel({
         <TaskCardItemDetail
           taskId={taskId}
           execution={selectedExecution}
-          workerAgentIds={workerAgentIds}
+          workerAgentIds={workerProfileIds}
+          workerLanes={dashboard.workers}
           agents={agents}
           defaultModel={defaultModel}
           onClose={onClearSelection}

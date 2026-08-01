@@ -27,10 +27,7 @@ class TaskItemStore(ABC):
         description: str | None = None,
         instructions: str | None = None,
         internal_note: str | None = None,
-        worker_agent_id: str | None = None,
-        host_id: str | None = None,
-        workspace: str | None = None,
-        priority: int = 0,
+        worker_id: str | None = None,
         created_by: str = "manager",
     ) -> TaskItem:
         """Insert a new task item."""
@@ -46,11 +43,11 @@ class TaskItemStore(ABC):
         *,
         created_by: str | None = None,
     ) -> list[TaskItem]:
-        """List task items in one state, newest first."""
+        """List task items in one state."""
 
     @abstractmethod
     def get_item_for_event(self, event_id: str) -> TaskItem | None:
-        """Return a task item linked to an event, if any."""
+        """Return the newest task item linked to an event."""
 
     @abstractmethod
     def list_items_for_task(
@@ -59,7 +56,7 @@ class TaskItemStore(ABC):
         *,
         state: str | None = None,
     ) -> list[TaskItem]:
-        """List task items ordered by priority desc, created_at asc."""
+        """List task items ordered by created_at asc."""
 
     @abstractmethod
     def update_item(
@@ -71,13 +68,10 @@ class TaskItemStore(ABC):
         instructions: str | None = _UNSET,
         description: str | None = _UNSET,
         internal_note: str | None = _UNSET,
-        worker_agent_id: str | None = _UNSET,
-        host_id: str | None = _UNSET,
-        workspace: str | None = _UNSET,
-        priority: int | None = None,
+        worker_id: str | None = _UNSET,
         task_id: str | None = None,
     ) -> TaskItem | None:
-        """Update mutable task-item fields."""
+        """Update mutable task item fields."""
 
     @abstractmethod
     def link_event(
@@ -87,11 +81,11 @@ class TaskItemStore(ABC):
         *,
         relation: str = "triggered",
     ) -> TaskItemEvent:
-        """Associate a task event with a task item."""
+        """Link a task item to a contributing event."""
 
     @abstractmethod
     def list_events_for_item(self, task_item_id: str) -> list[TaskItemEvent]:
-        """List event links for one task item."""
+        """List events linked to a task item."""
 
     @abstractmethod
     def create_fyi_cluster(
@@ -103,7 +97,7 @@ class TaskItemStore(ABC):
         rationale: str | None = None,
         state: str = "awaiting_user_ack",
     ) -> FyiCluster:
-        """Insert a secretary FYI cluster."""
+        """Insert an FYI cluster."""
 
     @abstractmethod
     def get_fyi_cluster(self, cluster_id: str) -> FyiCluster | None:
@@ -111,7 +105,7 @@ class TaskItemStore(ABC):
 
     @abstractmethod
     def get_fyi_cluster_for_event(self, event_id: str) -> FyiCluster | None:
-        """Return an open FYI cluster linked to an event, if any."""
+        """Return the open FYI cluster for an event, if any."""
 
     @abstractmethod
     def list_fyi_clusters(
@@ -120,7 +114,7 @@ class TaskItemStore(ABC):
         owner_user_id: str | None = None,
         state: str | None = None,
     ) -> list[FyiCluster]:
-        """List FYI clusters newest first."""
+        """List FYI clusters."""
 
     @abstractmethod
     def update_fyi_cluster(
@@ -132,12 +126,12 @@ class TaskItemStore(ABC):
         rationale: str | None = None,
         resolved_at: int | None = None,
     ) -> FyiCluster | None:
-        """Update an FYI cluster."""
+        """Update one FYI cluster."""
 
     @abstractmethod
     def link_fyi_cluster_event(self, cluster_id: str, event_id: str) -> None:
-        """Attach an event to an FYI cluster."""
+        """Link an event to an FYI cluster."""
 
     @abstractmethod
     def list_fyi_cluster_event_ids(self, cluster_id: str) -> list[str]:
-        """Return event ids included in an FYI cluster."""
+        """List event ids linked to an FYI cluster."""

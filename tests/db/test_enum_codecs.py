@@ -44,11 +44,6 @@ _CODECS = [
     (ec.TASK_STATE, ec.encode_task_state, ec.decode_task_state),
     (ec.TASK_EVENT_STATE, ec.encode_task_event_state, ec.decode_task_event_state),
     (
-        ec.TASK_EVENT_ROUTING_DECISION,
-        ec.encode_task_event_routing_decision,
-        ec.decode_task_event_routing_decision,
-    ),
-    (
         ec.TASK_EVENT_EXECUTION_STATUS,
         ec.encode_task_event_execution_status,
         ec.decode_task_event_execution_status,
@@ -166,13 +161,6 @@ def test_shipped_codes_are_stable() -> None:
         "running": 5,
         "done": 6,
         "cancelled": 7,
-    }
-    assert ec.TASK_EVENT_ROUTING_DECISION == {
-        "proposed": 1,
-        "accepted": 2,
-        "rejected": 3,
-        "selected": 4,
-        "not_selected": 5,
     }
     assert ec.TASK_EVENT_EXECUTION_STATUS == {
         "queued": 1,

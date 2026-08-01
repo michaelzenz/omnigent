@@ -70,7 +70,6 @@ class TaskEvent:
     :param task_id: Routed task, or ``None`` before routing completes.
     :param payload: JSON payload string. ``None`` when unset.
     :param source: Event source, e.g. ``"github"`` or ``"ci"``. ``None`` when unset.
-    :param selected_routing_attempt_id: Winning routing attempt, or ``None``.
     :param source_key: Stable dedupe key within ``source`` (external ingress id or
         adopted session id for secretary/adoption events). ``None`` when unset.
     :param source_offset: Ingress cursor (e.g. byte offset), or ``None``.
@@ -91,7 +90,6 @@ class TaskEvent:
     task_id: str | None = None
     payload: str | None = None
     source: str | None = None
-    selected_routing_attempt_id: str | None = None
     source_key: str | None = None
     source_offset: int | None = None
     source_internal_session_id: str | None = None
@@ -116,60 +114,44 @@ class EventTag:
 @dataclass
 class TaskEventRoutingAttempt:
     """
-    One routing proposal from a task event to a candidate task manager.
+    Record of how an event was routed to a task (for monitoring).
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param event_id: Event being routed.
-    :param candidate_task_id: Proposed destination task.
-    :param candidate_manager_agent_id: Manager agent for the candidate task.
-    :param rank: Shortlist position (1 = best retrieval score).
-    :param score: Retrieval score, or ``None`` when unset.
-    :param decision: One of ``"proposed"``, ``"accepted"``, ``"rejected"``,
-        ``"selected"``, ``"not_selected"``.
-    :param manager_reason: Manager justification. ``None`` when unset.
-    :param proposed_at: Unix epoch seconds when the proposal was sent.
-    :param responded_at: Unix epoch seconds when the manager responded,
-        or ``None``.
-    :param selected_at: Unix epoch seconds when the user selected this attempt,
-        or ``None``.
+    :param candidate_task_id: Destination task.
+    :param proposed_at: Unix epoch seconds when routing was recorded.
+    :param score: Tag-overlap score, or ``None`` when unset.
+    :param reason: Human-readable routing explanation from the distributor or
+        secretary. ``None`` when unset.
     """
 
     id: str
     event_id: str
     candidate_task_id: str
-    candidate_manager_agent_id: str
-    rank: int
-    decision: str
     proposed_at: int
     score: float | None = None
-    manager_reason: str | None = None
-    responded_at: int | None = None
-    selected_at: int | None = None
+    reason: str | None = None
 
 
 @dataclass
-class TaskEventRoutingResolution:
+class Worker:
     """
-    Records the user's final routing choice when multiple managers accepted.
+    A worker slot on a managed task.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
-    :param event_id: Event that was resolved.
-    :param selected_attempt_id: Winning routing attempt.
-    :param selected_task_id: Task the event was routed to.
-    :param selected_manager_agent_id: Manager agent that won the selection.
-    :param resolved_by_user_id: User who made the selection, or ``None``.
-    :param resolution_note: Optional note from the resolver.
-    :param created_at: Unix epoch seconds when the resolution was recorded.
+    :param task_id: Parent managed task.
+    :param profile_id: Registered agent profile that runs this worker.
+    :param session_id: Live worker session after dispatch, or ``None`` before spawn.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
 
     id: str
-    event_id: str
-    selected_attempt_id: str
-    selected_task_id: str
-    selected_manager_agent_id: str
+    task_id: str
+    profile_id: str
     created_at: int
-    resolved_by_user_id: str | None = None
-    resolution_note: str | None = None
+    session_id: str | None = None
+    updated_at: int | None = None
 
 
 @dataclass
@@ -184,10 +166,7 @@ class TaskItem:
     :param description: User-facing reason this item exists.
     :param instructions: Dispatch instructions for the worker.
     :param internal_note: Agent-facing context to avoid re-querying sources.
-    :param worker_agent_id: Proposed or assigned worker agent.
-    :param host_id: Host override for dispatch.
-    :param workspace: Workspace override for dispatch.
-    :param priority: Sort priority within a task backlog.
+    :param worker_id: Assigned worker slot, or ``None`` while still in the inbox.
     :param created_by: ``"manager"``, ``"secretary"``, or ``"user"``.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
@@ -201,10 +180,7 @@ class TaskItem:
     description: str | None = None
     instructions: str | None = None
     internal_note: str | None = None
-    worker_agent_id: str | None = None
-    host_id: str | None = None
-    workspace: str | None = None
-    priority: int = 0
+    worker_id: str | None = None
     created_by: str = "manager"
     updated_at: int | None = None
 
@@ -213,13 +189,12 @@ class TaskItem:
 class TaskAsset:
     """A link or file reference attached to one managed task."""
 
-    id: str
+    id: int
     task_id: str
     kind: str
     title: str
     created_at: int
     url: str | None = None
-    sort_order: int = 0
 
 
 @dataclass

@@ -27,9 +27,9 @@ interface TaskCardWorkersProps {
 }
 
 function laneDisplayName(lane: TaskWorkerLane, agents: AvailableAgent[]): string {
-  if (isInboxLane(lane.worker_agent_id)) return "Inbox";
-  const match = agents.find((agent) => agent.id === lane.worker_agent_id);
-  return match?.display_name ?? match?.name ?? lane.worker_agent_id;
+  if (isInboxLane(lane.worker_id)) return "Inbox";
+  const match = agents.find((agent) => agent.id === lane.profile_id);
+  return match?.display_name ?? match?.name ?? lane.profile_id;
 }
 
 export function TaskCardWorkers({
@@ -40,8 +40,8 @@ export function TaskCardWorkers({
   defaultModel,
 }: TaskCardWorkersProps) {
   const allAgentIds = useMemo(() => agents.map((agent) => agent.id), [agents]);
-  const workerAgentIds = useMemo(
-    () => workers.map((lane) => lane.worker_agent_id),
+  const workerProfileIds = useMemo(
+    () => workers.map((lane) => lane.profile_id),
     [workers],
   );
 
@@ -61,7 +61,7 @@ export function TaskCardWorkers({
       return;
     }
     const stored = readLastExpandedWorker(taskId);
-    if (stored && lanes.some((lane) => lane.worker_agent_id === stored)) {
+    if (stored && lanes.some((lane) => lane.worker_id === stored)) {
       setExpandedLaneId(stored);
       return;
     }
@@ -71,10 +71,10 @@ export function TaskCardWorkers({
     }
     const active = workers.find((lane) => lane.state === "active");
     if (active) {
-      setExpandedLaneId(active.worker_agent_id);
+      setExpandedLaneId(active.worker_id);
       return;
     }
-    setExpandedLaneId(lanes[0]?.worker_agent_id ?? null);
+    setExpandedLaneId(lanes[0]?.worker_id ?? null);
   }, [taskId, lanes, inboxItems.length, workers]);
 
   const toggleLane = (laneId: string) => {
@@ -110,28 +110,28 @@ export function TaskCardWorkers({
         data-testid="task-card-workers"
       >
         {lanes.map((lane) => {
-          const expanded = expandedLaneId === lane.worker_agent_id;
+          const expanded = expandedLaneId === lane.worker_id;
           const name = laneDisplayName(lane, agents);
-          const rowWorkerAgentIds = isInboxLane(lane.worker_agent_id)
+          const rowWorkerProfileIds = isInboxLane(lane.worker_id)
             ? allAgentIds
-            : workerAgentIds;
+            : workerProfileIds;
 
           return (
             <article
-              key={lane.worker_agent_id}
+              key={lane.worker_id}
               className={cn(
                 "shrink-0 overflow-hidden rounded-md border shadow-sm",
                 workerLaneStateClass(lane.state),
               )}
-              data-testid={`worker-lane-${lane.worker_agent_id}`}
+              data-testid={`worker-lane-${lane.worker_id}`}
               data-expanded={expanded ? "true" : "false"}
             >
               <button
                 type="button"
                 className="flex w-full shrink-0 items-center gap-2 px-2 py-1.5 text-left"
-                onClick={() => toggleLane(lane.worker_agent_id)}
+                onClick={() => toggleLane(lane.worker_id)}
                 aria-expanded={expanded}
-                data-testid={`worker-lane-toggle-${lane.worker_agent_id}`}
+                data-testid={`worker-lane-toggle-${lane.worker_id}`}
               >
                 {expanded ? (
                   <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -155,12 +155,13 @@ export function TaskCardWorkers({
                     "border-t border-border/60 px-2 pb-2 pt-1",
                     TASK_CARD_INNER_SCROLL_CLASS,
                   )}
-                  data-testid={`worker-lane-rows-scroll-${lane.worker_agent_id}`}
+                  data-testid={`worker-lane-rows-scroll-${lane.worker_id}`}
                 >
                   <TaskCardWorkerRows
                     taskId={taskId}
                     rows={lane.rows}
-                    workerAgentIds={rowWorkerAgentIds}
+                    workerAgentIds={rowWorkerProfileIds}
+                    workerLanes={workers}
                     agents={agents}
                     defaultModel={defaultModel}
                   />
