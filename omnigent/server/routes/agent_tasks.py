@@ -25,8 +25,6 @@ from omnigent.agent_tasks.adoption import (
 from omnigent.agent_tasks.agent_builtins import (
     PER_USER_TASK_ROLES,
     TASK_SECRETARY_ROLE,
-    TASK_WORKER_AGENT_NAME,
-    resolve_task_agent_id,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.constants import (
@@ -34,35 +32,14 @@ from omnigent.agent_tasks.constants import (
     DEFAULT_SECRETARY_MODEL,
 )
 from omnigent.agent_tasks.dashboard import build_task_dashboard
-from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
 )
 from omnigent.agent_tasks.fyi_clusters import (
     create_fyi_cluster,
+    list_fyi_board_cards,
     resolve_fyi_cluster,
-)
-from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
-from omnigent.agent_tasks.secretary_inbox import build_ambiguous_inbox
-from omnigent.agent_tasks.fyi_clusters import list_fyi_board_cards
-from omnigent.agent_tasks.task_match import (
-    load_events,
-    rank_tasks_for_events,
-    ranked_task_payload,
-    routable_tasks,
-    collect_event_tags,
-    task_tags_from_event_tags,
-)
-from omnigent.agent_tasks.task_packages import (
-    PackageItemSpec,
-    create_task_package,
-    reconcile_events_to_task,
-    reject_task_package,
-)
-from omnigent.agent_tasks.secretary_session import (
-    bootstrap_secretary_conversation,
-    get_or_create_role_profile,
 )
 from omnigent.agent_tasks.items import (
     create_task_item,
@@ -72,6 +49,27 @@ from omnigent.agent_tasks.items import (
     resolve_task_item,
     submit_item_for_user_ack,
 )
+from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
+from omnigent.agent_tasks.secretary_inbox import build_ambiguous_inbox
+from omnigent.agent_tasks.secretary_session import (
+    bootstrap_secretary_conversation,
+    get_or_create_role_profile,
+)
+from omnigent.agent_tasks.task_match import (
+    collect_event_tags,
+    load_events,
+    rank_tasks_for_events,
+    ranked_task_payload,
+    routable_tasks,
+    task_tags_from_event_tags,
+)
+from omnigent.agent_tasks.task_packages import (
+    PackageItemSpec,
+    create_task_package,
+    reconcile_events_to_task,
+    reject_task_package,
+)
+from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.entities import FyiCluster, Task, TaskAsset, TaskEventExecution, TaskItem, TaskTag
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
@@ -83,12 +81,12 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
-from omnigent.stores.task_asset_store import TaskAssetStore
-from omnigent.stores.worker_store import WorkerStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.worker_store import WorkerStore
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
 
@@ -633,9 +631,7 @@ def create_agent_tasks_router(
         if auth_provider is None or user_id is None or _is_admin(user_id):
             return tasks
         return [
-            task
-            for task in tasks
-            if task.owner_user_id is None or task.owner_user_id == user_id
+            task for task in tasks if task.owner_user_id is None or task.owner_user_id == user_id
         ]
 
     async def _require_agent_profile(agent_profile_id: str) -> None:
@@ -654,9 +650,7 @@ def create_agent_tasks_router(
         return task
 
     def _tags_from_input(task_id: str, tags: list[TaskTagInput]) -> list[TaskTag]:
-        return [
-            TaskTag(task_id=task_id, tag_type=tag.tag_type, tag=tag.tag) for tag in tags
-        ]
+        return [TaskTag(task_id=task_id, tag_type=tag.tag_type, tag=tag.tag) for tag in tags]
 
     @router.post("/agent-tasks")
     async def create_task(request: Request, body: CreateAgentTaskRequest) -> dict[str, Any]:
@@ -1441,8 +1435,7 @@ def create_agent_tasks_router(
             user_id = require_user(request, auth_provider)
             cluster = await asyncio.to_thread(task_item_store.get_fyi_cluster, cluster_id)
             if cluster is None or (
-                cluster.owner_user_id != _effective_user_id(user_id)
-                and not _is_admin(user_id)
+                cluster.owner_user_id != _effective_user_id(user_id) and not _is_admin(user_id)
             ):
                 raise OmnigentError("FYI cluster not found", code=ErrorCode.NOT_FOUND)
 

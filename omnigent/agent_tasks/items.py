@@ -9,18 +9,18 @@ from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
     resolve_bootstrap_params,
 )
-from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.dispatch import dispatch_worker_for_item, resolve_dispatch_params
+from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
-from omnigent.stores.agent_store import AgentStore
-from omnigent.stores.task_store import TaskStore
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item"]
