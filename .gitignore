@@ -6,6 +6,8 @@ node_modules/
 uv.lock
 web/package-lock.json
 reviews/
+# Scratch space for in-progress notes; shared designs belong in designs/.
+notes/
 
 # Generated artifact; never committed.
 .pytest_cache/
