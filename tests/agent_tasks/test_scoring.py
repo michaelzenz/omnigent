@@ -7,7 +7,7 @@ from omnigent.agent_tasks.scoring import (
     rank_tasks_for_event_tags,
     score_task_for_event_tags,
 )
-from omnigent.entities import Task, TaskEventTag, TaskTag
+from omnigent.entities import Task, EventTag, TaskTag
 
 
 def _task(task_id: str) -> Task:
@@ -33,8 +33,8 @@ class _TagStore:
 
 def test_score_task_counts_tag_overlap() -> None:
     event_tags = [
-        TaskEventTag(event_id="e1", tag_type="repo", tag="omnigent-fork"),
-        TaskEventTag(event_id="e1", tag_type="component", tag="ci"),
+        EventTag(tag_type="repo", tag="omnigent-fork"),
+        EventTag(tag_type="component", tag="ci"),
     ]
     task_tags = [
         TaskTag(task_id="t1", tag_type="repo", tag="omnigent-fork"),
@@ -72,7 +72,7 @@ def test_rank_tasks_orders_by_score() -> None:
             ],
         },
     )
-    event_tags = [TaskEventTag(event_id="e1", tag_type="repo", tag="omnigent-fork")]
+    event_tags = [EventTag(tag_type="repo", tag="omnigent-fork")]
     ranked = rank_tasks_for_event_tags(
         event_tags=event_tags,
         tasks=[_task("low"), _task("high")],

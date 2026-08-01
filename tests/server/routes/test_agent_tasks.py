@@ -12,7 +12,7 @@ from omnigent.agent_tasks.secretary_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.host_store import HostStore
-from omnigent.entities import TaskEventTag
+from omnigent.entities import EventTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -170,8 +170,7 @@ async def test_list_executions(
         event_type="build.finished",
         title="Build passed",
         task_id=task_id,
-        manager_agent_id=manager_agent_id,
-        tags=[TaskEventTag(event_id=event_id, tag_type="domain", tag="ci")],
+        tags=[EventTag(tag_type="domain", tag="ci")],
     )
     item_store.create_item(
         task_item_id,

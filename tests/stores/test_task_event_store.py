@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from omnigent.entities import TaskEventTag
+from omnigent.entities import EventTag
 from omnigent.stores.task_event_store import TASK_SESSION_BINDING_KINDS
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 
@@ -29,7 +29,7 @@ def test_create_event_and_get_by_source_dedupes(store: SqlAlchemyTaskEventStore)
         source="ci",
         source_key="build-42",
         source_offset=100,
-        tags=[TaskEventTag(event_id=event_id, tag_type="domain", tag="ci")],
+        tags=[EventTag(tag_type="domain", tag="ci")],
     )
     assert created.source_key == "build-42"
     assert created.source_offset == 100
@@ -42,7 +42,7 @@ def test_create_event_and_get_by_source_dedupes(store: SqlAlchemyTaskEventStore)
     assert loaded is not None
     assert loaded.id == event_id
     assert loaded.tags == [
-        TaskEventTag(event_id=event_id, tag_type="domain", tag="ci"),
+        EventTag(tag_type="domain", tag="ci"),
     ]
 
 

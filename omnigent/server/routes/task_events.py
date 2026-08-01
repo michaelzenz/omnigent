@@ -19,7 +19,7 @@ from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.stores.agent_task.tags import tags_to_payload
-from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt, TaskEventTag
+from omnigent.entities import Task, TaskEvent, TaskEventRoutingAttempt, EventTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
@@ -35,7 +35,7 @@ from omnigent.stores.task_store import TaskStore
 _VALID_EVENT_STATES = frozenset(TASK_EVENT_STATE)
 
 
-class TaskEventTagInput(BaseModel):
+class EventTagInput(BaseModel):
     """One typed tag on an ingress task event."""
 
     tag_type: str
@@ -61,7 +61,7 @@ class CreateIngressTaskEventRequest(BaseModel):
     source_offset: int = 0
     source_internal_session_id: str | None = None
     task_id: str | None = None
-    tags: list[TaskEventTagInput] = Field(default_factory=list)
+    tags: list[EventTagInput] = Field(default_factory=list)
 
     @field_validator("event_type", "title")
     @classmethod
@@ -249,10 +249,7 @@ def create_task_events_router(
 
         profile = await _load_secretary_profile(user_id)
         event_id = uuid.uuid4().hex
-        tags = [
-            TaskEventTag(event_id=event_id, tag_type=tag.tag_type, tag=tag.tag)
-            for tag in body.tags
-        ]
+        tags = [EventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in body.tags]
 
         def _create() -> TaskEvent:
             return task_event_store.create_event(

@@ -8,7 +8,7 @@ import httpx
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
-from omnigent.entities import TaskEventTag, TaskTag
+from omnigent.entities import EventTag, TaskTag
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -208,7 +208,7 @@ async def test_match_tasks_includes_paused_task(
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
-        tags=[TaskEventTag(event_id=event_id, tag_type="repo", tag="omnigent-fork")],
+        tags=[EventTag(tag_type="repo", tag="omnigent-fork")],
     )
 
     matched = await client.post(

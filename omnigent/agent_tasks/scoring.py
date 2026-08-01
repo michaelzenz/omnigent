@@ -7,14 +7,14 @@ from omnigent.agent_tasks.constants import (
     AUTO_ROUTE_MIN_CONFIDENCE,
     AUTO_ROUTE_MIN_MARGIN,
 )
-from omnigent.entities import Task, TaskEventTag, TaskTag
+from omnigent.entities import Task, EventTag, TaskTag
 from omnigent.stores.agent_task.tags import tag_pair, task_tag_pairs
 from omnigent.stores.task_store import TaskStore
 
 
 def score_task_for_event_tags(
     *,
-    event_tags: list[TaskEventTag],
+    event_tags: list[EventTag],
     task_tags: list[TaskTag],
 ) -> float:
     """Return the fraction of event tags matched on the task."""
@@ -26,7 +26,7 @@ def score_task_for_event_tags(
 
 
 def candidate_task_ids_for_event_tags(
-    event_tags: list[TaskEventTag],
+    event_tags: list[EventTag],
     *,
     task_store: TaskStore,
 ) -> set[str]:
@@ -41,7 +41,7 @@ def candidate_task_ids_for_event_tags(
 
 def rank_tasks_for_event_tags(
     *,
-    event_tags: list[TaskEventTag],
+    event_tags: list[EventTag],
     tasks: list[Task],
     task_store: TaskStore,
     limit: int = AUTO_ROUTE_MAX_CANDIDATES,

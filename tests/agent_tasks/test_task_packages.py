@@ -16,7 +16,7 @@ from omnigent.agent_tasks.task_packages import (
     reject_task_package,
 )
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import TaskEventTag, TaskTag
+from omnigent.entities import EventTag, TaskTag
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -71,7 +71,7 @@ def test_rank_tasks_for_events_includes_paused_match(stores) -> None:
         "PR checks failed",
         state="awaiting_grouping",
         tags=[
-            TaskEventTag(event_id=_uid("event-match"), tag_type="repo", tag="omnigent-fork"),
+            EventTag(tag_type="repo", tag="omnigent-fork"),
         ],
     )
     ranked = rank_tasks_for_events(
@@ -96,7 +96,7 @@ def test_create_task_package_reconciles_events(stores) -> None:
         "PR checks failed",
         state="awaiting_grouping",
         tags=[
-            TaskEventTag(event_id=event_id, tag_type="repo", tag="acme/widgets"),
+            EventTag(tag_type="repo", tag="acme/widgets"),
         ],
     )
 
@@ -329,7 +329,7 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
         "PR checks failed",
         state="awaiting_grouping",
         tags=[
-            TaskEventTag(event_id=event_id, tag_type="repo", tag="omnigent-fork"),
+            EventTag(tag_type="repo", tag="omnigent-fork"),
         ],
     )
     inbox = build_ambiguous_inbox(

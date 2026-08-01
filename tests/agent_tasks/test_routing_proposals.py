@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from omnigent.agent_tasks.secretary_inbox import cluster_ambiguous_events
-from omnigent.entities import TaskEventTag
+from omnigent.entities import EventTag
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 
 
@@ -29,8 +29,8 @@ def test_cluster_ambiguous_events_groups_by_tags(event_store) -> None:
         source="poll",
         source_key="org/repo#891",
         tags=[
-            TaskEventTag(event_id=_uid("e1"), tag_type="repo", tag="org/repo"),
-            TaskEventTag(event_id=_uid("e1"), tag_type="pr", tag="891"),
+            EventTag(tag_type="repo", tag="org/repo"),
+            EventTag(tag_type="pr", tag="891"),
         ],
     )
     e2 = event_store.create_event(
@@ -41,8 +41,8 @@ def test_cluster_ambiguous_events_groups_by_tags(event_store) -> None:
         source="poll",
         source_key="org/repo#891",
         tags=[
-            TaskEventTag(event_id=_uid("e2"), tag_type="repo", tag="org/repo"),
-            TaskEventTag(event_id=_uid("e2"), tag_type="pr", tag="891"),
+            EventTag(tag_type="repo", tag="org/repo"),
+            EventTag(tag_type="pr", tag="891"),
         ],
     )
     clusters = cluster_ambiguous_events([e1, e2])

@@ -10,7 +10,7 @@ from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME
 from omnigent.agent_tasks.distributor import distribute_event
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import TaskTag
-from omnigent.entities import TaskEventTag
+from omnigent.entities import EventTag
 from omnigent.entities.secretary import UserSecretaryProfile
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -74,7 +74,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
         "Upload retries failed",
         state="received",
         tags=[
-            TaskEventTag(event_id=event_id, tag_type="repo", tag="omnigent-fork"),
+            EventTag(tag_type="repo", tag="omnigent-fork"),
         ],
     )
     profile = UserSecretaryProfile(

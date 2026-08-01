@@ -10,7 +10,7 @@ from omnigent.entities import (
     TaskEventExecution,
     TaskEventRoutingAttempt,
     TaskEventRoutingResolution,
-    TaskEventTag,
+    EventTag,
     TaskSessionBinding,
 )
 
@@ -41,7 +41,7 @@ class TaskEventStore(ABC):
         source_offset: int | None = None,
         source_internal_session_id: str | None = None,
         state: str = "received",
-        tags: list[TaskEventTag] | None = None,
+        tags: list[EventTag] | None = None,
     ) -> TaskEvent:
         """Insert a new task event."""
 
@@ -83,7 +83,7 @@ class TaskEventStore(ABC):
         """Update mutable event fields."""
 
     @abstractmethod
-    def get_event_tags(self, event_id: str) -> list[TaskEventTag]:
+    def get_event_tags(self, event_id: str) -> list[EventTag]:
         """Return immutable ingress tags for an event."""
 
     # ── Routing ──────────────────────────────────────────────────

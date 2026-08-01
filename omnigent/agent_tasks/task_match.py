@@ -6,7 +6,7 @@ from typing import Any
 
 from omnigent.agent_tasks.constants import AUTO_ROUTE_MAX_CANDIDATES
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
-from omnigent.entities import Task, TaskEvent, TaskEventTag, TaskTag
+from omnigent.entities import Task, TaskEvent, EventTag, TaskTag
 from omnigent.stores.agent_task.tags import merge_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
@@ -67,13 +67,13 @@ def collect_event_tags(
     event_ids: list[str],
     *,
     task_event_store: TaskEventStore,
-) -> list[TaskEventTag]:
+) -> list[EventTag]:
     """Merge tags from multiple events, last write wins per tag_type."""
     events = load_events(event_ids, task_event_store=task_event_store)
     return merge_event_tags(events)
 
 
-def task_tags_from_event_tags(task_id: str, event_tags: list[TaskEventTag]) -> list[TaskTag]:
+def task_tags_from_event_tags(task_id: str, event_tags: list[EventTag]) -> list[TaskTag]:
     """Convert event tags into task tags for a new managed task."""
     seen: set[tuple[str, str]] = set()
     tags: list[TaskTag] = []
@@ -86,7 +86,7 @@ def task_tags_from_event_tags(task_id: str, event_tags: list[TaskEventTag]) -> l
     return tags
 
 
-def internal_note_from_event_tags(event_tags: list[TaskEventTag]) -> str | None:
+def internal_note_from_event_tags(event_tags: list[EventTag]) -> str | None:
     """Derive a task internal_note hint from event tags."""
     for tag in event_tags:
         if tag.tag_type == "repo":

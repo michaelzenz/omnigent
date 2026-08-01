@@ -87,7 +87,7 @@ class TaskEvent:
     title: str
     state: str
     created_at: int
-    tags: list[TaskEventTag] | None = None
+    tags: list[EventTag] | None = None
     task_id: str | None = None
     payload: str | None = None
     source: str | None = None
@@ -101,16 +101,14 @@ class TaskEvent:
 
 
 @dataclass
-class TaskEventTag:
+class EventTag:
     """
-    A typed tag on a task event.
+    A typed ingress tag on a task event (stored inline on ``task_events.tags``).
 
-    :param event_id: Event this tag belongs to.
     :param tag_type: Tag dimension.
     :param tag: Tag value within the dimension.
     """
 
-    event_id: str
     tag_type: str
     tag: str
 

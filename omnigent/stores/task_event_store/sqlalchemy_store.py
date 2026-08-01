@@ -28,7 +28,7 @@ from omnigent.entities import (
     TaskEventExecution,
     TaskEventRoutingAttempt,
     TaskEventRoutingResolution,
-    TaskEventTag,
+    EventTag,
     TaskSessionBinding,
 )
 from omnigent.stores.agent_task.tags import decode_event_tags, encode_event_tags
@@ -44,7 +44,7 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         title=row.title,
         state=decode_task_event_state(row.state),
         created_at=row.created_at,
-        tags=decode_event_tags(row.id, row.tags),
+        tags=decode_event_tags(row.tags),
         task_id=row.task_id,
         payload=row.payload,
         source=row.source,
@@ -141,13 +141,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         source_offset: int | None = None,
         source_internal_session_id: str | None = None,
         state: str = "received",
-        tags: list[TaskEventTag] | None = None,
+        tags: list[EventTag] | None = None,
     ) -> TaskEvent:
-        tag_rows = tags or []
-        normalized_tags = [
-            TaskEventTag(event_id=event_id, tag_type=tag.tag_type, tag=tag.tag)
-            for tag in tag_rows
-        ]
         row = SqlTaskEvent(
             id=event_id,
             task_id=task_id,
@@ -158,7 +153,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             source_key=source_key,
             source_offset=source_offset,
             source_internal_session_id=source_internal_session_id,
-            tags=encode_event_tags(normalized_tags),
+            tags=encode_event_tags(tags or []),
             state=encode_task_event_state(state),
             created_at=now_epoch(),
             updated_at=None,
@@ -256,7 +251,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             session.flush()
             return _event_to_entity(row)
 
-    def get_event_tags(self, event_id: str) -> list[TaskEventTag]:
+    def get_event_tags(self, event_id: str) -> list[EventTag]:
         event = self.get_event(event_id)
         if event is None:
             return []
