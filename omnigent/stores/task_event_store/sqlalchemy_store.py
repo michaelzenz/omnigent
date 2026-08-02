@@ -136,6 +136,18 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 return None
             return _event_to_entity(row)
 
+    def get_events(self, event_ids: list[str]) -> list[TaskEvent]:
+        if not event_ids:
+            return []
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEvent)
+                .where(SqlTaskEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskEvent.id.in_(event_ids))
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_event_to_entity(row) for row in rows]
+
     def get_event_by_source(
         self,
         *,

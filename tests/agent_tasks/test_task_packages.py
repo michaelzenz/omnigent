@@ -13,6 +13,7 @@ from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     create_task_package,
     reconcile_events_to_task,
+    reconcile_events_to_task_batch,
     reject_task_package,
 )
 from omnigent.db.utils import generate_agent_id
@@ -176,6 +177,43 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
     assert extended.id == first_item.id
     links = item_store.list_events_for_item(first_item.id)
     assert {link.event_id for link in links} == {e1, e2}
+
+
+def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
+    """A shared event is claimed by the first spec; the second spec skips it."""
+    task_store = stores["task"]
+    event_store = stores["event"]
+    item_store = stores["item"]
+    manager_id = generate_agent_id()
+    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
+    e1, e2, e3 = (_uid(f"dedup-{i}") for i in range(3))
+    for eid, etype in ((e1, "build.finished"), (e2, "build.failed"), (e3, "build.finished")):
+        event_store.create_event(eid, etype, "flaky", state="awaiting_grouping")
+
+    task = task_store.create(
+        _uid("dedup-task"),
+        "Dedup package",
+        agent_profile_id=manager_id,
+        owner_user_id=_uid("owner"),
+        state="pending",
+    )
+    results = reconcile_events_to_task_batch(
+        task=task,
+        specs=[
+            PackageItemSpec(title="A", event_ids=[e1, e2]),
+            PackageItemSpec(title="B", event_ids=[e2, e3]),
+        ],
+        task_item_store=item_store,
+        task_event_store=event_store,
+        worker_store=stores["worker"],
+    )
+    assert all(results)
+    item_a, item_b = results
+    assert {link.event_id for link in item_store.list_events_for_item(item_a.id)} == {e1, e2}
+    # e2 was consumed by A, so B only gets e3.
+    assert {link.event_id for link in item_store.list_events_for_item(item_b.id)} == {e3}
+    for eid in (e1, e2, e3):
+        assert event_store.get_event(eid).state == "reconciled"
 
 
 def test_resolve_inbox_item_activates_paused_package(stores) -> None:

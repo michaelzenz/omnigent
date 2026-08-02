@@ -236,8 +236,66 @@ async def test_reconcile_events_extends_package_item(
         },
     )
     assert reconciled.status_code == 200
-    assert reconciled.json()["id"] == item_id
+    assert reconciled.json()["object"] == "list"
+    assert reconciled.json()["data"][0]["id"] == item_id
     assert event_store.get_event(second_event) is not None
     assert event_store.get_event(second_event).state == "reconciled"
     links = item_store.list_events_for_item(item_id)
     assert {link.event_id for link in links} == {first_event, second_event}
+
+
+async def test_reconcile_events_batch_creates_multiple_items(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+    db_uri: str,
+) -> None:
+    """POST reconcile-events with `items` reconciles multiple items in one call."""
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    events = [_uid(f"batch-event-{i}") for i in range(4)]
+    for event_id in events:
+        event_store.create_event(
+            event_id,
+            "build.finished",
+            "Flaky upload",
+            state="awaiting_grouping",
+        )
+
+    package = await client.post(
+        "/v1/agent-tasks/packages",
+        json={
+            "title": "Upload retries",
+            "agent_profile_id": manager_agent_id,
+            "items": [
+                {"title": "Seed item", "event_ids": [events[0]]},
+            ],
+        },
+    )
+    assert package.status_code == 200
+    task_id = package.json()["id"]
+
+    # One call, two new items — one fresh and one extending the seed item.
+    seed_item_id = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0].id
+    reconciled = await client.post(
+        f"/v1/agent-tasks/{task_id}/reconcile-events",
+        json={
+            "items": [
+                {"title": "Second failure", "event_ids": [events[1], events[2]]},
+                {
+                    "title": "Seed item",
+                    "event_ids": [events[3]],
+                    "item_id": seed_item_id,
+                },
+            ],
+        },
+    )
+    assert reconciled.status_code == 200
+    body = reconciled.json()
+    assert body["object"] == "list"
+    assert len(body["data"]) == 2
+    # Every event is now reconciled exactly once.
+    for event_id in events:
+        assert event_store.get_event(event_id).state == "reconciled"
+    # The seed item now carries both its original and the newly attached event.
+    seed_links = {link.event_id for link in item_store.list_events_for_item(seed_item_id)}
+    assert seed_links == {events[0], events[3]}

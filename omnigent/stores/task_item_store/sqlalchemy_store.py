@@ -145,6 +145,17 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 return None
             return _item_to_entity(row)
 
+    def get_event_ids_claimed_by_items(self, event_ids: list[str]) -> set[str]:
+        if not event_ids:
+            return set()
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskItemEvent.event_id)
+                .where(SqlTaskItemEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskItemEvent.event_id.in_(event_ids))
+            )
+            return {row[0] for row in session.execute(stmt).all()}
+
     def list_items_for_task(
         self,
         task_id: str,
@@ -280,6 +291,25 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             if row is None:
                 return None
             return _fyi_cluster_to_entity(row)
+
+    def get_event_ids_claimed_by_fyi_clusters(self, event_ids: list[str]) -> set[str]:
+        if not event_ids:
+            return set()
+        with self._session() as session:
+            stmt = (
+                select(SqlFyiClusterEvent.event_id)
+                .join(
+                    SqlFyiCluster,
+                    (SqlFyiClusterEvent.workspace_id == SqlFyiCluster.workspace_id)
+                    & (SqlFyiClusterEvent.cluster_id == SqlFyiCluster.id),
+                )
+                .where(SqlFyiClusterEvent.workspace_id == current_workspace_id())
+                .where(SqlFyiClusterEvent.event_id.in_(event_ids))
+                .where(
+                    SqlFyiCluster.state == encode_fyi_cluster_state("awaiting_user_ack"),
+                )
+            )
+            return {row[0] for row in session.execute(stmt).all()}
 
     def list_fyi_clusters(
         self,

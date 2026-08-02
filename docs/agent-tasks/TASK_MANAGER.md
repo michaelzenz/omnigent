@@ -15,7 +15,7 @@ Wake notices:
 When events reach `routed`, reconcile them into **task items**:
 
 1. `GET /v1/agent-tasks/{id}/reconcile-queue` — events awaiting reconciliation
-2. `POST /v1/agent-tasks/{id}/reconcile-events` — create or extend a task item and mark events reconciled
+2. `POST /v1/agent-tasks/{id}/reconcile-events` — create or extend task item(s) and mark events reconciled (batch: pass `items` for several at once)
 3. Or create items directly: `POST /v1/agent-tasks/{id}/items`
 4. `POST /v1/agent-tasks/{id}/ack` — ack routed events as processed without creating items
 

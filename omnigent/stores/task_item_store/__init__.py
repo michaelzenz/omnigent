@@ -50,6 +50,10 @@ class TaskItemStore(ABC):
         """Return the newest task item linked to an event."""
 
     @abstractmethod
+    def get_event_ids_claimed_by_items(self, event_ids: list[str]) -> set[str]:
+        """Subset of ``event_ids`` already linked to any task item."""
+
+    @abstractmethod
     def list_items_for_task(
         self,
         task_id: str,
@@ -106,6 +110,10 @@ class TaskItemStore(ABC):
     @abstractmethod
     def get_fyi_cluster_for_event(self, event_id: str) -> FyiCluster | None:
         """Return the open FYI cluster for an event, if any."""
+
+    @abstractmethod
+    def get_event_ids_claimed_by_fyi_clusters(self, event_ids: list[str]) -> set[str]:
+        """Subset of ``event_ids`` linked to an open FYI cluster."""
 
     @abstractmethod
     def list_fyi_clusters(

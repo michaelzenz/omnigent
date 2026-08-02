@@ -78,14 +78,21 @@ Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
   curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
     -H 'Content-Type: application/json' \
     -d '{
-      "event_ids":["<id>"],
-      "title":"<title>",
-      "description":"<why this item exists for the user>",
-      "instructions":"<worker instructions>",
-      "internal_note":"<agent context — links, ids, prior conclusions>",
-      "item_id":"<optional-existing-item-id>"
+      "items":[
+        {
+          "event_ids":["<id>"],
+          "title":"<title>",
+          "description":"<why this item exists for the user>",
+          "instructions":"<worker instructions>",
+          "internal_note":"<agent context — links, ids, prior conclusions>",
+          "item_id":"<optional-existing-item-id>"
+        }
+      ]
     }'
   ```
+  - Batch: pass multiple items in `items` to reconcile several at once (one read
+    pass; a shared event is claimed by the first item that lists it). The
+    single-item shorthand (`title` + `event_ids` at the top level) still works.
   - This case you need to reconcile into taskItem. Update title, description, or
     instructions if needed. Use `description` for the user-facing why; put source
     excerpts and routing rationale in `internal_note` such that you or other agent can have

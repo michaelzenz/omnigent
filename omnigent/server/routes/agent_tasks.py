@@ -12,7 +12,7 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from omnigent.agent_tasks.adoption import (
     SESSION_ADOPTION_PROPOSAL,
@@ -65,7 +65,7 @@ from omnigent.agent_tasks.task_match import (
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     create_task_package,
-    reconcile_events_to_task,
+    reconcile_events_to_task_batch,
     reject_task_package,
 )
 from omnigent.agent_tasks.workers import worker_for_item
@@ -349,18 +349,44 @@ class CreateTaskPackageRequest(BaseModel):
 
 
 class ReconcileEventsToTaskRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/reconcile-events``."""
+    """Request body for ``POST /v1/agent-tasks/{task_id}/reconcile-events``.
 
-    title: str
-    event_ids: list[str] = Field(min_length=1)
+    Batch by default: pass ``items`` to reconcile multiple items in one call. The
+    single-item shorthand (``title`` + ``event_ids`` + optional ``item_id``) is
+    accepted for backward compatibility and normalizes to a one-element batch.
+    """
+
+    items: list[PackageItemInput] | None = None
+    title: str | None = None
+    event_ids: list[str] | None = None
     description: str | None = None
     instructions: str | None = None
     internal_note: str | None = None
     item_id: str | None = None
 
+    @model_validator(mode="after")
+    def _normalize(self) -> ReconcileEventsToTaskRequest:
+        if self.items:
+            return self
+        if self.title is not None and self.event_ids:
+            self.items = [
+                PackageItemInput(
+                    title=self.title,
+                    event_ids=self.event_ids,
+                    description=self.description,
+                    instructions=self.instructions,
+                    internal_note=self.internal_note,
+                    item_id=self.item_id,
+                ),
+            ]
+            return self
+        raise ValueError("Provide `items` (or `title` + `event_ids`)")
+
     @field_validator("title")
     @classmethod
-    def _non_empty(cls, value: str) -> str:
+    def _non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         stripped = value.strip()
         if not stripped:
             raise ValueError("value must be a non-empty string")
@@ -1333,34 +1359,42 @@ def create_agent_tasks_router(
             task_id: str,
             body: ReconcileEventsToTaskRequest,
         ) -> dict[str, Any]:
-            """Reconcile ambiguous events into a pending task package item."""
+            """Reconcile ambiguous events into pending task package items (batch)."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
+            specs = [
+                PackageItemSpec(
+                    title=item.title,
+                    event_ids=item.event_ids,
+                    description=item.description,
+                    instructions=item.instructions,
+                    internal_note=item.internal_note,
+                    item_id=item.item_id,
+                )
+                for item in body.items or []
+            ]
 
-            def _reconcile() -> TaskItem:
-                created = reconcile_events_to_task(
+            def _reconcile() -> list[TaskItem | None]:
+                return reconcile_events_to_task_batch(
                     task=task,
-                    spec=PackageItemSpec(
-                        title=body.title,
-                        event_ids=body.event_ids,
-                        description=body.description,
-                        instructions=body.instructions,
-                        internal_note=body.internal_note,
-                        item_id=body.item_id,
-                    ),
+                    specs=specs,
                     task_item_store=task_item_store,
                     task_event_store=task_event_store,
                     worker_store=worker_store,
                 )
-                if created is None:
-                    raise OmnigentError(
-                        "No claimable ambiguous events for task package item",
-                        code=ErrorCode.CONFLICT,
-                    )
-                return created
 
-            item = await asyncio.to_thread(_reconcile)
-            return _item_to_response(item)
+            results = await asyncio.to_thread(_reconcile)
+            if all(result is None for result in results):
+                raise OmnigentError(
+                    "No claimable ambiguous events for task package item",
+                    code=ErrorCode.CONFLICT,
+                )
+            return {
+                "object": "list",
+                "data": [
+                    _item_to_response(item) for item in results if item is not None
+                ],
+            }
 
         @router.get("/agent-tasks/board/pending")
         async def list_board_pending(request: Request) -> dict[str, Any]:

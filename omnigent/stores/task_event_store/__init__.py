@@ -47,6 +47,10 @@ class TaskEventStore(ABC):
         """Return an event by id, or ``None`` if not found."""
 
     @abstractmethod
+    def get_events(self, event_ids: list[str]) -> list[TaskEvent]:
+        """Return events for the given ids (order unspecified; missing ids skipped)."""
+
+    @abstractmethod
     def get_event_by_source(
         self,
         *,
