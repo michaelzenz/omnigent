@@ -19,6 +19,12 @@ AUTO_ROUTE_MAX_CANDIDATES = 10
 SECRETARY_BATCH_MAX_SIZE = 10
 MANAGER_BATCH_MAX_SIZE = 10
 
+# Secretary packager: tag-overlap coefficient (|A ∩ B| / min(|A|, |B|)) at/above
+# which two events join the same cluster. 0.8 ≈ "4 of 5 tags shared".
+SECRETARY_TAG_SIMILARITY_THRESHOLD = 0.8
+# How many candidate task ids to embed in a routed-cluster notice.
+SECRETARY_CANDIDATE_LIMIT = 5
+
 UNRECONCILED_EVENT_STATES = frozenset({"routed"})
 AMBIGUOUS_EVENT_STATES = frozenset({"awaiting_grouping"})
 CLASSIFIED_FYI_EVENT_STATE = "classified_fyi"

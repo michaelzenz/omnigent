@@ -15,8 +15,43 @@ Use Bash for every endpoint below. Do not use browser tools for routing work.
 
 ## Trigger
 
-`[System: please triage and route these events]` — one or more events
-are in `awaiting_grouping`.
+A JSON notice is enqueued to your queue. Parse the payload directly — it is
+self-contained, so you do **not** need to call `ambiguous-inbox` or
+`match-tasks` first.
+
+- **Routed batch** — events the distributor could not auto-route. One notice per
+  poll holds up to `batch_size` events, packed cluster-by-cluster oldest-first;
+  a cluster larger than the remaining capacity is capped to its oldest events
+  (the rest stay `awaiting_grouping` and ship on a later poll). Similar events
+  stay contiguous within their cluster:
+  ```json
+  {
+    "prompt": "[System: please triage and route these events] The following are possible clusters waiting for route/reconcile.",
+    "clusters": [
+      {
+        "tags": [{"tag_type": "repo", "tag": "acme/widgets"}],
+        "events": [
+          {"id": "...", "event_type": "build.finished", "title": "...",
+           "source": "github", "source_key": "...", "state": "awaiting_grouping",
+           "created_at": 123, "tags": [...], "payload": "<raw event json>"}
+        ]
+      }
+    ],
+    "candidate_task_ids": ["<task_id>", ...]
+  }
+  ```
+  Events within each cluster are oldest-first; `candidate_task_ids` are ranked
+  suggestions (active + pending tasks) ranked across the whole batch — confirm
+  or override before reconciling.
+
+- **Orphan session** — one `session.orphan` event per notice, isolated (never
+  bundled with routed events), no candidates:
+  ```json
+  {
+    "prompt": "[System: please triage and route these events]\nRead each orphan session, write omnigent.task.routing_repo ...",
+    "events": [{"id": "...", "event_type": "session.orphan", "title": "...", "source_key": "<session_id>", ...}]
+  }
+  ```
 
 ---
 
@@ -25,29 +60,10 @@ are in `awaiting_grouping`.
 We first find the right task for the taskEvent, because task has richer info. Then we reconcile events
 into existing/new taskItem as execution unit, so that we can avoid user make decisions on too many things.
 
-### 1. List ambiguous events
+### 1. Pick a task per cluster
 
-```bash
-curl -sS "$RUNNER_SERVER_URL/v1/task-events/ambiguous-inbox"
-```
-
-Returns clusters of stalled events (`awaiting_grouping`) grouped by shared event tags.
-Use each cluster’s `tags` and `suggested_candidates` when deciding how to route.
-Candidates include both **active** and **pending** tasks.
-
-### 2. List routable tasks (active and pending)
-
-rank tasks for specific events:
-This api returns task candidates for the input group, usually used for finding candidate
-for a group of close events, so that you can pick from smaller subset of candidates(limit to 5 for now)
-
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/match-tasks" \
-  -H 'Content-Type: application/json' \
-  -d '{"event_ids":["<id1>","<id2>"]}'
-```
-
-List items on a package (use `item_id` when extending one):
+Use the notice's `candidate_task_ids` as the starting point. If you need the
+items already on a candidate package (to decide whether to extend one):
 
 ```bash
 curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items"
@@ -61,7 +77,7 @@ new item.
 
 Optional filter, e.g. inbox items only: `?state=awaiting_user_ack`.
 
-### 3. Decide each cluster
+### 2. Decide each cluster
 
 - **Confident existing active-task match** → route to that task’s manager (no worker
   dispatch) with `POST /v1/task-events/batch-resolve` (use one or more

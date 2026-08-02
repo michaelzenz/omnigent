@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -16,8 +17,9 @@ from omnigent.agent_tasks.queue.packagers import (
     configure_secretary_packager,
     get_secretary_packager,
 )
+from omnigent.agent_tasks.secretary_inbox import cluster_events_by_similarity
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import AgentQueueKey
+from omnigent.entities import AgentQueueKey, EventTag, TaskEvent, TaskTag
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -76,6 +78,7 @@ def secretary_setup(db_uri: str) -> dict:
         store=queue_store,
         task_event_store=event_store,
         task_role_profile_store=profile_store,
+        task_store=task_store,
         status_reader=status_reader,
         # Negative threshold so freshly-created events qualify immediately when
         # idle (age 0 > -1). Tests that need "wait because young" raise it.
@@ -343,3 +346,226 @@ def test_get_secretary_packager_returns_configured(secretary_setup: dict) -> Non
 def test_get_secretary_packager_none_when_unconfigured() -> None:
     configure_secretary_packager(None)
     assert get_secretary_packager() is None
+
+
+# ── Level 2: tag-similarity clustering, orphan isolation, self-contained notice ──
+
+
+def _evt(
+    eid: str,
+    *,
+    tags: list[EventTag] | None = None,
+    created_at: int = 0,
+    event_type: str = "build.finished",
+    title: str = "x",
+) -> TaskEvent:
+    return TaskEvent(
+        id=eid,
+        event_type=event_type,
+        title=title,
+        state="awaiting_grouping",
+        created_at=created_at,
+        tags=tags,
+    )
+
+
+def test_cluster_events_by_similarity_groups_overlap_and_keeps_oldest_first() -> None:
+    shared = [
+        EventTag(tag_type="repo", tag="r"),
+        EventTag(tag_type="branch", tag="b"),
+        EventTag(tag_type="file", tag="f"),
+        EventTag(tag_type="line", tag="1"),
+    ]
+    e_old = _evt("old", tags=[*shared, EventTag(tag_type="severity", tag="high")], created_at=100)
+    e_new = _evt("new", tags=[*shared, EventTag(tag_type="severity", tag="low")], created_at=200)
+    # 4 of 5 tags shared → overlap 0.8 ≥ threshold → one cluster, oldest first.
+    clusters = cluster_events_by_similarity([e_new, e_old], threshold=0.8)
+    assert len(clusters) == 1
+    assert [e.id for e in clusters[0].events] == ["old", "new"]
+
+
+def test_cluster_events_by_similarity_separates_low_overlap() -> None:
+    e1 = _evt("a", tags=[EventTag(tag_type="repo", tag="x")], created_at=100)
+    e2 = _evt("b", tags=[EventTag(tag_type="repo", tag="y")], created_at=200)
+    clusters = cluster_events_by_similarity([e1, e2], threshold=0.8)
+    assert len(clusters) == 2
+
+
+def test_cluster_events_by_similarity_buckets_tagless() -> None:
+    e1 = _evt("a", tags=None, created_at=100)
+    e2 = _evt("b", tags=None, created_at=200)
+    e3 = _evt("c", tags=[EventTag(tag_type="repo", tag="r")], created_at=300)
+    clusters = cluster_events_by_similarity([e1, e2, e3], threshold=0.8)
+    assert len(clusters) == 2
+    tagless = [c for c in clusters if not c.events[0].tags]
+    assert {e.id for e in tagless[0].events} == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_similar_events_packaged_into_one_notice_with_candidates(
+    secretary_setup: dict,
+) -> None:
+    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
+    task_store: SqlAlchemyTaskStore = secretary_setup["task_store"]
+    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
+    packager: SecretaryPackager = secretary_setup["packager"]
+    secretary_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    task_id = _uid("task")
+    task_store.create(
+        task_id,
+        "Widget CI",
+        agent_profile_id=secretary_setup["agent_store"].get_by_name("task-manager-agent").id,
+        state="pending",
+        tags=[TaskTag(task_id=task_id, tag_type="repo", tag="acme/widgets")],
+    )
+    shared = [
+        EventTag(tag_type="repo", tag="acme/widgets"),
+        EventTag(tag_type="branch", tag="main"),
+        EventTag(tag_type="file", tag="a"),
+        EventTag(tag_type="line", tag="1"),
+    ]
+    for i, sev in enumerate(("high", "low")):
+        event_store.create_event(
+            _uid(f"sim{i}"),
+            "build.finished",
+            f"Build {i}",
+            state="awaiting_grouping",
+            owner_user_id=secretary_setup["user_id"],
+            tags=[*shared, EventTag(tag_type="severity", tag=sev)],
+        )
+    packager.scan_once_sync()
+
+    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    assert len(items) == 1
+    payload = json.loads(items[0].payload)
+    assert "possible clusters waiting for route/reconcile" in payload["prompt"]
+    assert len(payload["clusters"]) == 1
+    cluster_events = payload["clusters"][0]["events"]
+    assert len(cluster_events) == 2
+    assert task_id in payload["candidate_task_ids"]
+
+
+@pytest.mark.asyncio
+async def test_orphan_is_isolated_from_routed_events(secretary_setup: dict) -> None:
+    from omnigent.agent_tasks.adoption import (
+        SessionAdoptionContext,
+        configure_session_adoption,
+        enqueue_orphan_session,
+    )
+
+    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
+    packager: SecretaryPackager = secretary_setup["packager"]
+    secretary_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    configure_session_adoption(
+        SessionAdoptionContext(
+            task_store=secretary_setup["task_store"],
+            task_event_store=event_store,
+            worker_store=secretary_setup["worker_store"],
+            conversation_store=secretary_setup["conversation_store"],
+        )
+    )
+    event_store.create_event(
+        _uid("routed"),
+        "build.finished",
+        "Routed event",
+        state="awaiting_grouping",
+        owner_user_id=secretary_setup["user_id"],
+    )
+    conv = secretary_setup["conversation_store"].create_conversation(
+        title="Mystery session",
+        agent_id=secretary_setup["agent_store"].get_by_name("task-manager-agent").id,
+        host_id=_uid("host_orphan"),
+        workspace="/tmp/mystery",
+    )
+    await enqueue_orphan_session(conv.id, owner_user_id=secretary_setup["user_id"])
+    packager.scan_once_sync()
+
+    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    assert len(items) == 2
+    by_kind = {json.loads(it.payload).get("candidate_task_ids") is not None for it in items}
+    # One notice carries candidates (routed), the other does not (orphan).
+    assert by_kind == {True, False}
+    orphan_item = next(
+        it for it in items if json.loads(it.payload).get("candidate_task_ids") is None
+    )
+    orphan_payload = json.loads(orphan_item.payload)
+    assert "routing_repo" in orphan_payload["prompt"]
+    assert orphan_payload["events"][0]["event_type"] == "session.orphan"
+
+
+@pytest.mark.asyncio
+async def test_cluster_larger_than_batch_size_is_capped_and_defers_rest(
+    secretary_setup: dict,
+) -> None:
+    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
+    packager: SecretaryPackager = secretary_setup["packager"]
+    secretary_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+    packager._batch_size = 2
+
+    tags = [EventTag(tag_type="repo", tag="acme/widgets")]
+    for i in range(3):
+        event_store.create_event(
+            _uid(f"cap{i}"),
+            "build.finished",
+            f"Build {i}",
+            state="awaiting_grouping",
+            owner_user_id=secretary_setup["user_id"],
+            tags=tags,
+        )
+    packager.scan_once_sync()
+
+    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    assert len(items) == 1
+    payload = json.loads(items[0].payload)
+    # Capped at batch_size=2; one event deferred.
+    assert len(payload["clusters"][0]["events"]) == 2
+    # The deferred event is still awaiting_grouping and ships on the next poll.
+    packager.scan_once_sync()
+    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    assert len(items) == 2
+    second = json.loads(items[1].payload)
+    assert len(second["clusters"][0]["events"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_small_clusters_fill_into_one_notice(secretary_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
+    packager: SecretaryPackager = secretary_setup["packager"]
+    secretary_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    event_store.create_event(
+        _uid("fill_a"),
+        "build.finished",
+        "A",
+        state="awaiting_grouping",
+        owner_user_id=secretary_setup["user_id"],
+        tags=[EventTag(tag_type="repo", tag="x")],
+    )
+    event_store.create_event(
+        _uid("fill_b"),
+        "build.finished",
+        "B",
+        state="awaiting_grouping",
+        owner_user_id=secretary_setup["user_id"],
+        tags=[EventTag(tag_type="repo", tag="y")],
+    )
+    packager.scan_once_sync()
+
+    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    assert len(items) == 1
+    payload = json.loads(items[0].payload)
+    # Two dissimilar events → two clusters, packed into one notice.
+    assert len(payload["clusters"]) == 2
+    assert {c["events"][0]["id"] for c in payload["clusters"]} == {
+        _uid("fill_a"),
+        _uid("fill_b"),
+    }

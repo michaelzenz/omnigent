@@ -37,8 +37,16 @@ from omnigent.agent_tasks.agent_builtins import (
 from omnigent.agent_tasks.constants import (
     MANAGER_BATCH_MAX_SIZE,
     SECRETARY_BATCH_MAX_SIZE,
+    SECRETARY_CANDIDATE_LIMIT,
+    SECRETARY_TAG_SIMILARITY_THRESHOLD,
 )
+from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
 from omnigent.agent_tasks.notices import _format_manager_notice, _format_secretary_stall_notice
+from omnigent.agent_tasks.secretary_inbox import (
+    AmbiguousEventCluster,
+    cluster_events_by_similarity,
+)
+from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -66,6 +74,13 @@ class _PendingBatch:
 
     key: AgentQueueKey
     events: list[TaskEvent] = field(default_factory=list)
+    # Secretary-only metadata carried through to ``_flush`` so the notice can
+    # carry the included clusters / orphan flag. For a routed batch this holds
+    # the clusters packed into this notice (each possibly capped to ``batch_size``);
+    # ``events`` is the flat union of those clusters' events. Other roles leave
+    # these at their defaults.
+    clusters: list[AmbiguousEventCluster] | None = None
+    is_orphan: bool = False
 
     @property
     def oldest_age_s(self) -> float:
@@ -115,7 +130,7 @@ class Packager(ABC):
         """
 
     @abstractmethod
-    def _flush(self, key: AgentQueueKey, events: list[TaskEvent]) -> AgentQueueItem | None:
+    def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         """Format the payload and enqueue one item. ``None`` if unpackageable."""
 
     def _should_send(self, batch: _PendingBatch) -> bool:
@@ -161,7 +176,7 @@ class Packager(ABC):
         for batch in self._collect_pending():
             if self._should_send(batch):
                 try:
-                    self._flush(batch.key, batch.events)
+                    self._flush(batch)
                 except Exception:
                     _logger.exception(
                         "packager %s failed to flush %s",
@@ -173,7 +188,7 @@ class Packager(ABC):
         """Run one scan synchronously (tests only)."""
         for batch in self._collect_pending():
             if self._should_send(batch):
-                self._flush(batch.key, batch.events)
+                self._flush(batch)
 
 
 # ── Secretary packager ──────────────────────────────
@@ -183,7 +198,10 @@ class SecretaryPackager(Packager):
     """Stage-1 packager for secretary events.
 
     Scans ``awaiting_grouping`` events each tick, groups by owner, excludes
-    already-claimed events, and for each owner evaluates the batching matrix.
+    already-claimed events, and for each owner splits orphans (``session.orphan``)
+    from routed business events. Routed events are clustered by tag similarity
+    (leader-based, oldest-first) so each notice is a focused batch of similar
+    events carrying its own candidate task ids; each orphan is its own notice.
     The agent-idle check reads the secretary's bound session from the role
     profile and looks up its raw status.
     """
@@ -193,11 +211,14 @@ class SecretaryPackager(Packager):
         store: AgentQueueStore,
         task_event_store: TaskEventStore,
         task_role_profile_store: TaskRoleProfileStore,
+        task_store: TaskStore,
         status_reader: _StatusReader,
         *,
         poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
         batch_size: int = SECRETARY_BATCH_MAX_SIZE,
         age_threshold_s: float = DEFAULT_PACKAGER_AGE_THRESHOLD_S,
+        similarity_threshold: float = SECRETARY_TAG_SIMILARITY_THRESHOLD,
+        candidate_limit: int = SECRETARY_CANDIDATE_LIMIT,
     ) -> None:
         super().__init__(
             store,
@@ -207,7 +228,10 @@ class SecretaryPackager(Packager):
         )
         self._task_event_store = task_event_store
         self._task_role_profile_store = task_role_profile_store
+        self._task_store = task_store
         self._status_reader = status_reader
+        self._similarity_threshold = similarity_threshold
+        self._candidate_limit = candidate_limit
 
     @property
     def role(self) -> str:
@@ -230,8 +254,44 @@ class SecretaryPackager(Packager):
                 owner,
             )
             unclaimed = [e for e in owner_events if e.id not in claimed]
-            if unclaimed:
-                batches.append(_PendingBatch(key=key, events=unclaimed))
+            if not unclaimed:
+                continue
+            orphans = [e for e in unclaimed if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
+            routed = [e for e in unclaimed if e.event_type != SESSION_ORPHAN_EVENT_TYPE]
+            # Each orphan is its own batch — adoption is heavy and per-session.
+            for orphan in orphans:
+                batches.append(_PendingBatch(key=key, events=[orphan], is_orphan=True))
+            # Routed events: cluster by tag similarity, then fill ONE notice per
+            # poll up to ``batch_size``. Clusters are taken oldest-first; a cluster
+            # that would overflow the remaining capacity is capped to its oldest
+            # ``remaining`` events (the rest stay ``awaiting_grouping`` and are
+            # re-clustered next poll). Similar events stay contiguous per cluster.
+            clusters = cluster_events_by_similarity(
+                routed, threshold=self._similarity_threshold
+            )
+            clusters.sort(key=lambda c: (c.events[0].created_at, c.events[0].id))
+            included_clusters: list[AmbiguousEventCluster] = []
+            included_events: list[TaskEvent] = []
+            for cluster in clusters:
+                remaining = self._batch_size - len(included_events)
+                if remaining <= 0:
+                    break
+                if len(cluster.events) <= remaining:
+                    take = cluster
+                else:
+                    take = AmbiguousEventCluster(
+                        tags=cluster.tags, events=cluster.events[:remaining]
+                    )
+                included_clusters.append(take)
+                included_events.extend(take.events)
+            if included_events:
+                batches.append(
+                    _PendingBatch(
+                        key=key,
+                        events=included_events,
+                        clusters=included_clusters,
+                    )
+                )
         return batches
 
     def _is_idle(self, key: AgentQueueKey) -> bool:
@@ -243,25 +303,39 @@ class SecretaryPackager(Packager):
             return False
         return self._status_reader.status_for(profile.conversation_id) == "idle"
 
-    def _flush(self, key: AgentQueueKey, events: list[TaskEvent]) -> AgentQueueItem | None:
+    def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         profile = self._task_role_profile_store.get(
-            key.owner_user_id,
+            batch.key.owner_user_id,
             TASK_SECRETARY_ROLE,
         )
         if profile is None or profile.conversation_id is None:
             _logger.debug(
                 "secretary packager: no live secretary for %s; "
                 "%d events stay in awaiting_grouping",
-                key.owner_user_id,
-                len(events),
+                batch.key.owner_user_id,
+                len(batch.events),
             )
             return None
-        notice = _format_secretary_stall_notice(events)
+        candidate_task_ids: list[str] = []
+        if not batch.is_orphan:
+            ranked = rank_tasks_for_events(
+                events=batch.events,
+                tasks=routable_tasks(self._task_store),
+                task_store=self._task_store,
+                limit=self._candidate_limit,
+            )
+            candidate_task_ids = [task.id for task, _score in ranked]
+        notice = _format_secretary_stall_notice(
+            batch.events,
+            clusters=batch.clusters,
+            candidate_task_ids=candidate_task_ids,
+            is_orphan=batch.is_orphan,
+        )
         return self._store.enqueue(
             uuid.uuid4().hex,
-            key,
+            batch.key,
             "notice",
-            source_ids=[event.id for event in events],
+            source_ids=[event.id for event in batch.events],
             payload=notice,
         )
 
@@ -343,23 +417,23 @@ class ManagerPackager(Packager):
             return False
         return self._status_reader.status_for(task.manager_conversation_id) == "idle"
 
-    def _flush(self, key: AgentQueueKey, events: list[TaskEvent]) -> AgentQueueItem | None:
-        if key.scope_id is None:
+    def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
+        if batch.key.scope_id is None:
             return None
-        task = self._task_store.get(key.scope_id)
+        task = self._task_store.get(batch.key.scope_id)
         if task is None or task.manager_conversation_id is None:
             _logger.debug(
                 "manager packager: no live manager session for task %s; %d events stay routed",
-                key.scope_id,
-                len(events),
+                batch.key.scope_id,
+                len(batch.events),
             )
             return None
-        notice = _format_manager_notice(events)
+        notice = _format_manager_notice(batch.events)
         return self._store.enqueue(
             uuid.uuid4().hex,
-            key,
+            batch.key,
             "notice",
-            source_ids=[event.id for event in events],
+            source_ids=[event.id for event in batch.events],
             payload=notice,
         )
 

@@ -1541,6 +1541,7 @@ def create_app(
                 store=agent_queue_store,
                 task_event_store=task_event_store,
                 task_role_profile_store=task_role_profile_store,
+                task_store=task_store,
                 status_reader=_PackagerCacheReader(),
             )
             if task_store is not None:

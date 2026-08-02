@@ -12,7 +12,6 @@ import json
 import logging
 
 from omnigent.agent_tasks.event_types import (
-    SESSION_ORPHAN_EVENT_TYPE,
     WORKER_EXECUTION_FINISHED_EVENT_TYPE,
 )
 
@@ -57,29 +56,49 @@ def _format_execution_detail(event) -> str:
     return f"Worker execution {status} for item {item_title!r}{summary_block}"
 
 
-def _format_secretary_stall_notice(events: list) -> str:
+def _format_secretary_stall_notice(
+    events: list,
+    *,
+    clusters: list | None = None,
+    candidate_task_ids: list[str] | None = None,
+    is_orphan: bool = False,
+) -> str:
     """Format the notice the secretary packager hands the dispatcher.
 
-    A batch for one user can mix two kinds of stalled work: business events the
-    distributor could not auto-route (``awaiting_grouping``) and orphan sessions
-    that need a routing profile (``session.orphan``). The triage events get a
-    short prompt — the secretary decides how to route — and orphans get the
-    adoption steps. Each gets its own line so the secretary knows which action
-    to take per event.
+    Returns a JSON string the secretary reads directly. A routed batch carries
+    ``clusters`` (each with its tags and full event entries, similar events kept
+    contiguous) plus ranked ``candidate_task_ids``, so it can reconcile/route
+    without a follow-up ``ambiguous-inbox``/``match-tasks`` call. An orphan batch
+    carries the adoption steps in the prompt and a flat ``events`` list (no
+    candidates).
     """
-    orphans = [e for e in events if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
-    routed = [e for e in events if e.event_type != SESSION_ORPHAN_EVENT_TYPE]
-    lines = ["[System: please triage and route these events]"]
-    if routed:
-        for event in routed:
-            lines.append(f"- {event.event_type}: {event.title!r} ({event.state})")
-    if orphans:
-        lines.append(
+    from omnigent.agent_tasks.secretary_inbox import event_notice_entry
+
+    if is_orphan:
+        prompt = (
+            "[System: please triage and route these events]\n"
             "Read each orphan session, write omnigent.task.routing_repo (and "
             "optional omnigent.task.routing_intent), then call propose-adoption. "
             "User must accept before adopt."
         )
-        for event in orphans:
-            session_id = event.source_key or "?"
-            lines.append(f"- session.orphan: {event.title!r} ({session_id})")
-    return "\n".join(lines)
+        payload: dict[str, object] = {
+            "prompt": prompt,
+            "events": [event_notice_entry(e) for e in events],
+        }
+    else:
+        prompt = (
+            "[System: please triage and route these events] "
+            "The following are possible clusters waiting for route/reconcile."
+        )
+        payload = {
+            "prompt": prompt,
+            "clusters": [
+                {
+                    "tags": c.tags,
+                    "events": [event_notice_entry(e) for e in c.events],
+                }
+                for c in (clusters or [])
+            ],
+            "candidate_task_ids": candidate_task_ids or [],
+        }
+    return json.dumps(payload, separators=(",", ":"))
