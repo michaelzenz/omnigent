@@ -23,6 +23,7 @@ from omnigent.agent_tasks.queue.dispatcher import (
     DispatchTarget,
     RoleDispatchHandler,
 )
+from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.entities import AgentQueueItem, Task
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -323,3 +324,28 @@ class WorkerDispatchHandler(RoleDispatchHandler):
                     "session was created but may not be live",
                     worker_conv_id,
                 )
+
+    async def on_parked(self, item: AgentQueueItem, state: str) -> None:
+        """Mirror the park onto the task item the queue entry was carrying.
+
+        Without this the board keeps showing the item as queued or running while
+        its slot is halted — a stall with no explanation, which is the failure
+        the queue control plane exists to make visible.
+        """
+        if not item.source_ids:
+            return
+        item_id = item.source_ids[0]
+
+        def _park() -> None:
+            updated = self._task_item_store.update_item(item_id, state=state)
+            if updated is None:
+                return
+            task = self._task_store.get(updated.task_id)
+            if task is not None:
+                sync_task_activity_state(
+                    task,
+                    task_store=self._task_store,
+                    task_item_store=self._task_item_store,
+                )
+
+        await asyncio.to_thread(_park)

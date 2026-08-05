@@ -103,16 +103,17 @@ class AgentQueueItem:
     :param scope_id: Task/worker id narrowing the role, or ``None``.
     :param kind: One of :data:`AGENT_QUEUE_ITEM_KINDS`.
     :param state: ``"queued"``, ``"dispatched"``, ``"done"``, ``"cancelled"``,
-        or ``"dispatch_failed"``.
+        ``"dispatch_failed"``, or ``"interrupted"``. The last two are *parked*:
+        the queue halts and the item waits to be retried or cancelled.
     :param created_at: Unix epoch seconds at row creation.
     :param source_ids: Business-layer ids (events, task items) this item
         consumed. Packaging commits these before the sources are treated as
         claimed, so a crash mid-package neither loses nor double-packages work.
     :param payload: JSON-encoded dispatch inputs. ``None`` when the kind needs
         none.
-    :param priority: Higher sorts first within a queue.
-    :param seq: Monotonic arrival order, assigned at enqueue. Breaks ties that
-        ``created_at`` cannot, being second-granularity.
+    :param seq: Monotonic arrival order, assigned at enqueue, and the only
+        ordering a queue has — items dispatch in the order they were inserted.
+        Breaks ties that ``created_at`` cannot, being second-granularity.
     :param not_before: Earliest Unix epoch second this item may dispatch, used
         for debounce and snooze. There is no retry backoff — a failed dispatch
         halts the queue rather than rescheduling.
@@ -133,7 +134,6 @@ class AgentQueueItem:
     created_at: int
     source_ids: list[str] | None = None
     payload: str | None = None
-    priority: int = 0
     seq: int = 0
     not_before: int | None = None
     last_error: str | None = None

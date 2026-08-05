@@ -136,7 +136,7 @@ FYI_CLUSTER_STATE: dict[str, int] = {
 TASK_ITEM_STATE: dict[str, int] = {
     "draft": 1,
     "awaiting_user_ack": 2,
-    "approved": 3,
+    # 3 was "approved", removed: accepting an item goes straight to "queued".
     "queued": 4,
     "running": 5,
     "done": 6,
@@ -146,14 +146,23 @@ TASK_ITEM_STATE: dict[str, int] = {
     # worker that ran and failed, which returns to "queued" with an execution row
     # carrying the reason.
     "dispatch_failed": 8,
+    # Stopped by the user mid-run, or found abandoned after the host that was
+    # running it went away. Parked rather than terminal: the queue halts and the
+    # item waits to be retried or removed.
+    "interrupted": 9,
 }
 
 AGENT_QUEUE_ITEM_STATE: dict[str, int] = {
     "queued": 1,
     "dispatched": 2,
+    # The turn ended on its own — whether the agent succeeded or crashed. It
+    # means the slot is free, not that the work went well.
     "done": 3,
     "cancelled": 4,
     "dispatch_failed": 5,
+    # Twin of "dispatch_failed": parked, halts the queue, keeps its source
+    # claims, and leaves only by retry or cancel.
+    "interrupted": 6,
 }
 
 AGENT_QUEUE_STATE: dict[str, int] = {

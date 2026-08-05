@@ -28,7 +28,10 @@ from omnigent.stores.worker_store import WorkerStore
 
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item"]
 _INBOX_STATES = frozenset({"awaiting_user_ack"})
-_EDITABLE_WORK_ITEM_STATES = frozenset({"queued", "approved"})
+# Editable while the work is waiting: before it is handed over, and after it is
+# parked. A parked item is stopped precisely so its instructions can be fixed
+# before the retry.
+_EDITABLE_WORK_ITEM_STATES = frozenset({"queued", "interrupted", "dispatch_failed"})
 
 
 def _generate_item_id() -> str:

@@ -41,7 +41,6 @@ class AgentQueueStore(ABC):
         *,
         source_ids: list[str] | None = None,
         payload: str | None = None,
-        priority: int = 0,
         not_before: int | None = None,
     ) -> AgentQueueItem:
         """Append one agent-ready item, creating the queue row if needed.
@@ -120,7 +119,8 @@ class AgentQueueStore(ABC):
     ) -> AgentQueueItem | None:
         """Return the head of the queue, or ``None`` if nothing is ready.
 
-        Ordered by priority then arrival. Items snoozed past *now* are skipped.
+        Strict insert order — there is no priority. Items snoozed past *now* are
+        skipped.
         """
 
     @abstractmethod
@@ -168,11 +168,14 @@ class AgentQueueStore(ABC):
         """
 
     @abstractmethod
-    def reclaim_stale_inflight(self, *, now: int, max_inflight_s: int) -> list[AgentQueue]:
-        """Clear in-flight items older than *max_inflight_s* and return their queues.
+    def reclaim_stale_inflight(self, *, now: int, max_inflight_s: int) -> list[AgentQueueItem]:
+        """Park in-flight items older than *max_inflight_s* and return them.
 
-        A lost idle edge would otherwise wedge a queue permanently; the watchdog
-        re-arms it instead.
+        A lost idle edge would otherwise wedge a queue permanently. The item is
+        parked as ``interrupted`` and its queue halted rather than completed,
+        because the agent went away mid-item: recording that as ``done`` would
+        file unfinished work as finished and leave nothing for the user to
+        retry.
         """
 
     @abstractmethod
@@ -253,7 +256,6 @@ class AgentQueueStore(ABC):
         item_id: str,
         *,
         payload: str | None = _UNSET,
-        priority: int | None = None,
         not_before: int | None = _UNSET,
     ) -> AgentQueueItem | None:
         """Edit a queued item before it is dispatched.
@@ -264,4 +266,11 @@ class AgentQueueStore(ABC):
 
     @abstractmethod
     def cancel_item(self, item_id: str, *, now: int) -> AgentQueueItem | None:
-        """Drop a queued item. The only way past a poisoned head-of-line item."""
+        """Drop a queued or parked item.
+
+        For a parked item — ``dispatch_failed`` or ``interrupted``, the one that
+        halted the queue — cancel also clears the halt, so it is a complete
+        recovery and not a two-step resume. Idempotent on already-``cancelled``
+        items. Returns ``None`` for items that are not found or are in flight /
+        done (not cancelable).
+        """

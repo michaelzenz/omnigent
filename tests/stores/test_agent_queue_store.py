@@ -54,17 +54,18 @@ def test_unscoped_queue_round_trips_as_none(store: SqlAlchemyAgentQueueStore) ->
     assert queue.key == key
 
 
-def test_next_dispatchable_orders_by_priority_then_arrival(
+def test_next_dispatchable_is_strictly_insert_order(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
+    """Nothing jumps the queue — events and task items run in the order they arrived."""
     key = _worker_key()
     store.enqueue(_uid("first"), key, "notice")
     store.enqueue(_uid("second"), key, "notice")
-    store.enqueue(_uid("urgent"), key, "notice", priority=5)
+    store.enqueue(_uid("third"), key, "notice")
 
     head = store.next_dispatchable_item(key, now=_NOW)
     assert head is not None
-    assert head.id == _uid("urgent")
+    assert head.id == _uid("first")
 
 
 def test_same_second_items_keep_arrival_order(store: SqlAlchemyAgentQueueStore) -> None:
@@ -185,7 +186,42 @@ def test_resume_clears_the_halt_and_re_arms(store: SqlAlchemyAgentQueueStore) ->
     assert head.id == _uid("next")
 
 
-def test_paused_queue_is_not_scanned(store: SqlAlchemyAgentQueueStore) -> None:
+def test_cancel_dispatch_failed_item_clears_the_halt(
+    store: SqlAlchemyAgentQueueStore,
+) -> None:
+    """Cancel is the complete recovery for a dispatch-failed item, not two-step."""
+    key = _worker_key()
+    store.enqueue(_uid("poison"), key, "notice")
+    store.enqueue(_uid("next"), key, "notice")
+    store.fail_dispatch(_uid("poison"), key, error="boom", now=_NOW)
+
+    cancelled = store.cancel_item(_uid("poison"), now=_NOW)
+    assert cancelled is not None
+    assert cancelled.state == "cancelled"
+
+    queue = store.get_queue(key)
+    assert queue is not None
+    assert queue.state == "active"
+    assert queue.last_error is None
+    # The slot drains from the next item, no resume needed.
+    assert [q.key for q in store.due_queues(now=_NOW)] == [key]
+    head = store.next_dispatchable_item(key, now=_NOW)
+    assert head is not None
+    assert head.id == _uid("next")
+
+
+def test_cancel_is_idempotent_on_already_cancelled(
+    store: SqlAlchemyAgentQueueStore,
+) -> None:
+    key = _worker_key()
+    store.enqueue(_uid("idem"), key, "notice")
+    first = store.cancel_item(_uid("idem"), now=_NOW)
+    assert first is not None
+    assert first.state == "cancelled"
+
+    second = store.cancel_item(_uid("idem"), now=_NOW)
+    assert second is not None
+    assert second.state == "cancelled"
     key = _worker_key()
     store.enqueue(_uid("a"), key, "notice")
     store.set_queue_state(key, "paused")
@@ -271,9 +307,10 @@ def test_claimed_source_ids_cover_open_items_only(
     assert store.list_claimed_source_ids("secretary", _OWNER) == set()
 
 
-def test_watchdog_reclaims_a_stuck_in_flight_item(
+def test_watchdog_parks_a_stuck_in_flight_item(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
+    """An agent that went away leaves interrupted work, not finished work."""
     key = _worker_key()
     store.enqueue(_uid("a"), key, "notice")
     store.enqueue(_uid("b"), key, "notice")
@@ -282,16 +319,36 @@ def test_watchdog_reclaims_a_stuck_in_flight_item(
     assert store.reclaim_stale_inflight(now=_NOW + 10, max_inflight_s=3600) == []
 
     reclaimed = store.reclaim_stale_inflight(now=_NOW + 7200, max_inflight_s=3600)
-    assert [q.key for q in reclaimed] == [key]
+    assert [item.id for item in reclaimed] == [_uid("a")]
+    assert reclaimed[0].state == "interrupted"
+    assert reclaimed[0].completed_at is None
+
     queue = store.get_queue(key)
     assert queue is not None
     assert queue.inflight_item_id is None
-    assert store.next_dispatchable_item(key, now=_NOW + 7200) is not None
+    # Halted, so "b" waits behind the parked item until the user retries or
+    # cancels it rather than silently running out of order.
+    assert queue.state == "halted"
+
+
+def test_parked_items_keep_their_source_claims(
+    store: SqlAlchemyAgentQueueStore,
+) -> None:
+    """A parked item is retryable, so re-packaging its sources would duplicate it."""
+    key = _worker_key()
+    store.enqueue(_uid("a"), key, "notice", source_ids=["event-1"])
+    store.mark_dispatched(_uid("a"), key, now=_NOW)
+    store.reclaim_stale_inflight(now=_NOW + 7200, max_inflight_s=3600)
+
+    assert store.list_claimed_source_ids(key.role, _OWNER, scope_id=key.scope_id) == {"event-1"}
+
+    store.cancel_item(_uid("a"), now=_NOW + 7200)
+    assert store.list_claimed_source_ids(key.role, _OWNER, scope_id=key.scope_id) == set()
 
 
 def test_cancel_is_the_way_past_a_poisoned_head(store: SqlAlchemyAgentQueueStore) -> None:
     key = _worker_key()
-    store.enqueue(_uid("poison"), key, "notice", priority=9)
+    store.enqueue(_uid("poison"), key, "notice")
     store.enqueue(_uid("good"), key, "notice")
 
     cancelled = store.cancel_item(_uid("poison"), now=_NOW)
@@ -318,10 +375,9 @@ def test_queued_item_payload_can_be_edited(store: SqlAlchemyAgentQueueStore) -> 
     key = _worker_key()
     store.enqueue(_uid("a"), key, "notice", payload='{"v": 1}')
 
-    edited = store.update_item(_uid("a"), payload='{"v": 2}', priority=3)
+    edited = store.update_item(_uid("a"), payload='{"v": 2}')
     assert edited is not None
     assert edited.payload == '{"v": 2}'
-    assert edited.priority == 3
 
 
 def test_queue_depth_counts_only_waiting_items(store: SqlAlchemyAgentQueueStore) -> None:

@@ -41,7 +41,6 @@ def _item(
         created_at=now_epoch(),
         source_ids=[],
         payload=payload,
-        priority=0,
         seq=0,
     )
 

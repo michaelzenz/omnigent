@@ -1564,7 +1564,7 @@ class SqlTaskItem(OmnigentBase):
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_task_items_state"),
+        CheckConstraint("state IN (1, 2, 4, 5, 6, 7, 8, 9)", name="ck_task_items_state"),
         Index("ix_task_items_task_state", "workspace_id", "task_id", "state", "id"),
         Index("ix_task_items_worker", "workspace_id", "worker_id", "id"),
     )
@@ -1932,10 +1932,10 @@ class SqlAgentQueueItem(OmnigentBase):
     source_ids: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
     payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
-    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
-    # Arrival order. created_at is second-granularity, so it cannot break ties
-    # between items enqueued in the same second — and a uuid tiebreak would
-    # reorder them arbitrarily. Assigned monotonically per workspace.
+    # Arrival order, and the only ordering there is — dispatch is strict insert
+    # order. created_at is second-granularity, so it cannot break ties between
+    # items enqueued in the same second, and a uuid tiebreak would reorder them
+    # arbitrarily. Assigned monotonically per workspace.
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     not_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1945,7 +1945,7 @@ class SqlAgentQueueItem(OmnigentBase):
     completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5)", name="ck_agent_queue_items_state"),
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6)", name="ck_agent_queue_items_state"),
         Index(
             "ix_agent_queue_items_drain",
             "workspace_id",
@@ -1953,7 +1953,6 @@ class SqlAgentQueueItem(OmnigentBase):
             "owner_user_id",
             "scope_id",
             "state",
-            "priority",
             "seq",
         ),
     )

@@ -28,8 +28,10 @@ _logger = logging.getLogger(__name__)
 _UNSET: Any = object()
 
 # Item states that still hold a claim on their source ids and still occupy the
-# queue. Anything else has left the queue for good.
-_OPEN_ITEM_STATES = ("queued", "dispatched")
+# queue: waiting, running, and the two parked states. Only "done" and
+# "cancelled" release a claim — a parked item is retryable, so re-packaging its
+# sources would duplicate the work it is still holding.
+_OPEN_ITEM_STATES = ("queued", "dispatched", "dispatch_failed", "interrupted")
 
 
 def _scope_to_column(scope_id: str | None) -> str:
@@ -71,7 +73,6 @@ def _item_to_entity(row: SqlAgentQueueItem) -> AgentQueueItem:
         created_at=row.created_at,
         source_ids=_decode_source_ids(row.source_ids),
         payload=row.payload,
-        priority=row.priority,
         seq=row.seq,
         not_before=row.not_before,
         last_error=row.last_error,
@@ -113,7 +114,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         *,
         source_ids: list[str] | None = None,
         payload: str | None = None,
-        priority: int = 0,
         not_before: int | None = None,
     ) -> AgentQueueItem:
         now = now_epoch()
@@ -137,7 +137,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 source_ids=json.dumps(list(source_ids or [])),
                 payload=payload,
                 state=encode_agent_queue_item_state("queued"),
-                priority=priority,
                 seq=next_seq or 1,
                 not_before=not_before,
                 created_at=now,
@@ -326,7 +325,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     )
                 )
                 .order_by(
-                    desc(SqlAgentQueueItem.priority),
                     asc(SqlAgentQueueItem.seq),
                     asc(SqlAgentQueueItem.id),
                 )
@@ -425,7 +423,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             session.flush()
             return _item_to_entity(row)
 
-    def reclaim_stale_inflight(self, *, now: int, max_inflight_s: int) -> list[AgentQueue]:
+    def reclaim_stale_inflight(self, *, now: int, max_inflight_s: int) -> list[AgentQueueItem]:
         cutoff = now - max_inflight_s
         with self._session() as session:
             stmt = (
@@ -435,20 +433,28 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 .where(SqlAgentQueue.inflight_since.is_not(None))
                 .where(SqlAgentQueue.inflight_since <= cutoff)
             )
-            reclaimed: list[AgentQueue] = []
+            reclaimed: list[AgentQueueItem] = []
             for queue in session.execute(stmt).scalars().all():
                 item = session.get(
                     SqlAgentQueueItem,
                     (current_workspace_id(), queue.inflight_item_id),
                 )
-                if item is not None and item.state == encode_agent_queue_item_state("dispatched"):
-                    item.state = encode_agent_queue_item_state("done")
-                    item.completed_at = now
-                    item.updated_at = now
+                # Free the slot either way, so a vanished item cannot wedge the
+                # queue forever.
                 queue.inflight_item_id = None
                 queue.inflight_since = None
                 queue.updated_at = now
-                reclaimed.append(_queue_to_entity(queue))
+                if item is None or item.state != encode_agent_queue_item_state("dispatched"):
+                    continue
+                # Park rather than complete. The agent went away mid-item, so
+                # calling this "done" would record unfinished work as finished
+                # and leave the user no way to notice or retry.
+                item.state = encode_agent_queue_item_state("interrupted")
+                item.last_error = "agent went away while the item was in flight"
+                item.updated_at = now
+                queue.state = encode_agent_queue_state("halted")
+                queue.last_error = item.last_error
+                reclaimed.append(_item_to_entity(item))
             session.flush()
             return reclaimed
 
@@ -580,7 +586,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     SqlAgentQueueItem.state == encode_agent_queue_item_state(state),
                 )
             stmt = stmt.order_by(
-                desc(SqlAgentQueueItem.priority),
                 asc(SqlAgentQueueItem.seq),
                 asc(SqlAgentQueueItem.id),
             )
@@ -594,7 +599,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         item_id: str,
         *,
         payload: str | None = _UNSET,
-        priority: int | None = None,
         not_before: int | None = _UNSET,
     ) -> AgentQueueItem | None:
         with self._session() as session:
@@ -605,8 +609,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 return None
             if payload is not _UNSET:
                 row.payload = payload
-            if priority is not None:
-                row.priority = priority
             if not_before is not _UNSET:
                 row.not_before = not_before
             row.updated_at = now_epoch()
@@ -618,11 +620,37 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
             if row is None:
                 return None
-            if row.state != encode_agent_queue_item_state("queued"):
+            queued = encode_agent_queue_item_state("queued")
+            parked = (
+                encode_agent_queue_item_state("dispatch_failed"),
+                encode_agent_queue_item_state("interrupted"),
+            )
+            cancelled = encode_agent_queue_item_state("cancelled")
+            # Already cancelled: idempotent no-op. Dispatched/done items are
+            # not cancelable — the agent already has them or they finished.
+            if row.state == cancelled:
+                return _item_to_entity(row)
+            if row.state != queued and row.state not in parked:
                 return None
-            row.state = encode_agent_queue_item_state("cancelled")
+            was_parked = row.state in parked
+            row.state = cancelled
             row.completed_at = now
             row.updated_at = now
+            # A parked item halts the queue and is itself the blockage.
+            # Cancelling it is the complete recovery: clear the halt in the same
+            # call so the slot can accept new work, rather than making the user
+            # also find and press resume.
+            if was_parked:
+                key = AgentQueueKey(
+                    role=row.role,
+                    owner_user_id=row.owner_user_id,
+                    scope_id=row.scope_id if row.scope_id else None,
+                )
+                queue = self._get_queue_row(session, key)
+                if queue is not None and queue.state == encode_agent_queue_state("halted"):
+                    queue.state = encode_agent_queue_state("active")
+                    queue.last_error = None
+                    queue.updated_at = now
             session.flush()
             return _item_to_entity(row)
 

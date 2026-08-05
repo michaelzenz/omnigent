@@ -15,7 +15,9 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueKey
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -26,6 +28,12 @@ class QueueKeyRequest(BaseModel):
 
     owner_user_id: str = ""
     scope_id: str | None = None
+
+
+class PatchQueueItemRequest(BaseModel):
+    """Editable fields on a queued item, before dispatch."""
+
+    payload: str | None = None
 
 
 def create_agent_queues_router(
@@ -102,6 +110,55 @@ def create_agent_queues_router(
         queue = agent_queue_store.get_queue(key)
         return _queue_to_response(queue) if queue is not None else {"resumed": True}
 
+    @router.patch("/agent-queue-items/{item_id}")
+    async def patch_queue_item(
+        request: Request,
+        item_id: str,
+        body: PatchQueueItemRequest,
+    ) -> dict[str, Any]:
+        """Edit a queued item's payload before dispatch. User-only.
+
+        Rejects items that already left the queue (dispatched, done, cancelled,
+        or dispatch-failed), so a payload cannot change out from under a running
+        agent.
+        """
+        require_user(request, auth_provider)
+        item = await asyncio.to_thread(
+            agent_queue_store.update_item,
+            item_id,
+            payload=body.payload,
+        )
+        if item is None:
+            raise OmnigentError(
+                "Queue item not found or already dispatched",
+                code=ErrorCode.NOT_FOUND,
+            )
+        return _item_to_response(item)
+
+    @router.post("/agent-queue-items/{item_id}/cancel")
+    async def cancel_queue_item(
+        request: Request,
+        item_id: str,
+    ) -> dict[str, Any]:
+        """Drop a queued or dispatch-failed item. User-only.
+
+        For a dispatch-failed item — the one that halted the queue — cancel also
+        clears the halt, so it is a complete recovery and not a two-step resume.
+        Idempotent: an already-terminal item returns its current state.
+        """
+        require_user(request, auth_provider)
+        item = await asyncio.to_thread(
+            agent_queue_store.cancel_item,
+            item_id,
+            now=now_epoch(),
+        )
+        if item is None:
+            raise OmnigentError(
+                "Queue item not found",
+                code=ErrorCode.NOT_FOUND,
+            )
+        return _item_to_response(item)
+
     return router
 
 
@@ -129,7 +186,7 @@ def _item_to_response(item: Any) -> dict[str, Any]:
         "state": item.state,
         "source_ids": item.source_ids,
         "payload": item.payload,
-        "priority": item.priority,
+        "seq": item.seq,
         "not_before": item.not_before,
         "last_error": item.last_error,
     }

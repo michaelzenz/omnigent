@@ -97,6 +97,22 @@ class RoleDispatchHandler(ABC):
         :raises DispatchFailed: If the item could not be delivered.
         """
 
+    async def on_parked(self, item: AgentQueueItem, state: str) -> None:
+        """Mirror a parked queue item onto whatever work record backs it.
+
+        A parked item (``dispatch_failed`` or ``interrupted``) halts the queue
+        and waits for the user, so anything the user actually looks at has to
+        say the same thing — otherwise the board shows work still queued while
+        its slot is stopped. Default is a no-op: only roles with a durable
+        record behind the queue entry have something to mirror.
+        """
+        _logger.debug(
+            "agent queue %s: no work record to mark %s for item %s",
+            item.role,
+            state,
+            item.id,
+        )
+
 
 class StatusReader(ABC):
     """Reads the published status of a session."""
@@ -164,13 +180,15 @@ class AgentQueueDispatcher:
             now=now,
             max_inflight_s=MAX_INFLIGHT_S,
         )
-        for queue in reclaimed:
+        for item in reclaimed:
             _logger.warning(
-                "agent queue %s/%s/%s: reclaimed a stuck in-flight item",
-                queue.role,
-                queue.owner_user_id,
-                queue.scope_id,
+                "agent queue %s/%s/%s: item %s lost its agent, parked as interrupted",
+                item.role,
+                item.owner_user_id,
+                item.scope_id,
+                item.id,
             )
+            await self._notify_parked(item, "interrupted")
         queues = await asyncio.to_thread(store.due_queues, now=now, limit=SCAN_BATCH)
         if not queues:
             return 0
@@ -320,6 +338,22 @@ class AgentQueueDispatcher:
             error=error,
             now=now_epoch(),
         )
+        await self._notify_parked(item, "dispatch_failed")
+
+    async def _notify_parked(self, item: AgentQueueItem, state: str) -> None:
+        """Let the owning role mirror a park onto its own work record."""
+        handler = self._context.handlers.get(item.role)
+        if handler is None:
+            return
+        try:
+            await handler.on_parked(item, state)
+        except Exception:
+            _logger.exception(
+                "agent queue %s: could not mirror %s onto item %s",
+                item.role,
+                state,
+                item.id,
+            )
 
 
 @dataclass(frozen=True)

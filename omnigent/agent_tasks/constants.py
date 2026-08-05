@@ -29,7 +29,7 @@ UNRECONCILED_EVENT_STATES = frozenset({"routed"})
 AMBIGUOUS_EVENT_STATES = frozenset({"awaiting_grouping"})
 CLASSIFIED_FYI_EVENT_STATE = "classified_fyi"
 FYI_CLUSTER_OPEN_STATE = "awaiting_user_ack"
-DISPATCHABLE_ITEM_STATES = frozenset({"awaiting_user_ack", "approved"})
+DISPATCHABLE_ITEM_STATES = frozenset({"awaiting_user_ack"})
 
 
 def resolve_task_harness(harness: str) -> str:

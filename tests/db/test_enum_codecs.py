@@ -150,15 +150,17 @@ def test_shipped_codes_are_stable() -> None:
         "failed": 9,
         "classified_fyi": 12,
     }
+    # 3 was "approved" and is retired, not reused — a freed code stays free so an
+    # old row can never be reinterpreted as a newer state.
     assert ec.TASK_ITEM_STATE == {
         "draft": 1,
         "awaiting_user_ack": 2,
-        "approved": 3,
         "queued": 4,
         "running": 5,
         "done": 6,
         "cancelled": 7,
         "dispatch_failed": 8,
+        "interrupted": 9,
     }
     assert ec.AGENT_QUEUE_ITEM_STATE == {
         "queued": 1,
@@ -166,6 +168,7 @@ def test_shipped_codes_are_stable() -> None:
         "done": 3,
         "cancelled": 4,
         "dispatch_failed": 5,
+        "interrupted": 6,
     }
     assert ec.AGENT_QUEUE_STATE == {"active": 1, "paused": 2, "halted": 3}
     assert ec.TASK_EVENT_EXECUTION_STATUS == {

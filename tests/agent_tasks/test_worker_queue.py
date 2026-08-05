@@ -51,7 +51,6 @@ def _queue_item(
         created_at=now_epoch(),
         source_ids=[source_id],
         payload=json.dumps(payload or {}),
-        priority=0,
         seq=0,
     )
 
