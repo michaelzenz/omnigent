@@ -9,19 +9,19 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from omnigent.stores.agent_store import AgentStore
 
+TASK_BROKER_AGENT_NAME = "task-broker"
+TASK_BROKER_ROLE = "broker"
 TASK_SECRETARY_AGENT_NAME = "task-secretary"
 TASK_SECRETARY_ROLE = "secretary"
-TASK_DISTRIBUTOR_AGENT_NAME = "task-distributor"
-TASK_DISTRIBUTOR_ROLE = "distributor"
 TASK_MANAGER_AGENT_NAME = "task-manager"
 TASK_MANAGER_ROLE = "manager"
 TASK_WORKER_AGENT_NAME = "task-worker"
 
-PER_USER_TASK_ROLES: frozenset[str] = frozenset({TASK_SECRETARY_ROLE, TASK_DISTRIBUTOR_ROLE})
+PER_USER_TASK_ROLES: frozenset[str] = frozenset({TASK_BROKER_ROLE, TASK_SECRETARY_ROLE})
 
 TASK_BUILTIN_AGENT_NAMES: tuple[str, ...] = (
+    TASK_BROKER_AGENT_NAME,
     TASK_SECRETARY_AGENT_NAME,
-    TASK_DISTRIBUTOR_AGENT_NAME,
     TASK_MANAGER_AGENT_NAME,
     TASK_WORKER_AGENT_NAME,
 )
@@ -37,13 +37,13 @@ class TaskRoleDefaults:
 
 
 TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
+    TASK_BROKER_ROLE: TaskRoleDefaults(
+        agent_name=TASK_BROKER_AGENT_NAME,
+        harness="cursor-native",
+        model="composer-2.5",
+    ),
     TASK_SECRETARY_ROLE: TaskRoleDefaults(
         agent_name=TASK_SECRETARY_AGENT_NAME,
-        harness="claude-native",
-        model="sonnet",
-    ),
-    TASK_DISTRIBUTOR_ROLE: TaskRoleDefaults(
-        agent_name=TASK_DISTRIBUTOR_AGENT_NAME,
         harness="cursor-native",
         model="composer-2.5",
     ),

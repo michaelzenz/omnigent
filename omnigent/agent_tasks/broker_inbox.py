@@ -1,4 +1,4 @@
-"""Secretary ambiguous inbox — cluster and rank stalled task events."""
+"""Broker ambiguous inbox — cluster and rank stalled task events."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def cluster_events_by_similarity(
 
 
 def event_summary(event: TaskEvent) -> dict[str, Any]:
-    """Serialize a task event for secretary inbox responses."""
+    """Serialize a task event for broker inbox responses."""
     return {
         "id": event.id,
         "event_type": event.event_type,
@@ -108,7 +108,7 @@ def event_summary(event: TaskEvent) -> dict[str, Any]:
 
 
 def event_notice_entry(event: TaskEvent) -> dict[str, Any]:
-    """Serialize a task event for the secretary notice payload (includes body)."""
+    """Serialize a task event for the broker notice payload (includes body)."""
     entry = event_summary(event)
     entry["payload"] = event.payload
     return entry
@@ -132,7 +132,7 @@ def build_ambiguous_inbox(
     task_item_store: TaskItemStore,
     task_store: TaskStore,
 ) -> dict[str, Any]:
-    """Return ambiguous events and suggested clusters for secretary reconcile."""
+    """Return ambiguous events and suggested clusters for broker reconcile."""
     ambiguous_events = []
     for event in task_event_store.list_events(state="awaiting_grouping"):
         if task_item_store.get_item_for_event(event.id) is not None:

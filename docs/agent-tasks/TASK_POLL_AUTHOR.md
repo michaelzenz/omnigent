@@ -56,7 +56,7 @@ Always use ingress dedup fields:
 Put routing tokens in **`summary`**: `repo:…`, `pr:…`, `unblocks:pr:…`.
 
 When the manager supplies a managed task id, set `context.task_id` on the watch
-so follow-up events POST with `task_id` and skip distributor scoring.
+so follow-up events POST with `task_id` and skip ingress scoring.
 
 ## Testing
 

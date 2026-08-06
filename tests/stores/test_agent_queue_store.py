@@ -21,8 +21,8 @@ def _worker_key(scope: str = "slot-a") -> AgentQueueKey:
     return AgentQueueKey(role="worker", owner_user_id=_OWNER, scope_id=_uid(scope))
 
 
-def _secretary_key() -> AgentQueueKey:
-    return AgentQueueKey(role="secretary", owner_user_id=_OWNER, scope_id=None)
+def _broker_key() -> AgentQueueKey:
+    return AgentQueueKey(role="broker", owner_user_id=_OWNER, scope_id=None)
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def test_enqueue_creates_the_queue_row(store: SqlAlchemyAgentQueueStore) -> None
 
 def test_unscoped_queue_round_trips_as_none(store: SqlAlchemyAgentQueueStore) -> None:
     """A per-user role has no scope; the empty-string column form must not leak."""
-    key = _secretary_key()
+    key = _broker_key()
     item = store.enqueue(_uid("s1"), key, "notice")
 
     assert item.scope_id is None
@@ -294,17 +294,17 @@ def test_release_can_defer_the_next_scan(store: SqlAlchemyAgentQueueStore) -> No
 def test_claimed_source_ids_cover_open_items_only(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
-    key = _secretary_key()
+    key = _broker_key()
     store.enqueue(_uid("a"), key, "notice", source_ids=[_uid("e1"), _uid("e2")])
 
-    assert store.list_claimed_source_ids("secretary", _OWNER) == {_uid("e1"), _uid("e2")}
+    assert store.list_claimed_source_ids("broker", _OWNER) == {_uid("e1"), _uid("e2")}
 
     store.mark_dispatched(_uid("a"), key, now=_NOW)
     # Still claimed while in flight — redelivering it would double-package.
-    assert store.list_claimed_source_ids("secretary", _OWNER) == {_uid("e1"), _uid("e2")}
+    assert store.list_claimed_source_ids("broker", _OWNER) == {_uid("e1"), _uid("e2")}
 
     store.complete_inflight(key, item_id=_uid("a"), now=_NOW + 1)
-    assert store.list_claimed_source_ids("secretary", _OWNER) == set()
+    assert store.list_claimed_source_ids("broker", _OWNER) == set()
 
 
 def test_watchdog_parks_a_stuck_in_flight_item(
@@ -392,9 +392,9 @@ def test_queue_depth_counts_only_waiting_items(store: SqlAlchemyAgentQueueStore)
 
 def test_list_queues_filters_by_role_and_state(store: SqlAlchemyAgentQueueStore) -> None:
     worker = _worker_key()
-    secretary = _secretary_key()
+    broker = _broker_key()
     store.enqueue(_uid("a"), worker, "notice")
-    store.enqueue(_uid("b"), secretary, "notice")
+    store.enqueue(_uid("b"), broker, "notice")
     store.set_queue_state(worker, "paused")
 
     assert [q.key for q in store.list_queues(role="worker")] == [worker]

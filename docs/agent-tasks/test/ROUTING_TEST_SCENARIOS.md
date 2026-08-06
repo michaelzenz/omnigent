@@ -1,7 +1,7 @@
 # Routing test scenarios
 
-Manual scenarios for exercising task-event ingress, distributor auto-route,
-secretary triage, and manager reconciliation. Run against a local server
+Manual scenarios for exercising task-event ingress, ingress auto-route,
+broker triage, and manager reconciliation. Run against a local server
 (`http://127.0.0.1:6767`) with host connected.
 
 Use a **fresh database** (no active tasks, no open packages) unless a
@@ -15,7 +15,7 @@ environment.
 **Story.** PR #123 fails CI. Later, John posts on Slack that PR #456 contains the
 fix for #123 and is waiting on merge approval. There are no managed tasks yet.
 
-**Goal.** Distributor stalls both events; secretary wakes and creates a **pending
+**Goal.** Ingress stalls both events; broker wakes and creates a **pending
 task package** for the user. After the user accepts the package, the task becomes
 active and the manager reconciles routed work.
 
@@ -24,14 +24,14 @@ active and the manager reconciles routed work.
 1. **Empty task state** — no active tasks, no open pending packages, no
    stalled events in `awaiting_grouping` (wipe DB or use a clean server).
 2. Server and host running (`uv run omnigent server`, `uv run omnigent host`).
-3. Task secretary session live (`POST /v1/agent-tasks/roles/secretary/session`). This
+3. Task broker session live (`POST /v1/agent-tasks/roles/broker/session`). This
    also launches the session runner when a host is connected (no separate
    `POST /v1/hosts/{hostId}/runners` step).
 
 ### Events
 
-Post in order (replace `HOST_ID` with your registered host id). Wait for secretary
-triage after event 1 before posting event 2, or post both and let the secretary
+Post in order (replace `HOST_ID` with your registered host id). Wait for broker
+triage after event 1 before posting event 2, or post both and let the broker
 catch up in one batch.
 
 **Event 1 — CI failure on PR #123**
@@ -86,11 +86,11 @@ X-Omnigent-Host-Id: HOST_ID
 **After events are posted (before user accepts)**
 
 - [ ] Event 1 state is `reconciled` on a pending package item, not `routed`.
-- [ ] Event 2 is `reconciled` on the **same** package item (or secretary clearly linked both before user acts).
-- [ ] Secretary received a stall wake (check secretary session or server log).
+- [ ] Event 2 is `reconciled` on the **same** package item (or broker clearly linked both before user acts).
+- [ ] Broker received a stall wake (check broker session or server log).
 - [ ] `GET /v1/agent-tasks?state=pending` shows one pending task with both events on inbox items (preferred) or two packages the user can tell belong together.
 - [ ] Package task state is `pending` with `awaiting_user_ack` inbox items.
-- [ ] Secretary did **not** bootstrap a manager session yet.
+- [ ] Broker did **not** bootstrap a manager session yet.
 
 **After user Go on an inbox item**
 
@@ -105,10 +105,10 @@ X-Omnigent-Host-Id: HOST_ID
 
 ### Failure modes to watch
 
-- Events left in `awaiting_grouping` after secretary turn (no package created).
-- Secretary auto-resolves to a non-existent or wrong active task instead of opening a package.
+- Events left in `awaiting_grouping` after broker turn (no package created).
+- Broker auto-resolves to a non-existent or wrong active task instead of opening a package.
 - Two unrelated packages with no link between PR #123 CI failure and PR #456 Slack follow-up.
-- Secretary marks Slack message as FYI only and drops the follow-up signal.
+- Broker marks Slack message as FYI only and drops the follow-up signal.
 - Duplicate tasks created when user Go on multiple items without reconciling first.
 - Manager auto-dispatches workers without user Go on inbox items.
 
@@ -120,5 +120,5 @@ GET /v1/agent-tasks?state=pending
 GET /v1/agent-tasks/{task_id}/reconcile-queue
 ```
 
-Check event `state`, `task_id`, and board cards after ingest, after secretary
+Check event `state`, `task_id`, and board cards after ingest, after broker
 triage, and after user Go or Skip on inbox items.

@@ -1,4 +1,4 @@
-"""Secretary FYI clusters for informational orphan task events."""
+"""Broker FYI clusters for informational orphan task events."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from omnigent.agent_tasks.constants import (
     FYI_CLUSTER_OPEN_STATE,
     AMBIGUOUS_EVENT_STATES,
 )
-from omnigent.agent_tasks.secretary_inbox import event_summary
+from omnigent.agent_tasks.broker_inbox import event_summary
 from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
@@ -64,7 +64,7 @@ def create_fyi_cluster(
     cluster_id: str | None = None,
     rationale: str | None = None,
 ) -> FyiCluster | None:
-    """Create or extend a secretary FYI cluster over orphan events."""
+    """Create or extend a broker FYI cluster over orphan events."""
     claimed_ids = _claimable_fyi_events(
         event_ids,
         task_event_store=task_event_store,
@@ -110,7 +110,7 @@ def list_fyi_board_cards(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
 ) -> list[dict[str, Any]]:
-    """Build board FYI cards for open secretary clusters."""
+    """Build board FYI cards for open broker clusters."""
     clusters = task_item_store.list_fyi_clusters(state=FYI_CLUSTER_OPEN_STATE)
     cards: list[dict[str, Any]] = []
     for cluster in clusters:

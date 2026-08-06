@@ -8,8 +8,8 @@ import httpx
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
+    TASK_BROKER_ROLE,
     TASK_MANAGER_AGENT_NAME,
-    TASK_SECRETARY_ROLE,
     resolve_task_agent_id,
 )
 from omnigent.entities import EventTag, TaskTag
@@ -34,13 +34,13 @@ def task_event_store(db_uri: str) -> SqlAlchemyTaskEventStore:
     return SqlAlchemyTaskEventStore(db_uri)
 
 
-async def _put_secretary_profile(
+async def _put_broker_profile(
     client: httpx.AsyncClient,
     manager_agent_profile_id: str,
 ) -> None:
     profile_resp = await put_agent_role_profile(
         client,
-        role=TASK_SECRETARY_ROLE,
+        role=TASK_BROKER_ROLE,
         agent_profile_id=manager_agent_profile_id,
         host_id=_uid("host_test"),
         workspace="/tmp/omnigent-task-test",
@@ -53,7 +53,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     manager_agent_profile_id: str,
     task_event_store: SqlAlchemyTaskEventStore,
 ) -> None:
-    await _put_secretary_profile(client, manager_agent_profile_id)
+    await _put_broker_profile(client, manager_agent_profile_id)
     event_id = _uid("event_resolve")
     task_event_store.create_event(
         event_id=event_id,
@@ -106,7 +106,7 @@ async def test_bootstrap_rejects_dead_manager_session(
     client: httpx.AsyncClient,
     manager_agent_profile_id: str,
 ) -> None:
-    await _put_secretary_profile(client, manager_agent_profile_id)
+    await _put_broker_profile(client, manager_agent_profile_id)
     dead_conversation_id = _uid("dead_conv")
     create_resp = await client.post(
         "/v1/agent-tasks",

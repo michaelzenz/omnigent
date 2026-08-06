@@ -1,6 +1,6 @@
 """Notice formatting for the agent queue packagers.
 
-The manager and secretary are no longer woken directly — routed events (and the
+The manager and broker are no longer woken directly — routed events (and the
 ``worker.execution.finished`` event the completion hook emits) are polled by the
 role packagers. This module holds only the notice text the packagers render at
 send time.
@@ -56,23 +56,23 @@ def _format_execution_detail(event) -> str:
     return f"Worker execution {status} for item {item_title!r}{summary_block}"
 
 
-def _format_secretary_stall_notice(
+def _format_broker_stall_notice(
     events: list,
     *,
     clusters: list | None = None,
     candidate_task_ids: list[str] | None = None,
     is_orphan: bool = False,
 ) -> str:
-    """Format the notice the secretary packager hands the dispatcher.
+    """Format the notice the broker packager hands the dispatcher.
 
-    Returns a JSON string the secretary reads directly. A routed batch carries
+    Returns a JSON string the broker reads directly. A routed batch carries
     ``clusters`` (each with its tags and full event entries, similar events kept
     contiguous) plus ranked ``candidate_task_ids``, so it can reconcile/route
     without a follow-up ``ambiguous-inbox``/``match-tasks`` call. An orphan batch
     carries the adoption steps in the prompt and a flat ``events`` list (no
     candidates).
     """
-    from omnigent.agent_tasks.secretary_inbox import event_notice_entry
+    from omnigent.agent_tasks.broker_inbox import event_notice_entry
 
     if is_orphan:
         prompt = (

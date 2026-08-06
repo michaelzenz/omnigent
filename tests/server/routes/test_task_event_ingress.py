@@ -8,11 +8,10 @@ import httpx
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
+    TASK_BROKER_ROLE,
     TASK_MANAGER_AGENT_NAME,
-    TASK_SECRETARY_ROLE,
     resolve_task_agent_id,
 )
-from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from tests.server.routes.agent_task_api import put_agent_role_profile
 
@@ -27,10 +26,10 @@ async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
     return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
-async def _secretary_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
+async def _broker_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
     await put_agent_role_profile(
         client,
-        role=TASK_SECRETARY_ROLE,
+        role=TASK_BROKER_ROLE,
         agent_profile_id=manager_agent_id,
         host_id=_uid("host_ingress"),
         workspace="/tmp/ingress-test",
@@ -41,7 +40,7 @@ async def test_ingress_auto_routes_matching_task(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
-    await _secretary_profile(client, manager_agent_id)
+    await _broker_profile(client, manager_agent_id)
     created = await client.post(
         "/v1/agent-tasks",
         json={
@@ -74,7 +73,7 @@ async def test_ingress_fast_paths_explicit_task_id(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
-    await _secretary_profile(client, manager_agent_id)
+    await _broker_profile(client, manager_agent_id)
     created = await client.post(
         "/v1/agent-tasks",
         json={
@@ -122,7 +121,7 @@ async def test_ingress_dedupes_by_source(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
-    await _secretary_profile(client, manager_agent_id)
+    await _broker_profile(client, manager_agent_id)
     payload = {
         "event_type": "build.finished",
         "title": "Dedup me",
@@ -151,7 +150,7 @@ async def test_complete_requires_routed_state(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
-    await _secretary_profile(client, manager_agent_id)
+    await _broker_profile(client, manager_agent_id)
     await client.post(
         "/v1/agent-tasks",
         json={

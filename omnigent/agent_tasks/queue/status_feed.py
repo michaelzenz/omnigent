@@ -2,7 +2,7 @@
 
 For worker roles the completion signal is :func:`notify_worker_session_status`, which
 fires when a worker execution reaches a terminal state and is tied to a specific task
-item. For the *secretary* (and later the manager) the agent runs a long-lived session
+item. For the *broker* (and later the manager) the agent runs a long-lived session
 and there is no per-item execution record, so completion is inferred from the session
 going idle again after a dispatch: the item was handed to the agent, the agent worked on
 it, and when the session returns to ``idle`` the item is done.
@@ -29,7 +29,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 _logger = logging.getLogger(__name__)
 
 # Statuses that mean "the agent finished its turn". ``waiting`` is *not* here: it means
-# the turn ended but sub-agents are still running, so the secretary is still busy.
+# the turn ended but sub-agents are still running, so the broker is still busy.
 _TERMINAL_STATUSES = frozenset({QUIET_STATUS, FAILED_STATUS})
 
 

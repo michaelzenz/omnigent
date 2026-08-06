@@ -1,4 +1,4 @@
-"""Tests for the task event distributor."""
+"""Tests for the task event ingress."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import uuid
 
 import pytest
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, TASK_SECRETARY_ROLE
-from omnigent.agent_tasks.distributor import distribute_event
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE, TASK_MANAGER_AGENT_NAME
+from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
@@ -46,7 +46,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
-    task_id = _uid("dist_task")
+    task_id = _uid("ingress_task")
     task_store.create(
         task_id,
         "Upload retries",
@@ -67,7 +67,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) -> None:
+async def test_ingress_auto_routes_clear_match(db_uri: str, stores: dict) -> None:
     event_store: SqlAlchemyTaskEventStore = stores["event_store"]
     event_id = _uid("auto_event")
     event = event_store.create_event(
@@ -81,15 +81,15 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
     )
     profile = UserTaskRoleProfile(
         user_id="__anonymous__",
-        role=TASK_SECRETARY_ROLE,
+        role=TASK_BROKER_ROLE,
         agent_profile_id=stores["agent_profile_id"],
         harness="cursor",
         model="composer-2.5",
-        host_id=_uid("host_dist"),
-        workspace="/tmp/dist-test",
+        host_id=_uid("host_ingress"),
+        workspace="/tmp/ingress-test",
         created_at=1,
     )
-    updated = await distribute_event(
+    updated = await ingress_event(
         event=event,
         task_store=stores["task_store"],
         task_event_store=event_store,
@@ -107,7 +107,7 @@ async def test_distributor_auto_routes_clear_match(db_uri: str, stores: dict) ->
 
 
 @pytest.mark.asyncio
-async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) -> None:
+async def test_ingress_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) -> None:
     event_store = SqlAlchemyTaskEventStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
@@ -121,7 +121,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
         "Unknown project",
         state="received",
     )
-    updated = await distribute_event(
+    updated = await ingress_event(
         event=event,
         task_store=task_store,
         task_event_store=event_store,
@@ -135,7 +135,7 @@ async def test_distributor_stalls_when_no_tasks(db_uri: str, manager_agent_id: s
 
 
 @pytest.mark.asyncio
-async def test_distributor_skips_session_internal_events(db_uri: str, stores: dict) -> None:
+async def test_ingress_skips_session_internal_events(db_uri: str, stores: dict) -> None:
     event_store: SqlAlchemyTaskEventStore = stores["event_store"]
     event = event_store.create_event(
         _uid("internal_event"),
@@ -144,7 +144,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
         source_internal_session_id=_uid("orphan_session"),
         state="received",
     )
-    updated = await distribute_event(
+    updated = await ingress_event(
         event=event,
         task_store=stores["task_store"],
         task_event_store=event_store,
@@ -156,7 +156,7 @@ async def test_distributor_skips_session_internal_events(db_uri: str, stores: di
 
 
 @pytest.mark.asyncio
-async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict) -> None:
+async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) -> None:
     event_store: SqlAlchemyTaskEventStore = stores["event_store"]
     event_id = _uid("bound_event")
     event = event_store.create_event(
@@ -168,15 +168,15 @@ async def test_distributor_fast_paths_explicit_task_id(db_uri: str, stores: dict
     )
     profile = UserTaskRoleProfile(
         user_id="__anonymous__",
-        role=TASK_SECRETARY_ROLE,
+        role=TASK_BROKER_ROLE,
         agent_profile_id=stores["agent_profile_id"],
         harness="cursor",
         model="composer-2.5",
         host_id=_uid("host_bound"),
-        workspace="/tmp/dist-bound",
+        workspace="/tmp/ingress-bound",
         created_at=1,
     )
-    updated = await distribute_event(
+    updated = await ingress_event(
         event=event,
         task_store=stores["task_store"],
         task_event_store=event_store,

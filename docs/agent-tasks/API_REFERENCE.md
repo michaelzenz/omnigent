@@ -62,8 +62,8 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 ## Task agent roles
 
 `{role}` is a managed task agent role slug. Profile endpoints accept any
-supported role (`secretary`, `distributor`); session bootstrap is
-secretary-only until distributor session bootstrap lands.
+supported role (`broker`, `secretary`); session bootstrap is supported for
+both roles.
 
 | Method | Path |
 |--------|------|

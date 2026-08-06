@@ -31,25 +31,30 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from omnigent.agent_tasks.agent_builtins import (
+    TASK_BROKER_ROLE,
     TASK_MANAGER_ROLE,
-    TASK_SECRETARY_ROLE,
 )
-from omnigent.agent_tasks.constants import (
-    MANAGER_BATCH_MAX_SIZE,
-    SECRETARY_BATCH_MAX_SIZE,
-    SECRETARY_CANDIDATE_LIMIT,
-    SECRETARY_TAG_SIMILARITY_THRESHOLD,
-)
-from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
-from omnigent.agent_tasks.notices import _format_manager_notice, _format_secretary_stall_notice
-from omnigent.agent_tasks.secretary_inbox import (
+from omnigent.agent_tasks.broker_inbox import (
     AmbiguousEventCluster,
     cluster_events_by_similarity,
 )
+from omnigent.agent_tasks.broker_session import ensure_broker_session
+from omnigent.agent_tasks.constants import (
+    BROKER_BATCH_MAX_SIZE,
+    BROKER_CANDIDATE_LIMIT,
+    BROKER_TAG_SIMILARITY_THRESHOLD,
+    MANAGER_BATCH_MAX_SIZE,
+)
+from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
+from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
+from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.stores.agent_queue_store import AgentQueueStore
+from omnigent.stores.agent_store import AgentStore
+from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
@@ -74,7 +79,7 @@ class _PendingBatch:
 
     key: AgentQueueKey
     events: list[TaskEvent] = field(default_factory=list)
-    # Secretary-only metadata carried through to ``_flush`` so the notice can
+    # Broker-only metadata carried through to ``_flush`` so the notice can
     # carry the included clusters / orphan flag. For a routed batch this holds
     # the clusters packed into this notice (each possibly capped to ``batch_size``);
     # ``events`` is the flat union of those clusters' events. Other roles leave
@@ -112,7 +117,7 @@ class Packager(ABC):
     @property
     @abstractmethod
     def role(self) -> str:
-        """The role this packager feeds (e.g. ``"secretary"``)."""
+        """The role this packager feeds (e.g. ``"broker"``)."""
 
     @abstractmethod
     def _collect_pending(self) -> list[_PendingBatch]:
@@ -191,19 +196,21 @@ class Packager(ABC):
                 self._flush(batch)
 
 
-# ── Secretary packager ──────────────────────────────
+# ── Broker packager ────────────────────────────────
 
 
-class SecretaryPackager(Packager):
-    """Stage-1 packager for secretary events.
+class BrokerPackager(Packager):
+    """Stage-1 packager for broker events.
 
     Scans ``awaiting_grouping`` events each tick, groups by owner, excludes
     already-claimed events, and for each owner splits orphans (``session.orphan``)
     from routed business events. Routed events are clustered by tag similarity
     (leader-based, oldest-first) so each notice is a focused batch of similar
     events carrying its own candidate task ids; each orphan is its own notice.
-    The agent-idle check reads the secretary's bound session from the role
-    profile and looks up its raw status.
+    The agent-idle check reads the broker's bound session from the role
+    profile and looks up its raw status. The broker has no UI surface to boot
+    its own session, so when the conversation/agent/host stores are wired the
+    packager provisions one on demand the first time an owner has work.
     """
 
     def __init__(
@@ -214,11 +221,14 @@ class SecretaryPackager(Packager):
         task_store: TaskStore,
         status_reader: _StatusReader,
         *,
+        conversation_store: ConversationStore | None = None,
+        agent_store: AgentStore | None = None,
+        host_store: HostStore | None = None,
         poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
-        batch_size: int = SECRETARY_BATCH_MAX_SIZE,
+        batch_size: int = BROKER_BATCH_MAX_SIZE,
         age_threshold_s: float = DEFAULT_PACKAGER_AGE_THRESHOLD_S,
-        similarity_threshold: float = SECRETARY_TAG_SIMILARITY_THRESHOLD,
-        candidate_limit: int = SECRETARY_CANDIDATE_LIMIT,
+        similarity_threshold: float = BROKER_TAG_SIMILARITY_THRESHOLD,
+        candidate_limit: int = BROKER_CANDIDATE_LIMIT,
     ) -> None:
         super().__init__(
             store,
@@ -230,12 +240,39 @@ class SecretaryPackager(Packager):
         self._task_role_profile_store = task_role_profile_store
         self._task_store = task_store
         self._status_reader = status_reader
+        self._conversation_store = conversation_store
+        self._agent_store = agent_store
+        self._host_store = host_store
         self._similarity_threshold = similarity_threshold
         self._candidate_limit = candidate_limit
 
+    def _live_broker_profile(self, owner_user_id: str) -> UserTaskRoleProfile | None:
+        """Return the owner's broker profile, booting its session if needed."""
+        if (
+            self._conversation_store is not None
+            and self._agent_store is not None
+            and self._host_store is not None
+        ):
+            try:
+                return ensure_broker_session(
+                    owner_user_id=owner_user_id,
+                    task_role_profile_store=self._task_role_profile_store,
+                    conversation_store=self._conversation_store,
+                    agent_store=self._agent_store,
+                    host_store=self._host_store,
+                )
+            except Exception:
+                # One owner's bootstrap must not abort the scan for the rest.
+                _logger.exception("broker packager: failed to boot broker for %s", owner_user_id)
+                return None
+        profile = self._task_role_profile_store.get(owner_user_id, TASK_BROKER_ROLE)
+        if profile is None or profile.conversation_id is None:
+            return None
+        return profile
+
     @property
     def role(self) -> str:
-        return TASK_SECRETARY_ROLE
+        return TASK_BROKER_ROLE
 
     def _collect_pending(self) -> list[_PendingBatch]:
         events = self._task_event_store.list_events(state="awaiting_grouping")
@@ -248,9 +285,9 @@ class SecretaryPackager(Packager):
             grouped.setdefault(owner, []).append(event)
         batches: list[_PendingBatch] = []
         for owner, owner_events in grouped.items():
-            key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=owner)
+            key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=owner)
             claimed = self._store.list_claimed_source_ids(
-                TASK_SECRETARY_ROLE,
+                TASK_BROKER_ROLE,
                 owner,
             )
             unclaimed = [e for e in owner_events if e.id not in claimed]
@@ -295,22 +332,16 @@ class SecretaryPackager(Packager):
         return batches
 
     def _is_idle(self, key: AgentQueueKey) -> bool:
-        profile = self._task_role_profile_store.get(
-            key.owner_user_id,
-            TASK_SECRETARY_ROLE,
-        )
+        profile = self._live_broker_profile(key.owner_user_id)
         if profile is None or profile.conversation_id is None:
             return False
         return self._status_reader.status_for(profile.conversation_id) == "idle"
 
     def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
-        profile = self._task_role_profile_store.get(
-            batch.key.owner_user_id,
-            TASK_SECRETARY_ROLE,
-        )
+        profile = self._live_broker_profile(batch.key.owner_user_id)
         if profile is None or profile.conversation_id is None:
             _logger.debug(
-                "secretary packager: no live secretary for %s; "
+                "broker packager: no live broker for %s; "
                 "%d events stay in awaiting_grouping",
                 batch.key.owner_user_id,
                 len(batch.events),
@@ -325,7 +356,7 @@ class SecretaryPackager(Packager):
                 limit=self._candidate_limit,
             )
             candidate_task_ids = [task.id for task, _score in ranked]
-        notice = _format_secretary_stall_notice(
+        notice = _format_broker_stall_notice(
             batch.events,
             clusters=batch.clusters,
             candidate_task_ids=candidate_task_ids,
@@ -346,11 +377,11 @@ class SecretaryPackager(Packager):
 class ManagerPackager(Packager):
     """Stage-1 packager for routed task events.
 
-    Scans ``routed`` events each tick — these are events the distributor (or the
-    secretary resolve path) already bound to a task, plus ``worker.execution.finished``
+    Scans ``routed`` events each tick — these are events the ingress scorer (or the
+    broker resolve path) already bound to a task, plus ``worker.execution.finished``
     events the completion hook emits when a worker settles. They are grouped by
     ``(owner, task_id)`` and evaluated against the same batching matrix as the
-    secretary. The agent-idle check reads the task's ``manager_conversation_id``
+    broker. The agent-idle check reads the task's ``manager_conversation_id``
     and looks up its raw status; a task with no manager session yet is treated as
     not idle, so events stay routed until bootstrap.
     """
@@ -449,17 +480,17 @@ class _StatusReader(ABC):
         """Return ``"idle"``/``"running"``/``"failed"``, or ``None`` on miss."""
 
 
-# ── Module-level wiring (matches the secretary_queue.py pattern) ───
+# ── Module-level wiring (matches the broker_queue pattern) ───
 
-_secretary_packager: SecretaryPackager | None = None
-
-
-def configure_secretary_packager(packager: SecretaryPackager | None) -> None:
-    """Register or clear the global secretary packager."""
-    global _secretary_packager
-    _secretary_packager = packager
+_broker_packager: BrokerPackager | None = None
 
 
-def get_secretary_packager() -> SecretaryPackager | None:
-    """Return the configured secretary packager, if any."""
-    return _secretary_packager
+def configure_broker_packager(packager: BrokerPackager | None) -> None:
+    """Register or clear the global broker packager."""
+    global _broker_packager
+    _broker_packager = packager
+
+
+def get_broker_packager() -> BrokerPackager | None:
+    """Return the configured broker packager, if any."""
+    return _broker_packager

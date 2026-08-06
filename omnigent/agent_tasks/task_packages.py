@@ -1,4 +1,4 @@
-"""Pending task packages — secretary reconcile and user inbox ack."""
+"""Pending task packages — broker reconcile and user inbox ack."""
 
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def reconcile_events_to_task_batch(
                 instructions=spec.instructions,
                 internal_note=spec.internal_note,
                 state="awaiting_user_ack",
-                created_by="secretary",
+                created_by="broker",
                 event_ids=[event.id for event in events],
             )
             results.append(item)
@@ -202,7 +202,7 @@ def create_task_package(
     tags: list[TaskTag] | None = None,
     event_tags: list | None = None,
 ) -> Task:
-    """Create a pending task package with secretary-reconciled items."""
+    """Create a pending task package with broker-reconciled items."""
     if not items:
         raise OmnigentError("At least one item is required", code=ErrorCode.INVALID_INPUT)
 
@@ -247,7 +247,7 @@ def reject_task_package(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
 ) -> Task:
-    """Archive a pending package and release its events back to the secretary queue."""
+    """Archive a pending package and release its events back to the broker queue."""
     _require_pending_package_task(task)
 
     for item in task_item_store.list_items_for_task(task.id):

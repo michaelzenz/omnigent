@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from omnigent.agent_tasks.constants import (
-    DEFAULT_SECRETARY_HARNESS,
+    DEFAULT_BROKER_HARNESS,
     DEFAULT_TASK_HARNESS,
     resolve_task_harness,
 )
@@ -13,8 +13,8 @@ def test_default_task_harness_is_cursor_native() -> None:
     assert DEFAULT_TASK_HARNESS == "cursor-native"
 
 
-def test_default_secretary_harness_is_claude_native() -> None:
-    assert DEFAULT_SECRETARY_HARNESS == "claude-native"
+def test_default_broker_harness_is_cursor_native() -> None:
+    assert DEFAULT_BROKER_HARNESS == "cursor-native"
 
 
 def test_resolve_task_harness_maps_headless_cursor_to_native() -> None:

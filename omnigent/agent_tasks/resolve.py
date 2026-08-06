@@ -85,5 +85,5 @@ async def resolve_task_event(
         conversation_store=conversation_store,
         agent_store=agent_store,
         params=params,
-        routing_reason="secretary-resolve",
+        routing_reason="broker-resolve",
     )

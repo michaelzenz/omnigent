@@ -1,0 +1,12 @@
+# Task broker agent — per-user triage and routing for stalled events.
+
+name: task-broker
+prompt: |
+  You are a task broker. Follow docs/agent-tasks/TASK_BROKER.md.
+  When routing stalls, list the ambiguous inbox, auto-route confident active-task
+  matches via batch-resolve, reconcile onto pending packages when appropriate,
+  and create new pending task packages for uncertain cases.
+
+executor:
+  harness: cursor-native
+  model: composer-2.5

@@ -23,12 +23,14 @@ from omnigent.agent_tasks.adoption import (
 )
 from omnigent.agent_tasks.agent_builtins import (
     PER_USER_TASK_ROLES,
+    TASK_BROKER_ROLE,
     TASK_SECRETARY_ROLE,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
-from omnigent.agent_tasks.constants import (
-    DEFAULT_SECRETARY_HARNESS,
-    DEFAULT_SECRETARY_MODEL,
+from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
+from omnigent.agent_tasks.broker_session import (
+    bootstrap_broker_conversation,
+    get_or_create_role_profile,
 )
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.dispatch import (
@@ -49,11 +51,7 @@ from omnigent.agent_tasks.items import (
     submit_item_for_user_ack,
 )
 from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
-from omnigent.agent_tasks.secretary_inbox import build_ambiguous_inbox
-from omnigent.agent_tasks.secretary_session import (
-    bootstrap_secretary_conversation,
-    get_or_create_role_profile,
-)
+from omnigent.agent_tasks.secretary_session import bootstrap_secretary_conversation
 from omnigent.agent_tasks.task_match import (
     collect_event_tags,
     load_events,
@@ -530,6 +528,58 @@ def _require_task_agent_role(role: str) -> str:
     return normalized
 
 
+# Roles that own a long-lived session the user can bootstrap on demand. The
+# broker triages events; the secretary is a lightweight Q&A assistant. Both
+# get a seeded conversation via their own bootstrap helper.
+_SESSION_SUPPORTED_ROLES = frozenset({TASK_BROKER_ROLE, TASK_SECRETARY_ROLE})
+
+
+def _require_session_supported_role(role: str) -> None:
+    if role not in _SESSION_SUPPORTED_ROLES:
+        raise OmnigentError(
+            f"session bootstrap for role {role!r} is not supported yet",
+            code=ErrorCode.INVALID_INPUT,
+        )
+
+
+def _role_defaults(role: str) -> tuple[str, str]:
+    """Return the (harness, model) defaults for a session-supported role."""
+    from omnigent.agent_tasks.agent_builtins import TASK_ROLE_DEFAULTS
+
+    defaults = TASK_ROLE_DEFAULTS.get(role)
+    if defaults is not None:
+        return defaults.harness, defaults.model
+    return "cursor-native", "composer-2.5"
+
+
+def _bootstrap_role_session(
+    role: str,
+    *,
+    conversation_store,
+    agent_store,
+    profile,
+) -> str:
+    """Dispatch to the role-specific conversation bootstrap helper."""
+    if role == TASK_BROKER_ROLE:
+        return bootstrap_broker_conversation(
+            conversation_store=conversation_store,
+            agent_store=agent_store,
+            profile=profile,
+            seed_prompt=True,
+        )
+    if role == TASK_SECRETARY_ROLE:
+        return bootstrap_secretary_conversation(
+            conversation_store=conversation_store,
+            agent_store=agent_store,
+            profile=profile,
+            seed_prompt=True,
+        )
+    raise OmnigentError(
+        f"session bootstrap for role {role!r} is not supported yet",
+        code=ErrorCode.INVALID_INPUT,
+    )
+
+
 def _agent_role_profile_to_response(
     role: str,
     profile: UserTaskRoleProfile,
@@ -632,7 +682,7 @@ def create_agent_tasks_router(
     :param task_event_store: Store for execution history reads.
     :param task_item_store: Store for task items and routing proposals.
     :param agent_store: Used to resolve the built-in task-manager agent.
-    :param conversation_store: Used for manager/secretary session bootstrap.
+    :param conversation_store: Used for manager/broker session bootstrap.
     :param task_role_profile_store: Per-user task role defaults for bootstrap.
     :param host_store: Used to auto-provision role profiles with a default host.
     :param auth_provider: Auth provider for owner attribution and access
@@ -791,11 +841,7 @@ def create_agent_tasks_router(
             ) -> dict[str, Any]:
                 """Ensure the caller has a live session for a managed task agent role."""
                 role = _require_task_agent_role(role)
-                if role != TASK_SECRETARY_ROLE:
-                    raise OmnigentError(
-                        f"session bootstrap for role {role!r} is not supported yet",
-                        code=ErrorCode.INVALID_INPUT,
-                    )
+                _require_session_supported_role(role)
                 user_id = require_user(request, auth_provider)
                 effective_user_id = _effective_user_id(user_id)
                 profile = await _load_role_profile(role, user_id)
@@ -817,11 +863,11 @@ def create_agent_tasks_router(
                         created=False,
                     )
                 conversation_id = await asyncio.to_thread(
-                    bootstrap_secretary_conversation,
+                    _bootstrap_role_session,
+                    role,
                     conversation_store=conversation_store,
                     agent_store=agent_store,
                     profile=profile,
-                    seed_prompt=True,
                 )
                 await asyncio.to_thread(
                     task_role_profile_store.upsert,
@@ -847,22 +893,19 @@ def create_agent_tasks_router(
             ) -> dict[str, Any]:
                 """Delete the current role session and create a fresh one."""
                 role = _require_task_agent_role(role)
-                if role != TASK_SECRETARY_ROLE:
-                    raise OmnigentError(
-                        f"session bootstrap for role {role!r} is not supported yet",
-                        code=ErrorCode.INVALID_INPUT,
-                    )
+                _require_session_supported_role(role)
                 user_id = require_user(request, auth_provider)
                 effective_user_id = _effective_user_id(user_id)
                 profile = await _load_role_profile(role, user_id)
                 if profile.conversation_id is not None:
                     await conversation_store.delete_conversation(profile.conversation_id)
+                defaults = _role_defaults(role)
                 await asyncio.to_thread(
                     task_role_profile_store.upsert,
                     effective_user_id,
                     role,
-                    harness=DEFAULT_SECRETARY_HARNESS,
-                    model=DEFAULT_SECRETARY_MODEL,
+                    harness=defaults[0],
+                    model=defaults[1],
                     clear_conversation_id=True,
                 )
                 profile = await asyncio.to_thread(
@@ -870,11 +913,11 @@ def create_agent_tasks_router(
                 )
                 assert profile is not None
                 conversation_id = await asyncio.to_thread(
-                    bootstrap_secretary_conversation,
+                    _bootstrap_role_session,
+                    role,
                     conversation_store=conversation_store,
                     agent_store=agent_store,
                     profile=profile,
-                    seed_prompt=True,
                 )
                 await asyncio.to_thread(
                     task_role_profile_store.upsert,
@@ -888,7 +931,7 @@ def create_agent_tasks_router(
                     conversation_store,
                 )
                 # Orphan sessions are now durable ``session.orphan`` events the
-                # secretary packager polls, so there is nothing to flush here.
+                # broker packager polls, so there is nothing to flush here.
                 return _agent_role_session_to_response(
                     role,
                     conversation_id=conversation_id,
@@ -992,7 +1035,7 @@ def create_agent_tasks_router(
                 profile = await asyncio.to_thread(
                     task_role_profile_store.get,
                     _effective_user_id(user_id),
-                    TASK_SECRETARY_ROLE,
+                    TASK_BROKER_ROLE,
                 )
             params = resolve_bootstrap_params(
                 host_id=body.host_id,
@@ -1163,7 +1206,7 @@ def create_agent_tasks_router(
                 profile = await asyncio.to_thread(
                     task_role_profile_store.get,
                     _effective_user_id(user_id),
-                    TASK_SECRETARY_ROLE,
+                    TASK_BROKER_ROLE,
                 )
             if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
                 raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
@@ -1232,7 +1275,7 @@ def create_agent_tasks_router(
                 profile = await asyncio.to_thread(
                     task_role_profile_store.get,
                     _effective_user_id(user_id),
-                    TASK_SECRETARY_ROLE,
+                    TASK_BROKER_ROLE,
                 )
             worker = worker_for_item(item, worker_store=worker_store)
             payload = {
@@ -1276,7 +1319,7 @@ def create_agent_tasks_router(
 
         @router.get("/task-events/ambiguous-inbox")
         async def get_ambiguous_inbox(request: Request) -> dict[str, Any]:
-            """Return ambiguous events and suggested clusters for secretary reconcile."""
+            """Return ambiguous events and suggested clusters for broker reconcile."""
             require_user(request, auth_provider)
             return await asyncio.to_thread(
                 build_ambiguous_inbox,
@@ -1310,7 +1353,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateTaskPackageRequest,
         ) -> dict[str, Any]:
-            """Create a pending task package with secretary-reconciled items."""
+            """Create a pending task package with broker-reconciled items."""
             user_id = require_user(request, auth_provider)
             profile_id = resolve_agent_profile_id(agent_store, body.agent_profile_id)
             await _require_agent_profile(profile_id)
@@ -1434,7 +1477,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateFyiClusterRequest,
         ) -> dict[str, Any]:
-            """Create or extend a secretary FYI cluster over ambiguous events."""
+            """Create or extend a broker FYI cluster over ambiguous events."""
             user_id = require_user(request, auth_provider)
 
             def _create() -> FyiCluster | None:
@@ -1556,7 +1599,7 @@ def create_agent_tasks_router(
                 profile = await asyncio.to_thread(
                     task_role_profile_store.get,
                     _effective_user_id(user_id),
-                    TASK_SECRETARY_ROLE,
+                    TASK_BROKER_ROLE,
                 )
             params = resolve_bootstrap_params(
                 host_id=body.host_id,

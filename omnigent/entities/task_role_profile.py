@@ -11,7 +11,7 @@ class UserTaskRoleProfile:
     Task agent settings and live session binding for one user and role.
 
     :param user_id: Owning user identifier.
-    :param role: Task agent role, e.g. ``"secretary"`` or ``"distributor"``.
+    :param role: Task agent role, e.g. ``"broker"`` or ``"secretary"``.
     :param agent_profile_id: Agent profile to spawn for this role.
     :param harness: Brain harness override, e.g. ``"cursor"``.
     :param model: Model override, e.g. ``"composer-2.5"``.

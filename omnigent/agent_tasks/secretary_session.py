@@ -1,40 +1,35 @@
-"""Bootstrap helpers for the per-user task secretary conversation."""
+"""Bootstrap helpers for the per-user lightweight task secretary conversation.
+
+The secretary is an on-demand Q&A agent: it remembers the task-system endpoints
+and answers the user's questions. It has no packager, no queue, and no dispatch
+handler — the user chats with it directly. Only session bootstrap lives here.
+"""
 
 from __future__ import annotations
 
 from omnigent.agent_tasks.agent_builtins import (
-    TASK_ROLE_DEFAULTS,
     TASK_SECRETARY_ROLE,
     resolve_role_agent_profile_id,
 )
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
-from omnigent.agent_tasks.constants import (
-    DEFAULT_TASK_WORKSPACE,
-    resolve_task_harness,
-)
-from omnigent.agent_tasks.session_labels import SECRETARY_ROLE_LABEL, SECRETARY_ROLE_VALUE
-from omnigent.native_coding_agents import native_coding_agent_for_harness
-from omnigent.runtime import get_agent_cache
-from omnigent.db.utils import generate_task_id, now_epoch
+from omnigent.agent_tasks.constants import resolve_task_harness
+from omnigent.agent_tasks.session_labels import ROLE_LABEL, SECRETARY_ROLE_VALUE
+from omnigent.db.utils import generate_task_id
 from omnigent.entities import MessageData, NewConversationItem
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
-from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.server.auth import RESERVED_USER_LOCAL
+from omnigent.native_coding_agents import native_coding_agent_for_harness
+from omnigent.runtime import get_agent_cache
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.host_store import HostStore, host_is_live
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 
-NO_HOST_AVAILABLE_MESSAGE = (
-    "No host is available. Start a host with `omnigent host --server <url>` and try again."
-)
-
-PG_README_PATH = "docs/agent-tasks/README.md"
 SECRETARY_MANUAL_PATH = "docs/agent-tasks/TASK_SECRETARY.md"
+API_REFERENCE_PATH = "docs/agent-tasks/API_REFERENCE.md"
 
 SECRETARY_SEED_PROMPT = (
-    "You are the secretary of the PuppyGarden task system. Read and follow "
-    f"{PG_README_PATH} and {SECRETARY_MANUAL_PATH}."
+    "You are the task secretary of the PuppyGarden task system — a lightweight "
+    "assistant that remembers the available endpoints and answers user questions "
+    "about the task system. Read and follow " + SECRETARY_MANUAL_PATH + ". When you "
+    "need to recall an endpoint's shape or parameters, read " + API_REFERENCE_PATH + "."
 )
 
 
@@ -50,53 +45,6 @@ def seed_secretary_prompt(conversation_store: ConversationStore, conversation_id
         ),
     )
     conversation_store.append(conversation_id, [item])
-
-
-def resolve_host_owner_user_id(auth_user_id: str | None) -> str:
-    """Map an authenticated user id to the host-store owner key."""
-    return auth_user_id if auth_user_id is not None else RESERVED_USER_LOCAL
-
-
-def resolve_first_live_host_id(host_store: HostStore, owner: str) -> str | None:
-    """Return the most recently seen live user-connected host for *owner*."""
-    now = now_epoch()
-    for host in host_store.list_hosts(owner):
-        if host.sandbox_provider is not None:
-            continue
-        if host_is_live(host, now=now):
-            return host.host_id
-    return None
-
-
-def get_or_create_role_profile(
-    *,
-    role: str,
-    profile_user_id: str,
-    auth_user_id: str | None,
-    task_role_profile_store: TaskRoleProfileStore,
-    host_store: HostStore,
-    agent_store: AgentStore,
-) -> UserTaskRoleProfile:
-    """Load the role profile, auto-provisioning defaults on first use."""
-    existing = task_role_profile_store.get(profile_user_id, role)
-    if existing is not None:
-        return existing
-
-    host_id = resolve_first_live_host_id(host_store, resolve_host_owner_user_id(auth_user_id))
-    if host_id is None:
-        raise OmnigentError(NO_HOST_AVAILABLE_MESSAGE, code=ErrorCode.INVALID_INPUT)
-
-    defaults = TASK_ROLE_DEFAULTS.get(role)
-    agent_profile_id = resolve_role_agent_profile_id(agent_store, role)
-    return task_role_profile_store.upsert(
-        profile_user_id,
-        role,
-        agent_profile_id=agent_profile_id,
-        host_id=host_id,
-        harness=defaults.harness if defaults else "claude-native",
-        model=defaults.model if defaults else "sonnet",
-        workspace=DEFAULT_TASK_WORKSPACE,
-    )
 
 
 def resolve_secretary_profile_id(
@@ -117,7 +65,7 @@ def apply_secretary_session_labels(
     *,
     harness: str,
 ) -> None:
-    labels = {SECRETARY_ROLE_LABEL: SECRETARY_ROLE_VALUE}
+    labels = {ROLE_LABEL: SECRETARY_ROLE_VALUE}
     native_agent = native_coding_agent_for_harness(resolve_task_harness(harness))
     if native_agent is not None:
         labels.update(native_agent.presentation_labels)
@@ -143,6 +91,7 @@ def _secretary_terminal_launch_args(
     )
     if loaded.spec is not None:
         return _derive_terminal_launch_args_from_spec(loaded.spec)
+    # A profile may override the harness away from the packaged default.
     if resolve_task_harness(harness) == "claude-native":
         return ["--permission-mode", "auto"]
     return None
@@ -155,7 +104,7 @@ def bootstrap_secretary_conversation(
     profile: UserTaskRoleProfile,
     seed_prompt: bool = True,
 ) -> str:
-    """Create a secretary conversation with harness/model defaults and optional prompt seed."""
+    """Create a lightweight secretary conversation with harness/model defaults."""
     params = resolve_bootstrap_params(
         host_id=profile.host_id,
         workspace=profile.workspace,

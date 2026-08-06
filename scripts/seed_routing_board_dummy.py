@@ -578,7 +578,7 @@ def main() -> int:
     _create_task_package(
         title="Update API docs for task routing",
         description="Routing UI shipped; docs still describe the old inbox flow.",
-        instructions="Refresh TASK_SECRETARY.md and API_REFERENCE after routing cards shipped.",
+        instructions="Refresh TASK_BROKER.md and API_REFERENCE after routing cards shipped.",
         internal_note="See PR #902 and docs/agent-tasks/ for current API shapes.",
         event_ids=_create_events(host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10),
         agent_profile_id=manager_profile_id,

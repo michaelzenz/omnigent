@@ -1,6 +1,6 @@
 """Tests for the orphan-session queue model.
 
-Orphan sessions are now durable ``session.orphan`` task events the secretary
+Orphan sessions are now durable ``session.orphan`` task events the broker
 packager polls — no in-memory queue, debounce, or direct wake.
 """
 

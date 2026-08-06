@@ -1437,14 +1437,14 @@ def create_app(
             StatusReader,
         )
         from omnigent.agent_tasks.queue.handlers import (
+            BrokerDispatchHandler,
             ManagerDispatchHandler,
-            SecretaryDispatchHandler,
             WorkerDispatchHandler,
         )
         from omnigent.agent_tasks.queue.packagers import (
+            BrokerPackager,
             ManagerPackager,
-            SecretaryPackager,
-            configure_secretary_packager,
+            configure_broker_packager,
         )
         from omnigent.agent_tasks.queue.packagers import (
             _StatusReader as _PackagerStatusReader,
@@ -1455,10 +1455,10 @@ def create_app(
         # queue store and the role profile store are present; tests and
         # single-process setups that pre-build the store pass it through.
         _agent_queue_dispatcher: AgentQueueDispatcher | None = None
-        _secretary_packager: SecretaryPackager | None = None
+        _broker_packager: BrokerPackager | None = None
         _manager_packager: ManagerPackager | None = None
         if agent_queue_store is not None and task_role_profile_store is not None:
-            secretary_handler = SecretaryDispatchHandler(
+            broker_handler = BrokerDispatchHandler(
                 store=agent_queue_store,
                 task_role_profile_store=task_role_profile_store,
                 conversation_store=conversation_store,
@@ -1523,7 +1523,7 @@ def create_app(
                 DispatcherContext(
                     store=agent_queue_store,
                     handlers={
-                        "secretary": secretary_handler,
+                        "broker": broker_handler,
                         **({"manager": manager_handler} if manager_handler is not None else {}),
                         **({"worker": worker_handler} if worker_handler is not None else {}),
                     },
@@ -1537,12 +1537,15 @@ def create_app(
             from omnigent.server.routes.sessions import configure_queue_status_feed
 
             configure_queue_status_feed(_status_feed)
-            _secretary_packager = SecretaryPackager(
+            _broker_packager = BrokerPackager(
                 store=agent_queue_store,
                 task_event_store=task_event_store,
                 task_role_profile_store=task_role_profile_store,
                 task_store=task_store,
                 status_reader=_PackagerCacheReader(),
+                conversation_store=conversation_store,
+                agent_store=agent_store,
+                host_store=host_store,
             )
             if task_store is not None:
                 _manager_packager = ManagerPackager(
@@ -1551,13 +1554,13 @@ def create_app(
                     task_store=task_store,
                     status_reader=_PackagerCacheReader(),
                 )
-            await _secretary_packager.start()
+            await _broker_packager.start()
             if _manager_packager is not None:
                 await _manager_packager.start()
             await _agent_queue_dispatcher.start()
-            configure_secretary_packager(_secretary_packager)
+            configure_broker_packager(_broker_packager)
         else:
-            configure_secretary_packager(None)
+            configure_broker_packager(None)
 
         # Wake a blocked sub-agent's immediate parent: hooks
         # ``pending_elicitations.record_publish`` to post a ``[System: …]``
@@ -1673,9 +1676,9 @@ def create_app(
                 await _agent_queue_dispatcher.stop()
             if _manager_packager is not None:
                 await _manager_packager.stop()
-            if _secretary_packager is not None:
-                await _secretary_packager.stop()
-            configure_secretary_packager(None)
+            if _broker_packager is not None:
+                await _broker_packager.stop()
+            configure_broker_packager(None)
             from omnigent.server.routes.sessions import configure_queue_status_feed
 
             configure_queue_status_feed(None)

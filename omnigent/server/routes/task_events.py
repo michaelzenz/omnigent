@@ -10,10 +10,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
-from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
-from omnigent.agent_tasks.distributor import distribute_event
 from omnigent.agent_tasks.event_types import is_session_internal_event
+from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
 from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
 from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
@@ -188,12 +188,12 @@ def create_task_events_router(
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         return event
 
-    async def _load_secretary_profile(user_id: str | None) -> UserTaskRoleProfile | None:
+    async def _load_broker_profile(user_id: str | None) -> UserTaskRoleProfile | None:
         if task_role_profile_store is None:
             return None
         effective_user_id = user_id if user_id is not None else "__anonymous__"
         return await asyncio.to_thread(
-            task_role_profile_store.get, effective_user_id, TASK_SECRETARY_ROLE
+            task_role_profile_store.get, effective_user_id, TASK_BROKER_ROLE
         )
 
     def _effective_user_id(user_id: str | None) -> str:
@@ -213,7 +213,7 @@ def create_task_events_router(
         request: Request,
         body: CreateIngressTaskEventRequest,
     ) -> dict[str, Any]:
-        """Ingest an external task event and run the distributor."""
+        """Ingest an external task event and run the ingress scorer."""
         user_id = _require_ingress_auth(request)
         if is_session_internal_event(body.event_type):
             raise OmnigentError(
@@ -242,7 +242,7 @@ def create_task_events_router(
             if existing is not None:
                 return _event_to_response(existing)
 
-        profile = await _load_secretary_profile(user_id)
+        profile = await _load_broker_profile(user_id)
         event_id = uuid.uuid4().hex
         tags = [EventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in body.tags]
 
@@ -263,7 +263,7 @@ def create_task_events_router(
             )
 
         created = await asyncio.to_thread(_create)
-        distributed = await distribute_event(
+        distributed = await ingress_event(
             event=created,
             task_store=task_store,
             task_event_store=task_event_store,
@@ -350,7 +350,7 @@ def create_task_events_router(
         if task is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         _require_task_access(task, user_id)
-        profile = await _load_secretary_profile(user_id)
+        profile = await _load_broker_profile(user_id)
         resolved: list[dict[str, Any]] = []
         for event_id in body.event_ids:
             event = await _get_event_or_404(event_id)

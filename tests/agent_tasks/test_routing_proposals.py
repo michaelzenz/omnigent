@@ -1,4 +1,4 @@
-"""Tests for secretary ambiguous-event clustering."""
+"""Tests for broker ambiguous-event clustering."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from omnigent.agent_tasks.secretary_inbox import cluster_ambiguous_events
+from omnigent.agent_tasks.broker_inbox import cluster_ambiguous_events
 from omnigent.entities import EventTag
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 

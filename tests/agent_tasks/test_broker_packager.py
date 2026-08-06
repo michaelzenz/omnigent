@@ -1,28 +1,34 @@
-"""Tests for the secretary packager (poll-based batching)."""
+"""Tests for the broker packager (poll-based batching)."""
 
 from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 
 import pytest
 
-from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
-from omnigent.agent_tasks.distributor import distribute_event
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
+from omnigent.agent_tasks.broker_inbox import cluster_events_by_similarity
+from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.queue.packagers import (
     DEFAULT_PACKAGER_AGE_THRESHOLD_S,
     DEFAULT_PACKAGER_POLL_INTERVAL_S,
-    SecretaryPackager,
+    BrokerPackager,
     _StatusReader,
-    configure_secretary_packager,
-    get_secretary_packager,
+    configure_broker_packager,
+    get_broker_packager,
 )
-from omnigent.agent_tasks.secretary_inbox import cluster_events_by_similarity
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import AgentQueueKey, EventTag, TaskEvent, TaskTag
+from omnigent.runtime import init as init_runtime
+from omnigent.runtime.agent_cache import AgentCache
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
     SqlAlchemyTaskRoleProfileStore,
@@ -46,7 +52,7 @@ class _StaticStatusReader(_StatusReader):
 
 
 @pytest.fixture
-def secretary_setup(db_uri: str) -> dict:
+def broker_setup(db_uri: str) -> dict:
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
@@ -59,22 +65,22 @@ def secretary_setup(db_uri: str) -> dict:
         manager_agent_id, name="task-manager-agent", bundle_location="test:///bundle"
     )
     user_id = "__anonymous__"
-    secretary_conv = conversation_store.create_conversation(
-        title="Secretary",
+    broker_conv = conversation_store.create_conversation(
+        title="Task broker",
         agent_id=manager_agent_id,
-        host_id=_uid("host_sec"),
-        workspace="/tmp/secretary",
+        host_id=_uid("host_broker"),
+        workspace="/tmp/broker",
     )
     profile_store.upsert(
         user_id,
-        "secretary",
+        "broker",
         agent_profile_id=manager_agent_id,
-        conversation_id=secretary_conv.id,
-        host_id=_uid("host_sec"),
-        workspace="/tmp/secretary",
+        conversation_id=broker_conv.id,
+        host_id=_uid("host_broker"),
+        workspace="/tmp/broker",
     )
     status_reader = _StaticStatusReader("idle")
-    packager = SecretaryPackager(
+    packager = BrokerPackager(
         store=queue_store,
         task_event_store=event_store,
         task_role_profile_store=profile_store,
@@ -85,7 +91,7 @@ def secretary_setup(db_uri: str) -> dict:
         age_threshold_s=-1.0,
         batch_size=10,
     )
-    configure_secretary_packager(packager)
+    configure_broker_packager(packager)
     return {
         "agent_store": agent_store,
         "task_store": task_store,
@@ -95,7 +101,7 @@ def secretary_setup(db_uri: str) -> dict:
         "profile_store": profile_store,
         "queue_store": queue_store,
         "user_id": user_id,
-        "secretary_conv_id": secretary_conv.id,
+        "broker_conv_id": broker_conv.id,
         "packager": packager,
         "status_reader": status_reader,
     }
@@ -104,19 +110,100 @@ def secretary_setup(db_uri: str) -> dict:
 @pytest.fixture(autouse=True)
 def _clear_packager() -> None:
     yield
-    configure_secretary_packager(None)
+    configure_broker_packager(None)
 
 
 def _key(user_id: str) -> AgentQueueKey:
-    return AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=user_id)
+    return AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=user_id)
+
+
+def _lazy_packager(
+    db_uri: str,
+    tmp_path: Path,
+    *,
+    with_live_host: bool,
+) -> tuple[BrokerPackager, SqlAlchemyTaskRoleProfileStore]:
+    """Build a broker packager wired for on-demand session bootstrap, with no profile."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_store.create(generate_agent_id(), name="task-broker", bundle_location="test:///bundle")
+    conversation_store = SqlAlchemyConversationStore(db_uri)
+    artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
+    init_runtime(
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        agent_cache=AgentCache(artifact_store=artifact_store, cache_dir=tmp_path / ".cache"),
+        artifact_store=artifact_store,
+    )
+    host_store = HostStore(db_uri)
+    if with_live_host:
+        host_store.upsert_on_connect(_uid("lazy_host"), "lazy-host", RESERVED_USER_LOCAL)
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    queue_store = SqlAlchemyAgentQueueStore(db_uri)
+    packager = BrokerPackager(
+        store=queue_store,
+        task_event_store=SqlAlchemyTaskEventStore(db_uri),
+        task_role_profile_store=profile_store,
+        task_store=SqlAlchemyTaskStore(db_uri),
+        status_reader=_StaticStatusReader("idle"),
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        host_store=host_store,
+        age_threshold_s=-1.0,
+        batch_size=10,
+    )
+    return packager, profile_store
 
 
 @pytest.mark.asyncio
-async def test_full_batch_sends_regardless_of_agent_state(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "running"  # agent busy
+async def test_packager_boots_broker_session_on_demand(db_uri: str, tmp_path: Path) -> None:
+    """The broker has no UI rail, so the packager provisions its session itself."""
+    packager, profile_store = _lazy_packager(db_uri, tmp_path, with_live_host=True)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    assert profile_store.get("__anonymous__", TASK_BROKER_ROLE) is None
+
+    event_store.create_event(
+        _uid("lazy_evt"),
+        "build.finished",
+        "Ambiguous",
+        state="awaiting_grouping",
+        owner_user_id="__anonymous__",
+    )
+    packager.scan_once_sync()
+
+    profile = profile_store.get("__anonymous__", TASK_BROKER_ROLE)
+    assert profile is not None
+    assert profile.conversation_id is not None
+    assert len(packager._store.list_items(_key("__anonymous__"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_packager_leaves_events_queued_without_a_live_host(
+    db_uri: str,
+    tmp_path: Path,
+) -> None:
+    """No host means no broker to boot, so events stay in awaiting_grouping."""
+    packager, profile_store = _lazy_packager(db_uri, tmp_path, with_live_host=False)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+
+    event_store.create_event(
+        _uid("lazy_evt_nohost"),
+        "build.finished",
+        "Ambiguous",
+        state="awaiting_grouping",
+        owner_user_id="__anonymous__",
+    )
+    packager.scan_once_sync()
+
+    assert profile_store.get("__anonymous__", TASK_BROKER_ROLE) is None
+    assert packager._store.list_items(_key("__anonymous__")) == []
+
+
+@pytest.mark.asyncio
+async def test_full_batch_sends_regardless_of_agent_state(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "running"  # agent busy
     packager._batch_size = 3
 
     for i in range(3):
@@ -125,19 +212,19 @@ async def test_full_batch_sends_regardless_of_agent_state(secretary_setup: dict)
             "build.finished",
             f"Ambiguous {i}",
             state="awaiting_grouping",
-            owner_user_id=secretary_setup["user_id"],
+            owner_user_id=broker_setup["user_id"],
         )
     packager.scan_once_sync()
 
-    assert len(queue_store.list_items(_key(secretary_setup["user_id"]))) == 1
+    assert len(queue_store.list_items(_key(broker_setup["user_id"]))) == 1
 
 
 @pytest.mark.asyncio
-async def test_partial_batch_waits_when_agent_busy(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "running"
+async def test_partial_batch_waits_when_agent_busy(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "running"
     packager._age_threshold_s = -1.0  # age floor would otherwise force a send
 
     event_store.create_event(
@@ -145,19 +232,19 @@ async def test_partial_batch_waits_when_agent_busy(secretary_setup: dict) -> Non
         "build.finished",
         "Ambiguous",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
     )
     packager.scan_once_sync()
 
-    assert queue_store.list_items(_key(secretary_setup["user_id"])) == []
+    assert queue_store.list_items(_key(broker_setup["user_id"])) == []
 
 
 @pytest.mark.asyncio
-async def test_partial_batch_sends_when_idle_and_age_exceeded(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+async def test_partial_batch_sends_when_idle_and_age_exceeded(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0  # oldest age > 0 immediately
 
     event_store.create_event(
@@ -165,21 +252,21 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(secretary_setup: d
         "build.finished",
         "Ambiguous",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
     )
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     assert "[System: please triage and route these events]" in items[0].payload
 
 
 @pytest.mark.asyncio
-async def test_partial_batch_waits_when_idle_but_young(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+async def test_partial_batch_waits_when_idle_but_young(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = 3600  # far above any real age
 
     event_store.create_event(
@@ -187,19 +274,19 @@ async def test_partial_batch_waits_when_idle_but_young(secretary_setup: dict) ->
         "build.finished",
         "Ambiguous",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
     )
     packager.scan_once_sync()
 
-    assert queue_store.list_items(_key(secretary_setup["user_id"])) == []
+    assert queue_store.list_items(_key(broker_setup["user_id"])) == []
 
 
 @pytest.mark.asyncio
-async def test_stall_via_distributor_is_picked_up_by_poll(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+async def test_stall_via_ingress_is_picked_up_by_poll(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     event_id = _uid("stall_event")
@@ -209,30 +296,30 @@ async def test_stall_via_distributor_is_picked_up_by_poll(secretary_setup: dict)
         "Ambiguous build",
         state="received",
     )
-    updated = await distribute_event(
+    updated = await ingress_event(
         event=event,
-        task_store=secretary_setup["task_store"],
+        task_store=broker_setup["task_store"],
         task_event_store=event_store,
-        worker_store=secretary_setup["worker_store"],
-        conversation_store=secretary_setup["conversation_store"],
-        agent_store=secretary_setup["agent_store"],
-        owner_user_id=secretary_setup["user_id"],
+        worker_store=broker_setup["worker_store"],
+        conversation_store=broker_setup["conversation_store"],
+        agent_store=broker_setup["agent_store"],
+        owner_user_id=broker_setup["user_id"],
     )
     assert updated.state == "awaiting_grouping"
-    assert updated.owner_user_id == secretary_setup["user_id"]
+    assert updated.owner_user_id == broker_setup["user_id"]
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     assert items[0].source_ids == [event_id]
 
 
 @pytest.mark.asyncio
-async def test_claimed_events_are_not_repackaged(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+async def test_claimed_events_are_not_repackaged(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     event_store.create_event(
@@ -240,20 +327,20 @@ async def test_claimed_events_are_not_repackaged(secretary_setup: dict) -> None:
         "build.finished",
         "Ambiguous",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
     )
     packager.scan_once_sync()  # packages it
     packager.scan_once_sync()  # should not duplicate
 
-    assert len(queue_store.list_items(_key(secretary_setup["user_id"]))) == 1
+    assert len(queue_store.list_items(_key(broker_setup["user_id"]))) == 1
 
 
 @pytest.mark.asyncio
-async def test_stale_events_routed_away_are_filtered(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+async def test_stale_events_routed_away_are_filtered(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     event = event_store.create_event(
@@ -261,20 +348,20 @@ async def test_stale_events_routed_away_are_filtered(secretary_setup: dict) -> N
         "build.finished",
         "Already routed",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
     )
     event_store.update_event(event.id, state="routed")
     packager.scan_once_sync()
 
-    assert queue_store.list_items(_key(secretary_setup["user_id"])) == []
+    assert queue_store.list_items(_key(broker_setup["user_id"])) == []
 
 
 @pytest.mark.asyncio
-async def test_no_live_secretary_holds_events(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    # A user with no secretary profile.
+async def test_no_live_broker_holds_events(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    # A user with no broker profile.
     event_store.create_event(
         _uid("orphan"),
         "build.finished",
@@ -294,7 +381,7 @@ def test_defaults_are_configurable_constants() -> None:
 
 @pytest.mark.asyncio
 async def test_orphan_session_event_is_packaged_like_any_stall(
-    secretary_setup: dict,
+    broker_setup: dict,
 ) -> None:
     """An orphan session becomes an awaiting_grouping event the packager polls."""
     from omnigent.agent_tasks.adoption import (
@@ -304,30 +391,30 @@ async def test_orphan_session_event_is_packaged_like_any_stall(
     )
     from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
 
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     configure_session_adoption(
         SessionAdoptionContext(
-            task_store=secretary_setup["task_store"],
+            task_store=broker_setup["task_store"],
             task_event_store=event_store,
-            worker_store=secretary_setup["worker_store"],
-            conversation_store=secretary_setup["conversation_store"],
+            worker_store=broker_setup["worker_store"],
+            conversation_store=broker_setup["conversation_store"],
         )
     )
-    conv = secretary_setup["conversation_store"].create_conversation(
+    conv = broker_setup["conversation_store"].create_conversation(
         title="Mystery session",
-        agent_id=secretary_setup["agent_store"].get_by_name("task-manager-agent").id,
+        agent_id=broker_setup["agent_store"].get_by_name("task-manager-agent").id,
         host_id=_uid("host_orphan"),
         workspace="/tmp/mystery",
     )
-    await enqueue_orphan_session(conv.id, owner_user_id=secretary_setup["user_id"])
+    await enqueue_orphan_session(conv.id, owner_user_id=broker_setup["user_id"])
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     assert "session.orphan" in items[0].payload
     assert "Mystery session" in items[0].payload
@@ -339,13 +426,13 @@ async def test_orphan_session_event_is_packaged_like_any_stall(
     assert items[0].source_ids == [orphan_events[0].id]
 
 
-def test_get_secretary_packager_returns_configured(secretary_setup: dict) -> None:
-    assert get_secretary_packager() is secretary_setup["packager"]
+def test_get_broker_packager_returns_configured(broker_setup: dict) -> None:
+    assert get_broker_packager() is broker_setup["packager"]
 
 
-def test_get_secretary_packager_none_when_unconfigured() -> None:
-    configure_secretary_packager(None)
-    assert get_secretary_packager() is None
+def test_get_broker_packager_none_when_unconfigured() -> None:
+    configure_broker_packager(None)
+    assert get_broker_packager() is None
 
 
 # ── Level 2: tag-similarity clustering, orphan isolation, self-contained notice ──
@@ -403,20 +490,20 @@ def test_cluster_events_by_similarity_buckets_tagless() -> None:
 
 @pytest.mark.asyncio
 async def test_similar_events_packaged_into_one_notice_with_candidates(
-    secretary_setup: dict,
+    broker_setup: dict,
 ) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    task_store: SqlAlchemyTaskStore = secretary_setup["task_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    task_store: SqlAlchemyTaskStore = broker_setup["task_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     task_id = _uid("task")
     task_store.create(
         task_id,
         "Widget CI",
-        agent_profile_id=secretary_setup["agent_store"].get_by_name("task-manager-agent").id,
+        agent_profile_id=broker_setup["agent_store"].get_by_name("task-manager-agent").id,
         state="pending",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="acme/widgets")],
     )
@@ -432,12 +519,12 @@ async def test_similar_events_packaged_into_one_notice_with_candidates(
             "build.finished",
             f"Build {i}",
             state="awaiting_grouping",
-            owner_user_id=secretary_setup["user_id"],
+            owner_user_id=broker_setup["user_id"],
             tags=[*shared, EventTag(tag_type="severity", tag=sev)],
         )
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     payload = json.loads(items[0].payload)
     assert "possible clusters waiting for route/reconcile" in payload["prompt"]
@@ -448,25 +535,25 @@ async def test_similar_events_packaged_into_one_notice_with_candidates(
 
 
 @pytest.mark.asyncio
-async def test_orphan_is_isolated_from_routed_events(secretary_setup: dict) -> None:
+async def test_orphan_is_isolated_from_routed_events(broker_setup: dict) -> None:
     from omnigent.agent_tasks.adoption import (
         SessionAdoptionContext,
         configure_session_adoption,
         enqueue_orphan_session,
     )
 
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     configure_session_adoption(
         SessionAdoptionContext(
-            task_store=secretary_setup["task_store"],
+            task_store=broker_setup["task_store"],
             task_event_store=event_store,
-            worker_store=secretary_setup["worker_store"],
-            conversation_store=secretary_setup["conversation_store"],
+            worker_store=broker_setup["worker_store"],
+            conversation_store=broker_setup["conversation_store"],
         )
     )
     event_store.create_event(
@@ -474,18 +561,18 @@ async def test_orphan_is_isolated_from_routed_events(secretary_setup: dict) -> N
         "build.finished",
         "Routed event",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
     )
-    conv = secretary_setup["conversation_store"].create_conversation(
+    conv = broker_setup["conversation_store"].create_conversation(
         title="Mystery session",
-        agent_id=secretary_setup["agent_store"].get_by_name("task-manager-agent").id,
+        agent_id=broker_setup["agent_store"].get_by_name("task-manager-agent").id,
         host_id=_uid("host_orphan"),
         workspace="/tmp/mystery",
     )
-    await enqueue_orphan_session(conv.id, owner_user_id=secretary_setup["user_id"])
+    await enqueue_orphan_session(conv.id, owner_user_id=broker_setup["user_id"])
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 2
     by_kind = {json.loads(it.payload).get("candidate_task_ids") is not None for it in items}
     # One notice carries candidates (routed), the other does not (orphan).
@@ -500,12 +587,12 @@ async def test_orphan_is_isolated_from_routed_events(secretary_setup: dict) -> N
 
 @pytest.mark.asyncio
 async def test_cluster_larger_than_batch_size_is_capped_and_defers_rest(
-    secretary_setup: dict,
+    broker_setup: dict,
 ) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
     packager._batch_size = 2
 
@@ -516,30 +603,30 @@ async def test_cluster_larger_than_batch_size_is_capped_and_defers_rest(
             "build.finished",
             f"Build {i}",
             state="awaiting_grouping",
-            owner_user_id=secretary_setup["user_id"],
+            owner_user_id=broker_setup["user_id"],
             tags=tags,
         )
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     payload = json.loads(items[0].payload)
     # Capped at batch_size=2; one event deferred.
     assert len(payload["clusters"][0]["events"]) == 2
     # The deferred event is still awaiting_grouping and ships on the next poll.
     packager.scan_once_sync()
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 2
     second = json.loads(items[1].payload)
     assert len(second["clusters"][0]["events"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_small_clusters_fill_into_one_notice(secretary_setup: dict) -> None:
-    event_store: SqlAlchemyTaskEventStore = secretary_setup["event_store"]
-    queue_store: SqlAlchemyAgentQueueStore = secretary_setup["queue_store"]
-    packager: SecretaryPackager = secretary_setup["packager"]
-    secretary_setup["status_reader"].status = "idle"
+async def test_small_clusters_fill_into_one_notice(broker_setup: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
     event_store.create_event(
@@ -547,7 +634,7 @@ async def test_small_clusters_fill_into_one_notice(secretary_setup: dict) -> Non
         "build.finished",
         "A",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
         tags=[EventTag(tag_type="repo", tag="x")],
     )
     event_store.create_event(
@@ -555,12 +642,12 @@ async def test_small_clusters_fill_into_one_notice(secretary_setup: dict) -> Non
         "build.finished",
         "B",
         state="awaiting_grouping",
-        owner_user_id=secretary_setup["user_id"],
+        owner_user_id=broker_setup["user_id"],
         tags=[EventTag(tag_type="repo", tag="y")],
     )
     packager.scan_once_sync()
 
-    items = queue_store.list_items(_key(secretary_setup["user_id"]))
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     payload = json.loads(items[0].payload)
     # Two dissimilar events → two clusters, packed into one notice.

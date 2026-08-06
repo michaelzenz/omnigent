@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Recipient roles that own a queue. The distributor *scoring program* is
-# deterministic Python with no session, so it never appears here; the reserved
-# "distributor" role is for the LLM distributor agent, which is not enabled yet.
-AGENT_QUEUE_ROLES = frozenset({"secretary", "manager", "worker", "distributor"})
+# Recipient roles that own a queue. The ingress scorer (``ingress.py``) is
+# deterministic Python with no session, so it never appears here; the secretary
+# is a chat-only assistant the user talks to directly, so it has no queue either.
+AGENT_QUEUE_ROLES = frozenset({"broker", "manager", "worker"})
 
 # Payload shapes. A "notice" is prose packaged from N business signals; an
 # "item.dispatch" is an instruction to start one task item on a worker slot.
@@ -26,7 +26,7 @@ class AgentQueueKey:
 
     ``scope_id`` narrows the role to a single agent: the task id for a manager,
     the worker id for a worker slot, and ``None`` for per-user roles such as the
-    secretary, which have exactly one queue per owner.
+    broker, which have exactly one queue per owner.
 
     :param role: One of :data:`AGENT_QUEUE_ROLES`.
     :param owner_user_id: Owning user, or ``""`` in single-user mode.

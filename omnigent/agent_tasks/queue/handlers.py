@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from omnigent.agent_tasks.agent_builtins import (
-    TASK_SECRETARY_ROLE,
+    TASK_BROKER_ROLE,
 )
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
@@ -47,7 +47,7 @@ async def _inject_notice(
 ) -> None:
     """Inject ``item.payload`` into the target session as a synthetic user message.
 
-    Shared by every role whose payload is a ``[System: …]`` notice — secretary and
+    Shared by every role whose payload is a ``[System: …]`` notice — broker and
     manager today. Raises :class:`DispatchFailed` when the payload is empty, the
     conversation is gone, or the runner refuses the injection.
     """
@@ -72,13 +72,13 @@ async def _inject_notice(
         raise DispatchFailed(f"notice delivery to {target.session_id} returned false")
 
 
-class SecretaryDispatchHandler(RoleDispatchHandler):
-    """Deliver secretary notices to the user's live secretary session.
+class BrokerDispatchHandler(RoleDispatchHandler):
+    """Deliver broker notices to the user's live broker session.
 
-    The target is the secretary's bound conversation from the role profile. The
+    The target is the broker's bound conversation from the role profile. The
     handler caches it on the queue row via :meth:`set_queue_conversation` so the
     status feed can reverse-look-up the queue from the session id when the
-    secretary goes idle.
+    broker goes idle.
     """
 
     def __init__(
@@ -96,20 +96,20 @@ class SecretaryDispatchHandler(RoleDispatchHandler):
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         profile = self._task_role_profile_store.get(
             item.key.owner_user_id,
-            TASK_SECRETARY_ROLE,
+            TASK_BROKER_ROLE,
         )
         if profile is None or profile.conversation_id is None:
-            raise DispatchFailed(f"no live secretary for user {item.key.owner_user_id}")
+            raise DispatchFailed(f"no live broker for user {item.key.owner_user_id}")
         conv = await asyncio.to_thread(
             self._conversation_store.get_conversation,
             profile.conversation_id,
         )
         if conv is None:
-            raise DispatchFailed(f"secretary conversation {profile.conversation_id} missing")
+            raise DispatchFailed(f"broker conversation {profile.conversation_id} missing")
         # Cache the target so the status feed can find this queue from the
-        # session id alone when the secretary goes idle.
+        # session id alone when the broker goes idle.
         self._store.set_queue_conversation(item.key, profile.conversation_id)
-        harness = conv.harness_override or "claude-native"
+        harness = conv.harness_override or "cursor-native"
         return DispatchTarget(
             session_id=profile.conversation_id,
             harness=harness,
@@ -130,7 +130,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
     The target is the task's ``manager_conversation_id`` (one manager
     conversation per task), so the queue's ``scope_id`` is the task id. The
     handler caches the conversation on the queue row for the status feed's
-    reverse look-up, the same way the secretary handler does.
+    reverse look-up, the same way the broker handler does.
     """
 
     def __init__(
@@ -268,7 +268,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             role_profile = await asyncio.to_thread(
                 self._task_role_profile_store.get,
                 item.key.owner_user_id,
-                TASK_SECRETARY_ROLE,
+                TASK_BROKER_ROLE,
             )
 
         def _opt_str(key: str) -> str | None:

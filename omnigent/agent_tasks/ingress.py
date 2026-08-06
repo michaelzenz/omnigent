@@ -1,11 +1,11 @@
-"""Distribute inbound task events to managed task managers."""
+"""Ingress — route inbound task events to managed task managers or stall for the broker."""
 
 from __future__ import annotations
 
 import logging
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
-from omnigent.agent_tasks.event_types import is_distributor_candidate
+from omnigent.agent_tasks.event_types import is_ingress_candidate
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
 from omnigent.agent_tasks.scoring import (
     candidate_task_ids_for_event_tags,
@@ -37,7 +37,7 @@ def _bootstrap_params(role_profile: UserTaskRoleProfile | None) -> BootstrapPara
     )
 
 
-async def distribute_event(
+async def ingress_event(
     *,
     event: TaskEvent,
     task_store: TaskStore,
@@ -50,11 +50,11 @@ async def distribute_event(
     owner_user_id: str | None = None,
 ) -> TaskEvent:
     """
-    Route a distributor-candidate event to a task manager or stall for secretary help.
+    Route an ingress-candidate event to a task manager or stall for broker help.
 
     Idempotent when the event is already routed or awaiting manager triage.
     """
-    if not is_distributor_candidate(event_type=event.event_type, task_id=event.task_id):
+    if not is_ingress_candidate(event_type=event.event_type, task_id=event.task_id):
         return event
     if event.state in {ROUTED_EVENT_STATE, "reconciled"}:
         return event

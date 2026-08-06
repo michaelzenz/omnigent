@@ -39,7 +39,7 @@ _logger = logging.getLogger(__name__)
 SESSION_ADOPTION_PROPOSAL = "session.adoption"
 SESSION_ADOPTED = "session.adopted"
 
-# Orphan adoption on import/session-create is off until secretary UX is ready.
+# Orphan adoption on import/session-create is off until broker UX is ready.
 _ORPHAN_SESSION_ADOPTION_ENABLED = False
 
 
@@ -81,7 +81,7 @@ def resolve_owner_user_id(
     host_id: str | None,
     host_store: HostStore | None,
 ) -> str:
-    """Map a session to the secretary owner user."""
+    """Map a session to the broker owner user."""
     if host_id and host_store is not None:
         host = host_store.get_host(host_id)
         if host is not None and host.owner:
@@ -141,10 +141,10 @@ async def enqueue_orphan_session(
     owner_user_id: str,
 ) -> bool:
     """
-    Record an orphan session for secretary routing-profile work.
+    Record an orphan session for broker routing-profile work.
 
     Creates a ``session.orphan`` task event in ``awaiting_grouping`` state,
-    attributed to the owner. The secretary packager polls it like any other
+    attributed to the owner. The broker packager polls it like any other
     stalled event, so this is durable across restarts and needs no in-memory
     queue or direct wake.
 
@@ -269,10 +269,10 @@ def propose_session_adoption(
         f"Adopt session: {conv.title or session_id}",
         source_key=session_id,
         payload=json.dumps(payload),
-        source="secretary",
+        source="broker",
         state="received",
     )
-    # The secretary has produced a proposal, so the orphan trigger event is done.
+    # The broker has produced a proposal, so the orphan trigger event is done.
     orphan = find_open_orphan_event(task_event_store, session_id)
     if orphan is not None:
         task_event_store.update_event(

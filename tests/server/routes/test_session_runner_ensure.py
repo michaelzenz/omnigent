@@ -1,4 +1,4 @@
-"""Tests for host-bound runner ensure helpers used by secretary wakes."""
+"""Tests for host-bound runner ensure helpers used by broker wakes."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ async def test_ensure_session_runner_client_returns_existing_client(
     """A connected runner is returned without launching a duplicate."""
     conv = conv_store.create_conversation(
         kind="default",
-        title="secretary",
+        title="broker",
         host_id=_host_id("host"),
         workspace="/tmp/ws",
     )
@@ -68,7 +68,7 @@ async def test_ensure_session_runner_client_launches_for_host_bound_session(
     """Host-bound sessions with no live runner trigger a host launch."""
     conv = conv_store.create_conversation(
         kind="default",
-        title="secretary",
+        title="broker",
         host_id=_host_id("host"),
         workspace="/tmp/ws",
     )
@@ -116,7 +116,7 @@ async def test_wake_parent_launches_runner_before_dispatch(
     """Parent wake ensures a runner exists instead of dropping immediately."""
     parent = conv_store.create_conversation(
         kind="default",
-        title="secretary",
+        title="broker",
         host_id=_host_id("host"),
         workspace="/tmp/ws",
     )

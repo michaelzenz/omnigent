@@ -1,6 +1,6 @@
 # Task manager manual
 
-You own **one** managed task. Maintain its `internal_note` and tags so the distributor
+You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer
 can route inbound events.
 
 ## Triggers
@@ -39,7 +39,7 @@ Mark routed source events `reconciled` once items are created.
 ## Poll plugins
 
 Follow-up events from poll plugins may include an explicit `task_id` (via
-`watches.json` `context.task_id`). Those events skip distributor scoring and
+`watches.json` `context.task_id`). Those events skip ingress scoring and
 route to your task directly.
 
 When a blocker PR must be watched, ask the poll plugin author to add an

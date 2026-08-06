@@ -7,7 +7,7 @@ export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
   {
     id: FIXTURE_PENDING_TASK_ID,
     title: "Triage: Slack thread about deploy",
-    description: "Secretary package waiting for a manager",
+    description: "Broker package waiting for a manager",
     state: "pending",
     agent_profile_id: "fixture-manager",
     manager_conversation_id: null,
@@ -28,7 +28,7 @@ export function buildFixtureDashboard(taskId: string): TaskDashboard | null {
       task: {
         id: FIXTURE_PENDING_TASK_ID,
         title: "Triage: Slack thread about deploy",
-        description: "Secretary package waiting for a manager",
+        description: "Broker package waiting for a manager",
         state: "pending",
         manager_conversation_id: null,
       },

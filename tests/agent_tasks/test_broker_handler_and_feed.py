@@ -1,4 +1,4 @@
-"""Tests for the secretary dispatch handler and the queue status feed."""
+"""Tests for the broker dispatch handler and the queue status feed."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 from omnigent.agent_tasks.queue.dispatcher import DispatchFailed, DispatchTarget
-from omnigent.agent_tasks.queue.handlers import SecretaryDispatchHandler
+from omnigent.agent_tasks.queue.handlers import BrokerDispatchHandler
 from omnigent.agent_tasks.queue.status_feed import QueueStatusFeed
 from omnigent.db.utils import generate_agent_id, now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey
@@ -45,7 +45,7 @@ def _item(
     )
 
 
-# ── SecretaryDispatchHandler ───────────────────────
+# ── BrokerDispatchHandler ───────────────────────
 
 
 @pytest.fixture
@@ -59,21 +59,21 @@ def handler_setup(db_uri: str) -> dict:
         manager_agent_id, name="task-manager-agent", bundle_location="test:///bundle"
     )
     conv = conversation_store.create_conversation(
-        title="Secretary",
+        title="Task broker",
         agent_id=manager_agent_id,
         host_id=_uid("host"),
-        workspace="/tmp/sec",
+        workspace="/tmp/broker",
     )
     user_id = "user-1"
     profile_store.upsert(
         user_id,
-        "secretary",
+        "broker",
         agent_profile_id=manager_agent_id,
         conversation_id=conv.id,
         host_id=_uid("host"),
-        workspace="/tmp/sec",
+        workspace="/tmp/broker",
     )
-    handler = SecretaryDispatchHandler(
+    handler = BrokerDispatchHandler(
         store=queue_store,
         task_role_profile_store=profile_store,
         conversation_store=conversation_store,
@@ -91,9 +91,9 @@ def handler_setup(db_uri: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_returns_secretary_session(handler_setup: dict) -> None:
+async def test_resolve_target_returns_broker_session(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=handler_setup["user_id"])
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=handler_setup["user_id"])
     target = await handler.resolve_target(_item(key))
     assert target.session_id == handler_setup["conv_id"]
 
@@ -102,7 +102,7 @@ async def test_resolve_target_returns_secretary_session(handler_setup: dict) -> 
 async def test_resolve_target_caches_conversation_on_queue(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
     queue_store: SqlAlchemyAgentQueueStore = handler_setup["queue_store"]
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=handler_setup["user_id"])
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=handler_setup["user_id"])
     # Enqueue so the queue row exists.
     queue_store.enqueue(_uid("e"), key, "notice", payload="x")
     await handler.resolve_target(_item(key))
@@ -114,7 +114,7 @@ async def test_resolve_target_caches_conversation_on_queue(handler_setup: dict) 
 @pytest.mark.asyncio
 async def test_resolve_target_fails_without_profile(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id="nobody")
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id="nobody")
     with pytest.raises(DispatchFailed):
         await handler.resolve_target(_item(key))
 
@@ -130,13 +130,13 @@ async def test_resolve_target_fails_when_conversation_gone(handler_setup: dict) 
     # Profile points at a conversation that does not exist.
     profile_store.upsert(
         user_id,
-        "secretary",
+        "broker",
         agent_profile_id=agent_id,
         conversation_id=_uid("conv_missing"),
         host_id=_uid("h"),
         workspace="/tmp",
     )
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=user_id)
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=user_id)
     with pytest.raises(DispatchFailed):
         await handler.resolve_target(_item(key))
 
@@ -145,7 +145,7 @@ async def test_resolve_target_fails_when_conversation_gone(handler_setup: dict) 
 async def test_deliver_calls_wake_parent(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
     conv_id = handler_setup["conv_id"]
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=handler_setup["user_id"])
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=handler_setup["user_id"])
     item = _item(key, payload="[System: route me]")
     target = DispatchTarget(session_id=conv_id, harness="claude-native")
     with patch(
@@ -163,7 +163,7 @@ async def test_deliver_calls_wake_parent(handler_setup: dict) -> None:
 async def test_deliver_fails_when_wake_returns_false(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
     conv_id = handler_setup["conv_id"]
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=handler_setup["user_id"])
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=handler_setup["user_id"])
     item = _item(key)
     target = DispatchTarget(session_id=conv_id)
     with patch(
@@ -178,7 +178,7 @@ async def test_deliver_fails_when_wake_returns_false(handler_setup: dict) -> Non
 @pytest.mark.asyncio
 async def test_deliver_fails_without_payload(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id=handler_setup["user_id"])
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=handler_setup["user_id"])
     item = _item(key, payload="")
     target = DispatchTarget(session_id=handler_setup["conv_id"])
     with pytest.raises(DispatchFailed):
@@ -191,7 +191,7 @@ async def test_deliver_fails_without_payload(handler_setup: dict) -> None:
 @pytest.mark.asyncio
 async def test_status_feed_completes_inflight_on_idle(db_uri: str) -> None:
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id="user-x")
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id="user-x")
     session_id = "22222222222222222222222222222222"
     queue_store.enqueue(_uid("e"), key, "notice", payload="x")
     queue_store.set_queue_conversation(key, session_id)
@@ -216,7 +216,7 @@ async def test_status_feed_completes_inflight_on_idle(db_uri: str) -> None:
 @pytest.mark.asyncio
 async def test_status_feed_completes_inflight_on_failed(db_uri: str) -> None:
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id="user-y")
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id="user-y")
     session_id = "33333333333333333333333333333333"
     queue_store.enqueue(_uid("e"), key, "notice", payload="x")
     queue_store.set_queue_conversation(key, session_id)
@@ -245,7 +245,7 @@ async def test_status_feed_noop_for_session_without_queue(db_uri: str) -> None:
 @pytest.mark.asyncio
 async def test_status_feed_ignores_running_status(db_uri: str) -> None:
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
-    key = AgentQueueKey(role=TASK_SECRETARY_ROLE, owner_user_id="user-z")
+    key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id="user-z")
     session_id = "44444444444444444444444444444444"
     queue_store.enqueue(_uid("e"), key, "notice", payload="x")
     queue_store.set_queue_conversation(key, session_id)

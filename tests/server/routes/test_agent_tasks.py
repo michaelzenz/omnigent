@@ -8,12 +8,12 @@ import httpx
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
-    TASK_DISTRIBUTOR_ROLE,
+    TASK_BROKER_ROLE,
     TASK_MANAGER_AGENT_NAME,
     TASK_SECRETARY_ROLE,
     resolve_task_agent_id,
 )
-from omnigent.agent_tasks.secretary_session import NO_HOST_AVAILABLE_MESSAGE
+from omnigent.agent_tasks.broker_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.host_store import HostStore
@@ -245,35 +245,27 @@ async def test_unknown_task_agent_role_returns_404(client: httpx.AsyncClient) ->
     assert profile_resp.status_code == 404
 
 
-async def test_distributor_profile_round_trip(
+async def test_broker_profile_round_trip(
     client: httpx.AsyncClient,
     secretary_agent_id: str,
 ) -> None:
-    """Distributor role accepts and stores a profile independent of secretary."""
+    """Broker role accepts and stores a profile independent of secretary."""
     profile_resp = await put_agent_role_profile(
         client,
-        role=TASK_DISTRIBUTOR_ROLE,
+        role=TASK_BROKER_ROLE,
         agent_profile_id=secretary_agent_id,
-        host_id=_uid("distributor_host"),
-        workspace="/tmp/distributor",
+        host_id=_uid("broker_host"),
+        workspace="/tmp/broker",
     )
     assert profile_resp.status_code == 200
     body = profile_resp.json()
-    assert body["role"] == TASK_DISTRIBUTOR_ROLE
+    assert body["role"] == TASK_BROKER_ROLE
     assert body["agent_profile_id"] == secretary_agent_id
 
-    loaded = await client.get(agent_role_profile_url(TASK_DISTRIBUTOR_ROLE))
+    loaded = await client.get(agent_role_profile_url(TASK_BROKER_ROLE))
     assert loaded.status_code == 200
-    assert loaded.json()["workspace"] == "/tmp/distributor"
+    assert loaded.json()["workspace"] == "/tmp/broker"
     assert loaded.json()["agent_profile_id"] == secretary_agent_id
-
-
-async def test_distributor_session_not_supported(client: httpx.AsyncClient) -> None:
-    """Session bootstrap is rejected for the distributor role."""
-    ensure_resp = await client.post(agent_role_session_url(TASK_DISTRIBUTOR_ROLE))
-    assert ensure_resp.status_code == 400
-    reset_resp = await client.post(agent_role_session_reset_url(TASK_DISTRIBUTOR_ROLE))
-    assert reset_resp.status_code == 400
 
 
 async def test_secretary_profile_and_bootstrap(
@@ -281,13 +273,13 @@ async def test_secretary_profile_and_bootstrap(
     task_manager_agent_id: str,
     secretary_agent_id: str,
 ) -> None:
-    """Secretary profile defaults feed manager bootstrap."""
+    """Broker profile defaults feed manager bootstrap."""
     profile_resp = await put_agent_role_profile(
         client,
-        role=TASK_SECRETARY_ROLE,
+        role=TASK_BROKER_ROLE,
         agent_profile_id=secretary_agent_id,
-        host_id=_uid("secretary_host"),
-        workspace="/tmp/secretary",
+        host_id=_uid("broker_host"),
+        workspace="/tmp/broker",
     )
     assert profile_resp.status_code == 200
     assert profile_resp.json()["harness"] == "cursor"
@@ -334,7 +326,7 @@ async def test_ensure_secretary_session_seeds_prompt(
     assert len(items) == 1
     assert items[0]["role"] == "user"
     assert items[0].get("is_meta") is True
-    assert "docs/agent-tasks/README.md" in items_resp.text
+    assert "docs/agent-tasks/API_REFERENCE.md" in items_resp.text
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
     assert "secretary" in items_resp.text.lower()
 
@@ -368,7 +360,7 @@ async def test_reset_secretary_session_reseeds_prompt(
     items = items_resp.json()["data"]
     assert len(items) == 1
     assert items[0].get("is_meta") is True
-    assert "docs/agent-tasks/README.md" in items_resp.text
+    assert "docs/agent-tasks/API_REFERENCE.md" in items_resp.text
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
 
     profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))

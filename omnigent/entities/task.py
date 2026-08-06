@@ -122,8 +122,8 @@ class TaskEventRoutingAttempt:
     :param candidate_task_id: Destination task.
     :param proposed_at: Unix epoch seconds when routing was recorded.
     :param score: Tag-overlap score, or ``None`` when unset.
-    :param reason: Human-readable routing explanation from the distributor or
-        secretary. ``None`` when unset.
+    :param reason: Human-readable routing explanation from the ingress scorer or
+        broker. ``None`` when unset.
     """
 
     id: str
@@ -170,7 +170,7 @@ class TaskItem:
     :param instructions: Dispatch instructions for the worker.
     :param internal_note: Agent-facing context to avoid re-querying sources.
     :param worker_id: Assigned worker slot, or ``None`` while still in the inbox.
-    :param created_by: ``"manager"``, ``"secretary"``, or ``"user"``.
+    :param created_by: ``"manager"``, ``"broker"``, or ``"user"``.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """

@@ -960,7 +960,7 @@ _session_status_cache: dict[str, str] = {}
 
 # Bridge from session status changes to the agent queue system. Set by
 # ``configure_queue_status_feed`` at app startup; the publish path calls
-# ``notify`` for every status change so non-worker roles (secretary, manager)
+# ``notify`` for every status change so non-worker roles (broker, manager)
 # get their in-flight item completed when the session returns to idle/failed.
 _queue_status_feed: QueueStatusFeed | None = None
 
@@ -12059,7 +12059,7 @@ def set_server_runner_infrastructure(
     """
     Stash host/tunnel registries for background runner launch paths.
 
-    Called once from ``create_app`` so secretary wakes and other
+    Called once from ``create_app`` so broker wakes and other
     best-effort ensure paths can relaunch a host-bound runner without a
     FastAPI request closure.
 

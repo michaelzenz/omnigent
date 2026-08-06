@@ -109,11 +109,11 @@ Example body:
 
 When a watch is tied to a specific managed task, include `task_id` on the
 ingress body (or `context.task_id` in `watches.json` for the `github_pr`
-plugin). The distributor routes directly to that task and skips scoring.
+plugin). The ingress scorer routes directly to that task and skips scoring.
 
 Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server returns existing event.
 
-Use **dense `summary` text** so the distributor can route to the right task
+Use **dense `summary` text** so the ingress scorer can route to the right task
 (`pr:123`, `repo:org/repo`, `unblocks:pr:456`, etc.).
 
 ### Suggested `event_type` prefixes
@@ -174,7 +174,7 @@ See `examples/poll_plugins/github_pr/run.py` in the repository.
    `blocked_pr: 123` and `task_id` set to the managed task that owns PR #123.
 4. When #456 merges → `run.py` posts `github.pr.merged` with `task_id` and
    `unblocks:pr:123` in summary.
-5. Distributor fast-paths to that task → manager dispatches rerun/merge.
+5. Ingress fast-paths to that task → manager dispatches rerun/merge.
 
 ## Do not
 
