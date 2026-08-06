@@ -17,6 +17,18 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   })),
+  useStopTaskItem: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useRemoveTaskItem: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useRetryTaskItem: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
 }));
 
 vi.mock("@/hooks/useAvailableAgents", () => ({
@@ -179,10 +191,6 @@ describe("TaskCard", () => {
                   internal_note: null,
                   state: "queued",
                   worker_id: "worker-1",
-            profile_id: "worker-1",
-            session_id: null,
-                  host_id: null,
-                  workspace: null,
                   created_at: 3,
                   updated_at: null,
                 },
@@ -244,6 +252,54 @@ describe("TaskCard", () => {
 
     expect(screen.getByTestId("task-card-workers").className).toContain("overflow-y-auto");
     expect(screen.getByTestId("task-card-workers").className).toContain("flex-1");
+  });
+
+  it("shows retry and remove on parked items", async () => {
+    render(
+      <TaskCardWorkers
+        taskId="task-1"
+        inboxItems={[]}
+        defaultModel="composer-2.5"
+        agents={[
+          { id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", description: null, harness: null, skills: [] },
+        ]}
+        workers={[
+          {
+            worker_id: "worker-1",
+            profile_id: "worker-1",
+            session_id: null,
+            state: "idle",
+            situation: "Idle",
+            rows: [
+              {
+                kind: "item",
+                default_folded: false,
+                sort_at: 2,
+                item: {
+                  id: "item-interrupted",
+                  title: "Interrupted task",
+                  description: null,
+                  instructions: "Finish the docs",
+                  internal_note: null,
+                  state: "interrupted",
+                  worker_id: "worker-1",
+                  queue_item_id: "queue-1",
+                  created_at: 2,
+                  updated_at: 2,
+                },
+              },
+            ],
+            executions: [],
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Retry dispatch")).toBeInTheDocument();
+      expect(screen.getByLabelText("Remove item from queue")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("worker-row-item:fixture-item-done-hidden")).not.toBeInTheDocument();
   });
 
   it("collapses inbox lane when the header is toggled", () => {

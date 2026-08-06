@@ -12,7 +12,9 @@ from omnigent.stores.worker_store import WorkerStore
 
 _RUNNING_EXECUTION_STATUSES = frozenset({"queued", "running"})
 _TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
-_WORKER_LANE_ITEM_STATES = frozenset({"awaiting_user_ack", "queued", "running", "done"})
+_WORKER_LANE_ITEM_STATES = frozenset(
+    {"awaiting_user_ack", "queued", "running", "interrupted", "dispatch_failed"}
+)
 _WORKER_STATE = Literal["new", "active", "idle"]
 
 
@@ -130,7 +132,7 @@ def _worker_lane(
     for item in worker_items:
         if item.id in covered_item_ids:
             continue
-        if item.state in {"awaiting_user_ack", "queued", "running"}:
+        if item.state in {"awaiting_user_ack", "queued", "running", "interrupted", "dispatch_failed"}:
             rows.append(
                 _item_row(
                     item,
@@ -155,18 +157,6 @@ def _worker_lane(
             )
             covered_execution_ids.add(execution.id)
             covered_item_ids.add(execution.task_item_id)
-
-    for item in worker_items:
-        if item.id in covered_item_ids:
-            continue
-        if item.state == "done":
-            rows.append(
-                _item_row(
-                    item,
-                    default_folded=True,
-                    sort_at=_item_sort_at(item),
-                )
-            )
 
     rows.sort(key=lambda row: -int(row["sort_at"]))
 

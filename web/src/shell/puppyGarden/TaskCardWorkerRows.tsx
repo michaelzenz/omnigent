@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { TaskWorkerRow, TaskWorkerLane } from "@/lib/agentTasksApi";
-import { isExecutionEditable } from "./taskCardUtils";
+import { isEditableItemState, isExecutionEditable, visibleWorkerRows } from "./taskCardUtils";
 import { TaskCardItemEditor } from "./TaskCardItemEditor";
+import { TaskCardItemStateBadge } from "./TaskCardItemStateBadge";
+import { TaskCardExecutionRowActions, TaskCardRowActions } from "./TaskCardRowActions";
 import { WorkStateBadge, executionSubtitle } from "./TaskCardSessions";
 import { relativeTime } from "@/lib/relativeTime";
 
@@ -34,20 +36,22 @@ export function TaskCardWorkerRows({
   agents,
   defaultModel,
 }: TaskCardWorkerRowsProps) {
+  const visibleRows = visibleWorkerRows(rows);
   const [folded, setFolded] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(rows.map((row) => [rowKey(row), row.default_folded])),
+    Object.fromEntries(visibleRows.map((row) => [rowKey(row), row.default_folded])),
   );
 
-  if (rows.length === 0) {
+  if (visibleRows.length === 0) {
     return <p className="px-1 text-sm text-muted-foreground">No items for this worker yet.</p>;
   }
 
   return (
     <ul className="space-y-1.5" data-testid="worker-lane-rows">
-      {rows.map((row) => {
+      {visibleRows.map((row) => {
         const key = rowKey(row);
         const isFolded = folded[key] ?? row.default_folded;
         const title = rowTitle(row);
+        const runningExecution = row.kind === "execution" && row.execution.status === "running";
 
         return (
           <li
@@ -56,40 +60,59 @@ export function TaskCardWorkerRows({
             data-testid={`worker-row-${key}`}
             data-folded={isFolded ? "true" : "false"}
           >
-            <button
-              type="button"
-              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left"
-              onClick={() => setFolded((prev) => ({ ...prev, [key]: !isFolded }))}
-              aria-expanded={!isFolded}
-            >
-              {isFolded ? (
-                <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-              {row.kind === "execution" ? (
-                <WorkStateBadge status={row.execution.status} />
-              ) : (
-                <span className="shrink-0 text-[10px] text-muted-foreground uppercase">
-                  {row.item.state.replaceAll("_", " ")}
-                </span>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5 px-2 py-1.5">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                onClick={() => setFolded((prev) => ({ ...prev, [key]: !isFolded }))}
+                aria-expanded={!isFolded}
+              >
+                {isFolded ? (
+                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+                {row.kind === "execution" ? (
+                  <WorkStateBadge status={row.execution.status} />
+                ) : (
+                  <TaskCardItemStateBadge state={row.item.state} />
+                )}
+              </button>
+              {runningExecution ? (
+                <TaskCardExecutionRowActions
+                  taskId={taskId}
+                  taskItemId={row.execution.task_item_id}
+                  queueItemId={row.execution.item?.queue_item_id}
+                  conversationId={row.execution.conversation_id}
+                />
+              ) : row.kind === "item" && row.item.state === "running" ? (
+                <TaskCardRowActions taskId={taskId} item={row.item} showStop />
+              ) : null}
+            </div>
 
             {!isFolded ? (
               <div className="border-t border-border/60 px-2 pb-2 pt-1.5">
                 {row.kind === "item" ? (
-                  row.item.state === "awaiting_user_ack" || row.item.state === "queued" ? (
-                    <TaskCardItemEditor
-                      taskId={taskId}
-                      item={row.item}
-                      workerAgentIds={workerAgentIds}
-                      workerLanes={workerLanes}
-                      agents={agents}
-                      defaultModel={defaultModel}
-                      mode={row.item.state === "awaiting_user_ack" ? "ack" : "edit"}
-                    />
+                  isEditableItemState(row.item.state) ? (
+                    <>
+                      <TaskCardItemEditor
+                        taskId={taskId}
+                        item={row.item}
+                        workerAgentIds={workerAgentIds}
+                        workerLanes={workerLanes}
+                        agents={agents}
+                        defaultModel={defaultModel}
+                        mode={
+                          row.item.state === "awaiting_user_ack"
+                            ? "ack"
+                            : row.item.state === "queued"
+                              ? "edit"
+                              : "parked"
+                        }
+                      />
+                      <TaskCardRowActions taskId={taskId} item={row.item} />
+                    </>
                   ) : (
                     <ReadOnlyItemBody row={row} />
                   )

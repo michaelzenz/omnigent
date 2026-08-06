@@ -170,3 +170,6 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     assert False in folded
     assert True in folded
     assert queued_item.title in {row["item"]["title"] for row in lane["rows"] if row["kind"] == "item"}
+    # Finished work stays on the execution history row, not as a task-item row.
+    done_titles = {row["item"]["title"] for row in lane["rows"] if row["kind"] == "item"}
+    assert done_item.title not in done_titles

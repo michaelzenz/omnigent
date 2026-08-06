@@ -70,7 +70,7 @@ interface TaskCardItemEditorProps {
   workerLanes: TaskWorkerLane[];
   agents: AvailableAgent[];
   defaultModel: string;
-  mode: "ack" | "edit";
+  mode: "ack" | "edit" | "parked";
 }
 
 export function TaskCardItemEditor({
@@ -229,6 +229,17 @@ export function TaskCardItemEditor({
           >
             <CheckIcon aria-hidden />
             Go
+          </Button>
+        </div>
+      ) : mode === "parked" ? (
+        <div className="flex justify-end pt-0.5">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!dirty || pending}
+            onClick={() => void saveEdit()}
+          >
+            Save
           </Button>
         </div>
       ) : (

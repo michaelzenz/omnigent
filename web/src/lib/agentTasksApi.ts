@@ -27,6 +27,8 @@ export interface TaskItemSummary {
   internal_note: string | null;
   state: string;
   worker_id: string | null;
+  /** Present when the server knows which agent-queue row backs this item. */
+  queue_item_id?: string | null;
   created_at: number;
   updated_at: number | null;
 }
@@ -108,6 +110,7 @@ export interface TaskDashboard {
 export interface DispatchPayload {
   worker_profile_id?: string;
   title?: string;
+  description?: string;
   instructions?: string;
   host_id?: string;
   workspace?: string;
@@ -257,6 +260,36 @@ export async function updateTaskItem(
     body: JSON.stringify(body),
   });
   return readJson<TaskItemSummary>(res);
+}
+
+export async function cancelAgentQueueItem(queueItemId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-queue-items/${encodeURIComponent(queueItemId)}/cancel`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
+export async function interruptAgentQueueItem(queueItemId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-queue-items/${encodeURIComponent(queueItemId)}/interrupt`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
+export async function retryTaskItemDispatch(taskItemId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/task-items/${encodeURIComponent(taskItemId)}/retry-dispatch`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
 }
 
 export interface FyiClusterCard {

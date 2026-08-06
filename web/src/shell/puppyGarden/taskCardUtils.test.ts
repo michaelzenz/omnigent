@@ -4,6 +4,7 @@ import {
   getFoldedExecutions,
   findExecution,
   isExecutionEditable,
+  isDoneTaskItem,
   proposalHasEdits,
   sortExecutions,
   taskCardBodyStyle,
@@ -12,6 +13,7 @@ import {
   TASK_CARD_NEXT_LANE_PEEK,
   TASK_CARD_SCROLLABLE_LIST_CLASS,
   TASK_CARD_WORKERS_CHROME,
+  visibleWorkerRows,
   workStateLabel,
 } from "./taskCardUtils";
 
@@ -275,5 +277,46 @@ describe("taskCardUtils", () => {
     expect(TASK_CARD_SCROLLABLE_LIST_CLASS).toContain("overflow-y-auto");
     expect(TASK_CARD_INNER_SCROLL_CLASS).toContain("overflow-y-auto");
     expect(TASK_CARD_INNER_SCROLL_CLASS).toContain("var(--task-card-body-max)");
+  });
+
+  it("drops done and cancelled task items from worker rows", () => {
+    expect(isDoneTaskItem("done")).toBe(true);
+    expect(isDoneTaskItem("cancelled")).toBe(true);
+    const rows = visibleWorkerRows([
+      {
+        kind: "item",
+        default_folded: false,
+        sort_at: 1,
+        item: {
+          id: "done",
+          title: "Hidden",
+          description: null,
+          instructions: null,
+          internal_note: null,
+          state: "done",
+          worker_id: "w1",
+          created_at: 1,
+          updated_at: null,
+        },
+      },
+      {
+        kind: "item",
+        default_folded: false,
+        sort_at: 2,
+        item: {
+          id: "queued",
+          title: "Visible",
+          description: null,
+          instructions: null,
+          internal_note: null,
+          state: "queued",
+          worker_id: "w1",
+          created_at: 2,
+          updated_at: null,
+        },
+      },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind === "item" && rows[0].item.id).toBe("queued");
   });
 });

@@ -2,6 +2,48 @@ import type { DispatchPayload, TaskExecutionSummary, TaskItemSummary, TaskWorker
 
 export type WorkStateLabel = "To Run" | "Running" | "Done";
 
+export function isDoneTaskItem(state: string): boolean {
+  return state === "done" || state === "cancelled";
+}
+
+export function isEditableItemState(state: string): boolean {
+  return (
+    state === "awaiting_user_ack" ||
+    state === "queued" ||
+    state === "interrupted" ||
+    state === "dispatch_failed"
+  );
+}
+
+export function isParkedItemState(state: string): boolean {
+  return state === "interrupted" || state === "dispatch_failed";
+}
+
+export function itemStateLabel(state: string): string {
+  switch (state) {
+    case "awaiting_user_ack":
+      return "Needs ack";
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Running";
+    case "interrupted":
+      return "Interrupted";
+    case "dispatch_failed":
+      return "Dispatch failed";
+    case "done":
+      return "Done";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return state.replaceAll("_", " ");
+  }
+}
+
+export function visibleWorkerRows(rows: import("@/lib/agentTasksApi").TaskWorkerRow[]) {
+  return rows.filter((row) => row.kind !== "item" || !isDoneTaskItem(row.item.state));
+}
+
 /** Minimum task card body height in pixels. */
 export const TASK_CARD_BODY_MIN_PX = 320;
 
