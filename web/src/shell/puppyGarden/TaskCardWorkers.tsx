@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, MessageSquareIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
+import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardWorkerRows } from "./TaskCardWorkerRows";
 import {
   TASK_CARD_INNER_SCROLL_CLASS,
@@ -39,6 +41,7 @@ export function TaskCardWorkers({
   agents,
   defaultModel,
 }: TaskCardWorkersProps) {
+  const { openWorker, isWorkerSelected } = usePuppyGardenChat();
   const allAgentIds = useMemo(() => agents.map((agent) => agent.id), [agents]);
   const workerProfileIds = useMemo(
     () => workers.map((lane) => lane.profile_id),
@@ -112,6 +115,7 @@ export function TaskCardWorkers({
         {lanes.map((lane) => {
           const expanded = expandedLaneId === lane.worker_id;
           const name = laneDisplayName(lane, agents);
+          const workerSelected = isWorkerSelected(taskId, lane.worker_id);
           const rowWorkerProfileIds = isInboxLane(lane.worker_id)
             ? allAgentIds
             : workerProfileIds;
@@ -122,32 +126,57 @@ export function TaskCardWorkers({
               className={cn(
                 "shrink-0 overflow-hidden rounded-md border shadow-sm",
                 workerLaneStateClass(lane.state),
+                workerSelected && "ring-2 ring-primary ring-offset-1",
               )}
               data-testid={`worker-lane-${lane.worker_id}`}
               data-expanded={expanded ? "true" : "false"}
+              data-chat-selected={workerSelected ? "true" : "false"}
             >
-              <button
-                type="button"
-                className="flex w-full shrink-0 items-center gap-2 px-2 py-1.5 text-left"
-                onClick={() => toggleLane(lane.worker_id)}
-                aria-expanded={expanded}
-                data-testid={`worker-lane-toggle-${lane.worker_id}`}
-              >
-                {expanded ? (
-                  <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-semibold">{name}</span>
-                    <Badge variant="outline" className="shrink-0 text-[10px]">
-                      {workerLaneStateLabel(lane.state)}
-                    </Badge>
+              <div className="flex w-full shrink-0 items-center gap-1 px-1 py-1">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 px-1 py-0.5 text-left"
+                  onClick={() => toggleLane(lane.worker_id)}
+                  aria-expanded={expanded}
+                  data-testid={`worker-lane-toggle-${lane.worker_id}`}
+                >
+                  {expanded ? (
+                    <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold">{name}</span>
+                      <Badge variant="outline" className="shrink-0 text-[10px]">
+                        {workerLaneStateLabel(lane.state)}
+                      </Badge>
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">{lane.situation}</p>
                   </div>
-                  <p className="truncate text-xs text-muted-foreground">{lane.situation}</p>
-                </div>
-              </button>
+                </button>
+                {!isInboxLane(lane.worker_id) ? (
+                  <Button
+                    type="button"
+                    variant={workerSelected ? "default" : "outline"}
+                    size="sm"
+                    className={cn(
+                      "h-7 shrink-0 gap-1 px-2 text-xs",
+                      !workerSelected && "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10",
+                    )}
+                    aria-label={`Open ${name} chat`}
+                    aria-pressed={workerSelected}
+                    data-testid={`worker-lane-chat-${lane.worker_id}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openWorker(taskId, lane.worker_id, lane.session_id, name);
+                    }}
+                  >
+                    <MessageSquareIcon className="size-3.5" />
+                    Chat
+                  </Button>
+                ) : null}
+              </div>
 
               {expanded ? (
                 <div

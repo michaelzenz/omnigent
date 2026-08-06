@@ -2,6 +2,7 @@ import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
+import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardAssets } from "./TaskCardAssets";
 import { TaskCardWorkers } from "./TaskCardWorkers";
 import { TASK_CARD_BODY_CLASS, isTaskCardSparse, taskCardBodyStyle } from "./taskCardUtils";
@@ -17,17 +18,40 @@ interface TaskCardProps {
 export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
   const { data: agents = [] } = useAvailableAgents();
+  const { openManager, isManagerSelected } = usePuppyGardenChat();
   const defaultModel = "composer-2.5";
 
   const isActive = state === "active";
+  const managerSelected = isManagerSelected(taskId);
+
+  const handleHeaderClick = () => {
+    openManager(taskId, dashboard?.task.manager_conversation_id ?? null, title);
+  };
 
   return (
     <article
-      className="flex flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm"
+      className={cn(
+        "flex flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm",
+        managerSelected && "ring-2 ring-primary ring-offset-1",
+      )}
       data-testid={`task-card-${taskId}`}
       data-task-state={state}
+      data-chat-selected={managerSelected ? "true" : "false"}
+      onClick={(event) => event.stopPropagation()}
     >
-      <header className="flex items-start justify-between gap-2 border-b border-border bg-white px-3 py-2">
+      <header
+        role="button"
+        tabIndex={0}
+        className="flex cursor-pointer items-start justify-between gap-2 border-b border-border bg-white px-3 py-2 hover:bg-muted/30"
+        onClick={handleHeaderClick}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            handleHeaderClick();
+          }
+        }}
+        data-testid={`task-card-header-${taskId}`}
+      >
         <div className="min-w-0">
           <h2 className="truncate text-base leading-tight font-semibold">{title}</h2>
           {description ? (

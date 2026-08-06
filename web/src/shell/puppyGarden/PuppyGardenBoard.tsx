@@ -1,11 +1,13 @@
 import { Loader2Icon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
+import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { BoardFyiStream } from "./BoardFyiStream";
 import { TaskCard } from "./TaskCard";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 
 export function PuppyGardenBoard() {
   const fixtureMode = isPuppyGardenFixtureMode();
+  const { dismissToRole } = usePuppyGardenChat();
   const { data: pendingTasks, isLoading: pendingLoading, error: pendingError } =
     useAgentTaskList("pending");
   const { data: activeTasks, isLoading: activeLoading, error: activeError } =
@@ -35,7 +37,11 @@ export function PuppyGardenBoard() {
   const hasActive = (activeTasks?.length ?? 0) > 0;
 
   return (
-    <div className="h-full overflow-y-auto p-4">
+    <div
+      className="h-full overflow-y-auto p-4"
+      onClick={() => dismissToRole()}
+      data-testid="puppy-garden-board-scroll"
+    >
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
         {fixtureMode ? (
           <div

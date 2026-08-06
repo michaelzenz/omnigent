@@ -1,9 +1,11 @@
 import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
+import type React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { TaskCard } from "./TaskCard";
 import { TaskCardWorkers } from "./TaskCardWorkers";
+import { PuppyGardenChatProvider } from "./PuppyGardenChatContext";
 import { INBOX_LANE_ID } from "./workerLaneStorage";
 
 vi.mock("@/hooks/useAgentTasks", () => ({
@@ -49,15 +51,21 @@ function renderCard() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <TaskCard
-          taskId="task-1"
-          title="Land PR #123"
-          description="Fix upload retries"
-          state="active"
-        />
+        <PuppyGardenChatProvider>
+          <TaskCard
+            taskId="task-1"
+            title="Land PR #123"
+            description="Fix upload retries"
+            state="active"
+          />
+        </PuppyGardenChatProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+function renderWorkers(ui: React.ReactElement) {
+  return render(<PuppyGardenChatProvider>{ui}</PuppyGardenChatProvider>);
 }
 
 afterEach(cleanup);
@@ -163,7 +171,7 @@ describe("TaskCard", () => {
   });
 
   it("expands a worker lane and folds finished rows by default", async () => {
-    render(
+    renderWorkers(
       <TaskCardWorkers
         taskId="task-1"
         inboxItems={[]}
@@ -240,7 +248,7 @@ describe("TaskCard", () => {
       executions: [],
     }));
 
-    render(
+    renderWorkers(
       <TaskCardWorkers
         taskId="task-many"
         inboxItems={[]}
@@ -255,7 +263,7 @@ describe("TaskCard", () => {
   });
 
   it("shows retry and remove on parked items", async () => {
-    render(
+    renderWorkers(
       <TaskCardWorkers
         taskId="task-1"
         inboxItems={[]}
@@ -366,7 +374,9 @@ describe("TaskCard", () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter>
-          <TaskCard taskId="task-empty" title="Empty task" description={null} state="pending" />
+          <PuppyGardenChatProvider>
+            <TaskCard taskId="task-empty" title="Empty task" description={null} state="pending" />
+          </PuppyGardenChatProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );

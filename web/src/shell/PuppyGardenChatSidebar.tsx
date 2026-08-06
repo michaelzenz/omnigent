@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2Icon, RotateCcwIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  Loader2Icon,
+  Maximize2Icon,
+  RotateCcwIcon,
+  XIcon,
+} from "lucide-react";
+import { useNavigate } from "@/lib/routing";
 import { buildBubbles, createBubbleCache, type Bubble } from "@/lib/renderItems";
 import { getCurrentAuthorId } from "@/lib/identity";
 import {
@@ -8,7 +15,14 @@ import {
 } from "@/components/CostRoutingControl";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { type Agent, useAgents, useSessionAgent } from "@/hooks/useAgents";
-import { useResetSecretarySession, useSecretaryProfile, useSecretarySession } from "@/hooks/useAgentTasks";
+import {
+  useBrokerProfile,
+  useBrokerSession,
+  useResetBrokerSession,
+  useResetSecretarySession,
+  useSecretaryProfile,
+  useSecretarySession,
+} from "@/hooks/useAgentTasks";
 import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRefresh";
 import { useSessionRunnerOnline, useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import {
@@ -46,12 +60,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  type PuppyGardenChatTarget,
+  type PuppyGardenRole,
+  usePuppyGardenChat,
+} from "./puppyGarden/PuppyGardenChatContext";
 
 interface PuppyGardenSessionViewProps {
   sessionId: string;
-  onReload: () => void;
-  onReset: () => void;
-  resetPending: boolean;
 }
 
 /**
@@ -59,20 +81,12 @@ interface PuppyGardenSessionViewProps {
  * cursor-native elicitation cards, send queueing, and composer props match
  * the main chat page.
  */
-function PuppyGardenSessionView({
-  sessionId,
-  onReload: _onReload,
-  onReset,
-  resetPending,
-}: PuppyGardenSessionViewProps) {
+function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
   const { data: agents, isLoading: agentsLoading, error: agentsError, refetch: refetchAgents } =
     useAgents();
   const { data: boundAgentBySession } = useSessionAgent(sessionId);
   const { session: activeSession, isLoading: sessionLoading } = useSession(sessionId);
   const runnerHealthSessions = useMemo(() => [{ id: sessionId }], [sessionId]);
-  // Secretary sessions are hidden from the sidebar, so register for the
-  // app-wide /health poll — otherwise runner liveness stays unknown and
-  // ConnectionIndicator loops on "Connecting…".
   useRunnerHealthRegistration(runnerHealthSessions);
   const runnerOnline = useSessionRunnerOnline(sessionId);
   useRefreshSessionStateOnRunnerOnline(sessionId, runnerOnline);
@@ -217,25 +231,6 @@ function PuppyGardenSessionView({
   return (
     <TerminalFirstContextProvider value={terminalFirstContextValue}>
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center justify-between border-border border-b px-2 py-1.5">
-          <span className="font-medium text-sm">Task secretary</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 px-2 text-muted-foreground"
-            onClick={onReset}
-            disabled={resetPending}
-            data-testid="puppy-garden-secretary-reset"
-          >
-            {resetPending ? (
-              <Loader2Icon className="size-3.5 animate-spin" />
-            ) : (
-              <RotateCcwIcon className="size-3.5" />
-            )}
-            Reset
-          </Button>
-        </div>
         <MainAgentSurface
           conversationId={sessionId}
           bubbles={bubbles}
@@ -274,113 +269,263 @@ function PuppyGardenSessionView({
   );
 }
 
+function dockTitle(target: PuppyGardenChatTarget): string {
+  if (target.kind === "role") {
+    return target.role === "broker" ? "Task broker" : "Task secretary";
+  }
+  if (target.kind === "manager") {
+    return `${target.title} · Manager`;
+  }
+  return `${target.label} · Worker`;
+}
+
+function emptyDockMessage(target: PuppyGardenChatTarget): string {
+  if (target.kind === "manager") {
+    return "No manager session yet. Bootstrap the task manager before chatting here.";
+  }
+  return "No live worker session. Dispatch work to this lane first.";
+}
+
+interface RoleSessionBootstrap {
+  sessionId: string | null;
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+  resetPending: boolean;
+  onReset: () => void;
+}
+
+function useRoleSessionBootstrap(role: PuppyGardenRole): RoleSessionBootstrap {
+  const secretaryProfile = useSecretaryProfile();
+  const secretarySession = useSecretarySession();
+  const brokerProfile = useBrokerProfile();
+  const brokerSession = useBrokerSession();
+  const resetSecretary = useResetSecretarySession();
+  const resetBroker = useResetBrokerSession();
+
+  const profile = role === "broker" ? brokerProfile : secretaryProfile;
+  const session = role === "broker" ? brokerSession : secretarySession;
+  const reset = role === "broker" ? resetBroker : resetSecretary;
+
+  const sessionId = session.data?.conversation_id ?? profile.data?.conversation_id ?? null;
+  const errorDetail = profile.error ?? session.error;
+  const bootstrapError =
+    errorDetail instanceof Error ? errorDetail.message : errorDetail ? String(errorDetail) : null;
+
+  const onReload = useCallback(() => {
+    void profile.refetch();
+    void session.refetch();
+  }, [profile, session]);
+
+  const onReset = useCallback(() => {
+    reset.mutate();
+  }, [reset]);
+
+  return {
+    sessionId,
+    loading: profile.isLoading || session.isLoading,
+    error: bootstrapError,
+    onReload,
+    resetPending: reset.isPending,
+    onReset,
+  };
+}
+
 /**
- * Right-hand chat rail on the PuppyGarden board. Boots the per-user task
- * secretary session via the server and keeps it out of the main sidebar list.
+ * Right-hand chat dock on the PuppyGarden board. Shows per-user role chats
+ * (secretary/broker) by default; task manager and worker lanes override it
+ * when selected on the board.
  */
 export function PuppyGardenChatSidebar() {
-  const {
-    data: profile,
-    isLoading: profileLoading,
-    isError: profileError,
-    error: profileErrorDetail,
-    refetch: reloadProfile,
-  } = useSecretaryProfile();
-  const {
-    data: session,
-    isLoading: sessionLoading,
-    isError: sessionError,
-    error: sessionErrorDetail,
-    refetch: reloadSession,
-  } = useSecretarySession();
-  const resetSession = useResetSecretarySession();
+  const navigate = useNavigate();
+  const { target, setRole, dismissToRole } = usePuppyGardenChat();
   const [resetOpen, setResetOpen] = useState(false);
 
-  const sessionId = session?.conversation_id ?? profile?.conversation_id ?? null;
-  const bootstrapError =
-    profileError && profileErrorDetail instanceof Error
-      ? profileErrorDetail.message
-      : sessionError && sessionErrorDetail instanceof Error
-        ? sessionErrorDetail.message
-        : null;
+  const secretaryBootstrap = useRoleSessionBootstrap("secretary");
+  const brokerBootstrap = useRoleSessionBootstrap("broker");
+  const activeRoleBootstrap =
+    target.kind === "role" && target.role === "broker" ? brokerBootstrap : secretaryBootstrap;
 
-  const handleReload = useCallback(() => {
-    void reloadProfile();
-    void reloadSession();
-  }, [reloadProfile, reloadSession]);
+  const conversationId = useMemo(() => {
+    if (target.kind === "role") {
+      return target.role === "broker"
+        ? brokerBootstrap.sessionId
+        : secretaryBootstrap.sessionId;
+    }
+    return target.conversationId;
+  }, [target, brokerBootstrap.sessionId, secretaryBootstrap.sessionId]);
 
-  const handleReset = useCallback(() => {
-    resetSession.mutate(undefined, {
-      onSuccess: () => setResetOpen(false),
-    });
-  }, [resetSession]);
+  const title = dockTitle(target);
+  const showRoleControls = target.kind === "role";
+  const showDismiss = target.kind !== "role";
+  const showEmptyState = target.kind !== "role" && conversationId == null;
+
+  const handleFullscreen = useCallback(() => {
+    if (conversationId == null) return;
+    navigate(`/c/${conversationId}`, { state: { returnTo: "/puppy-garden" } });
+  }, [conversationId, navigate]);
+
+  const handleResetConfirm = useCallback(() => {
+    activeRoleBootstrap.onReset();
+    setResetOpen(false);
+  }, [activeRoleBootstrap]);
 
   return (
     <aside
       className="relative z-10 flex h-full min-h-0 min-w-[300px] flex-col border-border border-l bg-background"
       data-testid="puppy-garden-chat-sidebar"
     >
-      {profileLoading || sessionLoading ? (
+      <div className="flex shrink-0 items-center gap-1 border-border border-b px-2 py-1.5">
+        {target.kind === "role" ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 min-w-0 flex-1 justify-start gap-1 px-2 font-medium text-sm"
+                data-testid="puppy-garden-chat-title"
+              >
+                <span className="truncate">{title}</span>
+                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                onSelect={() => setRole("secretary")}
+                data-testid="puppy-garden-chat-role-secretary"
+              >
+                Task secretary
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => setRole("broker")}
+                data-testid="puppy-garden-chat-role-broker"
+              >
+                Task broker
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <span
+            className="min-w-0 flex-1 truncate px-2 font-medium text-sm"
+            data-testid="puppy-garden-chat-title"
+          >
+            {title}
+          </span>
+        )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 text-muted-foreground"
+          onClick={handleFullscreen}
+          disabled={conversationId == null}
+          aria-label="Open in full screen"
+          data-testid="puppy-garden-chat-fullscreen"
+        >
+          <Maximize2Icon className="size-3.5" />
+        </Button>
+
+        {showRoleControls ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground"
+            onClick={() => setResetOpen(true)}
+            disabled={activeRoleBootstrap.resetPending}
+            aria-label="Reset session"
+            data-testid="puppy-garden-chat-reset"
+          >
+            {activeRoleBootstrap.resetPending ? (
+              <Loader2Icon className="size-3.5 animate-spin" />
+            ) : (
+              <RotateCcwIcon className="size-3.5" />
+            )}
+          </Button>
+        ) : null}
+
+        {showDismiss ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground"
+            onClick={dismissToRole}
+            aria-label="Close task chat"
+            data-testid="puppy-garden-chat-dismiss"
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        ) : null}
+      </div>
+
+      {showEmptyState ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center text-muted-foreground text-sm">
+          <p>{emptyDockMessage(target)}</p>
+        </div>
+      ) : target.kind === "role" && activeRoleBootstrap.loading ? (
         <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm">
           <Loader2Icon className="size-4 animate-spin" />
-          Loading secretary…
+          Loading…
         </div>
-      ) : bootstrapError ? (
+      ) : target.kind === "role" && activeRoleBootstrap.error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-sm">
-          <p>{bootstrapError}</p>
-          <Button type="button" variant="outline" size="sm" onClick={handleReload}>
+          <p>{activeRoleBootstrap.error}</p>
+          <Button type="button" variant="outline" size="sm" onClick={activeRoleBootstrap.onReload}>
             Retry
           </Button>
         </div>
-      ) : sessionId == null ? (
+      ) : conversationId == null ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-sm">
-          <p>Could not load the task secretary session.</p>
-          <Button type="button" variant="outline" size="sm" onClick={handleReload}>
-            Retry
-          </Button>
+          <p>Could not load the session.</p>
+          {target.kind === "role" ? (
+            <Button type="button" variant="outline" size="sm" onClick={activeRoleBootstrap.onReload}>
+              Retry
+            </Button>
+          ) : null}
         </div>
       ) : (
-        <>
-          <PuppyGardenSessionView
-            sessionId={sessionId}
-            onReload={handleReload}
-            onReset={() => setResetOpen(true)}
-            resetPending={resetSession.isPending}
-          />
-          <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-            <DialogContent aria-describedby="puppy-garden-reset-description">
-              <DialogHeader>
-                <DialogTitle>Reset task secretary?</DialogTitle>
-                <DialogDescription id="puppy-garden-reset-description">
-                  This deletes the current secretary chat and starts a fresh session seeded with
-                  the secretary manual.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setResetOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={handleReset}
-                  disabled={resetSession.isPending}
-                  data-testid="puppy-garden-secretary-reset-confirm"
-                >
-                  {resetSession.isPending ? (
-                    <>
-                      <Loader2Icon className="size-4 animate-spin" />
-                      Resetting…
-                    </>
-                  ) : (
-                    "Reset session"
-                  )}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </>
+        <PuppyGardenSessionView sessionId={conversationId} />
       )}
+
+      {showRoleControls ? (
+        <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+          <DialogContent aria-describedby="puppy-garden-reset-description">
+            <DialogHeader>
+              <DialogTitle>
+                Reset task {target.kind === "role" && target.role === "broker" ? "broker" : "secretary"}?
+              </DialogTitle>
+              <DialogDescription id="puppy-garden-reset-description">
+                This deletes the current chat and starts a fresh session seeded with the role
+                manual.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setResetOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleResetConfirm}
+                disabled={activeRoleBootstrap.resetPending}
+                data-testid="puppy-garden-chat-reset-confirm"
+              >
+                {activeRoleBootstrap.resetPending ? (
+                  <>
+                    <Loader2Icon className="size-4 animate-spin" />
+                    Resetting…
+                  </>
+                ) : (
+                  "Reset session"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </aside>
   );
 }

@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   cancelAgentQueueItem,
+  ensureBrokerSession,
   ensureSecretarySession,
   fetchAgentTasks,
+  fetchBrokerProfile,
   fetchLiveAgentTasks,
   fetchSecretaryProfile,
   fetchTaskDashboard,
   interruptAgentQueueItem,
+  resetBrokerSession,
   resetSecretarySession,
   resolveTaskItem,
   retryTaskItemDispatch,
@@ -105,6 +108,26 @@ export function useSecretarySession() {
   });
 }
 
+export function useBrokerProfile() {
+  return useQuery({
+    queryKey: ["agent-task-broker-profile"],
+    queryFn: fetchBrokerProfile,
+    staleTime: 60_000,
+    retry: false,
+    enabled: !fixtureEnabled,
+  });
+}
+
+export function useBrokerSession() {
+  return useQuery({
+    queryKey: ["agent-task-broker-session"],
+    queryFn: ensureBrokerSession,
+    staleTime: 60_000,
+    retry: false,
+    enabled: !fixtureEnabled,
+  });
+}
+
 export function useResetSecretarySession() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -112,6 +135,19 @@ export function useResetSecretarySession() {
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ["agent-task-secretary-profile"] });
       await queryClient.invalidateQueries({ queryKey: ["agent-task-secretary-session"] });
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void useChatStore.getState().switchTo(session.conversation_id);
+    },
+  });
+}
+
+export function useResetBrokerSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: resetBrokerSession,
+    onSuccess: async (session) => {
+      await queryClient.invalidateQueries({ queryKey: ["agent-task-broker-profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-task-broker-session"] });
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
       void useChatStore.getState().switchTo(session.conversation_id);
     },

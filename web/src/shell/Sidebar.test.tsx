@@ -321,7 +321,7 @@ describe("Sidebar session list", () => {
     expect(screen.getByTestId("settings-button")).toHaveAttribute("href", "/settings");
   });
 
-  it("hides the task secretary session from the sidebar list", () => {
+  it("lists the task secretary session in the sidebar like any other chat", () => {
     secretaryProfileMock.current = { conversation_id: "conv_secretary" };
     mockConversations([
       conv("conv_secretary", "task-secretary"),
@@ -329,8 +329,8 @@ describe("Sidebar session list", () => {
     ]);
     renderSidebar();
 
-    expect(screen.queryByRole("link", { name: /conv_secretary/ })).toBeNull();
     const recentSection = screen.getByText("Sessions").closest("section")!;
+    expect(within(recentSection).getByText("conv_secretary")).toBeInTheDocument();
     expect(within(recentSection).getByText("conv_regular")).toBeInTheDocument();
   });
 

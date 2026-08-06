@@ -119,6 +119,7 @@ export interface DispatchPayload {
 }
 
 export const TASK_SECRETARY_ROLE = "secretary";
+export const TASK_BROKER_ROLE = "broker";
 
 function agentRolePath(role: string, suffix: string): string {
   return `/v1/agent-tasks/roles/${encodeURIComponent(role)}/${suffix}`;
@@ -223,12 +224,24 @@ export async function fetchSecretaryProfile(): Promise<SecretaryProfile> {
   return fetchAgentRoleProfile(TASK_SECRETARY_ROLE);
 }
 
+export async function fetchBrokerProfile(): Promise<SecretaryProfile> {
+  return fetchAgentRoleProfile(TASK_BROKER_ROLE);
+}
+
 export async function ensureSecretarySession(): Promise<SecretarySession> {
   return ensureAgentRoleSession(TASK_SECRETARY_ROLE);
 }
 
+export async function ensureBrokerSession(): Promise<SecretarySession> {
+  return ensureAgentRoleSession(TASK_BROKER_ROLE);
+}
+
 export async function resetSecretarySession(): Promise<SecretarySession> {
   return resetAgentRoleSession(TASK_SECRETARY_ROLE);
+}
+
+export async function resetBrokerSession(): Promise<SecretarySession> {
+  return resetAgentRoleSession(TASK_BROKER_ROLE);
 }
 
 export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item";
