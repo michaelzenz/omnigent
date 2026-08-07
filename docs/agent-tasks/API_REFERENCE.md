@@ -5,7 +5,7 @@ All paths are under `/v1`. Auth: logged-in user unless noted.
 ## Ingress
 
 `POST /v1/task-events` — ingest an external event. Auth: logged-in user or host
-poller (`X-Omnigent-Host-Ambient-Id`).
+poller (`X-Omnigent-Host-Id`).
 
 Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 
@@ -88,7 +88,7 @@ to one `host_id`; the host only pulls due items for itself.
 | Method | Path | Auth |
 |--------|------|------|
 | POST | `/v1/timer-items` | user |
-| GET | `/v1/timer-items/due` | host (`X-Omnigent-Host-Ambient-Id`) |
+| GET | `/v1/timer-items/due` | host (`X-Omnigent-Host-Id`) |
 | POST | `/v1/timer-items/{id}/claim` | host |
 | POST | `/v1/timer-items/{id}/complete` | host |
 | POST | `/v1/timer-items/{id}/fail` | host |

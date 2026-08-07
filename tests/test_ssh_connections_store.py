@@ -18,7 +18,6 @@ def test_write_and_read_ssh_connections(tmp_path: Path) -> None:
         label="Arca",
         alias="arca.ssh",
         created_at="2026-01-01T00:00:00+00:00",
-        codex_remote=True,
     )
     write_ssh_connections([profile], config_path=config_path)
     loaded = read_ssh_connections(config_path=config_path)

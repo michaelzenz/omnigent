@@ -35,6 +35,11 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 # auth provider.
 MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
 
+# Identifies which host a request came from on host-originated HTTP calls
+# (poll plugins, timer items). Distinct from the token header above: this
+# one names the caller, it does not authenticate it.
+HOST_ID_HEADER = "X-Omnigent-Host-Id"
+
 
 @dataclass
 class HostIdentity:

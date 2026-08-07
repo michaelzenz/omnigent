@@ -9,7 +9,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { fetchSshConnections, saveSshConnections, testSshConnection } from "@/lib/sshApi";
 import {
@@ -29,7 +28,6 @@ export function ConnectionSettingsBody() {
   const [statusById, setStatusById] = useState<StatusMap>({});
   const [label, setLabel] = useState("");
   const [alias, setAlias] = useState("");
-  const [codexRemote, setCodexRemote] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -112,7 +110,6 @@ export function ConnectionSettingsBody() {
       id: createSshConnectionId(),
       label: trimmedLabel,
       alias: trimmedAlias,
-      codexRemote,
       createdAt: new Date().toISOString(),
     };
 
@@ -122,14 +119,13 @@ export function ConnectionSettingsBody() {
       await persist(next);
       setLabel("");
       setAlias("");
-      setCodexRemote(true);
       await runProbe(connection);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Failed to save connection");
     } finally {
       setSaving(false);
     }
-  }, [alias, codexRemote, connections, label, persist, runProbe]);
+  }, [alias, connections, label, persist, runProbe]);
 
   const handleRemove = useCallback(
     async (id: string) => {
@@ -203,8 +199,7 @@ export function ConnectionSettingsBody() {
           <h3 className="text-sm font-medium">Add connection</h3>
           <p className="mt-0.5 text-sm text-muted-foreground">
             Enter a Host alias from <code className="text-xs">~/.ssh/config</code>. The alias is
-            tested automatically after you save. When enabled, remote Codex sessions on that host
-            are imported into Omnigent.
+            tested automatically after you save.
           </p>
         </div>
 
@@ -228,19 +223,6 @@ export function ConnectionSettingsBody() {
               data-testid="ssh-connection-alias"
               spellCheck={false}
               autoCapitalize="off"
-            />
-          </label>
-          <label className="col-span-full flex items-center justify-between gap-4 text-sm">
-            <div className="flex flex-col">
-              <span className="font-medium">Import remote Codex sessions</span>
-              <span className="text-muted-foreground">
-                Mirror Codex rollouts from this host&apos;s ~/.codex
-              </span>
-            </div>
-            <Switch
-              checked={codexRemote}
-              onCheckedChange={setCodexRemote}
-              data-testid="ssh-connection-codex-remote"
             />
           </label>
         </div>
@@ -293,10 +275,7 @@ function SshConnectionRow({
         <SshStatusIcon status={current} />
         <div className="min-w-0">
           <div className="text-sm font-medium">{connection.label}</div>
-          <div className="truncate text-xs text-muted-foreground">
-            {connection.alias}
-            {connection.codexRemote ? " · Codex import on" : " · Codex import off"}
-          </div>
+          <div className="truncate text-xs text-muted-foreground">{connection.alias}</div>
           {status?.message && current === "failed" && (
             <div className="mt-0.5 text-xs text-destructive">{status.message}</div>
           )}

@@ -26,7 +26,6 @@ class SshConnectionBody(BaseModel):
     id: str | None = None
     label: str = Field(..., min_length=1, max_length=128)
     alias: str = Field(..., min_length=1, max_length=128)
-    codex_remote: bool = True
 
 
 class SshConnectionsPutRequest(BaseModel):
@@ -72,7 +71,6 @@ def _parse_profiles(body: SshConnectionsPutRequest) -> list[SshConnectionProfile
                 label=label,
                 alias=entry.alias.strip(),
                 created_at=created_at,
-                codex_remote=entry.codex_remote,
             )
         )
     return profiles

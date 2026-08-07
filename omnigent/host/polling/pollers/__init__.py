@@ -1,1 +1,1 @@
-"""Host ambient source pollers."""
+"""Host poll sources."""

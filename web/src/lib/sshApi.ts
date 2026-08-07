@@ -6,7 +6,6 @@ interface ApiConnection {
   label: string;
   alias: string;
   created_at: string;
-  codex_remote?: boolean;
 }
 
 export interface SshTestResult {
@@ -20,7 +19,6 @@ function fromApiConnection(entry: ApiConnection): SshConnection {
     id: entry.id,
     label: entry.label,
     alias: entry.alias,
-    codexRemote: entry.codex_remote ?? true,
     createdAt: entry.created_at,
   };
 }
@@ -31,7 +29,6 @@ function toApiConnection(connection: SshConnection): ApiConnection {
     label: connection.label,
     alias: connection.alias,
     created_at: connection.createdAt,
-    codex_remote: connection.codexRemote,
   };
 }
 

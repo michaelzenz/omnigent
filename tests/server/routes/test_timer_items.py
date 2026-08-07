@@ -6,8 +6,8 @@ import uuid
 
 import httpx
 
-from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.utils import now_epoch
+from omnigent.host.identity import HOST_ID_HEADER
 from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
 
 
@@ -47,14 +47,14 @@ async def test_host_due_claim_complete_flow(
         "host-a",
         {"session_id": "conv_1", "message": "ping"},
     )
-    host_headers = {HOST_AMBIENT_ID_HEADER: "host-a"}
+    host_headers = {HOST_ID_HEADER: "host-a"}
 
     due_resp = await client.get("/v1/timer-items/due", headers=host_headers)
     assert due_resp.status_code == 200
     due_ids = {row["id"] for row in due_resp.json()["data"]}
     assert item.id in due_ids
 
-    other_host = await client.get("/v1/timer-items/due", headers={HOST_AMBIENT_ID_HEADER: "host-b"})
+    other_host = await client.get("/v1/timer-items/due", headers={HOST_ID_HEADER: "host-b"})
     assert item.id not in {row["id"] for row in other_host.json()["data"]}
 
     claim_resp = await client.post(f"/v1/timer-items/{item.id}/claim", headers=host_headers)

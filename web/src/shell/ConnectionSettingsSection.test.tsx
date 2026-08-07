@@ -58,7 +58,6 @@ describe("ConnectionSettingsBody", () => {
         id: "saved-1",
         label: "Saved",
         alias: "arca.ssh",
-        codexRemote: true,
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ];

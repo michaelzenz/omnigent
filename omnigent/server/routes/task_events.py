@@ -16,12 +16,12 @@ from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
 from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
-from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import EventTag, Task, TaskEvent, TaskEventRoutingAttempt
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.host.identity import HOST_ID_HEADER
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.stores.agent_store import AgentStore
@@ -201,7 +201,7 @@ def create_task_events_router(
 
     def _require_ingress_auth(request: Request) -> str | None:
         user_id = get_user_id(request, auth_provider)
-        poller_host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
+        poller_host_id = request.headers.get(HOST_ID_HEADER)
         if poller_host_id is not None:
             poller_host_id = poller_host_id.strip() or None
         if user_id is None and poller_host_id is None:

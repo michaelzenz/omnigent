@@ -15,10 +15,10 @@ a broker adoption proposal. Reject → no manager involvement.
 | Routing tags | Broker writes `omnigent.task.routing_repo` (and optional `routing_intent`) before scoring |
 | User reject | No binding; optional `omnigent.task.adoption_dismissed=1` label |
 | Host imports | `host_id` → `host.owner` → that user's broker |
-| User sessions | Same pipeline as poller import |
-| Broker wake | **Batch/debounced** for poller bursts |
+| User sessions | Same pipeline as host import |
+| Broker wake | **Batch/debounced** for import bursts |
 | No broker session | Queue pending; process when broker session starts |
-| After accept | `POST …/sessions/{id}/adopt` → `ambient` bind + `session.adopted` → manager triage |
+| After accept | `POST …/sessions/{id}/adopt` → task binding + `session.adopted` → manager triage |
 
 ## Pipeline overview
 
@@ -31,7 +31,7 @@ flowchart TB
   Propose --> User{User}
   User -->|accept| Adopt[POST …/sessions/id/adopt]
   User -->|reject| Orphan[Stays orphan]
-  Adopt --> Bind[ambient binding]
+  Adopt --> Bind[task binding]
   Bind --> Event[session.adopted]
   Event --> Manager[routed]
 ```

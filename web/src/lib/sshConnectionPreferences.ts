@@ -7,7 +7,6 @@ export interface SshConnection {
   label: string;
   /** SSH config Host alias, e.g. arca.ssh */
   alias: string;
-  codexRemote: boolean;
   createdAt: string;
 }
 

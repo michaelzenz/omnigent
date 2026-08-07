@@ -10,10 +10,10 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, field_validator
 
-from omnigent.ambient_codex import HOST_AMBIENT_ID_HEADER
 from omnigent.db.utils import now_epoch
 from omnigent.entities import TimerItem
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.host.identity import HOST_ID_HEADER
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
@@ -79,10 +79,10 @@ def create_timer_items_router(
     router = APIRouter()
 
     def _require_host_id(request: Request) -> str:
-        host_id = request.headers.get(HOST_AMBIENT_ID_HEADER)
+        host_id = request.headers.get(HOST_ID_HEADER)
         if host_id is None or not host_id.strip():
             raise OmnigentError(
-                f"Host timer routes require the {HOST_AMBIENT_ID_HEADER} header",
+                f"Host timer routes require the {HOST_ID_HEADER} header",
                 code=ErrorCode.UNAUTHORIZED,
             )
         return host_id.strip()

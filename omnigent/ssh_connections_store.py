@@ -23,8 +23,6 @@ class SshConnectionProfile:
     label: str
     alias: str
     created_at: str
-    codex_remote: bool = True
-    cursor_remote: bool = True
 
 
 def validate_ssh_alias(alias: str) -> str | None:
@@ -48,19 +46,11 @@ def _parse_profile(raw: object) -> SshConnectionProfile | None:
         return None
     if validate_ssh_alias(alias) is not None:
         return None
-    codex_remote = raw.get("codex_remote", True)
-    if not isinstance(codex_remote, bool):
-        codex_remote = True
-    cursor_remote = raw.get("cursor_remote", True)
-    if not isinstance(cursor_remote, bool):
-        cursor_remote = True
     return SshConnectionProfile(
         id=profile_id,
         label=label.strip(),
         alias=alias.strip(),
         created_at=created_at,
-        codex_remote=codex_remote,
-        cursor_remote=cursor_remote,
     )
 
 
@@ -119,5 +109,4 @@ def profile_to_api_dict(profile: SshConnectionProfile) -> dict[str, object]:
         "label": profile.label,
         "alias": profile.alias,
         "created_at": profile.created_at,
-        "codex_remote": profile.codex_remote,
     }

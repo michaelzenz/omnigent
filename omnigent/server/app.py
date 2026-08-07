@@ -2407,7 +2407,6 @@ def create_app(
             agent_store,
             auth_provider=auth_provider,
             permission_store=permission_store,
-            host_store=host_store,
         ),
         prefix="/v1",
         tags=["imports"],
@@ -2858,17 +2857,6 @@ def create_app(
                 permission_store=permission_store,
                 agent_store=agent_store,
                 agent_cache=agent_cache,
-            ),
-            prefix="/v1",
-            tags=["hosts"],
-        )
-        from omnigent.server.routes.ambient_sync import create_ambient_sync_router
-
-        app.include_router(
-            create_ambient_sync_router(
-                conversation_store,
-                host_store,
-                auth_provider=auth_provider,
             ),
             prefix="/v1",
             tags=["hosts"],

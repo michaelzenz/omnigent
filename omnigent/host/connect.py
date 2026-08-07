@@ -674,7 +674,7 @@ class HostProcess:
         self._watcher_tasks: set[asyncio.Task[None]] = set()
         # Strong ref to the orphan-reaper task (see :meth:`_orphan_reaper_loop`).
         self._reaper_task: asyncio.Task[None] | None = None
-        # Ambient source pollers (Codex rollout mirror, etc.).
+        # Scheduled poll plugins owned by this host.
         self._poll_scheduler: PollScheduler | None = None
         # Deferred timer items for this host.
         self._timer_scheduler: TimerScheduler | None = None
@@ -1785,32 +1785,14 @@ class HostProcess:
         self._reaper_task = asyncio.create_task(
             self._orphan_reaper_loop(), name="host-orphan-reaper"
         )
-        from omnigent.host.codex_ambient_bridge import codex_ambient_sync_enabled
-        from omnigent.host.polling import (
-            CodexAmbientPoller,
-            CursorProjectsAmbientPoller,
-            PollScheduler,
-            ScriptPollPluginsPoller,
-        )
-        from omnigent.host.polling.pollers.cursor_config import (
-            cursor_projects_ambient_sync_enabled,
-        )
+        from omnigent.host.polling import PollScheduler, ScriptPollPluginsPoller
         from omnigent.host.timer import TimerScheduler
-
-        pollers: list[CodexAmbientPoller | CursorProjectsAmbientPoller | ScriptPollPluginsPoller] = [
-            ScriptPollPluginsPoller(),
-        ]
-        if codex_ambient_sync_enabled():
-            pollers.insert(0, CodexAmbientPoller())
-        if cursor_projects_ambient_sync_enabled():
-            pollers.append(CursorProjectsAmbientPoller())
 
         self._poll_scheduler = PollScheduler(
             server_url=self._server_url,
             host_id=self._identity.host_id,
         )
-        for poller in pollers:
-            self._poll_scheduler.register(poller)
+        self._poll_scheduler.register(ScriptPollPluginsPoller())
         await self._poll_scheduler.start()
         self._timer_scheduler = TimerScheduler(
             server_url=self._server_url,
