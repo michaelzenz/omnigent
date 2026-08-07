@@ -9,6 +9,7 @@ import httpx
 
 from omnigent.host.http_client import build_host_http_headers
 from omnigent.host.identity import CONFIG_PATH
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _POST_TIMEOUT_S = 30.0
 
@@ -31,4 +32,5 @@ def build_poll_http_client(server_url: str, *, host_id: str) -> httpx.AsyncClien
         base_url=server_url.rstrip("/"),
         headers=headers,
         timeout=timeout,
+        **server_async_http_transport_kwargs(),
     )

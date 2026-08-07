@@ -34,6 +34,7 @@ from omnigent.runner.transports.ws_tunnel.serve import (
     _websocket_http_status,
     serve_tunnel,
 )
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 
 
 @dataclass
@@ -576,6 +577,52 @@ async def test_serve_tunnel_once_sends_bearer_header(
         "ping_timeout": serve_module.TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
     }
     assert isinstance(captured["sent"], str)
+
+
+async def test_serve_tunnel_once_uses_unix_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runner tunnel selection preserves the logical URI over a UDS."""
+    captured: dict[str, object] = {}
+
+    class _FakeWS:
+        async def send(self, data: str) -> None:
+            captured["sent"] = data
+
+        def __aiter__(self) -> _FakeWS:
+            return self
+
+        async def __anext__(self) -> str:
+            raise StopAsyncIteration
+
+    class _ConnectContext:
+        async def __aenter__(self) -> _FakeWS:
+            return _FakeWS()
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            del exc_info
+
+    def _unix_connect(path: str, *, uri: str, **kwargs: object) -> _ConnectContext:
+        captured.update(path=path, uri=uri, kwargs=kwargs)
+        return _ConnectContext()
+
+    monkeypatch.setenv(OMNIGENT_SERVER_UNIX_SOCKET, "/tmp/omnigent-server.sock")
+    monkeypatch.setattr("websockets.asyncio.client.unix_connect", _unix_connect)
+    monkeypatch.setattr("omnigent.cli_auth.load_databricks_org_id", lambda _url: None)
+
+    await _serve_tunnel_once(
+        _noop_app,
+        tunnel_url="wss://server.example.com/v1/runners/runner_uds/tunnel",
+        server_url="https://server.example.com",
+        runner_id="runner_uds",
+        runner_version="0.1.0",
+    )
+
+    assert captured["path"] == "/tmp/omnigent-server.sock"
+    assert captured["uri"] == "wss://server.example.com/v1/runners/runner_uds/tunnel"
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["ping_interval"] == serve_module.TUNNEL_KEEPALIVE_PING_INTERVAL_S
 
 
 async def test_serve_tunnel_once_sends_org_header(

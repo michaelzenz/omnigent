@@ -307,9 +307,10 @@ def create_host_tunnel_router(
                     receive_task,
                     return_exceptions=True,
                 )
-                host_registry.deregister(host_id)
-                await asyncio.to_thread(host_store.set_offline, host_id)
-                if on_host_disconnect is not None:
+                removed = host_registry.deregister(host_id, conn)
+                if removed is not None:
+                    await asyncio.to_thread(host_store.set_offline, host_id)
+                if removed is not None and on_host_disconnect is not None:
                     try:
                         await on_host_disconnect(host_id, tunnel_owner)
                     except Exception:
@@ -326,9 +327,10 @@ def create_host_tunnel_router(
             # connects with another owner's host_id — must not deregister
             # or flip that owner's host offline (cross-user DoS).
             if conn is not None:
-                host_registry.deregister(host_id)
-                await asyncio.to_thread(host_store.set_offline, host_id)
-                if on_host_disconnect is not None:
+                removed = host_registry.deregister(host_id, conn)
+                if removed is not None:
+                    await asyncio.to_thread(host_store.set_offline, host_id)
+                if removed is not None and on_host_disconnect is not None:
                     try:
                         await on_host_disconnect(host_id, tunnel_owner)
                     except Exception:
@@ -340,8 +342,9 @@ def create_host_tunnel_router(
             _logger.exception("Host tunnel error for %s", host_id)
             # Same guard as above: don't touch a host we never registered.
             if conn is not None:
-                host_registry.deregister(host_id)
-                await asyncio.to_thread(host_store.set_offline, host_id)
+                removed = host_registry.deregister(host_id, conn)
+                if removed is not None:
+                    await asyncio.to_thread(host_store.set_offline, host_id)
 
     return router
 

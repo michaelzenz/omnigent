@@ -45,6 +45,7 @@ from omnigent.cursor_native_bridge import send_cursor_pane_keys
 # transcript-based detector binds to the SAME cursor chat the forwarder mirrors
 # (one chat per workspace) and reads the live ``-wal`` state correctly.
 from omnigent.cursor_native_forwarder import _discover_store, _read_blob_rows
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -672,7 +673,11 @@ async def supervise_cursor_transcript_elicitations(
     loop = asyncio.get_running_loop()
     timeout = httpx.Timeout(_POST_TIMEOUT_S, connect=10.0)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:

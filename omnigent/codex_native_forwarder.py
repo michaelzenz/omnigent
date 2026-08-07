@@ -56,6 +56,7 @@ from omnigent.codex_native_elicitation import (
     is_codex_request_id as _is_codex_request_id,
 )
 from omnigent.entities.session_resources import terminal_resource_id
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -1678,7 +1679,11 @@ async def supervise_forwarder(
         headers=headers,
         auth=auth,
         timeout=httpx.Timeout(30.0),
-        transport=ap_transport,
+        **(
+            {"transport": ap_transport}
+            if ap_transport is not None
+            else server_async_http_transport_kwargs()
+        ),
     ) as ap_client:
         # Recover proven-undelivered dead-lettered forwards now that the
         # server may be reachable again (host/server returned after an

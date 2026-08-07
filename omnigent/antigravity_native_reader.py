@@ -99,6 +99,7 @@ from omnigent.antigravity_native_steps import (
 from omnigent.claude_native_bridge import url_component
 from omnigent.entities.session_resources import terminal_resource_id
 from omnigent.server.schemas import ElicitationRequestParams, ElicitationResult
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -2680,6 +2681,7 @@ async def run_reader_with_bridge(
         headers=headers,
         auth=auth,
         timeout=httpx.Timeout(_READER_CLIENT_TIMEOUT_SECONDS),
+        **server_async_http_transport_kwargs(),
     ) as client:
 
         async def _on_pending(cascade_id: str, port: int, pending: PendingInteraction) -> None:

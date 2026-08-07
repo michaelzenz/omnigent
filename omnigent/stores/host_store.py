@@ -703,6 +703,74 @@ class HostStore:
             session.add(row)
             return _row_to_host(row)
 
+    def register_ssh_host(
+        self,
+        *,
+        host_id: str,
+        name: str,
+        owner: str,
+        token: str,
+        token_expires_at: int,
+    ) -> Host:
+        """Register or re-arm an SSH-attached host identity.
+
+        SSH hosts use launch-token authentication but are not managed
+        sandboxes, so both sandbox discriminator columns remain ``NULL``.
+        """
+        now = now_epoch()
+        token_hash = hash_host_launch_token(token)
+        with self._session() as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                if row.owner != owner:
+                    raise ValueError(
+                        f"host {host_id!r} is registered to a different owner; "
+                        "refusing to re-credential it"
+                    )
+                row.name = name
+                row.token_hash = token_hash
+                row.token_expires_at = token_expires_at
+                row.sandbox_provider = None
+                row.sandbox_id = None
+                row.updated_at = now
+                return _row_to_host(row)
+            row = SqlHost(
+                owner=owner,
+                name=name,
+                host_id=host_id,
+                status=encode_host_status("offline"),
+                created_at=now,
+                updated_at=now,
+                token_hash=token_hash,
+                token_expires_at=token_expires_at,
+                sandbox_provider=None,
+                sandbox_id=None,
+            )
+            session.add(row)
+            return _row_to_host(row)
+
+    def reassign_ssh_host_owner(self, host_id: str, owner: str) -> bool:
+        """Claim a server-managed SSH host for its persisted profile owner."""
+        with self._session() as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                    SqlHost.sandbox_provider.is_(None),
+                    SqlHost.sandbox_id.is_(None),
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            row.owner = owner
+            row.updated_at = now_epoch()
+            return True
+
     def resolve_launch_token(self, token: str) -> Host | None:
         """
         Resolve a presented launch token to its managed host, if valid.

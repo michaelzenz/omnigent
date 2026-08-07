@@ -646,6 +646,22 @@ def test_upsert_conflict_preserves_created_at(
 # ── Managed-host credential methods ────────────────────────
 
 
+def test_register_ssh_host_arms_token_without_sandbox_classification(db_uri: str) -> None:
+    store = HostStore(db_uri)
+    registered = store.register_ssh_host(
+        host_id="9f1379f0279143808484ef84eca3e465",
+        name="ssh-build-box",
+        owner="alice@example.com",
+        token="ssh-launch-token",
+        token_expires_at=now_epoch() + 3600,
+    )
+    assert registered.sandbox_provider is None
+    assert registered.sandbox_id is None
+    resolved = store.resolve_launch_token("ssh-launch-token")
+    assert resolved is not None
+    assert resolved.host_id == registered.host_id
+
+
 def test_register_managed_host_and_resolve_token_roundtrip(db_uri: str) -> None:
     """
     The raw launch token resolves back to the full pre-registered host

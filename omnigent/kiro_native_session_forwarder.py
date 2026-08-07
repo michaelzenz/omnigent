@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 
 from omnigent.kiro_native_bridge import write_forwarder_ready
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -508,7 +509,11 @@ async def forward_kiro_session_to_omnigent(
     last_posted_cost: float | None = None
     last_posted_model: str | None = None
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:

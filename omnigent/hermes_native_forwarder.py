@@ -69,6 +69,7 @@ from pathlib import Path
 import httpx
 
 from omnigent import hermes_native_status
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -946,7 +947,11 @@ async def forward_hermes_store_to_session(
     _external_id_synced = False
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         usage_tracker = _HermesUsageTracker(client, session_id, bridge_dir)
         compaction_persisted = False

@@ -1158,6 +1158,56 @@ class SqlHost(OmnigentBase):
     )
 
 
+class SqlSshHostInstallation(OmnigentBase):
+    """Durable reconciliation state for one configured SSH connection."""
+
+    __tablename__ = "ssh_host_installations"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    connection_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ssh_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    host_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    owner: Mapped[str] = mapped_column(String(256), nullable=False)
+    desired_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    bundle_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_attempt_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "desired_state IN ('connected', 'detached')",
+            name="ck_ssh_host_installations_desired_state",
+        ),
+        UniqueConstraint(
+            "workspace_id",
+            "host_id",
+            name="uq_ssh_host_installations_host_id",
+        ),
+        # list_candidates filters workspace_id first, then due-ness.
+        Index(
+            "ix_ssh_host_installations_due",
+            "workspace_id",
+            "desired_state",
+            "next_attempt_at",
+            "lease_expires_at",
+        ),
+    )
+
+
 class SqlUserDailyCost(OmnigentBase):
     """
     SQLAlchemy model for the ``user_daily_cost`` table.

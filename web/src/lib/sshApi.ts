@@ -6,6 +6,19 @@ interface ApiConnection {
   label: string;
   alias: string;
   created_at: string;
+  host_id?: string | null;
+  lifecycle?: string;
+  phase?: string;
+  last_error?: string | null;
+  attempt?: number;
+  next_retry_at?: string | null;
+  updated_at?: string;
+  status?: "online" | "offline";
+}
+
+export interface SshConnectionsPayload {
+  connections: SshConnection[];
+  packageIndexUrl: string | null;
 }
 
 export interface SshTestResult {
@@ -20,6 +33,14 @@ function fromApiConnection(entry: ApiConnection): SshConnection {
     label: entry.label,
     alias: entry.alias,
     createdAt: entry.created_at,
+    hostId: entry.host_id ?? null,
+    lifecycle: entry.lifecycle ?? "connected",
+    phase: entry.phase ?? "queued",
+    lastError: entry.last_error ?? null,
+    attempt: entry.attempt ?? 0,
+    nextRetryAt: entry.next_retry_at ?? null,
+    updatedAt: entry.updated_at ?? entry.created_at,
+    status: entry.status ?? "offline",
   };
 }
 
@@ -32,27 +53,62 @@ function toApiConnection(connection: SshConnection): ApiConnection {
   };
 }
 
-export async function fetchSshConnections(): Promise<SshConnection[]> {
-  const res = await authenticatedFetch("/v1/ssh/connections");
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const body = (await res.json()) as { connections?: ApiConnection[] };
-  return (body.connections ?? []).map(fromApiConnection);
+function fromApiPayload(body: {
+  connections?: ApiConnection[];
+  package_index_url?: string | null;
+}): SshConnectionsPayload {
+  return {
+    connections: (body.connections ?? []).map(fromApiConnection),
+    packageIndexUrl:
+      typeof body.package_index_url === "string" ? body.package_index_url : null,
+  };
 }
 
-export async function saveSshConnections(connections: SshConnection[]): Promise<SshConnection[]> {
+export async function fetchSshConnections(): Promise<SshConnectionsPayload> {
+  const res = await authenticatedFetch("/v1/ssh/connections");
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const body = (await res.json()) as {
+    connections?: ApiConnection[];
+    package_index_url?: string | null;
+  };
+  return fromApiPayload(body);
+}
+
+export async function saveSshConnections(
+  connections: SshConnection[],
+  packageIndexUrl: string | null,
+): Promise<SshConnectionsPayload> {
   const res = await authenticatedFetch("/v1/ssh/connections", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       connections: connections.map(toApiConnection),
+      package_index_url: packageIndexUrl,
     }),
   });
   if (!res.ok) {
     const body = (await res.json()) as { detail?: string };
-    throw new Error(typeof body.detail === "string" ? body.detail : `${res.status} ${res.statusText}`);
+    throw new Error(
+      typeof body.detail === "string" ? body.detail : `${res.status} ${res.statusText}`,
+    );
   }
-  const saved = (await res.json()) as { connections?: ApiConnection[] };
-  return (saved.connections ?? []).map(fromApiConnection);
+  const saved = (await res.json()) as {
+    connections?: ApiConnection[];
+    package_index_url?: string | null;
+  };
+  return fromApiPayload(saved);
+}
+
+export async function retrySshConnection(id: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/ssh/connections/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = (await res.json()) as { detail?: string };
+    throw new Error(
+      typeof body.detail === "string" ? body.detail : `${res.status} ${res.statusText}`,
+    );
+  }
 }
 
 export async function testSshConnection(alias: string): Promise<SshTestResult> {

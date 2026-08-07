@@ -25,6 +25,7 @@ from typing import Any, Protocol, TypeAlias
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.reasoning_effort import CODEX_EFFORTS, validate_effort
 from omnigent.runner.identity import OMNIGENT_SESSION_ENV_VAR
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 from omnigent.spec.types import RetryPolicy
 
 from . import _proc
@@ -385,6 +386,7 @@ def _clean_codex_env(extra_allow: Iterable[str] = ()) -> dict[str, str]:
         "DATABRICKS_BEARER",  # explicit CI/integration bearer used by auth.command
         "DATABRICKS_CODEX_TOKEN",  # env_key referenced by ~/.codex/config.toml's DB provider
         OMNIGENT_SESSION_ENV_VAR,  # "inside Omnigent" marker (CLAUDE_CODE/CODEX analog)
+        OMNIGENT_SERVER_UNIX_SOCKET,
     } | set(extra_allow)
     for key, value in os.environ.items():
         if key in _CODEX_ENV_DENY_EXACT:

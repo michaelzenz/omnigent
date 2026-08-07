@@ -30,6 +30,8 @@ from collections.abc import Callable
 
 import httpx
 
+from omnigent.server_transport import server_http_transport_kwargs
+
 # How long to keep retrying transient 5xx / connect errors on the
 # policy evaluate POST before failing closed. Keeps the pre-execution
 # gate from blocking long on a sick server while still absorbing brief
@@ -539,7 +541,11 @@ def post_evaluate_with_retry(
     last_error: str = "unknown error"
     while True:
         try:
-            with httpx.Client(headers=headers, timeout=timeout) as client:
+            with httpx.Client(
+                headers=headers,
+                timeout=timeout,
+                **server_http_transport_kwargs(),
+            ) as client:
                 resp = client.post(url, json=request_body)
                 if (
                     reauth is not None

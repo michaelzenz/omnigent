@@ -38,6 +38,7 @@ from omnigent.native_policy_hook import (
     policy_hook_reauth,
     post_evaluate_with_retry,
 )
+from omnigent.server_transport import server_http_transport_kwargs
 
 # Client-side budget for the permission-request long-poll to AP. Held
 # at one day so the hook subprocess waits ~indefinitely for a verdict
@@ -364,7 +365,9 @@ def _rotate_session_on_clear(bridge_dir: Path) -> str | None:
     )
     try:
         with httpx.Client(
-            headers=headers, timeout=httpx.Timeout(_SESSION_ROTATION_TIMEOUT_S)
+            headers=headers,
+            timeout=httpx.Timeout(_SESSION_ROTATION_TIMEOUT_S),
+            **server_http_transport_kwargs(),
         ) as client:
             new_session_id = _create_clear_replacement_session(
                 client,
@@ -410,7 +413,9 @@ def _rotate_session_on_fork(bridge_dir: Path) -> str | None:
     )
     try:
         with httpx.Client(
-            headers=headers, timeout=httpx.Timeout(_SESSION_ROTATION_TIMEOUT_S)
+            headers=headers,
+            timeout=httpx.Timeout(_SESSION_ROTATION_TIMEOUT_S),
+            **server_http_transport_kwargs(),
         ) as client:
             new_session_id = _create_fork_replacement_session(
                 client,
@@ -704,7 +709,11 @@ def _post_hook_with_reattach(
     while True:
         attempt_started = time.monotonic()
         try:
-            with httpx.Client(headers=headers, timeout=timeout) as client:
+            with httpx.Client(
+                headers=headers,
+                timeout=timeout,
+                **server_http_transport_kwargs(),
+            ) as client:
                 resp = client.post(url, json=body)
                 if (
                     reauth is not None

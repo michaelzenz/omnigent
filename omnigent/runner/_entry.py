@@ -26,6 +26,10 @@ from fastapi import FastAPI
 from omnigent._platform import IS_WINDOWS
 from omnigent.inner import _proc
 from omnigent.runner.transports.ws_tunnel.serve import RUNNER_TUNNEL_REJECTION_PREFIX
+from omnigent.server_transport import (
+    server_async_http_transport_kwargs,
+    server_http_transport_kwargs,
+)
 from omnigent.version import VERSION
 
 if TYPE_CHECKING:
@@ -574,7 +578,10 @@ def _mint_managed_owner_token(
         RUNNER_TUNNEL_TOKEN_HEADER: binding_token,
         **databricks_request_headers(server_url),
     }
-    with httpx.Client(timeout=10.0) as client:
+    with httpx.Client(
+        timeout=10.0,
+        **server_http_transport_kwargs(),
+    ) as client:
         response = client.post(mint_url, headers=headers)
         response.raise_for_status()
         payload = response.json()
@@ -922,6 +929,7 @@ def create_app(
         # recorded for this server) routes these callbacks to the workspace.
         headers={"Origin": OMNIGENT_INTERNAL_WS_ORIGIN, **databricks_request_headers(server_url)},
         timeout=httpx.Timeout(5.0, read=None),
+        **server_async_http_transport_kwargs(),
         # NOTE: ``follow_redirects`` deliberately stays False.
         # ``_RunnerDatabricksAuth.auth_flow`` needs to *see* the
         # Databricks Apps OAuth login redirect (302 →

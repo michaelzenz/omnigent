@@ -5656,6 +5656,17 @@
             },
             "title": "Connections",
             "type": "array"
+          },
+          "package_index_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Index Url"
           }
         },
         "required": [
@@ -11275,13 +11286,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "items": {
-                      "additionalProperties": true,
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
+                  "additionalProperties": true,
                   "title": "Response List Ssh Connections V1 Ssh Connections Get",
                   "type": "object"
                 }
@@ -11313,13 +11318,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "items": {
-                      "additionalProperties": true,
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
+                  "additionalProperties": true,
                   "title": "Response Put Ssh Connections V1 Ssh Connections Put",
                   "type": "object"
                 }
@@ -11339,6 +11338,53 @@
           }
         },
         "summary": "Put Ssh Connections",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/ssh/connections/{connection_id}/retry": {
+      "post": {
+        "description": "Queue an immediate reconciliation attempt.",
+        "operationId": "retry_ssh_connection_v1_ssh_connections__connection_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Retry Ssh Connection V1 Ssh Connections  Connection Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Ssh Connection",
         "tags": [
           "ssh"
         ]

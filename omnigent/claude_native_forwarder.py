@@ -48,6 +48,7 @@ from omnigent.claude_native_bridge import (
 from omnigent.claude_native_message_display_hook import MESSAGE_DELTAS_FILE
 from omnigent.entities.session_resources import terminal_resource_id
 from omnigent.reasoning_effort import CLAUDE_EFFORTS, EFFORT_CLEAR_VALUES
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _FORWARDER_STATE_FILE = "transcript_forwarder.json"
 _HOOK_STATE_FILE = "hook_forwarder.json"
@@ -773,7 +774,11 @@ async def forward_claude_transcript_to_session(
     task_order: list[str] = []
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:

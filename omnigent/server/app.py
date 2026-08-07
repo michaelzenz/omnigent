@@ -97,6 +97,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -1207,6 +1208,9 @@ def create_app(
     agent_queue_store: AgentQueueStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
+    ssh_host_installation_store: SshHostInstallationStore | None = None,
+    ssh_tunnel_host: str = "127.0.0.1",
+    ssh_tunnel_port: int | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
     extra_routers: list[tuple[Any, str, list[str]]] | None = None,
     policy_modules: list[str] | None = None,
@@ -1657,9 +1661,37 @@ def create_app(
                     exc,
                 )
 
+        ssh_host_manager = None
+        # The reverse tunnel forwards to this server's own listener, so without a
+        # known port there is nothing valid to point remote hosts at.
+        if (
+            host_store is not None
+            and ssh_host_installation_store is not None
+            and ssh_tunnel_port is not None
+        ):
+            from omnigent.server.ssh_host_manager import SshHostInstallationManager
+
+            ssh_host_manager = SshHostInstallationManager(
+                store=ssh_host_installation_store,
+                host_store=host_store,
+                local_host=ssh_tunnel_host,
+                local_port=ssh_tunnel_port,
+            )
+            app_inst.state.ssh_host_manager = ssh_host_manager
+            try:
+                await ssh_host_manager.start()
+            except Exception:
+                _logger.exception(
+                    "SSH host installation manager failed to start; continuing without it"
+                )
+                app_inst.state.ssh_host_manager = None
+                ssh_host_manager = None
+
         try:
             yield
         finally:
+            if ssh_host_manager is not None:
+                await ssh_host_manager.stop()
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
             metrics_publish_task.cancel()
@@ -1707,6 +1739,7 @@ def create_app(
     app.state.runner_router = runner_router
     app.state.host_registry = host_registry
     app.state.host_store = host_store
+    app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
     # runtime-editable ``<data_dir>/admins`` file. Built once here so BOTH the
@@ -2429,7 +2462,10 @@ def create_app(
         tags=["harnesses"],
     )
     app.include_router(
-        create_ssh_connections_router(auth_provider=auth_provider),
+        create_ssh_connections_router(
+            auth_provider=auth_provider,
+            permission_store=permission_store,
+        ),
         prefix="/v1",
         tags=["ssh"],
     )

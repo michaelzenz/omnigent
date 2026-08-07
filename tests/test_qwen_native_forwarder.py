@@ -47,6 +47,40 @@ from omnigent.qwen_native_forwarder import (
 _AGENT = "qwen-native-ui"
 
 
+async def test_forwarder_passes_server_transport_to_async_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The native forwarder uses the shared server transport kwargs."""
+    transport = object()
+    captured: dict[str, object] = {}
+
+    class _StopClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        async def __aenter__(self) -> object:
+            raise RuntimeError("stop after client construction")
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        fwd, "server_async_http_transport_kwargs", lambda: {"transport": transport}
+    )
+    monkeypatch.setattr(fwd.httpx, "AsyncClient", _StopClient)
+
+    with pytest.raises(RuntimeError, match="stop after client construction"):
+        await fwd.forward_qwen_events_to_session(
+            base_url="http://server.test",
+            headers={"Authorization": "Bearer test"},
+            session_id="conv",
+            bridge_dir=tmp_path,
+            agent_name=_AGENT,
+        )
+
+    assert captured["transport"] is transport
+
+
 def _user_ev(uuid: str, text: str) -> dict:
     return {
         "type": "user",

@@ -39,6 +39,8 @@ from pathlib import Path
 
 import httpx
 
+from omnigent.server_transport import server_async_http_transport_kwargs
+
 _logger = logging.getLogger(__name__)
 
 #: Poll cadence for new wire-log lines (matches cursor_native_forwarder).
@@ -336,7 +338,10 @@ async def forward_kimi_wire_to_session(
     state = _read_state(bridge_dir)
     wire_path = Path(state.wire_path) if state is not None else None
     last_line = state.last_line if state is not None else 0
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        **server_async_http_transport_kwargs(),
+    ) as client:
         while True:
             if wire_path is None or not wire_path.exists():
                 discovered = await asyncio.to_thread(

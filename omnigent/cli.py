@@ -58,6 +58,7 @@ from omnigent.onboarding.ucode_setup import (
     model_gateway_workspace_urls,
 )
 from omnigent.process_logging import LOG_LEVEL_ENV_VAR, LOG_TO_STDERR_ENV_VAR
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 
 if TYPE_CHECKING:
     import httpx
@@ -3291,8 +3292,10 @@ def server(
         )
 
     from omnigent.stores.host_store import HostStore
+    from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 
     host_store = HostStore(db_uri)
+    ssh_host_installation_store = SshHostInstallationStore(db_uri)
 
     # Managed sandbox hosts (host_type="managed" sessions): parse the
     # config's `sandbox:` section up front so an operator typo stops
@@ -3371,6 +3374,9 @@ def server(
         agent_queue_store=agent_queue_store,
         auth_provider=auth_provider,
         host_store=host_store,
+        ssh_host_installation_store=ssh_host_installation_store,
+        ssh_tunnel_host="127.0.0.1",
+        ssh_tunnel_port=port,
         account_store=account_store,
         policy_modules=cfg.get("policy_modules"),
         admins=config_str_list(cfg.get("admins")),
@@ -7364,11 +7370,24 @@ class _HostGroup(click.Group):
             )
         if positionals[1:]:
             raise click.UsageError(f"Unexpected extra argument(s): {' '.join(positionals[1:])}")
-        # remove() drops the first token equal to `url`. Safe because the only
-        # value-taking group option (--server) triggers the conflict error above,
-        # so the URL can't be some other option's value.
+        # Drop the first token equal to `url`, skipping tokens that are another
+        # option's value. --server already triggered the conflict error above,
+        # but --server-unix-socket's value could itself look like the URL.
         remaining = list(args)
-        remaining.remove(url)
+        value_options = {"--server", "--server-unix-socket"}
+        skip_value = False
+        for index, token in enumerate(remaining):
+            if skip_value:
+                skip_value = False
+                continue
+            if token in value_options:
+                skip_value = True
+                continue
+            if any(token.startswith(f"{option}=") for option in value_options):
+                continue
+            if token == url:
+                remaining.pop(index)
+                break
         return ["--server", url, *remaining]
 
     def _token_is_positional_server(self, token: str) -> bool:
@@ -7426,6 +7445,12 @@ def _prompt_stop_local_server() -> None:
 @cli.group("host", cls=_HostGroup, invoke_without_command=True)
 @click.option("--server", default=None, help="Remote omnigent server URL.")
 @click.option(
+    "--server-unix-socket",
+    default=None,
+    metavar="PATH",
+    help="Connect to the logical server through this Unix socket.",
+)
+@click.option(
     "--non-interactive",
     "non_interactive",
     is_flag=True,
@@ -7437,7 +7462,12 @@ def _prompt_stop_local_server() -> None:
     ),
 )
 @click.pass_context
-def host(ctx: click.Context, server: str | None, non_interactive: bool) -> None:
+def host(
+    ctx: click.Context,
+    server: str | None,
+    server_unix_socket: str | None,
+    non_interactive: bool,
+) -> None:
     """
     Register this machine as a host with a server.
 
@@ -7462,6 +7492,8 @@ def host(ctx: click.Context, server: str | None, non_interactive: bool) -> None:
     :param server: Remote Omnigent server URL, e.g.
         ``"https://example.databricksapps.com"``. ``None`` falls back
         to config; empty string selects local mode.
+    :param server_unix_socket: Optional Unix socket used to dial the
+        logical server URL.
     :param non_interactive: When ``True``, never launch the browser login
         for an un-authed remote server — fail with the ``omnigent login``
         hint instead.
@@ -7470,6 +7502,8 @@ def host(ctx: click.Context, server: str | None, non_interactive: bool) -> None:
     ctx.obj["server"] = server
     if ctx.invoked_subcommand is not None:
         return
+    if server_unix_socket is not None:
+        os.environ[OMNIGENT_SERVER_UNIX_SOCKET] = str(Path(server_unix_socket).expanduser())
     cfg = _load_effective_config()
     if server is None:
         server = cfg.get("server")

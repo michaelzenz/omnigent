@@ -50,6 +50,7 @@ import httpx
 from omnigent import cursor_native_status
 from omnigent._native_post_delivery import post_may_have_been_delivered
 from omnigent.cursor_native_bridge import FORK_HISTORY_CLOSE_TAG, FORK_HISTORY_OPEN_TAG
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -920,7 +921,11 @@ async def forward_cursor_store_to_session(
     model_state = _ModelMirrorState()
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:

@@ -3923,6 +3923,7 @@ async def _codex_discover_thread_and_forward(
         _make_auth_token_factory,
         _RunnerDatabricksAuth,
     )
+    from omnigent.server_transport import server_async_http_transport_kwargs
 
     try:
         try:
@@ -3982,6 +3983,7 @@ async def _codex_discover_thread_and_forward(
                 headers=headers,
                 auth=_RunnerDatabricksAuth(auth_factory),
                 timeout=httpx.Timeout(10.0),
+                **server_async_http_transport_kwargs(),
             ) as _ext_client:
                 _ext_resp = await _ext_client.patch(
                     f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}",
@@ -18968,9 +18970,12 @@ def create_runner_app_from_env() -> FastAPI:
     server_url = os.environ.get("RUNNER_SERVER_URL", "").strip()
     if not server_url:
         raise RuntimeError("RUNNER_SERVER_URL is required for the runner subprocess factory")
+    from omnigent.server_transport import server_async_http_transport_kwargs
+
     server_client = httpx.AsyncClient(
         base_url=server_url,
         timeout=httpx.Timeout(5.0, read=None),
+        **server_async_http_transport_kwargs(),
     )
     return create_runner_app(server_client=server_client)
 

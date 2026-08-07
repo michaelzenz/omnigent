@@ -15,10 +15,10 @@ import logging
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING
-
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import websockets.asyncio.client
 from websockets.exceptions import InvalidStatus, InvalidURI
@@ -89,6 +89,10 @@ from omnigent.runner.transports.ws_tunnel.frames import (
 from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_INTERVAL_S,
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+)
+from omnigent.server_transport import (
+    OMNIGENT_SERVER_UNIX_SOCKET,
+    server_unix_socket_path,
 )
 from omnigent.version import VERSION
 
@@ -411,6 +415,9 @@ _RUNNER_ENV_ALLOWLIST: frozenset[str] = frozenset(
         # host→runner intrinsically, so the setter need not also list it in
         # OMNIGENT_RUNNER_ENV_PASSTHROUGH.
         "OMNIGENT_DATABRICKS_EXTRA_HEADERS",
+        # Optional local transport to the logical remote server. Runners must
+        # dial the same socket as their owning host.
+        OMNIGENT_SERVER_UNIX_SOCKET,
     }
     # Windows system / profile constants (SYSTEMROOT is mandatory for Winsock,
     # USERPROFILE for Path.home(), etc.); a no-op on POSIX. See _platform.
@@ -1915,17 +1922,28 @@ class HostProcess:
 
         _logger.info("Connecting to %s", url)
         try:
-            ws_cm = websockets.asyncio.client.connect(
-                url,
-                additional_headers=headers,
-                max_size=100 * 1024 * 1024,
-                # Align the host->server tunnel's protocol keepalive to the same
-                # 90 s app-level budget as the runner tunnel (not the 20 s library
-                # default that drops a busy-but-healthy tunnel with 1011 — #1116).
-                # Symmetric with serve.py's runner-side connect().
-                ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
-                ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
-            )
+            socket_path = server_unix_socket_path()
+            if socket_path is None:
+                ws_cm = websockets.asyncio.client.connect(
+                    url,
+                    additional_headers=headers,
+                    max_size=100 * 1024 * 1024,
+                    # Align the host->server tunnel's protocol keepalive to the same
+                    # 90 s app-level budget as the runner tunnel (not the 20 s library
+                    # default that drops a busy-but-healthy tunnel with 1011 — #1116).
+                    # Symmetric with serve.py's runner-side connect().
+                    ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+                    ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+                )
+            else:
+                ws_cm = websockets.asyncio.client.unix_connect(
+                    socket_path,
+                    uri=url,
+                    additional_headers=headers,
+                    max_size=100 * 1024 * 1024,
+                    ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+                    ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+                )
             ws = await ws_cm.__aenter__()
         except (InvalidURI, InvalidStatus) as exc:
             # The upgrade itself was rejected. Fail loud on permanent

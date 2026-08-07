@@ -509,6 +509,34 @@ def test_mint_managed_owner_token_posts_binding_token_and_parses_response(
     assert captured["url"].endswith("/v1/runners/runner_token_abc/token")
 
 
+def test_mint_managed_owner_token_uses_server_unix_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Managed runner auth reaches the mint endpoint through the shared UDS."""
+    from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
+
+    captured: dict[str, Any] = {}
+    real_client = httpx.Client
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token": "owner-jwt", "expires_at": 1234567890})
+
+    def _fake_client(**kwargs: Any) -> httpx.Client:
+        captured["transport"] = kwargs.pop("transport", None)
+        return real_client(transport=httpx.MockTransport(_handler), **kwargs)
+
+    monkeypatch.setenv(OMNIGENT_SERVER_UNIX_SOCKET, "/tmp/omnigent-server.sock")
+    monkeypatch.setattr("omnigent.runner._entry.httpx.Client", _fake_client)
+
+    _mint_managed_owner_token(
+        "https://server.example.com/v1/runners/runner_token_abc/token",
+        "https://server.example.com",
+        "the-binding-token",
+    )
+
+    assert isinstance(captured["transport"], httpx.HTTPTransport)
+
+
 def test_runner_databricks_auth_injects_fresh_token_per_request() -> None:
     """``_RunnerDatabricksAuth`` calls the factory on every request.
 
@@ -1169,6 +1197,7 @@ async def test_runner_shutdown_closes_terminal_registry(
     terminal_registries: list[_TrackingTerminalRegistry] = []
     mcp_managers: list[_TrackingMcpManager] = []
     async_clients: list[_TrackingAsyncClient] = []
+    async_client_kwargs: list[dict[str, Any]] = []
     sync_clients: list[_TrackingSyncClient] = []
 
     class _FakeProcessManager:
@@ -1199,7 +1228,8 @@ async def test_runner_shutdown_closes_terminal_registry(
         return manager
 
     def _async_client_factory(*args: Any, **kwargs: Any) -> _TrackingAsyncClient:
-        del args, kwargs
+        del args
+        async_client_kwargs.append(kwargs)
         client = _TrackingAsyncClient()
         async_clients.append(client)
         return client
@@ -1211,6 +1241,7 @@ async def test_runner_shutdown_closes_terminal_registry(
         return client
 
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://runner.test")
+    monkeypatch.setenv("OMNIGENT_SERVER_UNIX_SOCKET", "/tmp/omnigent-server.sock")
     monkeypatch.setattr(
         "omnigent.runtime.harnesses.process_manager.HarnessProcessManager",
         _FakeProcessManager,
@@ -1244,6 +1275,7 @@ async def test_runner_shutdown_closes_terminal_registry(
         "MCP calls are proxied per-session through ProxyMcpManager"
     )
     assert async_clients and async_clients[0].closed
+    assert isinstance(async_client_kwargs[0]["transport"], httpx.AsyncHTTPTransport)
     # No sync httpx.Client is wired into the runner after the DBOS
     # removal — the legacy idle-sync client used by background
     # polling was deleted with that path. If a future change

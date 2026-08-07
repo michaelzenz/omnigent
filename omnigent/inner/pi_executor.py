@@ -52,6 +52,7 @@ from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.onboarding.databricks_config import DATABRICKS_CLAUDE_DEFAULT_MODEL
 from omnigent.runner.identity import OMNIGENT_SESSION_ENV_VAR
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 from omnigent.spec.types import RetryPolicy
 
 from ._subprocess_lifecycle import close_subprocess_transport
@@ -657,6 +658,7 @@ _PI_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
         "SHELL",
         "TZ",
         OMNIGENT_SESSION_ENV_VAR,  # "inside Omnigent" marker (CLAUDE_CODE/CODEX analog)
+        OMNIGENT_SERVER_UNIX_SOCKET,
     }
 )
 _STREAM_READ_CHUNK_SIZE = 65536

@@ -58,6 +58,7 @@ from omnigent.native_policy_hook import (
     policy_hook_reauth,
     post_evaluate_with_retry,
 )
+from omnigent.server_transport import server_http_transport_kwargs
 
 # PreToolUse evaluations are normally a quick request/reply. (Unlike
 # claude-native, a TOOL_CALL ASK does NOT park here — kimi owns the ask via
@@ -253,7 +254,11 @@ def _request_web_approval(
     """
     timeout = httpx.Timeout(_PERMISSION_REQUEST_TIMEOUT_S, connect=_SURFACE_TIMEOUT_S)
     try:
-        with httpx.Client(headers=headers, timeout=timeout) as client:
+        with httpx.Client(
+            headers=headers,
+            timeout=timeout,
+            **server_http_transport_kwargs(),
+        ) as client:
             resp = client.post(url, json=body)
             resp.raise_for_status()
     except httpx.HTTPError as exc:

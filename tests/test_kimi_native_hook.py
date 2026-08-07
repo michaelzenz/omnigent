@@ -32,6 +32,38 @@ def _feed_stdin(monkeypatch: pytest.MonkeyPatch, payload: dict[str, object]) -> 
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
 
 
+def test_permission_client_receives_server_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The synchronous native hook uses the shared server transport kwargs."""
+    transport = object()
+    captured: dict[str, object] = {}
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def post(self, url: str, *, json: dict[str, object]) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"verdict": "allow"},
+                request=httpx.Request("POST", url, json=json),
+            )
+
+    monkeypatch.setattr(
+        kimi_native_hook, "server_http_transport_kwargs", lambda: {"transport": transport}
+    )
+    monkeypatch.setattr(kimi_native_hook.httpx, "Client", _Client)
+
+    kimi_native_hook._request_web_approval("http://server.test/hook", {}, {})
+
+    assert captured["transport"] is transport
+
+
 def test_evaluate_policy_deny_emits_kimi_decision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

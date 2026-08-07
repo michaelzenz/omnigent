@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 
 from omnigent.kiro_native_bridge import acp_record_path, send_kiro_permission_verdict
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -204,7 +205,11 @@ async def supervise_kiro_permission_mirror(
     pending: dict[str, _PendingPermission] = {}
     timeout = httpx.Timeout(_POST_TIMEOUT_S, connect=10.0)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:

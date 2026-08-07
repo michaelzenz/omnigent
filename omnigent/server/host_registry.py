@@ -291,15 +291,26 @@ class HostRegistry:
             self._hosts[host_id] = conn
         return conn
 
-    def deregister(self, host_id: str) -> None:
+    def deregister(
+        self,
+        host_id: str,
+        connection: HostConnection | None = None,
+    ) -> HostConnection | None:
         """Remove a host connection.
 
-        No-op if ``host_id`` is not registered.
+        When *connection* is provided, remove only if it is still the current
+        connection. This prevents stale tunnel cleanup from removing a newer
+        replacement.
 
         :param host_id: Host identifier to remove.
+        :param connection: Optional exact connection expected to be current.
+        :returns: The removed connection, or ``None`` when absent/replaced.
         """
         with self._lock:
-            self._hosts.pop(host_id, None)
+            current = self._hosts.get(host_id)
+            if current is None or (connection is not None and current is not connection):
+                return None
+            return self._hosts.pop(host_id)
 
     def get(self, host_id: str) -> HostConnection | None:
         """Look up a live host connection.

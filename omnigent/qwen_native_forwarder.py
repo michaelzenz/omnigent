@@ -58,6 +58,7 @@ from pathlib import Path
 import httpx
 
 from omnigent.qwen_native_bridge import events_file_path
+from omnigent.server_transport import server_async_http_transport_kwargs
 
 _logger = logging.getLogger(__name__)
 
@@ -318,7 +319,11 @@ async def forward_qwen_events_to_session(
     seen = _new_seen(persisted.seen_uuids)
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:
@@ -516,7 +521,11 @@ async def supervise_qwen_compaction_mirror(
         offset = 0  # not created yet; first poll reads from the start
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:

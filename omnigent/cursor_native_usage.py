@@ -295,6 +295,7 @@ async def forward_cursor_usage_to_session(
     import httpx
 
     from omnigent._native_post_delivery import post_external_session_status
+    from omnigent.server_transport import server_async_http_transport_kwargs
 
     acc = _read_usage_state(bridge_dir)
     timeout = httpx.Timeout(_POST_TIMEOUT_S)
@@ -304,7 +305,11 @@ async def forward_cursor_usage_to_session(
     # wake whose idle POST crashed after the usage flush persisted.
     idle_posted_turns = 0
     async with httpx.AsyncClient(
-        base_url=base_url, headers=headers, auth=auth, timeout=timeout
+        base_url=base_url,
+        headers=headers,
+        auth=auth,
+        timeout=timeout,
+        **server_async_http_transport_kwargs(),
     ) as client:
         while True:
             try:
