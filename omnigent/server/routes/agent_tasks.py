@@ -88,7 +88,7 @@ from omnigent.agent_tasks.worker_role_profile import (
     get_or_create_worker_role_profile,
     load_worker_role_profile,
 )
-from omnigent.agent_tasks.workers import worker_for_item
+from omnigent.agent_tasks.workers import activate_worker_lane, worker_for_item
 from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.entities import (
     FyiCluster,
@@ -1403,6 +1403,41 @@ def create_agent_tasks_router(
             if updated is None:
                 raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
             return _worker_to_response(updated)
+
+        @router.post("/task-workers/{worker_id}/activate")
+        async def activate_worker_lane_route(
+            request: Request,
+            worker_id: str,
+        ) -> dict[str, Any]:
+            """Start a worker sub-agent session for a lane that has not run yet."""
+            user_id = require_user(request, auth_provider)
+            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
+            if worker is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            task = await _get_task_or_404(worker.task_id, user_id)
+            manager_profile = await _manager_role_profile_for_task(task, user_id)
+            worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
+
+            def _activate() -> Worker:
+                activated, _conversation_id = activate_worker_lane(
+                    task=task,
+                    worker=worker,
+                    task_store=task_store,
+                    worker_store=worker_store,
+                    conversation_store=conversation_store,
+                    manager_role_profile=manager_profile,
+                    worker_role_profile=worker_profile,
+                )
+                return activated
+
+            activated = await asyncio.to_thread(_activate)
+            if activated.session_id is not None:
+                await _best_effort_ensure_conversation_runner(
+                    request,
+                    activated.session_id,
+                    conversation_store,
+                )
+            return _worker_to_response(activated)
 
         @router.post("/agent-tasks/{task_id}/assets")
         async def create_task_asset_route(

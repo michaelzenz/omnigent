@@ -114,33 +114,34 @@ export function TaskCard({ taskId, title, description, state, managerRoleKey }: 
       </header>
 
       {isPending ? (
-        <div className="space-y-2 border-b border-border bg-white px-3 py-2">
+        <div className="flex items-center gap-2 border-b border-border bg-white px-3 py-2">
           <TaskCardManagerRolePicker
             taskId={taskId}
             managerRoleKey={managerRoleKey}
             editable
+            compact
           />
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={packageActionPending}
-              onClick={() => rejectPackage.mutate()}
-              data-testid={`task-reject-${taskId}`}
-            >
-              Reject
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!canAccept || packageActionPending}
-              onClick={() => acceptPackage.mutate()}
-              data-testid={`task-accept-${taskId}`}
-            >
-              Accept
-            </Button>
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={packageActionPending}
+            onClick={() => rejectPackage.mutate()}
+            data-testid={`task-reject-${taskId}`}
+          >
+            Dismiss Task
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0"
+            disabled={!canAccept || packageActionPending}
+            onClick={() => acceptPackage.mutate()}
+            data-testid={`task-accept-${taskId}`}
+          >
+            Create Task
+          </Button>
         </div>
       ) : null}
 

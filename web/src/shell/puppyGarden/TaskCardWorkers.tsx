@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useRoleProfiles } from "@/hooks/useRoleProfiles";
+import { useActivateWorkerLane } from "@/hooks/useAgentTasks";
 import { WORKER_ROLE_PREFIX, type TaskItemSummary, type TaskWorkerLane } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardWorkerRows } from "./TaskCardWorkerRows";
@@ -33,6 +34,7 @@ function laneDisplayName(lane: TaskWorkerLane, roleTitleByKey: Map<string, strin
 
 export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkersProps) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
+  const activateWorkerLane = useActivateWorkerLane(taskId);
   const { data: workerRoles = [] } = useRoleProfiles(WORKER_ROLE_PREFIX);
   const roleTitleByKey = useMemo(
     () => new Map(workerRoles.map((role) => [role.role, role.title ?? role.role])),
@@ -157,11 +159,33 @@ export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkers
                     External — no chat yet
                   </span>
                 ) : awaitingRole ? (
-                  <WorkerLaneRolePicker
-                    taskId={taskId}
-                    workerId={lane.worker_id}
-                    roleKey={lane.role_key}
-                  />
+                  <div
+                    className="flex shrink-0 items-center gap-2"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <WorkerLaneRolePicker
+                      taskId={taskId}
+                      workerId={lane.worker_id}
+                      roleKey={lane.role_key}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 shrink-0"
+                      disabled={
+                        !lane.role_key?.trim() ||
+                        (activateWorkerLane.isPending &&
+                          activateWorkerLane.variables === lane.worker_id)
+                      }
+                      data-testid={`worker-lane-activate-${lane.worker_id}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        activateWorkerLane.mutate(lane.worker_id);
+                      }}
+                    >
+                      Activate
+                    </Button>
+                  </div>
                 ) : (
                   <Button
                     type="button"

@@ -5,6 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { useRoleProfiles } from "@/hooks/useRoleProfiles";
 
 interface TaskCardTemplateRolePickerProps {
@@ -16,6 +17,7 @@ interface TaskCardTemplateRolePickerProps {
   onChange: (roleKey: string) => void;
   isPending?: boolean;
   error?: string | null;
+  compact?: boolean;
 }
 
 export function TaskCardTemplateRolePicker({
@@ -27,6 +29,7 @@ export function TaskCardTemplateRolePicker({
   onChange,
   isPending = false,
   error = null,
+  compact = false,
 }: TaskCardTemplateRolePickerProps) {
   const { data: profiles = [] } = useRoleProfiles(rolePrefix);
   const options = profiles.filter((profile) => profile.role.startsWith(rolePrefix));
@@ -42,10 +45,13 @@ export function TaskCardTemplateRolePicker({
   }
 
   return (
-    <div className="space-y-1" data-testid={testId}>
-      <span className="text-xs text-muted-foreground">{label}</span>
+    <div className={cn(compact ? "min-w-0 flex-1" : "space-y-1")} data-testid={testId}>
+      {!compact ? <span className="text-xs text-muted-foreground">{label}</span> : null}
       <Select value={roleKey} onValueChange={onChange} disabled={isPending || options.length === 0}>
-        <SelectTrigger className="h-8 w-full max-w-xs text-xs">
+        <SelectTrigger
+          className={cn("h-8 text-xs", compact ? "w-full" : "w-full max-w-xs")}
+          aria-label={compact ? label : undefined}
+        >
           <SelectValue placeholder={`Select ${label.toLowerCase()}`} />
         </SelectTrigger>
         <SelectContent>

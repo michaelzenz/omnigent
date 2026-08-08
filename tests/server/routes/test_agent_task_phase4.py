@@ -22,6 +22,7 @@ from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEven
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+from tests.server.routes.agent_task_api import put_agent_role_profile
 
 WORKER_ROLE_SLUG = "investigator"
 WORKER_ROLE_KEY = f"worker:{WORKER_ROLE_SLUG}"
@@ -341,3 +342,33 @@ async def test_worker_completion_hook(
     completed_item = item_store.get_item(task_item_id)
     assert completed_item is not None
     assert completed_item.state == "done"
+
+
+async def test_activate_worker_lane_route(
+    client: httpx.AsyncClient,
+    worker_role_key: str,
+    worker_agent_id: str,
+    db_uri: str,
+) -> None:
+    """Activate starts a worker session before any item is dispatched."""
+    task_id = await _bootstrapped_task(client, db_uri)
+    _seed_live_host(db_uri, "activate-worker-host")
+    profile_resp = await put_agent_role_profile(
+        client,
+        role=worker_role_key,
+        agent_profile_id=worker_agent_id,
+        host_id=_uid("activate-worker-host"),
+        workspace="/tmp/omnigent-worker-activate",
+    )
+    assert profile_resp.status_code == 200
+
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    worker = worker_store.create_worker(_uid("activate-lane"), task_id, role_key=worker_role_key)
+
+    activated = await client.post(f"/v1/task-workers/{worker.id}/activate")
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["session_id"] is not None
+
+    dashboard = await client.get(f"/v1/agent-tasks/{task_id}/dashboard")
+    lane = next(w for w in dashboard.json()["workers"] if w["worker_id"] == worker.id)
+    assert lane["session_id"] == activated.json()["session_id"]

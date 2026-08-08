@@ -7,12 +7,14 @@ interface TaskCardManagerRolePickerProps {
   taskId: string;
   managerRoleKey: string;
   editable: boolean;
+  compact?: boolean;
 }
 
 export function TaskCardManagerRolePicker({
   taskId,
   managerRoleKey,
   editable,
+  compact = false,
 }: TaskCardManagerRolePickerProps) {
   const updateRole = useUpdateAgentTaskManagerRole(taskId);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +26,7 @@ export function TaskCardManagerRolePicker({
       roleKey={managerRoleKey}
       label="Manager role"
       editable={editable}
+      compact={compact}
       isPending={updateRole.isPending}
       error={error}
       onChange={(role) => {

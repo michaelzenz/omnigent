@@ -247,6 +247,15 @@ export async function updateWorkerLaneRole(
   return readJsonOrApiError<WorkerLaneSummary>(res);
 }
 
+/** Start a worker sub-agent session for a lane that has not run yet. */
+export async function activateWorkerLane(workerId: string): Promise<WorkerLaneSummary> {
+  const res = await authenticatedFetch(
+    `/v1/task-workers/${encodeURIComponent(workerId)}/activate`,
+    { method: "POST" },
+  );
+  return readJsonOrApiError<WorkerLaneSummary>(res);
+}
+
 export interface UpdateAgentRoleProfileRequest {
   agent_profile_id: string;
   harness?: string | null;

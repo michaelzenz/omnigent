@@ -47,6 +47,11 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutate: vi.fn(),
     isPending: false,
   })),
+  useActivateWorkerLane: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+    variables: undefined,
+  })),
 }));
 
 vi.mock("@/hooks/useRoleProfiles", () => ({
@@ -185,6 +190,7 @@ describe("TaskCard", () => {
     );
     // The lane has no session yet, so it offers the role choice, not Chat.
     expect(screen.getByTestId("worker-lane-role-worker-1")).toBeInTheDocument();
+    expect(screen.getByTestId("worker-lane-activate-worker-1")).toHaveTextContent("Activate");
     expect(screen.queryByTestId("worker-lane-chat-worker-1")).not.toBeInTheDocument();
     expect(screen.getByTestId("task-card-assets")).toBeInTheDocument();
     expect(screen.queryByText("Sessions")).not.toBeInTheDocument();

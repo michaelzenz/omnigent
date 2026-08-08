@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
 import type { RoleCatalogEntry } from "./rolesCatalog";
 
 interface RoleDefinitionCardProps {
@@ -10,10 +9,7 @@ interface RoleDefinitionCardProps {
   children?: ReactNode;
 }
 
-/**
- * Glossary card shell: definition text plus an optional defaults slot.
- * Selection ring leaves room for per-task manager bindings later.
- */
+/** Glossary card shell: definition text plus an optional defaults slot. */
 export function RoleDefinitionCard({
   entry,
   selected,
@@ -23,10 +19,7 @@ export function RoleDefinitionCard({
 }: RoleDefinitionCardProps) {
   return (
     <article
-      className={cn(
-        "rounded-lg border bg-card p-4 shadow-sm transition-colors",
-        selected ? "border-primary ring-2 ring-primary/20" : "border-border",
-      )}
+      className="rounded-lg border border-border bg-card p-4 shadow-sm"
       data-testid={`glossary-role-card-${entry.id}`}
       data-selected={selected ? "true" : "false"}
     >
