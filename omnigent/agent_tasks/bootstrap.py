@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_HARNESS,
-    DEFAULT_TASK_MODEL,
     DEFAULT_TASK_WORKSPACE,
     resolve_task_harness,
 )
@@ -26,7 +25,7 @@ class BootstrapParams:
     host_id: str
     workspace: str
     harness: str
-    model: str
+    model: str | None
 
 
 def resolve_bootstrap_params(
@@ -40,13 +39,17 @@ def resolve_bootstrap_params(
     """Merge explicit bootstrap inputs with role profile defaults."""
     resolved_host_id = host_id or (role_profile.host_id if role_profile else None)
     resolved_workspace = (
-        workspace
-        or (role_profile.workspace if role_profile else None)
-        or DEFAULT_TASK_WORKSPACE
+        workspace or (role_profile.workspace if role_profile else None) or DEFAULT_TASK_WORKSPACE
     )
-    # Host/workspace come from the role profile; harness/model use task-agent defaults.
-    resolved_harness = resolve_task_harness(harness or DEFAULT_TASK_HARNESS)
-    resolved_model = model or DEFAULT_TASK_MODEL
+    resolved_harness = resolve_task_harness(
+        harness or (role_profile.harness if role_profile else None) or DEFAULT_TASK_HARNESS
+    )
+    # The role profile stores harness and model as a matched pair (the glossary
+    # clears the model when the harness picks its own), so it is passed through
+    # as-is; empty means "let the harness choose".
+    resolved_model = (
+        model if model is not None else (role_profile.model if role_profile else None)
+    ) or None
     if not resolved_host_id or not resolved_workspace:
         raise OmnigentError(
             "host_id and workspace are required to bootstrap a manager session",
@@ -96,6 +99,7 @@ def bootstrap_task_manager(
         conversation.id,
         harness_override=params.harness,
         model_override=params.model,
+        _unset_model_override=params.model is None,
     )
     updated = task_store.update(
         task.id,

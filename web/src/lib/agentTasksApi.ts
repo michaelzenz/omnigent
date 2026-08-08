@@ -6,6 +6,8 @@ export interface AgentTaskSummary {
   description: string | null;
   state: string;
   agent_profile_id: string;
+  manager_role_key: string;
+  worker_role_key: string;
   manager_conversation_id: string | null;
 }
 
@@ -120,6 +122,10 @@ export interface DispatchPayload {
 
 export const TASK_SECRETARY_ROLE = "secretary";
 export const TASK_BROKER_ROLE = "broker";
+export const MANAGER_DEFAULT_ROLE_KEY = "manager:default";
+export const MANAGER_ROLE_PREFIX = "manager:";
+export const WORKER_DEFAULT_ROLE_KEY = "worker:default";
+export const WORKER_ROLE_PREFIX = "worker:";
 
 function agentRolePath(role: string, suffix: string): string {
   return `/v1/agent-tasks/roles/${encodeURIComponent(role)}/${suffix}`;
@@ -127,12 +133,34 @@ function agentRolePath(role: string, suffix: string): string {
 
 export interface SecretaryProfile {
   role?: string;
+  title?: string;
+  system?: boolean;
+  deletable?: boolean;
   agent_profile_id: string;
   conversation_id: string | null;
-  model: string;
+  /** Null when the harness resolves its own model (e.g. Codex, OpenCode). */
+  model: string | null;
   harness: string;
   host_id: string;
   workspace: string;
+}
+
+export type RoleProfileSummary = SecretaryProfile & { role: string };
+
+export interface CreateManagerRoleProfileRequest {
+  slug: string;
+  agent_profile_id?: string;
+  harness?: string | null;
+  model?: string | null;
+  host_id?: string | null;
+  workspace?: string | null;
+}
+
+export type CreateWorkerRoleProfileRequest = CreateManagerRoleProfileRequest;
+
+export interface UpdateAgentTaskRequest {
+  manager_role_key?: string;
+  worker_role_key?: string;
 }
 
 export interface SecretarySession {
@@ -189,10 +217,7 @@ export async function fetchAgentTasks(state = "idle"): Promise<AgentTaskSummary[
 
 /** Active and idle managed tasks (excludes pending packages and archived). */
 export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
-  const [active, idle] = await Promise.all([
-    fetchAgentTasks("active"),
-    fetchAgentTasks("idle"),
-  ]);
+  const [active, idle] = await Promise.all([fetchAgentTasks("active"), fetchAgentTasks("idle")]);
   return [...active, ...idle];
 }
 
@@ -201,8 +226,78 @@ export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard>
   return readJson<TaskDashboard>(res);
 }
 
+export interface UpdateAgentRoleProfileRequest {
+  agent_profile_id: string;
+  harness?: string | null;
+  model?: string | null;
+  host_id?: string | null;
+  workspace?: string | null;
+}
+
+export async function fetchRoleProfiles(prefix?: string): Promise<RoleProfileSummary[]> {
+  const query = prefix ? `?prefix=${encodeURIComponent(prefix)}` : "";
+  const res = await authenticatedFetch(`/v1/agent-tasks/roles/profiles${query}`);
+  const body = await readJsonOrApiError<{ data: RoleProfileSummary[] }>(res);
+  return body.data;
+}
+
+export async function createManagerRoleProfile(
+  body: CreateManagerRoleProfileRequest,
+): Promise<RoleProfileSummary> {
+  const res = await authenticatedFetch("/v1/agent-tasks/roles/manager", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonOrApiError<RoleProfileSummary>(res);
+}
+
+export async function createWorkerRoleProfile(
+  body: CreateWorkerRoleProfileRequest,
+): Promise<RoleProfileSummary> {
+  const res = await authenticatedFetch("/v1/agent-tasks/roles/worker", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonOrApiError<RoleProfileSummary>(res);
+}
+
+export async function deleteAgentRoleProfile(role: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/agent-tasks/roles/${encodeURIComponent(role)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    await readJsonOrApiError(res);
+  }
+}
+
+export async function patchAgentTask(
+  taskId: string,
+  body: UpdateAgentTaskRequest,
+): Promise<AgentTaskSummary> {
+  const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonOrApiError<AgentTaskSummary>(res);
+}
+
 export async function fetchAgentRoleProfile(role: string): Promise<SecretaryProfile> {
   const res = await authenticatedFetch(agentRolePath(role, "profile"));
+  return readJsonOrApiError<SecretaryProfile>(res);
+}
+
+export async function updateAgentRoleProfile(
+  role: string,
+  body: UpdateAgentRoleProfileRequest,
+): Promise<SecretaryProfile> {
+  const res = await authenticatedFetch(agentRolePath(role, "profile"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   return readJsonOrApiError<SecretaryProfile>(res);
 }
 

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from sqlalchemy import select
 
-from omnigent.agent_tasks.agent_builtins import TASK_ROLE_DEFAULTS
-from omnigent.agent_tasks.constants import DEFAULT_TASK_WORKSPACE
+from omnigent.agent_tasks.agent_builtins import task_role_defaults_for_key
+from omnigent.agent_tasks.constants import (
+    DEFAULT_TASK_HARNESS,
+    DEFAULT_TASK_MODEL,
+    DEFAULT_TASK_WORKSPACE,
+)
 from omnigent.db.db_models import SqlUserTaskRoleProfile, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
-
-_UNSET: Any = object()
 
 
 def _to_entity(row: SqlUserTaskRoleProfile) -> UserTaskRoleProfile:
@@ -47,6 +49,36 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                 return None
             return _to_entity(row)
 
+    def list_for_user(
+        self,
+        user_id: str,
+        *,
+        role_prefix: str | None = None,
+    ) -> list[UserTaskRoleProfile]:
+        with self._session() as session:
+            stmt = (
+                select(SqlUserTaskRoleProfile)
+                .where(SqlUserTaskRoleProfile.workspace_id == current_workspace_id())
+                .where(SqlUserTaskRoleProfile.user_id == user_id)
+            )
+            if role_prefix is not None:
+                stmt = stmt.where(SqlUserTaskRoleProfile.role.like(f"{role_prefix}%"))
+            stmt = stmt.order_by(SqlUserTaskRoleProfile.role.asc())
+            rows = session.execute(stmt).scalars().all()
+            return [_to_entity(row) for row in rows]
+
+    def delete(self, user_id: str, role: str) -> bool:
+        with self._session() as session:
+            row = session.get(
+                SqlUserTaskRoleProfile,
+                (current_workspace_id(), user_id, role),
+            )
+            if row is None:
+                return False
+            session.delete(row)
+            session.flush()
+            return True
+
     def upsert(
         self,
         user_id: str,
@@ -59,6 +91,7 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
         host_id: str | None = None,
         workspace: str | None = None,
         clear_conversation_id: bool = False,
+        clear_model: bool = False,
     ) -> UserTaskRoleProfile:
         with self._session() as session:
             row = session.get(
@@ -67,7 +100,7 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
             )
             now = now_epoch()
             if row is None:
-                defaults = TASK_ROLE_DEFAULTS.get(role)
+                defaults = task_role_defaults_for_key(role)
                 if agent_profile_id is None:
                     raise ValueError(
                         "agent_profile_id is required when creating a task role profile"
@@ -76,8 +109,12 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     user_id=user_id,
                     role=role,
                     agent_profile_id=agent_profile_id,
-                    harness=harness or (defaults.harness if defaults else "claude-native"),
-                    model=model or (defaults.model if defaults else "sonnet"),
+                    harness=harness or (defaults.harness if defaults else DEFAULT_TASK_HARNESS),
+                    model=(
+                        None
+                        if clear_model
+                        else model or (defaults.model if defaults else DEFAULT_TASK_MODEL)
+                    ),
                     conversation_id=conversation_id,
                     host_id=host_id,
                     workspace=workspace or DEFAULT_TASK_WORKSPACE,
@@ -90,7 +127,9 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     row.agent_profile_id = agent_profile_id
                 if harness is not None:
                     row.harness = harness
-                if model is not None:
+                if clear_model:
+                    row.model = None
+                elif model is not None:
                     row.model = model
                 if host_id is not None:
                     row.host_id = host_id

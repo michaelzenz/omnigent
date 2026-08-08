@@ -24,6 +24,8 @@ class TaskStore(ABC):
         *,
         agent_profile_id: str,
         owner_user_id: str | None = None,
+        manager_role_key: str | None = None,
+        worker_role_key: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
         manager_conversation_id: str | None = None,
@@ -59,9 +61,29 @@ class TaskStore(ABC):
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
         agent_profile_id: str | None = None,
+        manager_role_key: str | None = None,
+        worker_role_key: str | None = None,
         state: str | None = None,
     ) -> Task | None:
         """Update mutable task fields."""
+
+    @abstractmethod
+    def count_by_manager_role_key(
+        self,
+        manager_role_key: str,
+        *,
+        state: str | None = None,
+    ) -> int:
+        """Count tasks using a manager glossary role key."""
+
+    @abstractmethod
+    def count_by_worker_role_key(
+        self,
+        worker_role_key: str,
+        *,
+        state: str | None = None,
+    ) -> int:
+        """Count tasks using a worker glossary role key."""
 
     @abstractmethod
     def delete(self, task_id: str) -> bool:

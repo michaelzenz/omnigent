@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from omnigent.stores.agent_store import AgentStore
+from omnigent.agent_tasks.role_keys import (
+    MANAGER_DEFAULT_ROLE_KEY,
+    WORKER_DEFAULT_ROLE_KEY,
+    is_manager_role_key,
+    is_worker_role_key,
+    resolve_template_defaults_role_key,
+)
+from omnigent.stores.agent_store import AgentStore
 
 TASK_BROKER_AGENT_NAME = "task-broker"
 TASK_BROKER_ROLE = "broker"
@@ -47,7 +52,28 @@ TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
         harness="cursor-native",
         model="composer-2.5",
     ),
+    MANAGER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
+        agent_name=TASK_MANAGER_AGENT_NAME,
+        harness="cursor-native",
+        model="composer-2.5",
+    ),
+    WORKER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
+        agent_name=TASK_WORKER_AGENT_NAME,
+        harness="cursor-native",
+        model="composer-2.5",
+    ),
 }
+
+
+def task_role_defaults_for_key(role: str) -> TaskRoleDefaults | None:
+    """Return packaged defaults for a glossary role key."""
+    defaults = TASK_ROLE_DEFAULTS.get(role)
+    if defaults is not None:
+        return defaults
+    fallback_key = resolve_template_defaults_role_key(role)
+    if fallback_key is None:
+        return None
+    return TASK_ROLE_DEFAULTS.get(fallback_key)
 
 
 _AGENTS_DIR = Path(__file__).parent / "agents"
@@ -81,6 +107,18 @@ def resolve_role_agent_profile_id(
 ) -> str:
     """Return the built-in agent profile id for *role*, or *fallback_agent_id*."""
     defaults = TASK_ROLE_DEFAULTS.get(role)
+    if defaults is None and is_manager_role_key(role):
+        return resolve_task_agent_id(
+            agent_store,
+            TASK_MANAGER_AGENT_NAME,
+            fallback_agent_id=fallback_agent_id,
+        )
+    if defaults is None and is_worker_role_key(role):
+        return resolve_task_agent_id(
+            agent_store,
+            TASK_WORKER_AGENT_NAME,
+            fallback_agent_id=fallback_agent_id,
+        )
     if defaults is None:
         if fallback_agent_id is not None:
             return fallback_agent_id

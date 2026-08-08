@@ -1264,7 +1264,7 @@ function PickerSectionHeader({ children }: { children: ReactNode }) {
  * BEFORE selecting, so the harness-switch reseed effect in the screen reads it
  * back as the same value and doesn't clobber the choice.
  */
-function AgentHarnessPicker({
+export function AgentHarnessPicker({
   agentEntries,
   harnessEntries,
   brainHarnessLabels,
@@ -1291,6 +1291,8 @@ function AgentHarnessPicker({
   setPickedModel,
   setPickedEffort,
   setPickedHarness,
+  harnessesOnly = false,
+  triggerTestId,
 }: {
   agentEntries: AvailableAgent[];
   harnessEntries: AvailableAgent[];
@@ -1318,6 +1320,9 @@ function AgentHarnessPicker({
   setPickedModel: (model: string) => void;
   setPickedEffort: (effort: string) => void;
   setPickedHarness: (harness: string | null, agentId?: string) => void;
+  /** When true, only native harness rows are shown (no bundle/custom agents). */
+  harnessesOnly?: boolean;
+  triggerTestId?: string;
 }) {
   // Controlled so clicking a knobbed row can commit the pick and close the
   // menu (see the sub-trigger onClick below) without diving into the submenu.
@@ -1631,7 +1636,7 @@ function AgentHarnessPicker({
           variant="ghost"
           size="sm"
           disabled={!hasAgents}
-          data-testid="new-chat-landing-agent-select"
+          data-testid={triggerTestId ?? "new-chat-landing-agent-select"}
           // Drop the Button's focus-visible ring/border that otherwise shows
           // when focus returns to the trigger after a pick.
           className="h-8 gap-1.5 px-2.5 font-normal text-muted-foreground hover:text-foreground focus-visible:border-transparent focus-visible:ring-0"
@@ -1687,32 +1692,36 @@ function AgentHarnessPicker({
                 <DropdownMenuSeparator />
               </>
             )}
-            {/* Agents group — SDK / bundle + custom agents. Always rendered so the
-            "Create custom agent" action is reachable even with no bundle agents. */}
-            <PickerSectionHeader>Agents</PickerSectionHeader>
-            {agentEntries.map(renderEntry)}
-            {pendingAgent && (
-              <DropdownMenuItem
-                key={pendingAgentId}
-                data-testid="new-chat-landing-agent-pending"
-                data-active={effectiveAgentId === pendingAgentId ? "true" : undefined}
-                onSelect={onSelectPending}
-                className="items-start gap-2 rounded-sm px-2 py-1.5 text-13 data-[active=true]:bg-accent/60 data-[active=true]:text-foreground"
-              >
-                <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
-                  <span className="truncate">{pendingAgent.name}</span>
-                  <span className="truncate text-[11px] text-muted-foreground/70">Custom</span>
-                </div>
-              </DropdownMenuItem>
+            {!harnessesOnly && (
+              <>
+                {/* Agents group — SDK / bundle + custom agents. Always rendered so the
+                "Create custom agent" action is reachable even with no bundle agents. */}
+                <PickerSectionHeader>Agents</PickerSectionHeader>
+                {agentEntries.map(renderEntry)}
+                {pendingAgent && (
+                  <DropdownMenuItem
+                    key={pendingAgentId}
+                    data-testid="new-chat-landing-agent-pending"
+                    data-active={effectiveAgentId === pendingAgentId ? "true" : undefined}
+                    onSelect={onSelectPending}
+                    className="items-start gap-2 rounded-sm px-2 py-1.5 text-13 data-[active=true]:bg-accent/60 data-[active=true]:text-foreground"
+                  >
+                    <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
+                      <span className="truncate">{pendingAgent.name}</span>
+                      <span className="truncate text-[11px] text-muted-foreground/70">Custom</span>
+                    </div>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  data-testid="new-chat-landing-create-agent"
+                  onSelect={onCreateCustomAgent}
+                  className="gap-2 rounded-sm px-2 py-1.5 text-13 text-muted-foreground"
+                >
+                  <PlusIcon className="size-3.5" />
+                  Create custom agent
+                </DropdownMenuItem>
+              </>
             )}
-            <DropdownMenuItem
-              data-testid="new-chat-landing-create-agent"
-              onSelect={onCreateCustomAgent}
-              className="gap-2 rounded-sm px-2 py-1.5 text-13 text-muted-foreground"
-            >
-              <PlusIcon className="size-3.5" />
-              Create custom agent
-            </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>
@@ -2992,335 +3001,332 @@ export function NewChatComposer({
   return (
     <>
       <div className="relative flex w-full flex-col gap-3">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void handleCreate();
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleCreate();
+          }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          // Two visual states only (no hover): resting --border, and
+          // --foreground while the textarea itself has focus (has-[]
+          // scopes it so focusing footer buttons doesn't trigger it).
+          // dark:bg-card-solid: the footer tray below tucks its top
+          // edge behind this card (-mt-9), and the dark glass --card
+          // is 60% alpha — the tucked strip ghosts through a
+          // translucent card. Mirrors the chat composer card. Drag-over
+          // lifts an inset ring (overlay below).
+          className={cn(
+            "relative z-10 flex w-full flex-col rounded-2xl border border-border bg-card dark:bg-card-solid shadow-[0_12px_20px_-20px_rgba(0,0,0,0.14),0_20px_28px_-28px_rgba(0,0,0,0.1)] transition-[border-color,box-shadow] duration-150 has-[textarea:focus]:border-foreground",
+            isDragActive && "ring-2 ring-ring ring-inset",
+          )}
+          data-testid="new-chat-landing-composer"
+        >
+          {isDragActive && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-card/80">
+              <span className="text-sm font-medium text-ring">Drop files here</span>
+            </div>
+          )}
+          {/* Skill suggestions — floats above the composer box. */}
+          {slashMenuOpen && (
+            <SlashCommandMenu
+              query={slashMenuQuery}
+              activeIndex={slashMenuIndex}
+              onSelect={applySlashSelection}
+              commands={skillCommands}
+            />
+          )}
+          {/* "@"-file-mention browser — native terminal agents with a workspace */}
+          {(mentionOpen || mentionListingPending) && (
+            <FileMentionMenu
+              currentDir={mentionDir}
+              activeIndex={mentionIndex}
+              entries={mentionEntries}
+              loading={mentionListingPending}
+              onOpenDir={openMentionDir}
+              onAttach={attachMention}
+            />
+          )}
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              // Recompute the active "@"-mention from the caret each keystroke
+              // (native terminal agents with a workspace — ``mentionEnabled``).
+              setMention(
+                mentionEnabled
+                  ? detectMentionAt(
+                      e.target.value,
+                      e.target.selectionStart ?? e.target.value.length,
+                    )
+                  : null,
+              );
             }}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            // Two visual states only (no hover): resting --border, and
-            // --foreground while the textarea itself has focus (has-[]
-            // scopes it so focusing footer buttons doesn't trigger it).
-            // dark:bg-card-solid: the footer tray below tucks its top
-            // edge behind this card (-mt-9), and the dark glass --card
-            // is 60% alpha — the tucked strip ghosts through a
-            // translucent card. Mirrors the chat composer card. Drag-over
-            // lifts an inset ring (overlay below).
-            className={cn(
-              "relative z-10 flex w-full flex-col rounded-2xl border border-border bg-card dark:bg-card-solid shadow-[0_12px_20px_-20px_rgba(0,0,0,0.14),0_20px_28px_-28px_rgba(0,0,0,0.1)] transition-[border-color,box-shadow] duration-150 has-[textarea:focus]:border-foreground",
-              isDragActive && "ring-2 ring-ring ring-inset",
-            )}
-            data-testid="new-chat-landing-composer"
-          >
-            {isDragActive && (
-              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-card/80">
-                <span className="text-sm font-medium text-ring">Drop files here</span>
-              </div>
-            )}
-            {/* Skill suggestions — floats above the composer box. */}
-            {slashMenuOpen && (
-              <SlashCommandMenu
-                query={slashMenuQuery}
-                activeIndex={slashMenuIndex}
-                onSelect={applySlashSelection}
-                commands={skillCommands}
-              />
-            )}
-            {/* "@"-file-mention browser — native terminal agents with a workspace */}
-            {(mentionOpen || mentionListingPending) && (
-              <FileMentionMenu
-                currentDir={mentionDir}
-                activeIndex={mentionIndex}
-                entries={mentionEntries}
-                loading={mentionListingPending}
-                onOpenDir={openMentionDir}
-                onAttach={attachMention}
-              />
-            )}
-            <textarea
-              ref={textareaRef}
-              value={message}
-              onChange={(e) => {
-                setMessage(e.target.value);
-                // Recompute the active "@"-mention from the caret each keystroke
-                // (native terminal agents with a workspace — ``mentionEnabled``).
-                setMention(
-                  mentionEnabled
-                    ? detectMentionAt(
-                        e.target.value,
-                        e.target.selectionStart ?? e.target.value.length,
-                      )
-                    : null,
-                );
-              }}
-              onBlur={() => {
-                // Dismiss the mention menu when focus leaves the textarea; menu
-                // rows preventDefault on mousedown so selecting one doesn't blur.
-                dismissMention();
-              }}
-              onCompositionStart={() => {
-                isComposingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                isComposingRef.current = false;
-              }}
-              onKeyDown={(e) => {
-                if (isImeCompositionKeyEvent(e, isComposingRef.current)) {
+            onBlur={() => {
+              // Dismiss the mention menu when focus leaves the textarea; menu
+              // rows preventDefault on mousedown so selecting one doesn't blur.
+              dismissMention();
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
+            onKeyDown={(e) => {
+              if (isImeCompositionKeyEvent(e, isComposingRef.current)) {
+                return;
+              }
+
+              // "@"-mention menu navigation (shared useMentionBrowser) —
+              // mutually exclusive with the slash menu (a token can't be both)
+              // and takes priority over submission.
+              if (handleMentionKeyDown(e)) return;
+
+              // While the skills menu is open, ArrowUp/Down navigate it and
+              // Enter/Tab complete the highlighted item — these take
+              // priority over submission (same UX as the in-session
+              // composer).
+              if (slashMenuOpen && slashMenuMatches.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashMenuIndex((i) => (i + 1) % slashMenuMatches.length);
                   return;
                 }
-
-                // "@"-mention menu navigation (shared useMentionBrowser) —
-                // mutually exclusive with the slash menu (a token can't be both)
-                // and takes priority over submission.
-                if (handleMentionKeyDown(e)) return;
-
-                // While the skills menu is open, ArrowUp/Down navigate it and
-                // Enter/Tab complete the highlighted item — these take
-                // priority over submission (same UX as the in-session
-                // composer).
-                if (slashMenuOpen && slashMenuMatches.length > 0) {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setSlashMenuIndex((i) => (i + 1) % slashMenuMatches.length);
-                    return;
-                  }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setSlashMenuIndex((i) => (i <= 0 ? slashMenuMatches.length - 1 : i - 1));
-                    return;
-                  }
-                  if (
-                    (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) &&
-                    slashMenuIndex >= 0
-                  ) {
-                    e.preventDefault();
-                    applySlashSelection(slashMenuMatches[slashMenuIndex]!);
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    // Dismiss the menu by clearing the draft so the user can
-                    // start fresh.
-                    setMessage("");
-                    setSlashMenuIndex(-1);
-                    return;
-                  }
-                }
-                // Enter sends; Shift+Enter inserts a newline.
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "ArrowUp") {
                   e.preventDefault();
-                  // The mention menu is briefly closed while its listing loads;
-                  // swallow Enter so the in-progress "@dir/" token isn't sent.
-                  if (mentionListingPending) return;
-                  void handleCreate();
+                  setSlashMenuIndex((i) => (i <= 0 ? slashMenuMatches.length - 1 : i - 1));
+                  return;
                 }
-              }}
-              onPaste={(e) => {
-                // Pasted images/files attach instead of inserting as text,
-                // mirroring the in-session composer.
-                const pasted = Array.from(e.clipboardData.items)
-                  .filter((item) => item.kind === "file")
-                  .map((item) => item.getAsFile())
-                  .filter((f): f is File => f !== null);
-                if (pasted.length > 0) {
+                if (
+                  (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) &&
+                  slashMenuIndex >= 0
+                ) {
                   e.preventDefault();
-                  addFiles(pasted);
+                  applySlashSelection(slashMenuMatches[slashMenuIndex]!);
+                  return;
                 }
-              }}
-              // Suppress the native placeholder when the overlay supplies its
-              // own prompt text; aria-label preserves the accessible name.
-              placeholder={pillSkills.length > 0 ? "" : "Describe a task to start a new session…"}
-              aria-label="Describe a task to start a new session"
-              rows={1}
-              autoFocus={autoFocus}
-              data-testid="new-chat-landing-input"
-              // Compose-pill text spec: SF Pro Text system stack at
-              // 14px/20px. (Note: sub-16px inputs make mobile Safari
-              // auto-zoom on focus — accepted tradeoff per the design.)
-              // Heights are border-box (16px top + 4px bottom padding lives
-              // inside them): min 60px = one 20px line + a spare line of
-              // breathing room; max 200px = the spec's 180px of content.
-              // useAutoGrowTextarea drives the height between the two.
-              className="max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-4 pb-1 font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground md:select-text"
-            />
-            {/* Gated on an empty draft so it reads as the placeholder.
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  // Dismiss the menu by clearing the draft so the user can
+                  // start fresh.
+                  setMessage("");
+                  setSlashMenuIndex(-1);
+                  return;
+                }
+              }
+              // Enter sends; Shift+Enter inserts a newline.
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                // The mention menu is briefly closed while its listing loads;
+                // swallow Enter so the in-progress "@dir/" token isn't sent.
+                if (mentionListingPending) return;
+                void handleCreate();
+              }
+            }}
+            onPaste={(e) => {
+              // Pasted images/files attach instead of inserting as text,
+              // mirroring the in-session composer.
+              const pasted = Array.from(e.clipboardData.items)
+                .filter((item) => item.kind === "file")
+                .map((item) => item.getAsFile())
+                .filter((f): f is File => f !== null);
+              if (pasted.length > 0) {
+                e.preventDefault();
+                addFiles(pasted);
+              }
+            }}
+            // Suppress the native placeholder when the overlay supplies its
+            // own prompt text; aria-label preserves the accessible name.
+            placeholder={pillSkills.length > 0 ? "" : "Describe a task to start a new session…"}
+            aria-label="Describe a task to start a new session"
+            rows={1}
+            autoFocus={autoFocus}
+            data-testid="new-chat-landing-input"
+            // Compose-pill text spec: SF Pro Text system stack at
+            // 14px/20px. (Note: sub-16px inputs make mobile Safari
+            // auto-zoom on focus — accepted tradeoff per the design.)
+            // Heights are border-box (16px top + 4px bottom padding lives
+            // inside them): min 60px = one 20px line + a spare line of
+            // breathing room; max 200px = the spec's 180px of content.
+            // useAutoGrowTextarea drives the height between the two.
+            className="max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-4 pb-1 font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground md:select-text"
+          />
+          {/* Gated on an empty draft so it reads as the placeholder.
                 pointer-events-none lets clicks fall through to focus the
                 textarea; the pills themselves opt back in. */}
-            {pillSkills.length > 0 && message.length === 0 && (
-              <div className="pointer-events-none absolute inset-x-4 top-4 flex flex-wrap items-center gap-2">
-                <span className="font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-sm leading-5 text-muted-foreground">
-                  Describe a task, or try a skill
-                </span>
-                <SkillPills skills={pillSkills} onPick={applySkillPill} />
-              </div>
-            )}
-            {/* Hidden file input for the attach button. */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,application/pdf,text/*,application/json"
-              className="hidden"
-              data-testid="new-chat-landing-file-input"
-              onChange={(e) => {
-                if (e.target.files) {
-                  addFiles(Array.from(e.target.files));
-                  // Reset so the same file can be re-selected.
-                  e.target.value = "";
-                }
-              }}
-            />
-            {/* "@"-mention chips — one per tagged workspace file/folder. Each is
+          {pillSkills.length > 0 && message.length === 0 && (
+            <div className="pointer-events-none absolute inset-x-4 top-4 flex flex-wrap items-center gap-2">
+              <span className="font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-sm leading-5 text-muted-foreground">
+                Describe a task, or try a skill
+              </span>
+              <SkillPills skills={pillSkills} onPick={applySkillPill} />
+            </div>
+          )}
+          {/* Hidden file input for the attach button. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,application/pdf,text/*,application/json"
+            className="hidden"
+            data-testid="new-chat-landing-file-input"
+            onChange={(e) => {
+              if (e.target.files) {
+                addFiles(Array.from(e.target.files));
+                // Reset so the same file can be re-selected.
+                e.target.value = "";
+              }
+            }}
+          />
+          {/* "@"-mention chips — one per tagged workspace file/folder. Each is
                 delivered as an "[Attached: <path>]" marker prepended to the
                 first message at create time. */}
-            {mentionedItems.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-                {mentionedItems.map((item, i) => (
-                  <span
-                    key={mentionItemPath(item)}
-                    className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                  >
-                    {item.isDir ? (
-                      <FolderIcon className="size-3 shrink-0" />
-                    ) : (
-                      <FileTextIcon className="size-3 shrink-0" />
-                    )}
-                    <span className="max-w-[200px] truncate" title={mentionItemPath(item)}>
-                      @{item.path}
-                      {item.isDir ? "/" : ""}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeMentionedItem(i)}
-                      className="ml-0.5 rounded-full hover:text-foreground"
-                      aria-label={`Remove ${item.path}`}
-                    >
-                      <XIcon className="size-3" />
-                    </button>
+          {mentionedItems.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+              {mentionedItems.map((item, i) => (
+                <span
+                  key={mentionItemPath(item)}
+                  className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                >
+                  {item.isDir ? (
+                    <FolderIcon className="size-3 shrink-0" />
+                  ) : (
+                    <FileTextIcon className="size-3 shrink-0" />
+                  )}
+                  <span className="max-w-[200px] truncate" title={mentionItemPath(item)}>
+                    @{item.path}
+                    {item.isDir ? "/" : ""}
                   </span>
-                ))}
-              </div>
-            )}
-            {/* File chips — shown below the textarea when files are attached. */}
-            {files.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-                {files.map((file, i) => (
-                  <span
-                    key={i}
-                    className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                  <button
+                    type="button"
+                    onClick={() => removeMentionedItem(i)}
+                    className="ml-0.5 rounded-full hover:text-foreground"
+                    aria-label={`Remove ${item.path}`}
                   >
-                    {file.type.startsWith("image/") ? (
-                      <ImageIcon className="size-3 shrink-0" />
-                    ) : (
-                      <FileTextIcon className="size-3 shrink-0" />
-                    )}
-                    <span className="max-w-[140px] truncate">{file.name || "image.png"}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeFile(i)}
-                      className="ml-0.5 rounded-full hover:text-foreground"
-                      aria-label={`Remove ${file.name || "image.png"}`}
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {/* No own bg — the pill paints the surface. An explicit bg-card
+                    <XIcon className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {/* File chips — shown below the textarea when files are attached. */}
+          {files.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+              {files.map((file, i) => (
+                <span
+                  key={i}
+                  className="flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                >
+                  {file.type.startsWith("image/") ? (
+                    <ImageIcon className="size-3 shrink-0" />
+                  ) : (
+                    <FileTextIcon className="size-3 shrink-0" />
+                  )}
+                  <span className="max-w-[140px] truncate">{file.name || "image.png"}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(i)}
+                    className="ml-0.5 rounded-full hover:text-foreground"
+                    aria-label={`Remove ${file.name || "image.png"}`}
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {/* No own bg — the pill paints the surface. An explicit bg-card
                 here would also catch the .dark .bg-card glass rule (border +
                 shadow) and visually split the pill in half. */}
-            <div className="flex items-center justify-between pt-1 pr-4 pb-3 pl-2">
-              {/* Attach + dictate — left side, mirroring the in-session composer. */}
-              <div className="flex items-center gap-0.5">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="size-9 md:size-8"
-                  disabled={creating}
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach files"
-                  data-testid="new-chat-landing-attach"
-                >
-                  <PaperclipIcon className="size-4" />
-                  <span className="sr-only">Attach files</span>
-                </Button>
-                <ComposerMicButton
-                  disabled={creating}
-                  onTranscript={(text) => setMessage((prev) => (prev ? `${prev} ${text}` : text))}
-                />
-              </div>
-              <div className="flex items-center gap-0.5">
-                {/* Unified agent / harness picker — selects the agent or
+          <div className="flex items-center justify-between pt-1 pr-4 pb-3 pl-2">
+            {/* Attach + dictate — left side, mirroring the in-session composer. */}
+            <div className="flex items-center gap-0.5">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-9 md:size-8"
+                disabled={creating}
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach files"
+                data-testid="new-chat-landing-attach"
+              >
+                <PaperclipIcon className="size-4" />
+                <span className="sr-only">Attach files</span>
+              </Button>
+              <ComposerMicButton
+                disabled={creating}
+                onTranscript={(text) => setMessage((prev) => (prev ? `${prev} ${text}` : text))}
+              />
+            </div>
+            <div className="flex items-center gap-0.5">
+              {/* Unified agent / harness picker — selects the agent or
                   harness and exposes its run-config knobs in a per-entry
                   submenu (model / effort / permission mode for Claude Code,
                   approval mode for Codex/OpenCode, exec mode for Cursor,
                   brain-harness override for bundle agents). */}
-                <AgentHarnessPicker
-                  agentEntries={agentEntries}
-                  harnessEntries={harnessEntries}
-                  brainHarnessLabels={brainHarnessLabels}
-                  effectiveAgentId={effectiveAgentId}
-                  agentLabel={agentLabel}
-                  hasAgents={agentList.length > 0}
-                  host={harnessWarningHost}
-                  onSelectAgent={handleSelectAgent}
-                  pendingAgent={pendingAgent}
-                  pendingAgentId={PENDING_AGENT_ID}
-                  onSelectPending={handleSelectPending}
-                  onCreateCustomAgent={() => setCreateAgentOpen(true)}
-                  permissionMode={permissionMode}
-                  approvalMode={approvalMode}
-                  cursorExecMode={cursorExecMode}
-                  bypassSandbox={bypassSandbox}
-                  pickedModel={pickedModel}
-                  pickedEffort={pickedEffort}
-                  pickedHarness={pickedHarness}
-                  setPermissionMode={setPermissionMode}
-                  setApprovalMode={setApprovalMode}
-                  setCursorExecMode={setCursorExecMode}
-                  setBypassSandbox={setBypassSandbox}
-                  setPickedModel={setPickedModel}
-                  setPickedEffort={setPickedEffort}
-                  setPickedHarness={handleSetPickedHarness}
-                />
-                {smartRoutingEnabled &&
-                  selectedAgent &&
-                  _ROUTABLE_HARNESSES.has(selectedAgent.harness ?? "") && (
-                    <IntelligentModelControl
-                      value={costControlMode}
-                      onChange={setCostControlMode}
-                    />
+              <AgentHarnessPicker
+                agentEntries={agentEntries}
+                harnessEntries={harnessEntries}
+                brainHarnessLabels={brainHarnessLabels}
+                effectiveAgentId={effectiveAgentId}
+                agentLabel={agentLabel}
+                hasAgents={agentList.length > 0}
+                host={harnessWarningHost}
+                onSelectAgent={handleSelectAgent}
+                pendingAgent={pendingAgent}
+                pendingAgentId={PENDING_AGENT_ID}
+                onSelectPending={handleSelectPending}
+                onCreateCustomAgent={() => setCreateAgentOpen(true)}
+                permissionMode={permissionMode}
+                approvalMode={approvalMode}
+                cursorExecMode={cursorExecMode}
+                bypassSandbox={bypassSandbox}
+                pickedModel={pickedModel}
+                pickedEffort={pickedEffort}
+                pickedHarness={pickedHarness}
+                setPermissionMode={setPermissionMode}
+                setApprovalMode={setApprovalMode}
+                setCursorExecMode={setCursorExecMode}
+                setBypassSandbox={setBypassSandbox}
+                setPickedModel={setPickedModel}
+                setPickedEffort={setPickedEffort}
+                setPickedHarness={handleSetPickedHarness}
+              />
+              {smartRoutingEnabled &&
+                selectedAgent &&
+                _ROUTABLE_HARNESSES.has(selectedAgent.harness ?? "") && (
+                  <IntelligentModelControl value={costControlMode} onChange={setCostControlMode} />
+                )}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">
+                      <Button
+                        type="submit"
+                        size="icon"
+                        disabled={!canSubmit}
+                        aria-label="Start session"
+                        data-testid="new-chat-landing-submit"
+                        className="size-8 rounded-full bg-foreground text-card transition-opacity hover:opacity-80 disabled:opacity-50"
+                      >
+                        <ArrowUpIcon className="size-4" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {submitDisabledReason != null && (
+                    <TooltipContent>{submitDisabledReason}</TooltipContent>
                   )}
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex">
-                        <Button
-                          type="submit"
-                          size="icon"
-                          disabled={!canSubmit}
-                          aria-label="Start session"
-                          data-testid="new-chat-landing-submit"
-                          className="size-8 rounded-full bg-foreground text-card transition-opacity hover:opacity-80 disabled:opacity-50"
-                        >
-                          <ArrowUpIcon className="size-4" />
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    {submitDisabledReason != null && (
-                      <TooltipContent>{submitDisabledReason}</TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
+                </Tooltip>
+              </TooltipProvider>
             </div>
-          </form>
-          {/* Composer footer tray — host / working directory / worktree
+          </div>
+        </form>
+        {/* Composer footer tray — host / working directory / worktree
               selectors. Renders below the pill at z-0 while the pill sits
               at z-10: -mt-9 cancels the wrapper's gap-3 (12px) and tucks
               the tray's top 24px underneath the pill's rounded bottom
@@ -3329,526 +3335,524 @@ export function NewChatComposer({
               chip row can wrap on narrow screens — with a fixed h-16 the
               chips overflowed the viewport on phones, widening the whole
               page (#sidebar-wider-than-screen on the landing page). */}
-          <div
-            className={cn(
-              "relative flex w-full items-center rounded-b-2xl bg-tray/40 pr-3 pb-2 pl-2",
-              compactFooter ? "mt-1 pt-2" : "z-0 -mt-9 pt-8",
-            )}
-          >
-            <div className="flex flex-wrap items-center gap-1">
-              {/* Host chip */}
-              <DropdownMenu
-                onOpenChange={(open) => {
-                  // Run a requested "connect this machine" only once the menu
-                  // has closed.
-                  if (!open && pendingConnectRef.current) {
-                    pendingConnectRef.current = false;
-                    void connectThisMachine();
-                  }
-                }}
-              >
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-                    data-testid="new-chat-landing-host-chip"
+        <div
+          className={cn(
+            "relative flex w-full items-center rounded-b-2xl bg-tray/40 pr-3 pb-2 pl-2",
+            compactFooter ? "mt-1 pt-2" : "z-0 -mt-9 pt-8",
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-1">
+            {/* Host chip */}
+            <DropdownMenu
+              onOpenChange={(open) => {
+                // Run a requested "connect this machine" only once the menu
+                // has closed.
+                if (!open && pendingConnectRef.current) {
+                  pendingConnectRef.current = false;
+                  void connectThisMachine();
+                }
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
+                  data-testid="new-chat-landing-host-chip"
+                >
+                  {isCloudHost ? (
+                    <MonitorCloudIcon className="size-4 shrink-0" />
+                  ) : (
+                    <MonitorIcon className="size-4 shrink-0" />
+                  )}
+                  <span
+                    className={`hidden max-w-32 truncate sm:block ${sandboxSelected || selectedHost != null || connectingThisMachine ? "text-foreground" : ""}`}
                   >
-                    {isCloudHost ? (
-                      <MonitorCloudIcon className="size-4 shrink-0" />
-                    ) : (
-                      <MonitorIcon className="size-4 shrink-0" />
-                    )}
-                    <span
-                      className={`hidden max-w-32 truncate sm:block ${sandboxSelected || selectedHost != null || connectingThisMachine ? "text-foreground" : ""}`}
-                    >
-                      {hostLabel}
-                    </span>
-                    <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="min-w-52">
-                  {/* Server-provisioned sandbox — only advertised when
+                    {hostLabel}
+                  </span>
+                  <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-52">
+                {/* Server-provisioned sandbox — only advertised when
                     /v1/info reports managed_sandboxes_enabled. Pinned
                     first, above the connected-host list. */}
-                  {(managedSandboxesEnabled || showDisabledSandboxWithDocs) && (
-                    <>
-                      {managedSandboxesEnabled ? (
-                        <DropdownMenuItem
-                          onSelect={selectSandbox}
-                          data-testid="new-chat-landing-sandbox-option"
-                          data-active={sandboxSelected ? "true" : undefined}
-                          className="text-xs data-[active=true]:bg-accent/60"
-                        >
-                          <span className="flex items-center gap-2">
-                            <MonitorCloudIcon className="size-4 text-muted-foreground" />
-                            <span className="text-xs">{sandboxLabel}</span>
-                          </span>
-                        </DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem
-                          aria-disabled="true"
-                          onSelect={(e) => e.preventDefault()}
-                          className="flex items-center justify-between px-2 py-1.5 text-xs text-muted-foreground opacity-60"
-                          data-testid="new-chat-landing-sandbox-option-disabled"
-                        >
-                          <span className="flex items-center gap-2">
-                            <MonitorCloudIcon className="size-4 text-muted-foreground" />
-                            <span className="text-xs">New Sandbox</span>
-                          </span>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/80 hover:text-foreground"
-                                aria-label="Why New Sandbox is unavailable"
-                                onClick={(e) => e.stopPropagation()}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                                }}
-                              >
-                                <CircleHelpIcon className="size-3.5" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-64">
-                              {newSandboxTooltipContent}
-                            </TooltipContent>
-                          </Tooltip>
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
-                  {allHosts.length === 0 && !showConnectThisMachine && (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No hosts connected yet.
-                    </div>
-                  )}
-                  {onlineHosts.map((host) => (
-                    <DropdownMenuItem
-                      key={host.host_id}
-                      onSelect={() => selectHost(host.host_id)}
-                      data-testid={`new-chat-landing-host-${host.host_id}`}
-                      data-active={host.host_id === selectedHostId ? "true" : undefined}
-                      className="text-xs data-[active=true]:bg-accent/60"
-                    >
+                {(managedSandboxesEnabled || showDisabledSandboxWithDocs) && (
+                  <>
+                    {managedSandboxesEnabled ? (
+                      <DropdownMenuItem
+                        onSelect={selectSandbox}
+                        data-testid="new-chat-landing-sandbox-option"
+                        data-active={sandboxSelected ? "true" : undefined}
+                        className="text-xs data-[active=true]:bg-accent/60"
+                      >
+                        <span className="flex items-center gap-2">
+                          <MonitorCloudIcon className="size-4 text-muted-foreground" />
+                          <span className="text-xs">{sandboxLabel}</span>
+                        </span>
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem
+                        aria-disabled="true"
+                        onSelect={(e) => e.preventDefault()}
+                        className="flex items-center justify-between px-2 py-1.5 text-xs text-muted-foreground opacity-60"
+                        data-testid="new-chat-landing-sandbox-option-disabled"
+                      >
+                        <span className="flex items-center gap-2">
+                          <MonitorCloudIcon className="size-4 text-muted-foreground" />
+                          <span className="text-xs">New Sandbox</span>
+                        </span>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/80 hover:text-foreground"
+                              aria-label="Why New Sandbox is unavailable"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                              }}
+                            >
+                              <CircleHelpIcon className="size-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-64">
+                            {newSandboxTooltipContent}
+                          </TooltipContent>
+                        </Tooltip>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {allHosts.length === 0 && !showConnectThisMachine && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    No hosts connected yet.
+                  </div>
+                )}
+                {onlineHosts.map((host) => (
+                  <DropdownMenuItem
+                    key={host.host_id}
+                    onSelect={() => selectHost(host.host_id)}
+                    data-testid={`new-chat-landing-host-${host.host_id}`}
+                    data-active={host.host_id === selectedHostId ? "true" : undefined}
+                    className="text-xs data-[active=true]:bg-accent/60"
+                  >
+                    <HostOption
+                      host={host}
+                      subtitle={host.host_id === thisMachineHostId ? "this machine" : undefined}
+                    />
+                  </DropdownMenuItem>
+                ))}
+                {offlineHosts.map((host) => {
+                  // This machine, offline: make the row itself the connect
+                  // affordance instead of a disabled entry + a duplicate "Run
+                  // on this machine" item. Connect after the menu closes.
+                  if (host.host_id === thisMachineHostId && canConnectThisMachine) {
+                    return (
+                      <DropdownMenuItem
+                        key={host.host_id}
+                        onSelect={() => {
+                          pendingConnectRef.current = true;
+                        }}
+                        disabled={connectingThisMachine}
+                        data-testid="new-chat-landing-run-on-this-machine"
+                        className="text-xs"
+                      >
+                        <HostOption
+                          host={host}
+                          subtitle={
+                            connectingThisMachine
+                              ? "connecting…"
+                              : "this machine · select to connect"
+                          }
+                        />
+                      </DropdownMenuItem>
+                    );
+                  }
+                  return (
+                    <DropdownMenuItem key={host.host_id} disabled className="text-xs">
                       <HostOption
                         host={host}
                         subtitle={host.host_id === thisMachineHostId ? "this machine" : undefined}
                       />
                     </DropdownMenuItem>
-                  ))}
-                  {offlineHosts.map((host) => {
-                    // This machine, offline: make the row itself the connect
-                    // affordance instead of a disabled entry + a duplicate "Run
-                    // on this machine" item. Connect after the menu closes.
-                    if (host.host_id === thisMachineHostId && canConnectThisMachine) {
-                      return (
-                        <DropdownMenuItem
-                          key={host.host_id}
-                          onSelect={() => {
-                            pendingConnectRef.current = true;
-                          }}
-                          disabled={connectingThisMachine}
-                          data-testid="new-chat-landing-run-on-this-machine"
-                          className="text-xs"
-                        >
-                          <HostOption
-                            host={host}
-                            subtitle={
-                              connectingThisMachine
-                                ? "connecting…"
-                                : "this machine · select to connect"
-                            }
-                          />
-                        </DropdownMenuItem>
-                      );
-                    }
-                    return (
-                      <DropdownMenuItem key={host.host_id} disabled className="text-xs">
-                        <HostOption
-                          host={host}
-                          subtitle={host.host_id === thisMachineHostId ? "this machine" : undefined}
-                        />
-                      </DropdownMenuItem>
-                    );
-                  })}
-                  {/* Desktop shell, machine not in the list yet: offer to connect
+                  );
+                })}
+                {/* Desktop shell, machine not in the list yet: offer to connect
                     it in one click. */}
-                  {showConnectThisMachine && (
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        pendingConnectRef.current = true;
-                      }}
-                      disabled={connectingThisMachine}
-                      data-testid="new-chat-landing-run-on-this-machine"
-                      className="gap-2 text-xs"
-                    >
-                      <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="text-xs">
-                        {connectingThisMachine ? "Connecting this machine…" : "Run on this machine"}
-                      </span>
-                    </DropdownMenuItem>
-                  )}
-                  {(allHosts.length > 0 || showConnectThisMachine) && <DropdownMenuSeparator />}
-                  {/* Persistent escape hatch: open the connect-a-host
+                {showConnectThisMachine && (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      pendingConnectRef.current = true;
+                    }}
+                    disabled={connectingThisMachine}
+                    data-testid="new-chat-landing-run-on-this-machine"
+                    className="gap-2 text-xs"
+                  >
+                    <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="text-xs">
+                      {connectingThisMachine ? "Connecting this machine…" : "Run on this machine"}
+                    </span>
+                  </DropdownMenuItem>
+                )}
+                {(allHosts.length > 0 || showConnectThisMachine) && <DropdownMenuSeparator />}
+                {/* Persistent escape hatch: open the connect-a-host
                     instructions. Present even with zero hosts so a fresh user
                     is never stuck. */}
-                  <DropdownMenuItem
-                    onSelect={() => setConnectOpen(true)}
-                    data-testid="new-chat-landing-connect-host"
-                    className="gap-2 text-xs text-muted-foreground"
-                  >
-                    <PlusIcon className="size-3.5" />
-                    Connect new host
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                <DropdownMenuItem
+                  onSelect={() => setConnectOpen(true)}
+                  data-testid="new-chat-landing-connect-host"
+                  className="gap-2 text-xs text-muted-foreground"
+                >
+                  <PlusIcon className="size-3.5" />
+                  Connect new host
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-              {/* Sandbox repository chip — the sandbox counterpart of the
+            {/* Sandbox repository chip — the sandbox counterpart of the
                 working-directory chip. There is no filesystem to browse
                 before the sandbox exists, so the workspace is specified as
                 a git repository URL (+ optional branch) the server clones
                 at create time. Blank = empty server-created workspace. */}
-              {sandboxSelected && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-                      data-testid="new-chat-landing-repo-chip"
+            {sandboxSelected && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
+                    data-testid="new-chat-landing-repo-chip"
+                  >
+                    <GitBranchIcon className="size-4 shrink-0" />
+                    <span
+                      className={`hidden max-w-40 truncate sm:block ${sandboxRepoName ? "text-foreground" : "text-muted-foreground"}`}
                     >
-                      <GitBranchIcon className="size-4 shrink-0" />
-                      <span
-                        className={`hidden max-w-40 truncate sm:block ${sandboxRepoName ? "text-foreground" : "text-muted-foreground"}`}
+                      {sandboxRepoLabel}
+                    </span>
+                    <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-96 p-3">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <label
+                        htmlFor="landing-repo-url"
+                        className="text-xs font-medium text-foreground"
                       >
-                        {sandboxRepoLabel}
-                      </span>
-                      <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-96 p-3">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <label
-                          htmlFor="landing-repo-url"
-                          className="text-xs font-medium text-foreground"
-                        >
-                          Repository (optional)
-                        </label>
-                        {databricksGitCredentialsTooltipContent && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
-                                aria-label="How to set up Databricks git credentials"
-                              >
-                                <CircleHelpIcon className="size-3.5" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-64">
-                              {databricksGitCredentialsTooltipContent}
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
-                      </div>
-                      <input
-                        id="landing-repo-url"
-                        type="text"
-                        value={sandboxRepoUrl}
-                        onChange={(e) => setSandboxRepoUrl(e.target.value)}
-                        placeholder="https://github.com/org/repo"
-                        className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
-                        data-testid="new-chat-landing-repo-input"
-                      />
-                      <input
-                        type="text"
-                        value={sandboxRepoBranch}
-                        onChange={(e) => setSandboxRepoBranch(e.target.value)}
-                        placeholder="Branch (defaults to the repo's default)"
-                        aria-label="Repository branch"
-                        className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
-                        data-testid="new-chat-landing-repo-branch-input"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Cloned into the sandbox as the session's working directory. Leave blank to
-                        start in an empty workspace.
-                      </p>
+                        Repository (optional)
+                      </label>
+                      {databricksGitCredentialsTooltipContent && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                              aria-label="How to set up Databricks git credentials"
+                            >
+                              <CircleHelpIcon className="size-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-64">
+                            {databricksGitCredentialsTooltipContent}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </div>
-                  </PopoverContent>
-                </Popover>
-              )}
+                    <input
+                      id="landing-repo-url"
+                      type="text"
+                      value={sandboxRepoUrl}
+                      onChange={(e) => setSandboxRepoUrl(e.target.value)}
+                      placeholder="https://github.com/org/repo"
+                      className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
+                      data-testid="new-chat-landing-repo-input"
+                    />
+                    <input
+                      type="text"
+                      value={sandboxRepoBranch}
+                      onChange={(e) => setSandboxRepoBranch(e.target.value)}
+                      placeholder="Branch (defaults to the repo's default)"
+                      aria-label="Repository branch"
+                      className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
+                      data-testid="new-chat-landing-repo-branch-input"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Cloned into the sandbox as the session's working directory. Leave blank to
+                      start in an empty workspace.
+                    </p>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
 
-              {/* Working directory chip — opens the file browser directly (no
+            {/* Working directory chip — opens the file browser directly (no
                 separate "browse" toggle). onNavigate updates the workspace
                 live as the user browses (no "Select" button); the popover
                 closes on click-out. The directory-conflict warning shows as a
                 banner inside the browser on the occupied folder. Hidden for
                 sandbox sessions — the repository chip above replaces it (the
                 server creates the directory inside the sandbox). */}
-              {!sandboxSelected && (
-                <Popover open={workspacePopoverOpen} onOpenChange={setWorkspacePopoverOpen}>
-                  <PopoverTrigger asChild>{workspaceChip}</PopoverTrigger>
-                  {/* Cap to the viewport so the 420px browser can't overflow a
+            {!sandboxSelected && (
+              <Popover open={workspacePopoverOpen} onOpenChange={setWorkspacePopoverOpen}>
+                <PopoverTrigger asChild>{workspaceChip}</PopoverTrigger>
+                {/* Cap to the viewport so the 420px browser can't overflow a
                   narrow screen; desktop still gets the full width. */}
-                  <PopoverContent align="start" className="w-[min(420px,calc(100vw-2rem))] p-0">
-                    {selectedHostId ? (
-                      <WorkspacePicker
-                        hostId={selectedHostId}
-                        initialPath={
-                          isNavigablePath(workspaceTrimmed) ? workspaceTrimmed : undefined
-                        }
-                        onNavigate={setWorkspace}
-                        // Warn when browsing into a directory other live agents
-                        // occupy. Suppressed only when a NEW isolated worktree
-                        // will be created (no shared-dir conflict then). When
-                        // starting directly in an existing worktree the branch
-                        // is prefilled but the dir IS shared, so keep warning.
-                        occupancyForPath={
-                          !shouldCreateWorktree
-                            ? (abs) => occupancyByDir.get(normalizeWorkspacePath(abs) ?? "") ?? 0
-                            : undefined
-                        }
-                      />
-                    ) : (
-                      <p className="p-3 text-xs text-muted-foreground">Select a host first.</p>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              )}
+                <PopoverContent align="start" className="w-[min(420px,calc(100vw-2rem))] p-0">
+                  {selectedHostId ? (
+                    <WorkspacePicker
+                      hostId={selectedHostId}
+                      initialPath={isNavigablePath(workspaceTrimmed) ? workspaceTrimmed : undefined}
+                      onNavigate={setWorkspace}
+                      // Warn when browsing into a directory other live agents
+                      // occupy. Suppressed only when a NEW isolated worktree
+                      // will be created (no shared-dir conflict then). When
+                      // starting directly in an existing worktree the branch
+                      // is prefilled but the dir IS shared, so keep warning.
+                      occupancyForPath={
+                        !shouldCreateWorktree
+                          ? (abs) => occupancyByDir.get(normalizeWorkspacePath(abs) ?? "") ?? 0
+                          : undefined
+                      }
+                    />
+                  ) : (
+                    <p className="p-3 text-xs text-muted-foreground">Select a host first.</p>
+                  )}
+                </PopoverContent>
+              </Popover>
+            )}
 
-              {/* Git worktree chip — hidden for sandbox sessions (worktree
+            {/* Git worktree chip — hidden for sandbox sessions (worktree
                 creation requires a caller-supplied host_id). */}
-              {!sandboxSelected && (
-                <Popover open={worktreePopoverOpen} onOpenChange={setWorktreePopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-                      data-testid="new-chat-landing-branch-chip"
-                    >
-                      <GitBranchIcon className="size-4 shrink-0" />
-                      <span
-                        className={`hidden max-w-32 truncate sm:block ${branchName.trim() ? "text-foreground" : ""}`}
-                      >
-                        {worktreeLabel}
-                      </span>
-                      <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    collisionPadding={16}
-                    // No overflow clip here — the worktree dropdown floats as an
-                    // absolute overlay (below) and must be able to escape the
-                    // popover's padding box.
-                    className="w-[min(20rem,calc(100vw-2rem))] p-3"
+            {!sandboxSelected && (
+              <Popover open={worktreePopoverOpen} onOpenChange={setWorktreePopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
+                    data-testid="new-chat-landing-branch-chip"
                   >
-                    <div className="flex flex-col gap-2">
-                      <label
-                        htmlFor="landing-branch-name"
-                        className="text-xs font-medium text-foreground"
-                      >
-                        Git worktree branch (optional)
-                      </label>
-                      {/* Help text sits above the field. The warning for a picked
+                    <GitBranchIcon className="size-4 shrink-0" />
+                    <span
+                      className={`hidden max-w-32 truncate sm:block ${branchName.trim() ? "text-foreground" : ""}`}
+                    >
+                      {worktreeLabel}
+                    </span>
+                    <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  collisionPadding={16}
+                  // No overflow clip here — the worktree dropdown floats as an
+                  // absolute overlay (below) and must be able to escape the
+                  // popover's padding box.
+                  className="w-[min(20rem,calc(100vw-2rem))] p-3"
+                >
+                  <div className="flex flex-col gap-2">
+                    <label
+                      htmlFor="landing-branch-name"
+                      className="text-xs font-medium text-foreground"
+                    >
+                      Git worktree branch (optional)
+                    </label>
+                    {/* Help text sits above the field. The warning for a picked
                         existing worktree stays below the input (contextual to the
                         selection). */}
-                      <p className="text-xs text-muted-foreground">
-                        New branch name, or pick an existing worktree. Leave blank to start directly
-                        in the working directory.
-                      </p>
-                      {/* The branch field is a combobox: focusing it reveals the
+                    <p className="text-xs text-muted-foreground">
+                      New branch name, or pick an existing worktree. Leave blank to start directly
+                      in the working directory.
+                    </p>
+                    {/* The branch field is a combobox: focusing it reveals the
                         repo's existing worktrees, and typing filters them.
                         Picking one starts in that worktree; a name matching none
                         creates a new worktree. */}
-                      <div className="relative flex flex-col">
-                        <input
-                          id="landing-branch-name"
-                          type="text"
-                          value={branchName}
-                          onChange={(e) => setBranchName(e.target.value)}
-                          onFocus={() => setBranchInputFocused(true)}
-                          // Delay so a click on a dropdown option registers
-                          // before the list unmounts on blur.
-                          onBlur={() => setTimeout(() => setBranchInputFocused(false), 120)}
-                          placeholder="feature/my-branch"
-                          role="combobox"
-                          aria-expanded={branchInputFocused && filteredWorktrees.length > 0}
-                          aria-autocomplete="list"
-                          // Suppress the browser's native autofill dropdown so it
-                          // doesn't overlay our worktree combobox. `off` alone is
-                          // ignored by some browsers, so also disable spellcheck /
-                          // autocorrect and give it an unrecognized name.
-                          autoComplete="off"
-                          autoCorrect="off"
-                          autoCapitalize="off"
-                          spellCheck={false}
-                          name="omnigent-worktree-branch"
-                          // pr-9 leaves room for the generate button overlaid at
-                          // the right edge.
-                          className="rounded-md border border-input bg-background py-2 pr-9 pl-3 text-xs outline-none transition-colors focus-visible:border-ring"
-                          data-testid="new-chat-landing-branch-input"
-                        />
-                        {/* Fill a unique branch name for a throwaway worktree.
+                    <div className="relative flex flex-col">
+                      <input
+                        id="landing-branch-name"
+                        type="text"
+                        value={branchName}
+                        onChange={(e) => setBranchName(e.target.value)}
+                        onFocus={() => setBranchInputFocused(true)}
+                        // Delay so a click on a dropdown option registers
+                        // before the list unmounts on blur.
+                        onBlur={() => setTimeout(() => setBranchInputFocused(false), 120)}
+                        placeholder="feature/my-branch"
+                        role="combobox"
+                        aria-expanded={branchInputFocused && filteredWorktrees.length > 0}
+                        aria-autocomplete="list"
+                        // Suppress the browser's native autofill dropdown so it
+                        // doesn't overlay our worktree combobox. `off` alone is
+                        // ignored by some browsers, so also disable spellcheck /
+                        // autocorrect and give it an unrecognized name.
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        name="omnigent-worktree-branch"
+                        // pr-9 leaves room for the generate button overlaid at
+                        // the right edge.
+                        className="rounded-md border border-input bg-background py-2 pr-9 pl-3 text-xs outline-none transition-colors focus-visible:border-ring"
+                        data-testid="new-chat-landing-branch-input"
+                      />
+                      {/* Fill a unique branch name for a throwaway worktree.
                           onMouseDown so it fires before the input's blur closes
                           the combobox and preventDefault keeps focus on the
                           input. */}
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            generateBranchName();
-                          }}
-                          title="Generate a unique branch name"
-                          aria-label="Generate a unique branch name"
-                          className="absolute top-0 right-0 flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-                          data-testid="new-chat-landing-branch-generate"
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          generateBranchName();
+                        }}
+                        title="Generate a unique branch name"
+                        aria-label="Generate a unique branch name"
+                        className="absolute top-0 right-0 flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                        data-testid="new-chat-landing-branch-generate"
+                      >
+                        <ShuffleIcon className="size-4" />
+                      </button>
+                      {branchInputFocused && filteredWorktrees.length > 0 && (
+                        <div
+                          // Floats over the popover as a combobox popup, so it
+                          // doesn't stretch the box. Bounded height + internal
+                          // scroll keep it from running off the viewport.
+                          className="absolute top-full right-0 left-0 z-20 mt-1 flex max-h-40 flex-col overflow-y-auto rounded-md border border-input bg-popover p-1 shadow-md"
+                          data-testid="new-chat-landing-worktree-dropdown"
                         >
-                          <ShuffleIcon className="size-4" />
-                        </button>
-                        {branchInputFocused && filteredWorktrees.length > 0 && (
-                          <div
-                            // Floats over the popover as a combobox popup, so it
-                            // doesn't stretch the box. Bounded height + internal
-                            // scroll keep it from running off the viewport.
-                            className="absolute top-full right-0 left-0 z-20 mt-1 flex max-h-40 flex-col overflow-y-auto rounded-md border border-input bg-popover p-1 shadow-md"
-                            data-testid="new-chat-landing-worktree-dropdown"
-                          >
-                            <span className="px-2 pt-1 pb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                              Existing worktrees
-                            </span>
-                            <ul className="flex flex-col gap-0.5">
-                              {filteredWorktrees.map((w) => {
-                                const selected =
-                                  normalizeWorkspacePath(w.path) ===
-                                  normalizeWorkspacePath(workspaceTrimmed);
-                                return (
-                                  <li key={w.path}>
-                                    <button
-                                      type="button"
-                                      // onMouseDown (not onClick): fires before the
-                                      // input's blur, so the selection lands even
-                                      // though blur is about to hide the list.
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        setWorkspace(w.path);
-                                        setBranchInputFocused(false);
-                                        setWorktreePopoverOpen(false);
-                                      }}
-                                      className={`flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-accent ${
-                                        selected ? "bg-accent" : ""
-                                      }`}
-                                      data-testid="new-chat-landing-worktree-option"
-                                    >
-                                      <span className="font-medium text-foreground">
-                                        {w.branch ?? "(detached)"}
-                                      </span>
-                                      {/* Tail-truncated so the disambiguating
+                          <span className="px-2 pt-1 pb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                            Existing worktrees
+                          </span>
+                          <ul className="flex flex-col gap-0.5">
+                            {filteredWorktrees.map((w) => {
+                              const selected =
+                                normalizeWorkspacePath(w.path) ===
+                                normalizeWorkspacePath(workspaceTrimmed);
+                              return (
+                                <li key={w.path}>
+                                  <button
+                                    type="button"
+                                    // onMouseDown (not onClick): fires before the
+                                    // input's blur, so the selection lands even
+                                    // though blur is about to hide the list.
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      setWorkspace(w.path);
+                                      setBranchInputFocused(false);
+                                      setWorktreePopoverOpen(false);
+                                    }}
+                                    className={`flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-accent ${
+                                      selected ? "bg-accent" : ""
+                                    }`}
+                                    data-testid="new-chat-landing-worktree-option"
+                                  >
+                                    <span className="font-medium text-foreground">
+                                      {w.branch ?? "(detached)"}
+                                    </span>
+                                    {/* Tail-truncated so the disambiguating
                                       folder shows, not a shared prefix; full
                                       path on hover. */}
-                                      <span
-                                        className="w-full truncate text-muted-foreground"
-                                        title={w.path}
-                                      >
-                                        {worktreePathTail(w.path)}
-                                      </span>
-                                    </button>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                      {/* Base branch only matters when creating a NEW worktree
-                        — hidden once the workspace points at an existing one
-                        (no worktree is created, so there's nothing to base). */}
-                      {branchName.trim() !== "" && !startInExistingWorktree && (
-                        <input
-                          type="text"
-                          value={baseBranch}
-                          onChange={(e) => setBaseBranch(e.target.value)}
-                          placeholder="Base branch (defaults to current)"
-                          aria-label="Base branch"
-                          className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
-                          data-testid="new-chat-landing-base-branch-input"
-                        />
-                      )}
-                      {startInExistingWorktree && (
-                        <p
-                          className="text-xs text-amber-600 dark:text-amber-500"
-                          data-testid="new-chat-landing-existing-worktree-warning"
-                        >
-                          Starts in existing worktree, edit the name to create a new one.
-                        </p>
+                                    <span
+                                      className="w-full truncate text-muted-foreground"
+                                      title={w.path}
+                                    >
+                                      {worktreePathTail(w.path)}
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
                       )}
                     </div>
-                  </PopoverContent>
-                </Popover>
-              )}
+                    {/* Base branch only matters when creating a NEW worktree
+                        — hidden once the workspace points at an existing one
+                        (no worktree is created, so there's nothing to base). */}
+                    {branchName.trim() !== "" && !startInExistingWorktree && (
+                      <input
+                        type="text"
+                        value={baseBranch}
+                        onChange={(e) => setBaseBranch(e.target.value)}
+                        placeholder="Base branch (defaults to current)"
+                        aria-label="Base branch"
+                        className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
+                        data-testid="new-chat-landing-base-branch-input"
+                      />
+                    )}
+                    {startInExistingWorktree && (
+                      <p
+                        className="text-xs text-amber-600 dark:text-amber-500"
+                        data-testid="new-chat-landing-existing-worktree-warning"
+                      >
+                        Starts in existing worktree, edit the name to create a new one.
+                      </p>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
 
-              {/* Project chip — files the session under a named project on
+            {/* Project chip — files the session under a named project on
                 create. Sits after the worktree chip. Only shown when a project
                 is already selected (e.g. quick-starting from an existing
                 project's "new session" pencil, which passes `?project=`);
                 otherwise the new-session flow stays unfiled. */}
-              {selectedProject && (
-                <LandingProjectPicker value={selectedProject} onChange={setSelectedProject} />
-              )}
-            </div>
-            {/* The agent / harness picker moved out of the tray and into the
+            {selectedProject && (
+              <LandingProjectPicker value={selectedProject} onChange={setSelectedProject} />
+            )}
+          </div>
+          {/* The agent / harness picker moved out of the tray and into the
                 composer's right action cluster (next to Send) — see
                 AgentHarnessPicker above. The tray now holds only the
                 host / working-directory / worktree / project chips. */}
-          </div>
+        </div>
 
-          {/* Warn (don't block) when the selected agent's harness isn't
+        {/* Warn (don't block) when the selected agent's harness isn't
               configured on the selected host — the host re-checks at
               launch, so submitting surfaces a specific error if it
               really can't run. Normal-flow directly under the composer
               (like the createError line below) so it reads as part of it. */}
-          {selectedAgentUnconfigured && (
-            <p
-              className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-500"
-              data-testid="new-chat-landing-harness-warning"
-            >
-              <TriangleAlertIcon className="size-3.5 shrink-0" />
-              <span>
-                {harnessWarningMessage(
-                  selectedAgent?.display_name,
-                  harnessWarningHost?.name,
-                  selectedAgentUnavailableReason,
-                )}
-              </span>
-            </p>
-          )}
+        {selectedAgentUnconfigured && (
+          <p
+            className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-500"
+            data-testid="new-chat-landing-harness-warning"
+          >
+            <TriangleAlertIcon className="size-3.5 shrink-0" />
+            <span>
+              {harnessWarningMessage(
+                selectedAgent?.display_name,
+                harnessWarningHost?.name,
+                selectedAgentUnavailableReason,
+              )}
+            </span>
+          </p>
+        )}
 
-          {/* Persistent danger banner — stays under the composer while full
+        {/* Persistent danger banner — stays under the composer while full
               bypass is armed (the in-menu banner vanishes when the Advanced
               tray closes), so the dangerous stance is always visible before
               the session is created. Gated on the codex-native capability so
               a stale toggle from a since-switched agent can't show it. */}
-          {supportsApprovalMode && bypassSandbox && (
-            <p
-              role="alert"
-              className="flex items-center gap-1.5 rounded-md border border-destructive bg-destructive/10 px-2 py-1.5 text-xs font-medium text-destructive"
-              data-testid="new-chat-landing-bypass-sandbox-active-banner"
-            >
-              <TriangleAlertIcon className="size-3.5 shrink-0" />
-              <span>
-                Codex will run with approvals and the sandbox disabled — it can edit any file and
-                run any command without asking.
-              </span>
-            </p>
-          )}
+        {supportsApprovalMode && bypassSandbox && (
+          <p
+            role="alert"
+            className="flex items-center gap-1.5 rounded-md border border-destructive bg-destructive/10 px-2 py-1.5 text-xs font-medium text-destructive"
+            data-testid="new-chat-landing-bypass-sandbox-active-banner"
+          >
+            <TriangleAlertIcon className="size-3.5 shrink-0" />
+            <span>
+              Codex will run with approvals and the sandbox disabled — it can edit any file and run
+              any command without asking.
+            </span>
+          </p>
+        )}
 
-          {createError && (
-            <p className="text-xs text-destructive" data-testid="new-chat-landing-error">
-              {createError}
-            </p>
-          )}
-        </div>
+        {createError && (
+          <p className="text-xs text-destructive" data-testid="new-chat-landing-error">
+            {createError}
+          </p>
+        )}
+      </div>
 
       {/* Connect-host instructions, reachable from the host dropdown even when
           no hosts are online — the zero-host escape hatch. */}

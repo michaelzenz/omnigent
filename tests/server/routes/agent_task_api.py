@@ -6,7 +6,9 @@ import httpx
 
 
 def agent_role_profile_url(role: str) -> str:
-    return f"/v1/agent-tasks/roles/{role}/profile"
+    from urllib.parse import quote
+
+    return f"/v1/agent-tasks/roles/{quote(role, safe='')}/profile"
 
 
 def agent_role_session_url(role: str) -> str:

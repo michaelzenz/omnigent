@@ -4,6 +4,8 @@ import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardAssets } from "./TaskCardAssets";
+import { TaskCardManagerRolePicker } from "./TaskCardManagerRolePicker";
+import { TaskCardWorkerRolePicker } from "./TaskCardWorkerRolePicker";
 import { TaskCardWorkers } from "./TaskCardWorkers";
 import { TASK_CARD_BODY_CLASS, isTaskCardSparse, taskCardBodyStyle } from "./taskCardUtils";
 import { cn } from "@/lib/utils";
@@ -13,15 +15,25 @@ interface TaskCardProps {
   title: string;
   description: string | null;
   state: string;
+  managerRoleKey: string;
+  workerRoleKey: string;
 }
 
-export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
+export function TaskCard({
+  taskId,
+  title,
+  description,
+  state,
+  managerRoleKey,
+  workerRoleKey,
+}: TaskCardProps) {
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
   const { data: agents = [] } = useAvailableAgents();
   const { openManager, isManagerSelected } = usePuppyGardenChat();
   const defaultModel = "composer-2.5";
 
   const isActive = state === "active";
+  const isPending = state === "pending";
   const managerSelected = isManagerSelected(taskId);
 
   const handleHeaderClick = () => {
@@ -79,6 +91,19 @@ export function TaskCard({ taskId, title, description, state }: TaskCardProps) {
           </Badge>
         </div>
       </header>
+
+      <div className="space-y-2 border-b border-border bg-white px-3 py-2">
+        <TaskCardManagerRolePicker
+          taskId={taskId}
+          managerRoleKey={managerRoleKey}
+          editable={isPending}
+        />
+        <TaskCardWorkerRolePicker
+          taskId={taskId}
+          workerRoleKey={workerRoleKey}
+          editable={isPending}
+        />
+      </div>
 
       {isLoading ? (
         <div className="flex min-h-[160px] items-center justify-center p-8 text-sm text-muted-foreground">

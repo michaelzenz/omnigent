@@ -18,6 +18,19 @@ class TaskRoleProfileStore(ABC):
         """Return the profile for ``user_id`` and ``role``, or ``None`` if unset."""
 
     @abstractmethod
+    def list_for_user(
+        self,
+        user_id: str,
+        *,
+        role_prefix: str | None = None,
+    ) -> list[UserTaskRoleProfile]:
+        """List profiles for ``user_id``, optionally filtered by role prefix."""
+
+    @abstractmethod
+    def delete(self, user_id: str, role: str) -> bool:
+        """Delete a profile row. Returns ``False`` when missing."""
+
+    @abstractmethod
     def upsert(
         self,
         user_id: str,
@@ -30,5 +43,11 @@ class TaskRoleProfileStore(ABC):
         host_id: str | None = None,
         workspace: str | None = None,
         clear_conversation_id: bool = False,
+        clear_model: bool = False,
     ) -> UserTaskRoleProfile:
-        """Create or update a task role profile."""
+        """
+        Create or update a task role profile.
+
+        ``None`` leaves a field unchanged. To clear ``model`` back to ``None``
+        (the harness picks its own model), pass ``clear_model=True``.
+        """

@@ -22,14 +22,16 @@ from omnigent.agent_tasks.adoption import (
     reject_session_adoption,
 )
 from omnigent.agent_tasks.agent_builtins import (
-    PER_USER_TASK_ROLES,
     TASK_BROKER_ROLE,
+    TASK_MANAGER_AGENT_NAME,
     TASK_SECRETARY_ROLE,
+    resolve_task_agent_id,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.broker_session import (
     bootstrap_broker_conversation,
+    ensure_role_profile,
     get_or_create_role_profile,
 )
 from omnigent.agent_tasks.dashboard import build_task_dashboard
@@ -51,6 +53,22 @@ from omnigent.agent_tasks.items import (
     submit_item_for_user_ack,
 )
 from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
+from omnigent.agent_tasks.manager_role_profile import (
+    get_or_create_manager_role_profile,
+)
+from omnigent.agent_tasks.role_keys import (
+    MANAGER_ROLE_PREFIX,
+    SYSTEM_ROLE_KEYS,
+    WORKER_ROLE_PREFIX,
+    is_deletable_role_key,
+    is_manager_role_key,
+    is_system_role_key,
+    is_worker_role_key,
+    manager_role_key_from_slug,
+    normalize_role_profile_key,
+    role_profile_title,
+    worker_role_key_from_slug,
+)
 from omnigent.agent_tasks.secretary_session import bootstrap_secretary_conversation
 from omnigent.agent_tasks.task_match import (
     collect_event_tags,
@@ -65,6 +83,10 @@ from omnigent.agent_tasks.task_packages import (
     create_task_package,
     reconcile_events_to_task_batch,
     reject_task_package,
+)
+from omnigent.agent_tasks.worker_role_profile import (
+    get_or_create_worker_role_profile,
+    load_worker_role_profile,
 )
 from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.enum_codecs import TASK_STATE
@@ -147,6 +169,8 @@ class UpdateAgentTaskRequest(BaseModel):
     description: str | None = None
     internal_note: str | None = None
     agent_profile_id: str | None = None
+    manager_role_key: str | None = None
+    worker_role_key: str | None = None
     manager_conversation_id: str | None = None
     state: str | None = None
 
@@ -177,14 +201,38 @@ class PutTaskTagsRequest(BaseModel):
     tags: list[TaskTagInput] = Field(default_factory=list)
 
 
-class PutAgentRoleProfileRequest(BaseModel):
-    """Request body for ``PUT /v1/agent-tasks/roles/{role}/profile``."""
+class _RoleProfileFieldsMixin(BaseModel):
+    """Shared role-profile fields with explicit-null handling for ``model``."""
 
-    agent_profile_id: str
     harness: str | None = None
     model: str | None = None
     host_id: str | None = None
     workspace: str | None = None
+
+    @property
+    def clears_model(self) -> bool:
+        """Whether the caller explicitly sent ``model: null`` to clear it."""
+        return "model" in self.model_fields_set and self.model is None
+
+
+class PutAgentRoleProfileRequest(_RoleProfileFieldsMixin):
+    """Request body for ``PUT /v1/agent-tasks/roles/{role}/profile``."""
+
+    agent_profile_id: str
+
+
+class CreateManagerRoleProfileRequest(_RoleProfileFieldsMixin):
+    """Request body for ``POST /v1/agent-tasks/roles/manager``."""
+
+    slug: str
+    agent_profile_id: str | None = None
+
+
+class CreateWorkerRoleProfileRequest(_RoleProfileFieldsMixin):
+    """Request body for ``POST /v1/agent-tasks/roles/worker``."""
+
+    slug: str
+    agent_profile_id: str | None = None
 
 
 class BootstrapTaskManagerRequest(BaseModel):
@@ -504,6 +552,8 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
         "id": task.id,
         "object": "agent.task",
         "agent_profile_id": task.agent_profile_id,
+        "manager_role_key": task.manager_role_key,
+        "worker_role_key": task.worker_role_key,
         "manager_conversation_id": task.manager_conversation_id,
         "owner_user_id": task.owner_user_id,
         "title": task.title,
@@ -519,13 +569,7 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
 
 
 def _require_task_agent_role(role: str) -> str:
-    normalized = role.strip().lower()
-    if normalized not in PER_USER_TASK_ROLES:
-        raise OmnigentError(
-            f"Unsupported task agent role: {role}",
-            code=ErrorCode.NOT_FOUND,
-        )
-    return normalized
+    return normalize_role_profile_key(role)
 
 
 # Roles that own a long-lived session the user can bootstrap on demand. The
@@ -540,16 +584,6 @@ def _require_session_supported_role(role: str) -> None:
             f"session bootstrap for role {role!r} is not supported yet",
             code=ErrorCode.INVALID_INPUT,
         )
-
-
-def _role_defaults(role: str) -> tuple[str, str]:
-    """Return the (harness, model) defaults for a session-supported role."""
-    from omnigent.agent_tasks.agent_builtins import TASK_ROLE_DEFAULTS
-
-    defaults = TASK_ROLE_DEFAULTS.get(role)
-    if defaults is not None:
-        return defaults.harness, defaults.model
-    return "cursor-native", "composer-2.5"
 
 
 def _bootstrap_role_session(
@@ -587,6 +621,9 @@ def _agent_role_profile_to_response(
     return {
         "object": "agent.task.role_profile",
         "role": role,
+        "title": role_profile_title(role),
+        "system": is_system_role_key(role),
+        "deletable": is_deletable_role_key(role),
         "user_id": profile.user_id,
         "agent_profile_id": profile.agent_profile_id,
         "conversation_id": profile.conversation_id,
@@ -778,6 +815,64 @@ def create_agent_tasks_router(
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
 
+    async def _manager_role_profile_for_task(
+        task: Task,
+        user_id: str | None,
+    ) -> UserTaskRoleProfile | None:
+        if task_role_profile_store is None or host_store is None:
+            return None
+        return await asyncio.to_thread(
+            get_or_create_manager_role_profile,
+            task_role_profile_store=task_role_profile_store,
+            host_store=host_store,
+            agent_store=agent_store,
+            owner_user_id=_effective_user_id(user_id),
+            auth_user_id=user_id,
+            task=task,
+        )
+
+    async def _worker_role_profile_for_task(
+        task: Task,
+        user_id: str | None,
+    ) -> UserTaskRoleProfile | None:
+        if task_role_profile_store is None:
+            return None
+        effective_user_id = _effective_user_id(user_id)
+        existing = await asyncio.to_thread(
+            load_worker_role_profile,
+            task_role_profile_store,
+            effective_user_id,
+            task,
+        )
+        if existing is not None:
+            return existing
+        if host_store is None or agent_store is None:
+            return None
+        return await asyncio.to_thread(
+            get_or_create_worker_role_profile,
+            task_role_profile_store=task_role_profile_store,
+            host_store=host_store,
+            agent_store=agent_store,
+            owner_user_id=effective_user_id,
+            auth_user_id=user_id,
+            task=task,
+        )
+
+    async def _ensure_system_role_profiles(user_id: str) -> None:
+        if task_role_profile_store is None or agent_store is None:
+            return
+        effective_user_id = _effective_user_id(user_id)
+        for role in SYSTEM_ROLE_KEYS:
+            await asyncio.to_thread(
+                ensure_role_profile,
+                role=role,
+                profile_user_id=effective_user_id,
+                auth_user_id=user_id,
+                task_role_profile_store=task_role_profile_store,
+                agent_store=agent_store,
+                host_store=host_store,
+            )
+
     async def _load_role_profile(role: str, user_id: str | None) -> UserTaskRoleProfile:
         if task_role_profile_store is None:
             raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
@@ -801,6 +896,167 @@ def create_agent_tasks_router(
         )
 
     if task_role_profile_store is not None:
+
+        @router.get("/agent-tasks/roles/profiles")
+        async def list_agent_role_profiles(
+            request: Request,
+            prefix: str | None = Query(default=None),
+        ) -> dict[str, Any]:
+            """List the caller's glossary role profiles."""
+            user_id = require_user(request, auth_provider)
+            await _ensure_system_role_profiles(user_id)
+            profiles = await asyncio.to_thread(
+                task_role_profile_store.list_for_user,
+                _effective_user_id(user_id),
+                role_prefix=prefix,
+            )
+            return {
+                "object": "list",
+                "data": [
+                    _agent_role_profile_to_response(profile.role, profile) for profile in profiles
+                ],
+            }
+
+        @router.post("/agent-tasks/roles/manager")
+        async def create_manager_role_profile(
+            request: Request,
+            body: CreateManagerRoleProfileRequest,
+        ) -> dict[str, Any]:
+            """Create a custom manager glossary profile."""
+            user_id = require_user(request, auth_provider)
+            if agent_store is None:
+                raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
+            role = manager_role_key_from_slug(body.slug)
+            effective_user_id = _effective_user_id(user_id)
+            existing = await asyncio.to_thread(
+                task_role_profile_store.get,
+                effective_user_id,
+                role,
+            )
+            if existing is not None:
+                raise OmnigentError(
+                    f"Manager role already exists: {role}",
+                    code=ErrorCode.CONFLICT,
+                )
+            agent_profile_id = body.agent_profile_id or await asyncio.to_thread(
+                resolve_task_agent_id,
+                agent_store,
+                TASK_MANAGER_AGENT_NAME,
+            )
+            await _require_agent_profile(agent_profile_id)
+            profile = await asyncio.to_thread(
+                ensure_role_profile,
+                role=role,
+                profile_user_id=effective_user_id,
+                auth_user_id=user_id,
+                task_role_profile_store=task_role_profile_store,
+                agent_store=agent_store,
+                host_store=host_store,
+            )
+            profile = await asyncio.to_thread(
+                task_role_profile_store.upsert,
+                effective_user_id,
+                role,
+                agent_profile_id=agent_profile_id,
+                harness=body.harness,
+                model=body.model,
+                clear_model=body.clears_model,
+                host_id=body.host_id,
+                workspace=body.workspace,
+            )
+            return _agent_role_profile_to_response(role, profile)
+
+        @router.post("/agent-tasks/roles/worker")
+        async def create_worker_role_profile(
+            request: Request,
+            body: CreateWorkerRoleProfileRequest,
+        ) -> dict[str, Any]:
+            """Create a custom worker glossary profile."""
+            user_id = require_user(request, auth_provider)
+            if agent_store is None:
+                raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
+            from omnigent.agent_tasks.agent_builtins import TASK_WORKER_AGENT_NAME
+
+            role = worker_role_key_from_slug(body.slug)
+            effective_user_id = _effective_user_id(user_id)
+            existing = await asyncio.to_thread(
+                task_role_profile_store.get,
+                effective_user_id,
+                role,
+            )
+            if existing is not None:
+                raise OmnigentError(
+                    f"Worker role already exists: {role}",
+                    code=ErrorCode.CONFLICT,
+                )
+            agent_profile_id = body.agent_profile_id or await asyncio.to_thread(
+                resolve_task_agent_id,
+                agent_store,
+                TASK_WORKER_AGENT_NAME,
+            )
+            await _require_agent_profile(agent_profile_id)
+            profile = await asyncio.to_thread(
+                ensure_role_profile,
+                role=role,
+                profile_user_id=effective_user_id,
+                auth_user_id=user_id,
+                task_role_profile_store=task_role_profile_store,
+                agent_store=agent_store,
+                host_store=host_store,
+            )
+            profile = await asyncio.to_thread(
+                task_role_profile_store.upsert,
+                effective_user_id,
+                role,
+                agent_profile_id=agent_profile_id,
+                harness=body.harness,
+                model=body.model,
+                clear_model=body.clears_model,
+                host_id=body.host_id,
+                workspace=body.workspace,
+            )
+            return _agent_role_profile_to_response(role, profile)
+
+        @router.delete("/agent-tasks/roles/{role}")
+        async def delete_agent_role_profile(request: Request, role: str) -> dict[str, Any]:
+            """Delete a custom manager or worker glossary profile."""
+            role = _require_task_agent_role(role)
+            if not is_deletable_role_key(role):
+                raise OmnigentError(
+                    f"Role profile cannot be deleted: {role}",
+                    code=ErrorCode.CONFLICT,
+                )
+            user_id = require_user(request, auth_provider)
+            if is_manager_role_key(role):
+                in_use = await asyncio.to_thread(
+                    task_store.count_by_manager_role_key,
+                    role,
+                    state="pending",
+                )
+                conflict_message = "Manager role is assigned to pending tasks"
+            elif is_worker_role_key(role):
+                in_use = await asyncio.to_thread(
+                    task_store.count_by_worker_role_key,
+                    role,
+                    state="pending",
+                )
+                conflict_message = "Worker role is assigned to pending tasks"
+            else:
+                in_use = 0
+                conflict_message = "Role is assigned to pending tasks"
+            if in_use > 0:
+                raise OmnigentError(
+                    conflict_message,
+                    code=ErrorCode.CONFLICT,
+                )
+            deleted = await asyncio.to_thread(
+                task_role_profile_store.delete,
+                _effective_user_id(user_id),
+                role,
+            )
+            if not deleted:
+                raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
+            return {"object": "agent.task.role_profile", "role": role, "deleted": True}
 
         @router.get("/agent-tasks/roles/{role}/profile")
         async def get_agent_role_profile(request: Request, role: str) -> dict[str, Any]:
@@ -827,6 +1083,7 @@ def create_agent_tasks_router(
                 agent_profile_id=body.agent_profile_id,
                 harness=body.harness,
                 model=body.model,
+                clear_model=body.clears_model,
                 host_id=body.host_id,
                 workspace=body.workspace,
             )
@@ -899,13 +1156,12 @@ def create_agent_tasks_router(
                 profile = await _load_role_profile(role, user_id)
                 if profile.conversation_id is not None:
                     await conversation_store.delete_conversation(profile.conversation_id)
-                defaults = _role_defaults(role)
+                # Only the session is reset; the role's configured harness and
+                # model are the user's and must survive a respawn.
                 await asyncio.to_thread(
                     task_role_profile_store.upsert,
                     effective_user_id,
                     role,
-                    harness=defaults[0],
-                    model=defaults[1],
                     clear_conversation_id=True,
                 )
                 profile = await asyncio.to_thread(
@@ -954,7 +1210,7 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Update mutable task fields."""
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
+        task = await _get_task_or_404(task_id, user_id)
         update_kwargs: dict[str, Any] = {}
         for field in (
             "title",
@@ -966,6 +1222,55 @@ def create_agent_tasks_router(
         ):
             if field in body.model_fields_set:
                 update_kwargs[field] = getattr(body, field)
+        manager_role_key = None
+        if "manager_role_key" in body.model_fields_set:
+            if task.state != "pending":
+                raise OmnigentError(
+                    "manager_role_key can only be changed while the task is pending",
+                    code=ErrorCode.CONFLICT,
+                )
+            manager_role_key = normalize_role_profile_key(body.manager_role_key or "")
+            if not manager_role_key.startswith(MANAGER_ROLE_PREFIX):
+                raise OmnigentError(
+                    "manager_role_key must be a manager glossary role",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if task_role_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    task_role_profile_store.get,
+                    _effective_user_id(user_id),
+                    manager_role_key,
+                )
+                if profile is None:
+                    raise OmnigentError(
+                        f"Task role profile not found: {manager_role_key}",
+                        code=ErrorCode.NOT_FOUND,
+                    )
+            update_kwargs["manager_role_key"] = manager_role_key
+        if "worker_role_key" in body.model_fields_set:
+            if task.state != "pending":
+                raise OmnigentError(
+                    "worker_role_key can only be changed while the task is pending",
+                    code=ErrorCode.CONFLICT,
+                )
+            worker_role_key = normalize_role_profile_key(body.worker_role_key or "")
+            if not worker_role_key.startswith(WORKER_ROLE_PREFIX):
+                raise OmnigentError(
+                    "worker_role_key must be a worker glossary role",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if task_role_profile_store is not None:
+                profile = await asyncio.to_thread(
+                    task_role_profile_store.get,
+                    _effective_user_id(user_id),
+                    worker_role_key,
+                )
+                if profile is None:
+                    raise OmnigentError(
+                        f"Task role profile not found: {worker_role_key}",
+                        code=ErrorCode.NOT_FOUND,
+                    )
+            update_kwargs["worker_role_key"] = worker_role_key
         if not update_kwargs:
             task = await asyncio.to_thread(task_store.get, task_id)
             assert task is not None
@@ -1030,13 +1335,7 @@ def create_agent_tasks_router(
             """Bootstrap the manager session for a managed task."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
-            profile = None
-            if task_role_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    task_role_profile_store.get,
-                    _effective_user_id(user_id),
-                    TASK_BROKER_ROLE,
-                )
+            profile = await _manager_role_profile_for_task(task, user_id)
             params = resolve_bootstrap_params(
                 host_id=body.host_id,
                 workspace=body.workspace,
@@ -1201,13 +1500,8 @@ def create_agent_tasks_router(
                 )
                 return _item_to_response(updated)
             task = await _get_task_or_404(item.task_id, user_id)
-            profile = None
-            if task_role_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    task_role_profile_store.get,
-                    _effective_user_id(user_id),
-                    TASK_BROKER_ROLE,
-                )
+            worker_profile = await _worker_role_profile_for_task(task, user_id)
+            manager_profile = await _manager_role_profile_for_task(task, user_id)
             if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
                 raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
 
@@ -1223,7 +1517,7 @@ def create_agent_tasks_router(
                     conversation_store=conversation_store,
                     agent_store=agent_store,
                     edited_payload=body.edited_payload,
-                    role_profile=profile,
+                    role_profile=worker_profile or manager_profile,
                     agent_queue_store=agent_queue_store,
                     owner_user_id=_effective_user_id(user_id),
                 )
@@ -1270,13 +1564,8 @@ def create_agent_tasks_router(
             user_id = require_user(request, auth_provider)
             item = await _get_item_or_404(item_id, user_id)
             task = await _get_task_or_404(item.task_id, user_id)
-            profile = None
-            if task_role_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    task_role_profile_store.get,
-                    _effective_user_id(user_id),
-                    TASK_BROKER_ROLE,
-                )
+            manager_profile = await _manager_role_profile_for_task(task, user_id)
+            worker_profile = await _worker_role_profile_for_task(task, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
             payload = {
                 "worker_profile_id": body.worker_profile_id
@@ -1294,7 +1583,7 @@ def create_agent_tasks_router(
                 workspace=body.workspace,
                 harness=body.harness,
                 model=body.model,
-                role_profile=profile,
+                role_profile=worker_profile or manager_profile,
             )
 
             def _dispatch() -> tuple[TaskEventExecution, str]:
@@ -1434,9 +1723,7 @@ def create_agent_tasks_router(
                 )
             return {
                 "object": "list",
-                "data": [
-                    _item_to_response(item) for item in results if item is not None
-                ],
+                "data": [_item_to_response(item) for item in results if item is not None],
             }
 
         @router.get("/agent-tasks/board/pending")
@@ -1593,14 +1880,8 @@ def create_agent_tasks_router(
             """Bind an orphan session to a task after user acceptance."""
             user_id = require_user(request, auth_provider)
             await _require_session_or_404(session_id, user_id)
-            await _get_task_or_404(body.task_id, user_id)
-            profile = None
-            if task_role_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    task_role_profile_store.get,
-                    _effective_user_id(user_id),
-                    TASK_BROKER_ROLE,
-                )
+            task = await _get_task_or_404(body.task_id, user_id)
+            profile = await _manager_role_profile_for_task(task, user_id)
             params = resolve_bootstrap_params(
                 host_id=body.host_id,
                 workspace=body.workspace,

@@ -11,6 +11,7 @@ import {
   interruptAgentQueueItem,
   resetBrokerSession,
   resetSecretarySession,
+  patchAgentTask,
   resolveTaskItem,
   retryTaskItemDispatch,
   updateTaskItem,
@@ -282,6 +283,28 @@ export function useRetryTaskItem(taskId: string) {
       }
       await retryTaskItemDispatch(taskItemId);
     },
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+export function useUpdateAgentTaskManagerRole(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (managerRoleKey: string) =>
+      patchAgentTask(taskId, { manager_role_key: managerRoleKey }),
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+export function useUpdateAgentTaskWorkerRole(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (workerRoleKey: string) =>
+      patchAgentTask(taskId, { worker_role_key: workerRoleKey }),
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
     },

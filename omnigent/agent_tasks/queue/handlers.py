@@ -18,12 +18,14 @@ from omnigent.agent_tasks.dispatch import (
     resolve_dispatch_params,
 )
 from omnigent.agent_tasks.items import ensure_task_manager_for_dispatch
+from omnigent.agent_tasks.manager_role_profile import load_manager_role_profile
 from omnigent.agent_tasks.queue.dispatcher import (
     DispatchFailed,
     DispatchTarget,
     RoleDispatchHandler,
 )
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
+from omnigent.agent_tasks.worker_role_profile import load_worker_role_profile
 from omnigent.entities import AgentQueueItem, Task
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -263,12 +265,20 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             raise DispatchFailed(f"task item {item.source_ids[0]} not found")
 
         payload = parse_dispatch_payload(item.payload)
-        role_profile = None
+        manager_role_profile = None
+        worker_role_profile = None
         if self._task_role_profile_store is not None:
-            role_profile = await asyncio.to_thread(
-                self._task_role_profile_store.get,
+            manager_role_profile = await asyncio.to_thread(
+                load_manager_role_profile,
+                self._task_role_profile_store,
                 item.key.owner_user_id,
-                TASK_BROKER_ROLE,
+                task,
+            )
+            worker_role_profile = await asyncio.to_thread(
+                load_worker_role_profile,
+                self._task_role_profile_store,
+                item.key.owner_user_id,
+                task,
             )
 
         def _opt_str(key: str) -> str | None:
@@ -282,7 +292,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
                 task_event_store=self._task_event_store,
                 conversation_store=self._conversation_store,
                 agent_store=self._agent_store,
-                role_profile=role_profile,
+                role_profile=manager_role_profile,
                 host_id=_opt_str("host_id"),
                 workspace=_opt_str("workspace"),
                 harness=_opt_str("harness"),
@@ -292,7 +302,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         task = await asyncio.to_thread(_bootstrap)
         params = resolve_dispatch_params(
             payload={**payload, "worker_profile_id": worker.profile_id},
-            role_profile=role_profile,
+            role_profile=worker_role_profile or manager_role_profile,
             host_id=_opt_str("host_id"),
             workspace=_opt_str("workspace"),
             harness=_opt_str("harness"),

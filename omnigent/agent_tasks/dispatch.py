@@ -30,7 +30,7 @@ class DispatchParams:
     host_id: str
     workspace: str
     harness: str
-    model: str
+    model: str | None
 
 
 def parse_dispatch_payload(payload: str | None) -> dict[str, Any]:
@@ -91,6 +91,8 @@ def resolve_dispatch_params(
         payload=payload,
         worker_profile_id=worker_profile_id,
     )
+    if not resolved_profile and role_profile is not None:
+        resolved_profile = role_profile.agent_profile_id
     resolved_title = title or payload.get("title")
     resolved_instructions = compose_worker_instructions(
         instructions=instructions if instructions is not None else payload.get("instructions"),
@@ -152,14 +154,7 @@ def dispatch_worker_for_item(
         )
 
     worker = worker_for_item(item, worker_store=worker_store)
-    if worker is None:
-        item, worker = assign_worker_profile(
-            item=item,
-            profile_id=params.worker_profile_id,
-            worker_store=worker_store,
-            task_item_store=task_item_store,
-        )
-    elif worker.profile_id != params.worker_profile_id:
+    if worker is None or worker.profile_id != params.worker_profile_id:
         item, worker = assign_worker_profile(
             item=item,
             profile_id=params.worker_profile_id,
@@ -180,6 +175,7 @@ def dispatch_worker_for_item(
         worker_conv.id,
         harness_override=params.harness,
         model_override=params.model,
+        _unset_model_override=params.model is None,
     )
     worker_store.update_worker(worker.id, session_id=worker_conv.id)
     execution = start_execution_for_item(

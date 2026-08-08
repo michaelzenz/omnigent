@@ -1490,6 +1490,16 @@ class SqlTask(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    manager_role_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default="manager:default",
+    )
+    worker_role_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default="worker:default",
+    )
     manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -1796,7 +1806,8 @@ class SqlUserTaskRoleProfile(OmnigentBase):
     agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
-    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    # NULL when the harness resolves its own model (e.g. Codex, OpenCode).
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)

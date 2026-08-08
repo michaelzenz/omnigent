@@ -129,6 +129,7 @@ def bootstrap_secretary_conversation(
         conversation.id,
         harness_override=params.harness,
         model_override=params.model,
+        _unset_model_override=params.model is None,
     )
     apply_secretary_session_labels(
         conversation_store,

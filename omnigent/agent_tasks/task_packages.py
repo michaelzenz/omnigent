@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any
 
 from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
+from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
 from omnigent.agent_tasks.task_match import (
     internal_note_from_event_tags,
-    collect_event_tags,
     task_tags_from_event_tags,
 )
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskItem, TaskTag
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
@@ -106,11 +104,14 @@ def reconcile_events_to_task_batch(
         return []
 
     all_event_ids = [eid for spec in specs for eid in spec.event_ids]
-    events_by_id = {e.id: e for e in _bulk_claimable_events(
-        all_event_ids,
-        task_event_store=task_event_store,
-        task_item_store=task_item_store,
-    )}
+    events_by_id = {
+        e.id: e
+        for e in _bulk_claimable_events(
+            all_event_ids,
+            task_event_store=task_event_store,
+            task_item_store=task_item_store,
+        )
+    }
     # Track which claimable ids are still available; consume as each spec takes them.
     available: set[str] = set(events_by_id)
 
@@ -221,6 +222,8 @@ def create_task_package(
         owner_user_id=owner_user_id,
         description=description,
         internal_note=resolved_internal_note,
+        manager_role_key=MANAGER_DEFAULT_ROLE_KEY,
+        worker_role_key=WORKER_DEFAULT_ROLE_KEY,
         state="pending",
         tags=resolved_tags,
     )

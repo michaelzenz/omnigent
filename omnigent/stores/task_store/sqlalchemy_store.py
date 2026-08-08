@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, delete, desc, select
+from sqlalchemy import asc, delete, desc, func, select
 
+from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.db_models import (
     SqlTask,
     SqlTaskTag,
@@ -28,6 +29,8 @@ def _to_entity(row: SqlTask) -> Task:
     return Task(
         id=row.id,
         agent_profile_id=row.agent_profile_id,
+        manager_role_key=row.manager_role_key,
+        worker_role_key=row.worker_role_key,
         manager_conversation_id=row.manager_conversation_id,
         owner_user_id=row.owner_user_id,
         title=row.title,
@@ -54,6 +57,8 @@ class SqlAlchemyTaskStore(TaskStore):
         *,
         agent_profile_id: str,
         owner_user_id: str | None = None,
+        manager_role_key: str | None = None,
+        worker_role_key: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
         manager_conversation_id: str | None = None,
@@ -64,6 +69,8 @@ class SqlAlchemyTaskStore(TaskStore):
         row = SqlTask(
             id=task_id,
             agent_profile_id=agent_profile_id,
+            manager_role_key=manager_role_key or MANAGER_DEFAULT_ROLE_KEY,
+            worker_role_key=worker_role_key or WORKER_DEFAULT_ROLE_KEY,
             manager_conversation_id=manager_conversation_id,
             owner_user_id=owner_user_id,
             title=title,
@@ -128,6 +135,8 @@ class SqlAlchemyTaskStore(TaskStore):
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
         agent_profile_id: str | None = None,
+        manager_role_key: str | None = None,
+        worker_role_key: str | None = None,
         state: str | None = None,
     ) -> Task | None:
         with self._session() as session:
@@ -155,6 +164,12 @@ class SqlAlchemyTaskStore(TaskStore):
             if agent_profile_id is not None and row.agent_profile_id != agent_profile_id:
                 row.agent_profile_id = agent_profile_id
                 changed = True
+            if manager_role_key is not None and row.manager_role_key != manager_role_key:
+                row.manager_role_key = manager_role_key
+                changed = True
+            if worker_role_key is not None and row.worker_role_key != worker_role_key:
+                row.worker_role_key = worker_role_key
+                changed = True
             if state is not None:
                 encoded_state = encode_task_state(state)
                 if row.state != encoded_state:
@@ -164,6 +179,40 @@ class SqlAlchemyTaskStore(TaskStore):
                 row.updated_at = now_epoch()
             session.flush()
             return _to_entity(row)
+
+    def count_by_manager_role_key(
+        self,
+        manager_role_key: str,
+        *,
+        state: str | None = None,
+    ) -> int:
+        with self._session() as session:
+            stmt = (
+                select(func.count())
+                .select_from(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .where(SqlTask.manager_role_key == manager_role_key)
+            )
+            if state is not None:
+                stmt = stmt.where(SqlTask.state == encode_task_state(state))
+            return int(session.execute(stmt).scalar_one())
+
+    def count_by_worker_role_key(
+        self,
+        worker_role_key: str,
+        *,
+        state: str | None = None,
+    ) -> int:
+        with self._session() as session:
+            stmt = (
+                select(func.count())
+                .select_from(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .where(SqlTask.worker_role_key == worker_role_key)
+            )
+            if state is not None:
+                stmt = stmt.where(SqlTask.state == encode_task_state(state))
+            return int(session.execute(stmt).scalar_one())
 
     def delete(self, task_id: str) -> bool:
         with self._session() as session:

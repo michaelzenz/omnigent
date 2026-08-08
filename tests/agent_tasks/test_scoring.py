@@ -7,13 +7,15 @@ from omnigent.agent_tasks.scoring import (
     rank_tasks_for_event_tags,
     score_task_for_event_tags,
 )
-from omnigent.entities import Task, EventTag, TaskTag
+from omnigent.entities import EventTag, Task, TaskTag
 
 
 def _task(task_id: str) -> Task:
     return Task(
         id=task_id,
         agent_profile_id="a" * 32,
+        manager_role_key="manager:default",
+        worker_role_key="worker:default",
         owner_user_id=None,
         title="title",
         description=None,

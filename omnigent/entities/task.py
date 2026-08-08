@@ -18,6 +18,8 @@ class Task:
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param agent_profile_id: Registered agent profile that runs the task manager.
+    :param manager_role_key: Glossary manager template key, e.g. ``"manager:default"``.
+    :param worker_role_key: Glossary worker template key, e.g. ``"worker:default"``.
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
@@ -31,6 +33,8 @@ class Task:
 
     id: str
     agent_profile_id: str
+    manager_role_key: str
+    worker_role_key: str
     owner_user_id: str | None
     title: str
     description: str | None

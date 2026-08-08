@@ -6,7 +6,6 @@ import logging
 
 from omnigent.agent_tasks.agent_builtins import (
     TASK_BROKER_ROLE,
-    TASK_ROLE_DEFAULTS,
     resolve_role_agent_profile_id,
 )
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
@@ -72,6 +71,39 @@ def resolve_first_live_host_id(host_store: HostStore, owner: str) -> str | None:
     return None
 
 
+def ensure_role_profile(
+    *,
+    role: str,
+    profile_user_id: str,
+    auth_user_id: str | None,
+    task_role_profile_store: TaskRoleProfileStore,
+    agent_store: AgentStore,
+    host_store: HostStore | None = None,
+) -> UserTaskRoleProfile:
+    """Ensure a glossary profile row exists, without requiring a live host."""
+    existing = task_role_profile_store.get(profile_user_id, role)
+    if existing is not None:
+        return existing
+
+    host_id = None
+    if host_store is not None:
+        host_id = resolve_first_live_host_id(
+            host_store,
+            resolve_host_owner_user_id(auth_user_id),
+        )
+
+    agent_profile_id = resolve_role_agent_profile_id(agent_store, role)
+    # harness/model omitted: the store seeds them from the role's packaged
+    # defaults when it creates the row.
+    return task_role_profile_store.upsert(
+        profile_user_id,
+        role,
+        agent_profile_id=agent_profile_id,
+        host_id=host_id,
+        workspace=DEFAULT_TASK_WORKSPACE,
+    )
+
+
 def get_or_create_role_profile(
     *,
     role: str,
@@ -90,15 +122,12 @@ def get_or_create_role_profile(
     if host_id is None:
         raise OmnigentError(NO_HOST_AVAILABLE_MESSAGE, code=ErrorCode.INVALID_INPUT)
 
-    defaults = TASK_ROLE_DEFAULTS.get(role)
     agent_profile_id = resolve_role_agent_profile_id(agent_store, role)
     return task_role_profile_store.upsert(
         profile_user_id,
         role,
         agent_profile_id=agent_profile_id,
         host_id=host_id,
-        harness=defaults.harness if defaults else "cursor-native",
-        model=defaults.model if defaults else "composer-2.5",
         workspace=DEFAULT_TASK_WORKSPACE,
     )
 
@@ -237,6 +266,7 @@ def bootstrap_broker_conversation(
         conversation.id,
         harness_override=params.harness,
         model_override=params.model,
+        _unset_model_override=params.model is None,
     )
     apply_broker_session_labels(
         conversation_store,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from urllib.parse import quote
 
 import httpx
 import pytest_asyncio
@@ -15,10 +16,10 @@ from omnigent.agent_tasks.agent_builtins import (
 )
 from omnigent.agent_tasks.broker_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
-from omnigent.server.auth import RESERVED_USER_LOCAL
-from omnigent.stores.host_store import HostStore
 from omnigent.entities import EventTag
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from tests.server.routes.agent_task_api import (
@@ -74,6 +75,8 @@ async def test_create_and_get_task(
     assert created["object"] == "agent.task"
     assert created["agent_profile_id"] == task_manager_agent_id
     assert created["state"] == "idle"
+    assert created["manager_role_key"] == "manager:default"
+    assert created["worker_role_key"] == "worker:default"
     assert created["tags"] == [{"tag_type": "domain", "tag": "s3"}]
 
     get_resp = await client.get(f"/v1/agent-tasks/{created['id']}")
@@ -189,7 +192,6 @@ async def test_list_executions(
     task_id = created["id"]
     event_store = SqlAlchemyTaskEventStore(db_uri)
     item_store = SqlAlchemyTaskItemStore(db_uri)
-    manager_agent_id = _uid("mgr_exec")
     event_id = _uid("event_exec")
     task_item_id = _uid("item_exec")
     event_store.create_event(
@@ -268,21 +270,104 @@ async def test_broker_profile_round_trip(
     assert loaded.json()["agent_profile_id"] == secretary_agent_id
 
 
+def _seed_live_host(db_uri: str, seed: str) -> str:
+    host_id = _uid(seed)
+    HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
+    return host_id
+
+
+async def test_list_role_profiles_includes_system_roles(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    _seed_live_host(db_uri, "list-profiles-host")
+    list_resp = await client.get("/v1/agent-tasks/roles/profiles")
+    assert list_resp.status_code == 200
+    roles = {row["role"] for row in list_resp.json()["data"]}
+    assert "broker" in roles
+    assert "secretary" in roles
+    assert "manager:default" in roles
+    assert "worker:default" in roles
+
+
+async def test_create_and_delete_custom_manager_role(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    _seed_live_host(db_uri, "manager-role-host")
+    create_resp = await client.post(
+        "/v1/agent-tasks/roles/manager",
+        json={"slug": "research", "agent_profile_id": task_manager_agent_id},
+    )
+    assert create_resp.status_code == 200
+    body = create_resp.json()
+    assert body["role"] == "manager:research"
+    assert body["deletable"] is True
+    assert body["system"] is False
+
+    delete_resp = await client.delete(
+        f"/v1/agent-tasks/roles/{quote('manager:research', safe='')}",
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["deleted"] is True
+
+
+async def test_patch_manager_role_key_pending_only(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    _seed_live_host(db_uri, "patch-manager-host")
+    await client.post(
+        "/v1/agent-tasks/roles/manager",
+        json={"slug": "alt", "agent_profile_id": task_manager_agent_id},
+    )
+    created = (
+        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
+    ).json()
+    pending_state = await client.patch(
+        f"/v1/agent-tasks/{created['id']}",
+        json={"state": "pending"},
+    )
+    assert pending_state.status_code == 200
+
+    pending_patch = await client.patch(
+        f"/v1/agent-tasks/{created['id']}",
+        json={"manager_role_key": "manager:alt"},
+    )
+    assert pending_patch.status_code == 200
+    assert pending_patch.json()["manager_role_key"] == "manager:alt"
+
+    active_patch = await client.patch(
+        f"/v1/agent-tasks/{created['id']}",
+        json={"state": "active"},
+    )
+    assert active_patch.status_code == 200
+
+    blocked_patch = await client.patch(
+        f"/v1/agent-tasks/{created['id']}",
+        json={"manager_role_key": "manager:default"},
+    )
+    assert blocked_patch.status_code == 409
+
+
 async def test_secretary_profile_and_bootstrap(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
     secretary_agent_id: str,
 ) -> None:
-    """Broker profile defaults feed manager bootstrap."""
+    """Manager glossary defaults feed manager bootstrap."""
+    from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY
+
     profile_resp = await put_agent_role_profile(
         client,
-        role=TASK_BROKER_ROLE,
-        agent_profile_id=secretary_agent_id,
-        host_id=_uid("broker_host"),
-        workspace="/tmp/broker",
+        role=MANAGER_DEFAULT_ROLE_KEY,
+        agent_profile_id=task_manager_agent_id,
+        host_id=_uid("manager_host"),
+        workspace="/tmp/manager",
     )
     assert profile_resp.status_code == 200
-    assert profile_resp.json()["harness"] == "cursor"
 
     created = await client.post(
         "/v1/agent-tasks",

@@ -47,6 +47,29 @@ def test_upsert_and_get_secretary_profile(store: SqlAlchemyTaskRoleProfileStore)
     assert updated.conversation_id == "c" * 32
 
 
+def test_clear_model_unsets_a_stored_model(store: SqlAlchemyTaskRoleProfileStore) -> None:
+    """Switching to a harness that owns its model clears the previous pick."""
+    store.upsert(
+        "alice@example.com",
+        TASK_SECRETARY_ROLE,
+        agent_profile_id="a" * 32,
+        harness="cursor-native",
+        model="composer-2.5",
+    )
+    # A bare None model means "leave unchanged", so the stale pick survives.
+    unchanged = store.upsert("alice@example.com", TASK_SECRETARY_ROLE, harness="codex-native")
+    assert unchanged.model == "composer-2.5"
+
+    cleared = store.upsert(
+        "alice@example.com",
+        TASK_SECRETARY_ROLE,
+        harness="codex-native",
+        clear_model=True,
+    )
+    assert cleared.model is None
+    assert store.get("alice@example.com", TASK_SECRETARY_ROLE).model is None
+
+
 def test_upsert_and_get_broker_profile(store: SqlAlchemyTaskRoleProfileStore) -> None:
     created = store.upsert(
         "alice@example.com",
@@ -69,9 +92,5 @@ def test_upsert_and_get_broker_profile(store: SqlAlchemyTaskRoleProfileStore) ->
     )
     assert store.get("alice@example.com", TASK_SECRETARY_ROLE) is not None
     assert store.get("alice@example.com", TASK_BROKER_ROLE) is not None
-    assert (
-        store.get("alice@example.com", TASK_SECRETARY_ROLE).agent_profile_id == "a" * 32
-    )
-    assert (
-        store.get("alice@example.com", TASK_BROKER_ROLE).agent_profile_id == "b" * 32
-    )
+    assert store.get("alice@example.com", TASK_SECRETARY_ROLE).agent_profile_id == "a" * 32
+    assert store.get("alice@example.com", TASK_BROKER_ROLE).agent_profile_id == "b" * 32

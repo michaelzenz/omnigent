@@ -31,6 +31,23 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   })),
+  useUpdateAgentTaskManagerRole: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
+  useUpdateAgentTaskWorkerRole: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
+}));
+
+vi.mock("@/hooks/useRoleProfiles", () => ({
+  useRoleProfiles: vi.fn((prefix?: string) => ({
+    data:
+      prefix === "worker:"
+        ? [{ role: "worker:default", title: "Task worker (default)" }]
+        : [{ role: "manager:default", title: "Task manager (default)" }],
+  })),
 }));
 
 vi.mock("@/hooks/useAvailableAgents", () => ({
@@ -57,6 +74,8 @@ function renderCard() {
             title="Land PR #123"
             description="Fix upload retries"
             state="active"
+            managerRoleKey="manager:default"
+            workerRoleKey="worker:default"
           />
         </PuppyGardenChatProvider>
       </MemoryRouter>
@@ -177,7 +196,14 @@ describe("TaskCard", () => {
         inboxItems={[]}
         defaultModel="composer-2.5"
         agents={[
-          { id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", description: null, harness: null, skills: [] },
+          {
+            id: "worker-1",
+            name: "ci-fixer",
+            display_name: "CI Fixer",
+            description: null,
+            harness: null,
+            skills: [],
+          },
         ]}
         workers={[
           {
@@ -269,7 +295,14 @@ describe("TaskCard", () => {
         inboxItems={[]}
         defaultModel="composer-2.5"
         agents={[
-          { id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", description: null, harness: null, skills: [] },
+          {
+            id: "worker-1",
+            name: "ci-fixer",
+            display_name: "CI Fixer",
+            description: null,
+            harness: null,
+            skills: [],
+          },
         ]}
         workers={[
           {
@@ -307,7 +340,9 @@ describe("TaskCard", () => {
       expect(screen.getByLabelText("Retry dispatch")).toBeInTheDocument();
       expect(screen.getByLabelText("Remove item from queue")).toBeInTheDocument();
     });
-    expect(screen.queryByTestId("worker-row-item:fixture-item-done-hidden")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("worker-row-item:fixture-item-done-hidden"),
+    ).not.toBeInTheDocument();
   });
 
   it("collapses inbox lane when the header is toggled", () => {
@@ -372,10 +407,19 @@ describe("TaskCard", () => {
     } as unknown as ReturnType<typeof useTaskDashboard>);
 
     render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
         <MemoryRouter>
           <PuppyGardenChatProvider>
-            <TaskCard taskId="task-empty" title="Empty task" description={null} state="pending" />
+            <TaskCard
+              taskId="task-empty"
+              title="Empty task"
+              description={null}
+              state="pending"
+              managerRoleKey="manager:default"
+              workerRoleKey="worker:default"
+            />
           </PuppyGardenChatProvider>
         </MemoryRouter>
       </QueryClientProvider>,

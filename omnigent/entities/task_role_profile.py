@@ -14,7 +14,8 @@ class UserTaskRoleProfile:
     :param role: Task agent role, e.g. ``"broker"`` or ``"secretary"``.
     :param agent_profile_id: Agent profile to spawn for this role.
     :param harness: Brain harness override, e.g. ``"cursor"``.
-    :param model: Model override, e.g. ``"composer-2.5"``.
+    :param model: Model override, e.g. ``"composer-2.5"``; ``None`` when the
+        harness resolves its own model (e.g. Codex, OpenCode).
     :param conversation_id: Live role session, or ``None`` before spawn.
     :param host_id: Default host for role/manager bootstrap.
     :param workspace: Default workspace path on ``host_id``.
@@ -26,7 +27,7 @@ class UserTaskRoleProfile:
     role: str
     agent_profile_id: str
     harness: str
-    model: str
+    model: str | None
     created_at: int
     conversation_id: str | None = None
     host_id: str | None = None

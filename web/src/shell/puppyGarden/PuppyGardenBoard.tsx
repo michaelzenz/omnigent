@@ -8,10 +8,16 @@ import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 export function PuppyGardenBoard() {
   const fixtureMode = isPuppyGardenFixtureMode();
   const { dismissToRole } = usePuppyGardenChat();
-  const { data: pendingTasks, isLoading: pendingLoading, error: pendingError } =
-    useAgentTaskList("pending");
-  const { data: activeTasks, isLoading: activeLoading, error: activeError } =
-    useAgentTaskList("live");
+  const {
+    data: pendingTasks,
+    isLoading: pendingLoading,
+    error: pendingError,
+  } = useAgentTaskList("pending");
+  const {
+    data: activeTasks,
+    isLoading: activeLoading,
+    error: activeError,
+  } = useAgentTaskList("live");
 
   const isLoading = pendingLoading || activeLoading;
   const error = pendingError ?? activeError;
@@ -48,8 +54,8 @@ export function PuppyGardenBoard() {
             className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
             data-testid="puppy-garden-fixture-banner"
           >
-            Fixture mode — dummy board data. Remove <code className="text-xs">?fixture=1</code>{" "}
-            from the URL to load live tasks.
+            Fixture mode — dummy board data. Remove <code className="text-xs">?fixture=1</code> from
+            the URL to load live tasks.
           </div>
         ) : null}
         <BoardFyiStream />
@@ -63,6 +69,8 @@ export function PuppyGardenBoard() {
                 title={task.title}
                 description={task.description}
                 state={task.state}
+                managerRoleKey={task.manager_role_key}
+                workerRoleKey={task.worker_role_key}
               />
             ))}
           </section>
@@ -77,6 +85,8 @@ export function PuppyGardenBoard() {
                 title={task.title}
                 description={task.description}
                 state={task.state}
+                managerRoleKey={task.manager_role_key}
+                workerRoleKey={task.worker_role_key}
               />
             ))}
           </section>
