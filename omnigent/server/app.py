@@ -1561,6 +1561,8 @@ def create_app(
                 conversation_store=conversation_store,
                 agent_store=agent_store,
                 host_store=host_store,
+                session_creator=_session_creator,
+                app_state=app_inst.state,
             )
             if task_store is not None:
                 _manager_packager = ManagerPackager(
@@ -2176,6 +2178,18 @@ def create_app(
             )
         return result
 
+    _session_creator = functools.partial(
+        create_session_internal,
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        runner_router=runner_router,
+        agent_cache=agent_cache,
+        permission_store=permission_store,
+        liveness_lookup=_bulk_session_liveness,
+        file_store=file_store,
+        artifact_store=artifact_store,
+    )
+
     @app.get("/health")
     async def health(
         session_id: str | None = Query(default=None),
@@ -2535,17 +2549,7 @@ def create_app(
                 auth_provider=auth_provider,
                 permission_store=permission_store,
                 agent_queue_store=agent_queue_store,
-                session_creator=functools.partial(
-                    create_session_internal,
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    runner_router=runner_router,
-                    agent_cache=agent_cache,
-                    permission_store=permission_store,
-                    liveness_lookup=_bulk_session_liveness,
-                    file_store=file_store,
-                    artifact_store=artifact_store,
-                ),
+                session_creator=_session_creator,
             ),
             prefix="/v1",
             tags=["agent_tasks"],

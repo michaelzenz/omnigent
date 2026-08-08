@@ -30,7 +30,6 @@ from omnigent.agent_tasks.agent_builtins import (
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.broker_session import (
-    bootstrap_broker_conversation,
     ensure_role_profile,
     get_or_create_role_profile,
 )
@@ -68,7 +67,6 @@ from omnigent.agent_tasks.role_keys import (
     role_profile_title,
     worker_role_key_from_slug,
 )
-from omnigent.agent_tasks.secretary_session import bootstrap_secretary_conversation
 from omnigent.agent_tasks.task_match import (
     collect_event_tags,
     load_events,
@@ -605,34 +603,6 @@ def _require_session_supported_role(role: str) -> None:
             f"session bootstrap for role {role!r} is not supported yet",
             code=ErrorCode.INVALID_INPUT,
         )
-
-
-def _bootstrap_role_session(
-    role: str,
-    *,
-    conversation_store,
-    agent_store,
-    profile,
-) -> str:
-    """Dispatch to the role-specific conversation bootstrap helper."""
-    if role == TASK_BROKER_ROLE:
-        return bootstrap_broker_conversation(
-            conversation_store=conversation_store,
-            agent_store=agent_store,
-            profile=profile,
-            seed_prompt=True,
-        )
-    if role == TASK_SECRETARY_ROLE:
-        return bootstrap_secretary_conversation(
-            conversation_store=conversation_store,
-            agent_store=agent_store,
-            profile=profile,
-            seed_prompt=True,
-        )
-    raise OmnigentError(
-        f"session bootstrap for role {role!r} is not supported yet",
-        code=ErrorCode.INVALID_INPUT,
-    )
 
 
 def _role_session_labels(role: str, harness: str) -> dict[str, str]:
@@ -1252,28 +1222,14 @@ def create_agent_tasks_router(
                         conversation_id=existing.id,
                         created=False,
                     )
-                if session_creator is not None:
-                    conversation_id = await _create_role_session_via_create_path(
-                        role,
-                        profile=profile,
-                        request=request,
-                        user_id=user_id,
-                        session_creator=session_creator,
-                        conversation_store=conversation_store,
-                    )
-                else:
-                    conversation_id = await asyncio.to_thread(
-                        _bootstrap_role_session,
-                        role,
-                        conversation_store=conversation_store,
-                        agent_store=agent_store,
-                        profile=profile,
-                    )
-                    await _best_effort_ensure_conversation_runner(
-                        request,
-                        conversation_id,
-                        conversation_store,
-                    )
+                conversation_id = await _create_role_session_via_create_path(
+                    role,
+                    profile=profile,
+                    request=request,
+                    user_id=user_id,
+                    session_creator=session_creator,
+                    conversation_store=conversation_store,
+                )
                 await _bind_role_session(effective_user_id, role, conversation_id)
                 return _agent_role_session_to_response(
                     role,
@@ -1296,28 +1252,14 @@ def create_agent_tasks_router(
                 if bound_conversation_id is not None:
                     await conversation_store.delete_conversation(bound_conversation_id)
                 await _bind_role_session(effective_user_id, role, None)
-                if session_creator is not None:
-                    conversation_id = await _create_role_session_via_create_path(
-                        role,
-                        profile=profile,
-                        request=request,
-                        user_id=user_id,
-                        session_creator=session_creator,
-                        conversation_store=conversation_store,
-                    )
-                else:
-                    conversation_id = await asyncio.to_thread(
-                        _bootstrap_role_session,
-                        role,
-                        conversation_store=conversation_store,
-                        agent_store=agent_store,
-                        profile=profile,
-                    )
-                    await _best_effort_ensure_conversation_runner(
-                        request,
-                        conversation_id,
-                        conversation_store,
-                    )
+                conversation_id = await _create_role_session_via_create_path(
+                    role,
+                    profile=profile,
+                    request=request,
+                    user_id=user_id,
+                    session_creator=session_creator,
+                    conversation_store=conversation_store,
+                )
                 await _bind_role_session(effective_user_id, role, conversation_id)
                 # Orphan sessions are now durable ``session.orphan`` events the
                 # broker packager polls, so there is nothing to flush here.

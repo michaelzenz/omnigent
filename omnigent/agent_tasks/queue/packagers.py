@@ -29,6 +29,7 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 from omnigent.agent_tasks.agent_builtins import (
     TASK_BROKER_ROLE,
@@ -127,7 +128,7 @@ class Packager(ABC):
         """
 
     @abstractmethod
-    def _is_idle(self, key: AgentQueueKey) -> bool:
+    async def _is_idle(self, key: AgentQueueKey) -> bool:
         """Is the destination agent for *key* currently idle (raw status)?
 
         Returns ``False`` when there is no live agent session for the key, so a
@@ -135,17 +136,17 @@ class Packager(ABC):
         """
 
     @abstractmethod
-    def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
+    async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         """Format the payload and enqueue one item. ``None`` if unpackageable."""
 
-    def _should_send(self, batch: _PendingBatch) -> bool:
+    async def _should_send(self, batch: _PendingBatch) -> bool:
         """Evaluate the batching matrix for one key."""
         if not batch.events:
             return False
         if len(batch.events) >= self._batch_size:
             return True
         # Partial batch: wait unless the agent is idle and the floor is reached.
-        if not self._is_idle(batch.key):
+        if not await self._is_idle(batch.key):
             return False
         return batch.oldest_age_s > self._age_threshold_s
 
@@ -179,9 +180,9 @@ class Packager(ABC):
 
     async def _scan_once(self) -> None:
         for batch in self._collect_pending():
-            if self._should_send(batch):
+            if await self._should_send(batch):
                 try:
-                    self._flush(batch)
+                    await self._flush(batch)
                 except Exception:
                     _logger.exception(
                         "packager %s failed to flush %s",
@@ -189,11 +190,11 @@ class Packager(ABC):
                         batch.key,
                     )
 
-    def scan_once_sync(self) -> None:
-        """Run one scan synchronously (tests only)."""
+    async def scan_once(self) -> None:
+        """Run one scan (tests can await this directly)."""
         for batch in self._collect_pending():
-            if self._should_send(batch):
-                self._flush(batch)
+            if await self._should_send(batch):
+                await self._flush(batch)
 
 
 # ── Broker packager ────────────────────────────────
@@ -225,6 +226,8 @@ class BrokerPackager(Packager):
         conversation_store: ConversationStore | None = None,
         agent_store: AgentStore | None = None,
         host_store: HostStore | None = None,
+        session_creator: Any | None = None,
+        app_state: Any = None,
         poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
         batch_size: int = BROKER_BATCH_MAX_SIZE,
         age_threshold_s: float = DEFAULT_PACKAGER_AGE_THRESHOLD_S,
@@ -245,10 +248,12 @@ class BrokerPackager(Packager):
         self._conversation_store = conversation_store
         self._agent_store = agent_store
         self._host_store = host_store
+        self._session_creator = session_creator
+        self._app_state = app_state
         self._similarity_threshold = similarity_threshold
         self._candidate_limit = candidate_limit
 
-    def _live_broker_conversation_id(self, owner_user_id: str) -> str | None:
+    async def _live_broker_conversation_id(self, owner_user_id: str) -> str | None:
         """Return the owner's live broker conversation, booting one if needed."""
         if (
             self._conversation_store is not None
@@ -256,13 +261,15 @@ class BrokerPackager(Packager):
             and self._host_store is not None
         ):
             try:
-                return ensure_broker_session(
+                return await ensure_broker_session(
                     owner_user_id=owner_user_id,
                     task_role_profile_store=self._task_role_profile_store,
                     user_role_session_store=self._user_role_session_store,
                     conversation_store=self._conversation_store,
                     agent_store=self._agent_store,
                     host_store=self._host_store,
+                    session_creator=self._session_creator,
+                    app_state=self._app_state,
                 )
             except Exception:
                 # One owner's bootstrap must not abort the scan for the rest.
@@ -332,14 +339,14 @@ class BrokerPackager(Packager):
                 )
         return batches
 
-    def _is_idle(self, key: AgentQueueKey) -> bool:
-        conversation_id = self._live_broker_conversation_id(key.owner_user_id)
+    async def _is_idle(self, key: AgentQueueKey) -> bool:
+        conversation_id = await self._live_broker_conversation_id(key.owner_user_id)
         if conversation_id is None:
             return False
         return self._status_reader.status_for(conversation_id) == "idle"
 
-    def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
-        conversation_id = self._live_broker_conversation_id(batch.key.owner_user_id)
+    async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
+        conversation_id = await self._live_broker_conversation_id(batch.key.owner_user_id)
         if conversation_id is None:
             _logger.debug(
                 "broker packager: no live broker for %s; %d events stay in awaiting_grouping",
@@ -440,7 +447,7 @@ class ManagerPackager(Packager):
                 batches.append(_PendingBatch(key=key, events=unclaimed))
         return batches
 
-    def _is_idle(self, key: AgentQueueKey) -> bool:
+    async def _is_idle(self, key: AgentQueueKey) -> bool:
         if key.scope_id is None:
             return False
         task = self._task_store.get(key.scope_id)
@@ -448,7 +455,7 @@ class ManagerPackager(Packager):
             return False
         return self._status_reader.status_for(task.manager_conversation_id) == "idle"
 
-    def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
+    async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         if batch.key.scope_id is None:
             return None
         task = self._task_store.get(batch.key.scope_id)

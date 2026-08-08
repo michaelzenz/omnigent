@@ -131,7 +131,7 @@ async def test_full_batch_sends_regardless_of_agent_state(manager_setup: dict) -
 
     for i in range(3):
         _routed_event(manager_setup, seed=f"evt{i}")
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))) == 1
 
@@ -144,7 +144,7 @@ async def test_partial_batch_waits_when_agent_busy(manager_setup: dict) -> None:
     packager._age_threshold_s = -1.0  # age floor would otherwise force a send
 
     _routed_event(manager_setup, seed="evt")
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"])) == []
 
@@ -157,7 +157,7 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(manager_setup: dic
     packager._age_threshold_s = -1.0  # oldest age > 0 immediately
 
     _routed_event(manager_setup, seed="evt")
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))
     assert len(items) == 1
@@ -172,7 +172,7 @@ async def test_partial_batch_waits_when_idle_but_young(manager_setup: dict) -> N
     packager._age_threshold_s = 3600  # far above any real age
 
     _routed_event(manager_setup, seed="evt")
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"])) == []
 
@@ -185,8 +185,8 @@ async def test_claimed_events_are_not_repackaged(manager_setup: dict) -> None:
     packager._age_threshold_s = -1.0
 
     _routed_event(manager_setup, seed="evt")
-    packager.scan_once_sync()  # packages it
-    packager.scan_once_sync()  # should not duplicate
+    await packager.scan_once()  # packages it
+    await packager.scan_once()  # should not duplicate
 
     assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))) == 1
 
@@ -201,7 +201,7 @@ async def test_reconciled_events_are_filtered(manager_setup: dict) -> None:
 
     event_id = _routed_event(manager_setup, seed="reconciled")
     event_store.update_event(event_id, state="reconciled")
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"])) == []
 
@@ -223,7 +223,7 @@ async def test_no_manager_conversation_holds_events(manager_setup: dict) -> None
         owner_user_id=manager_setup["owner"],
     )
     _routed_event(manager_setup, seed="orphan_evt", task_id=orphan_task_id)
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(manager_setup["owner"], orphan_task_id)) == []
 
@@ -252,7 +252,7 @@ async def test_worker_execution_finished_event_is_packaged(manager_setup: dict) 
         title="Worker execution succeeded for item 'Fix login'",
         payload=payload,
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))
     assert len(items) == 1
@@ -288,7 +288,7 @@ async def test_events_grouped_by_task_id(manager_setup: dict) -> None:
     _routed_event(manager_setup, seed="a1")
     _routed_event(manager_setup, seed="a2")
     _routed_event(manager_setup, seed="b1", task_id=second_task_id)
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     a_items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))
     b_items = queue_store.list_items(_key(manager_setup["owner"], second_task_id))

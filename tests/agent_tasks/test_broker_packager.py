@@ -145,6 +145,17 @@ def _lazy_packager(
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
+
+    async def _mock_session_creator(*, body, request, user_id, **kwargs):
+        return conversation_store.create_conversation(
+            title=body.title or "Task broker",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+        )
+
+    from types import SimpleNamespace
+
     packager = BrokerPackager(
         store=queue_store,
         task_event_store=SqlAlchemyTaskEventStore(db_uri),
@@ -155,6 +166,8 @@ def _lazy_packager(
         conversation_store=conversation_store,
         agent_store=agent_store,
         host_store=host_store,
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
         age_threshold_s=-1.0,
         batch_size=10,
     )
@@ -175,7 +188,7 @@ async def test_packager_boots_broker_session_on_demand(db_uri: str, tmp_path: Pa
         state="awaiting_grouping",
         owner_user_id="__anonymous__",
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert profile_store.get(TASK_BROKER_ROLE) is not None
     session = session_store.get("__anonymous__", TASK_BROKER_ROLE)
@@ -200,7 +213,7 @@ async def test_packager_leaves_events_queued_without_a_live_host(
         state="awaiting_grouping",
         owner_user_id="__anonymous__",
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert profile_store.get(TASK_BROKER_ROLE) is None
     assert session_store.get("__anonymous__", TASK_BROKER_ROLE) is None
@@ -223,7 +236,7 @@ async def test_full_batch_sends_regardless_of_agent_state(broker_setup: dict) ->
             state="awaiting_grouping",
             owner_user_id=broker_setup["user_id"],
         )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert len(queue_store.list_items(_key(broker_setup["user_id"]))) == 1
 
@@ -243,7 +256,7 @@ async def test_partial_batch_waits_when_agent_busy(broker_setup: dict) -> None:
         state="awaiting_grouping",
         owner_user_id=broker_setup["user_id"],
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(broker_setup["user_id"])) == []
 
@@ -263,7 +276,7 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(broker_setup: dict
         state="awaiting_grouping",
         owner_user_id=broker_setup["user_id"],
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
@@ -285,7 +298,7 @@ async def test_partial_batch_waits_when_idle_but_young(broker_setup: dict) -> No
         state="awaiting_grouping",
         owner_user_id=broker_setup["user_id"],
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(broker_setup["user_id"])) == []
 
@@ -315,7 +328,7 @@ async def test_stall_via_ingress_is_picked_up_by_poll(broker_setup: dict) -> Non
     )
     assert updated.state == "awaiting_grouping"
     assert updated.owner_user_id == broker_setup["user_id"]
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
@@ -337,8 +350,8 @@ async def test_claimed_events_are_not_repackaged(broker_setup: dict) -> None:
         state="awaiting_grouping",
         owner_user_id=broker_setup["user_id"],
     )
-    packager.scan_once_sync()  # packages it
-    packager.scan_once_sync()  # should not duplicate
+    await packager.scan_once()  # packages it
+    await packager.scan_once()  # should not duplicate
 
     assert len(queue_store.list_items(_key(broker_setup["user_id"]))) == 1
 
@@ -359,7 +372,7 @@ async def test_stale_events_routed_away_are_filtered(broker_setup: dict) -> None
         owner_user_id=broker_setup["user_id"],
     )
     event_store.update_event(event.id, state="routed")
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key(broker_setup["user_id"])) == []
 
@@ -377,7 +390,7 @@ async def test_no_live_broker_holds_events(broker_setup: dict) -> None:
         state="awaiting_grouping",
         owner_user_id="nobody",
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     assert queue_store.list_items(_key("nobody")) == []
 
@@ -420,7 +433,7 @@ async def test_orphan_session_event_is_packaged_like_any_stall(
         workspace="/tmp/mystery",
     )
     await enqueue_orphan_session(conv.id, owner_user_id=broker_setup["user_id"])
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
@@ -529,7 +542,7 @@ async def test_similar_events_packaged_into_one_notice_with_candidates(
             owner_user_id=broker_setup["user_id"],
             tags=[*shared, EventTag(tag_type="severity", tag=sev)],
         )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
@@ -577,7 +590,7 @@ async def test_orphan_is_isolated_from_routed_events(broker_setup: dict) -> None
         workspace="/tmp/mystery",
     )
     await enqueue_orphan_session(conv.id, owner_user_id=broker_setup["user_id"])
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 2
@@ -613,7 +626,7 @@ async def test_cluster_larger_than_batch_size_is_capped_and_defers_rest(
             owner_user_id=broker_setup["user_id"],
             tags=tags,
         )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
@@ -621,7 +634,7 @@ async def test_cluster_larger_than_batch_size_is_capped_and_defers_rest(
     # Capped at batch_size=2; one event deferred.
     assert len(payload["clusters"][0]["events"]) == 2
     # The deferred event is still awaiting_grouping and ships on the next poll.
-    packager.scan_once_sync()
+    await packager.scan_once()
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 2
     second = json.loads(items[1].payload)
@@ -652,7 +665,7 @@ async def test_small_clusters_fill_into_one_notice(broker_setup: dict) -> None:
         owner_user_id=broker_setup["user_id"],
         tags=[EventTag(tag_type="repo", tag="y")],
     )
-    packager.scan_once_sync()
+    await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
