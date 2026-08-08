@@ -16,8 +16,8 @@ from omnigent.entities import AgentQueueItem, AgentQueueKey
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
-    SqlAlchemyTaskRoleProfileStore,
+from omnigent.stores.user_role_session_store.sqlalchemy_store import (
+    SqlAlchemyUserRoleSessionStore,
 )
 
 
@@ -52,7 +52,7 @@ def _item(
 def handler_setup(db_uri: str) -> dict:
     agent_store = SqlAlchemyAgentStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
-    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
     manager_agent_id = generate_agent_id()
     agent_store.create(
@@ -65,17 +65,10 @@ def handler_setup(db_uri: str) -> dict:
         workspace="/tmp/broker",
     )
     user_id = "user-1"
-    profile_store.upsert(
-        user_id,
-        "broker",
-        agent_profile_id=manager_agent_id,
-        conversation_id=conv.id,
-        host_id=_uid("host"),
-        workspace="/tmp/broker",
-    )
+    session_store.set_conversation(user_id, TASK_BROKER_ROLE, conv.id)
     handler = BrokerDispatchHandler(
         store=queue_store,
-        task_role_profile_store=profile_store,
+        user_role_session_store=session_store,
         conversation_store=conversation_store,
         runner_router=None,
     )
@@ -83,7 +76,7 @@ def handler_setup(db_uri: str) -> dict:
         "handler": handler,
         "queue_store": queue_store,
         "conversation_store": conversation_store,
-        "profile_store": profile_store,
+        "session_store": session_store,
         "agent_store": agent_store,
         "conv_id": conv.id,
         "user_id": user_id,
@@ -112,7 +105,7 @@ async def test_resolve_target_caches_conversation_on_queue(handler_setup: dict) 
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_fails_without_profile(handler_setup: dict) -> None:
+async def test_resolve_target_fails_without_session(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
     key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id="nobody")
     with pytest.raises(DispatchFailed):
@@ -122,20 +115,10 @@ async def test_resolve_target_fails_without_profile(handler_setup: dict) -> None
 @pytest.mark.asyncio
 async def test_resolve_target_fails_when_conversation_gone(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
-    agent_store: SqlAlchemyAgentStore = handler_setup["agent_store"]
-    profile_store: SqlAlchemyTaskRoleProfileStore = handler_setup["profile_store"]
+    session_store: SqlAlchemyUserRoleSessionStore = handler_setup["session_store"]
     user_id = "user-2"
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-manager-agent-2", bundle_location="test:///b")
-    # Profile points at a conversation that does not exist.
-    profile_store.upsert(
-        user_id,
-        "broker",
-        agent_profile_id=agent_id,
-        conversation_id=_uid("conv_missing"),
-        host_id=_uid("h"),
-        workspace="/tmp",
-    )
+    # The binding points at a conversation that does not exist.
+    session_store.set_conversation(user_id, TASK_BROKER_ROLE, _uid("conv_missing"))
     key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=user_id)
     with pytest.raises(DispatchFailed):
         await handler.resolve_target(_item(key))

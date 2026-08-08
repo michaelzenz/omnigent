@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { TaskWorkerRow, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { isEditableItemState, isExecutionEditable, visibleWorkerRows } from "./taskCardUtils";
 import { TaskCardItemEditor } from "./TaskCardItemEditor";
@@ -22,18 +21,14 @@ function rowTitle(row: TaskWorkerRow): string {
 interface TaskCardWorkerRowsProps {
   taskId: string;
   rows: TaskWorkerRow[];
-  workerAgentIds: string[];
   workerLanes: TaskWorkerLane[];
-  agents: AvailableAgent[];
   defaultModel: string;
 }
 
 export function TaskCardWorkerRows({
   taskId,
   rows,
-  workerAgentIds,
   workerLanes,
-  agents,
   defaultModel,
 }: TaskCardWorkerRowsProps) {
   const visibleRows = visibleWorkerRows(rows);
@@ -99,9 +94,7 @@ export function TaskCardWorkerRows({
                       <TaskCardItemEditor
                         taskId={taskId}
                         item={row.item}
-                        workerAgentIds={workerAgentIds}
                         workerLanes={workerLanes}
-                        agents={agents}
                         defaultModel={defaultModel}
                         mode={
                           row.item.state === "awaiting_user_ack"

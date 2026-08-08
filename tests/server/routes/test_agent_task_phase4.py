@@ -14,12 +14,17 @@ from omnigent.agent_tasks.completion import (
     notify_worker_session_status,
 )
 from omnigent.db.utils import generate_agent_id
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+
+WORKER_ROLE_SLUG = "investigator"
+WORKER_ROLE_KEY = f"worker:{WORKER_ROLE_SLUG}"
 
 
 def _uid(seed: str) -> str:
@@ -40,6 +45,23 @@ async def worker_agent_id(db_uri: str) -> str:
     return agent_id
 
 
+@pytest_asyncio.fixture()
+async def worker_role_key(client: httpx.AsyncClient, worker_agent_id: str) -> str:
+    """Register the custom worker role the phase 4 items are dispatched under."""
+    resp = await client.post(
+        "/v1/agent-tasks/roles/worker",
+        json={"slug": WORKER_ROLE_SLUG, "agent_profile_id": worker_agent_id},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["role"]
+
+
+def _seed_live_host(db_uri: str, seed: str) -> str:
+    host_id = _uid(seed)
+    HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
+    return host_id
+
+
 def _bootstrap_body() -> dict[str, str]:
     return {
         "host_id": _uid("host_test"),
@@ -49,20 +71,17 @@ def _bootstrap_body() -> dict[str, str]:
     }
 
 
-def _item_payload(worker_profile_id: str) -> dict[str, str]:
+def _item_payload(worker_role_key: str) -> dict[str, str]:
     return {
         "title": "Investigate failure",
         "instructions": "Read logs and summarize the root cause.",
-        "worker_profile_id": worker_profile_id,
-        **_bootstrap_body(),
+        "worker_role_key": worker_role_key,
     }
 
 
-async def _bootstrapped_task(client: httpx.AsyncClient, task_manager_agent_id: str) -> str:
-    created = await client.post(
-        "/v1/agent-tasks",
-        json={"agent_profile_id": task_manager_agent_id, "title": "Phase 4 task"},
-    )
+async def _bootstrapped_task(client: httpx.AsyncClient, db_uri: str) -> str:
+    _seed_live_host(db_uri, "phase4-host")
+    created = await client.post("/v1/agent-tasks", json={"title": "Phase 4 task"})
     task_id = created.json()["id"]
     bootstrap = await client.post(
         f"/v1/agent-tasks/{task_id}/bootstrap",
@@ -74,12 +93,11 @@ async def _bootstrapped_task(client: httpx.AsyncClient, task_manager_agent_id: s
 
 async def test_dispatch_and_dashboard(
     client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-    worker_agent_id: str,
+    worker_role_key: str,
     db_uri: str,
 ) -> None:
     """Dispatch creates an execution visible on the task dashboard."""
-    task_id = await _bootstrapped_task(client, task_manager_agent_id)
+    task_id = await _bootstrapped_task(client, db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     event_id = _uid("routed_event")
     event_store.create_event(
@@ -93,8 +111,8 @@ async def test_dispatch_and_dashboard(
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
-            **_item_payload(worker_agent_id),
-            "state": "approved",
+            **_item_payload(worker_role_key),
+            "state": "queued",
             "event_ids": [event_id],
         },
     )
@@ -115,14 +133,15 @@ async def test_dispatch_and_dashboard(
     dashboard = dashboard_resp.json()
     assert dashboard["derived"]["has_running_workers"] is True
     assert len(dashboard["workers"]) == 1
-    assert dashboard["workers"][0]["profile_id"] == worker_agent_id
+    assert dashboard["workers"][0]["kind"] == "managed"
+    assert dashboard["workers"][0]["role_key"] == worker_role_key
+    assert dashboard["workers"][0]["agent_profile_id"] is None
     assert dashboard["workers"][0]["executions"][0]["task_item_id"] == item_id
 
 
 async def test_item_accept_enqueues_worker(
     client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-    worker_agent_id: str,
+    worker_role_key: str,
     db_uri: str,
 ) -> None:
     """Accepting a task item moves it to ``queued`` and enqueues a dispatch."""
@@ -131,11 +150,11 @@ async def test_item_accept_enqueues_worker(
         SqlAlchemyAgentQueueStore,
     )
 
-    task_id = await _bootstrapped_task(client, task_manager_agent_id)
+    task_id = await _bootstrapped_task(client, db_uri)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
-            **_item_payload(worker_agent_id),
+            **_item_payload(worker_role_key),
             "submit_for_user_ack": True,
         },
     )
@@ -165,8 +184,7 @@ async def test_item_accept_enqueues_worker(
 
 async def test_item_edit_and_dispatch_enqueues(
     client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-    worker_agent_id: str,
+    worker_role_key: str,
     db_uri: str,
 ) -> None:
     """User-edited item payload is enqueued for dispatch (not launched)."""
@@ -177,11 +195,11 @@ async def test_item_edit_and_dispatch_enqueues(
         SqlAlchemyAgentQueueStore,
     )
 
-    task_id = await _bootstrapped_task(client, task_manager_agent_id)
+    task_id = await _bootstrapped_task(client, db_uri)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
-            **_item_payload(worker_agent_id),
+            **_item_payload(worker_role_key),
             "submit_for_user_ack": True,
         },
     )
@@ -212,15 +230,15 @@ async def test_item_edit_and_dispatch_enqueues(
 
 async def test_patch_queued_task_item(
     client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-    worker_agent_id: str,
+    worker_role_key: str,
+    db_uri: str,
 ) -> None:
     """Queued work items can be edited before dispatch."""
-    task_id = await _bootstrapped_task(client, task_manager_agent_id)
+    task_id = await _bootstrapped_task(client, db_uri)
     item_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={
-            **_item_payload(worker_agent_id),
+            **_item_payload(worker_role_key),
             "state": "queued",
         },
     )
@@ -255,7 +273,7 @@ async def test_worker_completion_hook(
     task_id = _uid("task_complete")
     event_id = _uid("event_complete")
     task_item_id = _uid("item_complete")
-    task_store.create(task_id, "Completion task", agent_profile_id=task_manager_agent_id)
+    task_store.create(task_id, "Completion task")
     manager_conv = conversation_store.create_conversation(
         title="Manager",
         agent_id=task_manager_agent_id,
@@ -270,7 +288,11 @@ async def test_worker_completion_hook(
         task_id=task_id,
         state="routed",
     )
-    worker = worker_store.create_worker(_uid("worker_complete"), task_id, worker_agent_id)
+    worker = worker_store.create_worker(
+        _uid("worker_complete"),
+        task_id,
+        role_key=WORKER_ROLE_KEY,
+    )
     item_store.create_item(
         task_item_id,
         task_id,

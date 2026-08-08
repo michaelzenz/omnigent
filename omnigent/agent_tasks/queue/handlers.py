@@ -35,6 +35,7 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
@@ -86,34 +87,35 @@ class BrokerDispatchHandler(RoleDispatchHandler):
     def __init__(
         self,
         store: AgentQueueStore,
-        task_role_profile_store: TaskRoleProfileStore,
+        user_role_session_store: UserRoleSessionStore,
         conversation_store: ConversationStore,
         runner_router: RunnerRouter | None,
     ) -> None:
         self._store = store
-        self._task_role_profile_store = task_role_profile_store
+        self._user_role_session_store = user_role_session_store
         self._conversation_store = conversation_store
         self._runner_router = runner_router
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
-        profile = self._task_role_profile_store.get(
+        session = self._user_role_session_store.get(
             item.key.owner_user_id,
             TASK_BROKER_ROLE,
         )
-        if profile is None or profile.conversation_id is None:
+        if session is None or session.conversation_id is None:
             raise DispatchFailed(f"no live broker for user {item.key.owner_user_id}")
+        conversation_id = session.conversation_id
         conv = await asyncio.to_thread(
             self._conversation_store.get_conversation,
-            profile.conversation_id,
+            conversation_id,
         )
         if conv is None:
-            raise DispatchFailed(f"broker conversation {profile.conversation_id} missing")
+            raise DispatchFailed(f"broker conversation {conversation_id} missing")
         # Cache the target so the status feed can find this queue from the
         # session id alone when the broker goes idle.
-        self._store.set_queue_conversation(item.key, profile.conversation_id)
+        self._store.set_queue_conversation(item.key, conversation_id)
         harness = conv.harness_override or "cursor-native"
         return DispatchTarget(
-            session_id=profile.conversation_id,
+            session_id=conversation_id,
             harness=harness,
         )
 
@@ -208,7 +210,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         worker_store: WorkerStore,
         conversation_store: ConversationStore,
         agent_store: AgentStore,
-        task_role_profile_store: TaskRoleProfileStore | None,
+        task_role_profile_store: TaskRoleProfileStore,
         runner_router: RunnerRouter | None,
         ensure_runner: EnsureRunner = None,
     ) -> None:
@@ -265,21 +267,17 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             raise DispatchFailed(f"task item {item.source_ids[0]} not found")
 
         payload = parse_dispatch_payload(item.payload)
-        manager_role_profile = None
-        worker_role_profile = None
-        if self._task_role_profile_store is not None:
-            manager_role_profile = await asyncio.to_thread(
-                load_manager_role_profile,
-                self._task_role_profile_store,
-                item.key.owner_user_id,
-                task,
-            )
-            worker_role_profile = await asyncio.to_thread(
-                load_worker_role_profile,
-                self._task_role_profile_store,
-                item.key.owner_user_id,
-                task,
-            )
+        manager_role_profile = await asyncio.to_thread(
+            load_manager_role_profile,
+            self._task_role_profile_store,
+            task,
+        )
+        worker_role_profile = await asyncio.to_thread(
+            load_worker_role_profile,
+            self._task_role_profile_store,
+            task,
+            worker,
+        )
 
         def _opt_str(key: str) -> str | None:
             value = payload.get(key)
@@ -289,9 +287,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             return ensure_task_manager_for_dispatch(
                 task=task,
                 task_store=self._task_store,
-                task_event_store=self._task_event_store,
                 conversation_store=self._conversation_store,
-                agent_store=self._agent_store,
                 role_profile=manager_role_profile,
                 host_id=_opt_str("host_id"),
                 workspace=_opt_str("workspace"),
@@ -301,7 +297,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
 
         task = await asyncio.to_thread(_bootstrap)
         params = resolve_dispatch_params(
-            payload={**payload, "worker_profile_id": worker.profile_id},
+            payload=payload,
             role_profile=worker_role_profile or manager_role_profile,
             host_id=_opt_str("host_id"),
             workspace=_opt_str("workspace"),

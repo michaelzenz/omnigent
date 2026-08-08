@@ -7,20 +7,20 @@ handler — the user chats with it directly. Only session bootstrap lives here.
 
 from __future__ import annotations
 
-from omnigent.agent_tasks.agent_builtins import (
-    TASK_SECRETARY_ROLE,
-    resolve_role_agent_profile_id,
-)
+import logging
+
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.constants import resolve_task_harness
 from omnigent.agent_tasks.session_labels import ROLE_LABEL, SECRETARY_ROLE_VALUE
 from omnigent.db.utils import generate_task_id
 from omnigent.entities import MessageData, NewConversationItem
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.native_coding_agents import native_coding_agent_for_harness
 from omnigent.runtime import get_agent_cache
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
+
+_logger = logging.getLogger(__name__)
 
 SECRETARY_MANUAL_PATH = "docs/agent-tasks/TASK_SECRETARY.md"
 API_REFERENCE_PATH = "docs/agent-tasks/API_REFERENCE.md"
@@ -45,18 +45,6 @@ def seed_secretary_prompt(conversation_store: ConversationStore, conversation_id
         ),
     )
     conversation_store.append(conversation_id, [item])
-
-
-def resolve_secretary_profile_id(
-    agent_store: AgentStore,
-    profile: UserTaskRoleProfile,
-) -> str:
-    """Prefer the packaged task-secretary builtin over a stale profile id."""
-    return resolve_role_agent_profile_id(
-        agent_store,
-        TASK_SECRETARY_ROLE,
-        fallback_agent_id=profile.agent_profile_id,
-    )
 
 
 def apply_secretary_session_labels(
@@ -84,12 +72,18 @@ def _secretary_terminal_launch_args(
     agent = agent_store.get(agent_id)
     if agent is None:
         return None
-    loaded = get_agent_cache().load(
-        agent.id,
-        agent.bundle_location,
-        expand_env=agent.session_id is None,
-    )
-    if loaded.spec is not None:
+    # Launch args are an optimisation; a role may point at an agent whose bundle
+    # is missing or unreadable, and that must not fail the session bootstrap.
+    try:
+        loaded = get_agent_cache().load(
+            agent.id,
+            agent.bundle_location,
+            expand_env=agent.session_id is None,
+        )
+    except (KeyError, OSError, RuntimeError):
+        _logger.warning("secretary: could not load spec for agent %s", agent_id, exc_info=True)
+        loaded = None
+    if loaded is not None and loaded.spec is not None:
         return _derive_terminal_launch_args_from_spec(loaded.spec)
     # A profile may override the harness away from the packaged default.
     if resolve_task_harness(harness) == "claude-native":
@@ -101,26 +95,25 @@ def bootstrap_secretary_conversation(
     *,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    profile: UserTaskRoleProfile,
+    profile: TaskRoleProfile,
     seed_prompt: bool = True,
 ) -> str:
     """Create a lightweight secretary conversation with harness/model defaults."""
     params = resolve_bootstrap_params(
         host_id=profile.host_id,
         workspace=profile.workspace,
-        harness=resolve_task_harness(profile.harness),
+        harness=profile.harness,
         model=profile.model,
         role_profile=profile,
     )
-    agent_id = resolve_secretary_profile_id(agent_store, profile)
     terminal_launch_args = _secretary_terminal_launch_args(
         agent_store,
-        agent_id,
+        params.agent_profile_id,
         harness=params.harness,
     )
     conversation = conversation_store.create_conversation(
         title="Task secretary",
-        agent_id=agent_id,
+        agent_id=params.agent_profile_id,
         host_id=params.host_id,
         workspace=params.workspace,
         terminal_launch_args=terminal_launch_args,

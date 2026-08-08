@@ -6,7 +6,8 @@ import uuid
 
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.executions import start_execution_for_item
-from omnigent.db.utils import generate_agent_id, now_epoch
+from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
+from omnigent.db.utils import now_epoch
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -23,13 +24,10 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
     item_store = SqlAlchemyTaskItemStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
-    manager_id = generate_agent_id()
-    worker_profile_id = generate_agent_id()
     task_id = _uid("task_inbox")
     task_store.create(
         task_id,
         "Demo task",
-        agent_profile_id=manager_id,
         state="active",
         manager_conversation_id=_uid("mgr_conv"),
     )
@@ -43,7 +41,11 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
         state="awaiting_user_ack",
         instructions="No worker yet",
     )
-    worker = worker_store.create_worker(_uid("worker_slot"), task_id, worker_profile_id)
+    worker = worker_store.create_worker(
+        _uid("worker_slot"),
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+    )
     item_store.create_item(
         _uid("assigned"),
         task_id,
@@ -64,12 +66,10 @@ def test_dashboard_includes_task_assets(db_uri: str) -> None:
     event_store = SqlAlchemyTaskEventStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     asset_store = SqlAlchemyTaskAssetStore(db_uri)
-    manager_id = generate_agent_id()
     task_id = _uid("task_assets")
     task_store.create(
         task_id,
         "Asset task",
-        agent_profile_id=manager_id,
         state="active",
         manager_conversation_id=_uid("mgr_conv_assets"),
     )
@@ -100,20 +100,21 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     item_store = SqlAlchemyTaskItemStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
-    manager_id = generate_agent_id()
-    worker_profile_id = generate_agent_id()
     task_id = _uid("task_lane")
     task_store.create(
         task_id,
         "Lane task",
-        agent_profile_id=manager_id,
         state="active",
         manager_conversation_id=_uid("mgr_conv2"),
     )
     task = task_store.get(task_id)
     assert task is not None
 
-    worker = worker_store.create_worker(_uid("worker_lane"), task_id, worker_profile_id)
+    worker = worker_store.create_worker(
+        _uid("worker_lane"),
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+    )
     running_item = item_store.create_item(
         _uid("running_item"),
         task_id,

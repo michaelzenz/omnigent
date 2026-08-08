@@ -6,11 +6,20 @@ import pytest
 
 from omnigent.agent_tasks.role_keys import (
     MANAGER_DEFAULT_ROLE_KEY,
+    ROLE_KIND_BROKER,
+    ROLE_KIND_EXTERNAL,
+    ROLE_KIND_MANAGER,
+    ROLE_KIND_SECRETARY,
+    ROLE_KIND_WORKER,
+    TASK_BROKER_ROLE_KEY,
+    TASK_SECRETARY_ROLE_KEY,
     WORKER_DEFAULT_ROLE_KEY,
     is_deletable_role_key,
+    is_singleton_role_key,
     is_system_role_key,
     manager_role_key_from_slug,
     normalize_role_profile_key,
+    role_kind_from_key,
     role_profile_title,
     worker_role_key_from_slug,
 )
@@ -49,3 +58,20 @@ def test_reserved_template_slug_rejected() -> None:
 def test_normalize_accepts_template_roles() -> None:
     assert normalize_role_profile_key("manager:default") == MANAGER_DEFAULT_ROLE_KEY
     assert normalize_role_profile_key("worker:default") == WORKER_DEFAULT_ROLE_KEY
+
+
+def test_role_kind_from_key_covers_every_family() -> None:
+    assert role_kind_from_key(TASK_BROKER_ROLE_KEY) == ROLE_KIND_BROKER
+    assert role_kind_from_key(TASK_SECRETARY_ROLE_KEY) == ROLE_KIND_SECRETARY
+    assert role_kind_from_key(MANAGER_DEFAULT_ROLE_KEY) == ROLE_KIND_MANAGER
+    assert role_kind_from_key(WORKER_DEFAULT_ROLE_KEY) == ROLE_KIND_WORKER
+    # A key outside the glossary belongs to no template family.
+    assert role_kind_from_key("adopted-session") == ROLE_KIND_EXTERNAL
+
+
+def test_only_user_facing_roles_are_singletons() -> None:
+    """Broker and secretary sessions are per-user; task roles are per task/lane."""
+    assert is_singleton_role_key(TASK_BROKER_ROLE_KEY)
+    assert is_singleton_role_key(TASK_SECRETARY_ROLE_KEY)
+    assert not is_singleton_role_key(MANAGER_DEFAULT_ROLE_KEY)
+    assert not is_singleton_role_key(WORKER_DEFAULT_ROLE_KEY)

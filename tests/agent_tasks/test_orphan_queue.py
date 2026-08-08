@@ -135,7 +135,6 @@ async def test_propose_adoption_reconciles_orphan_event(orphan_setup: dict) -> N
     event_store: SqlAlchemyTaskEventStore = orphan_setup["event_store"]
     task_store: SqlAlchemyTaskStore = orphan_setup["task_store"]
     conversation_store: SqlAlchemyConversationStore = orphan_setup["conversation_store"]
-    agent_store: SqlAlchemyAgentStore = orphan_setup["agent_store"]
     worker_store: SqlAlchemyWorkerStore = orphan_setup["worker_store"]
 
     await enqueue_orphan_session(orphan_setup["session_id"], owner_user_id=orphan_setup["owner"])
@@ -149,7 +148,6 @@ async def test_propose_adoption_reconciles_orphan_event(orphan_setup: dict) -> N
     task_store.create(
         task_id,
         "Adopt target",
-        agent_profile_id=orphan_setup["manager_agent_id"],
         owner_user_id=orphan_setup["owner"],
     )
     proposal = propose_session_adoption(
@@ -158,7 +156,6 @@ async def test_propose_adoption_reconciles_orphan_event(orphan_setup: dict) -> N
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
         owner_user_id=orphan_setup["owner"],
     )
     assert proposal.event_type == "session.adoption"

@@ -2,7 +2,6 @@ import type {
   DispatchPayload,
   TaskExecutionSummary,
   TaskItemSummary,
-  TaskWorkerGroup,
   TaskWorkerLane,
 } from "@/lib/agentTasksApi";
 
@@ -96,14 +95,8 @@ export function isTaskCardSparse(dashboard: {
   );
 }
 
-/** Work section scrolls once a task has more than this many worker groups. */
-export const WORKER_GROUP_SCROLL_THRESHOLD = 2;
-
-/** Each worker's task-item list scrolls after this many items (legacy TaskCardWork). */
-export const WORK_ITEM_SCROLL_THRESHOLD = 2;
-
 export interface WorkerOption {
-  workerAgentId: string;
+  workerRoleKey: string;
   model: string;
 }
 
@@ -132,13 +125,6 @@ export function sortExecutions(executions: TaskExecutionSummary[]): TaskExecutio
   });
 }
 
-function workerGroupRank(group: TaskWorkerGroup): number {
-  const statuses = group.executions.map((row) => row.status);
-  if (statuses.some((status) => status === "running")) return 0;
-  if (statuses.some((status) => status === "queued")) return 1;
-  return 2;
-}
-
 /** Folded worker cards show only in-flight executions. */
 export function getFoldedExecutions(executions: TaskExecutionSummary[]): TaskExecutionSummary[] {
   return sortExecutions(executions).filter((execution) => execution.status === "running");
@@ -149,7 +135,7 @@ export function isExecutionEditable(status: string): boolean {
 }
 
 export function findExecution(
-  workers: TaskWorkerGroup[],
+  workers: TaskWorkerLane[],
   executionId: string | null,
 ): TaskExecutionSummary | null {
   if (executionId == null) return null;
@@ -161,52 +147,48 @@ export function findExecution(
   return null;
 }
 
-export function sortWorkerGroups(groups: TaskWorkerGroup[]): TaskWorkerGroup[] {
-  return [...groups].sort((a, b) => workerGroupRank(a) - workerGroupRank(b));
-}
-
-export function profileIdForItem(
+export function roleKeyForItem(
   item: TaskItemSummary,
   workers: TaskWorkerLane[],
 ): string | undefined {
   if (item.worker_id == null) return undefined;
-  return workers.find((lane) => lane.worker_id === item.worker_id)?.profile_id;
+  return workers.find((lane) => lane.worker_id === item.worker_id)?.role_key ?? undefined;
 }
 
 export function buildWorkerOptions(
-  workerAgentIds: string[],
+  workerRoleKeys: string[],
   proposalPayload: DispatchPayload,
   defaultModel: string,
 ): WorkerOption[] {
   const byId = new Map<string, WorkerOption>();
 
-  const add = (workerAgentId: string | undefined, model: string) => {
-    if (!workerAgentId) return;
-    if (byId.has(workerAgentId)) return;
-    byId.set(workerAgentId, { workerAgentId, model });
+  const add = (workerRoleKey: string | undefined, model: string) => {
+    if (!workerRoleKey) return;
+    if (byId.has(workerRoleKey)) return;
+    byId.set(workerRoleKey, { workerRoleKey, model });
   };
 
-  add(proposalPayload.worker_profile_id, proposalPayload.model ?? defaultModel);
-  for (const workerAgentId of workerAgentIds) {
-    add(workerAgentId, defaultModel);
+  add(proposalPayload.worker_role_key, proposalPayload.model ?? defaultModel);
+  for (const workerRoleKey of workerRoleKeys) {
+    add(workerRoleKey, defaultModel);
   }
 
   return Array.from(byId.values());
 }
 
 export function workerOptionLabel(
-  workerAgentId: string,
+  workerRoleKey: string,
   model: string,
-  agentNameById: Map<string, string>,
+  roleTitleByKey: Map<string, string>,
 ): string {
-  const name = agentNameById.get(workerAgentId) ?? workerAgentId;
+  const name = roleTitleByKey.get(workerRoleKey) ?? workerRoleKey;
   return `${name} (${model})`;
 }
 
 export function proposalHasEdits(
   baseline: DispatchPayload & { description?: string },
   current: {
-    workerAgentId: string;
+    workerRoleKey: string;
     title: string;
     description: string;
     instructions: string;
@@ -214,7 +196,7 @@ export function proposalHasEdits(
   },
 ): boolean {
   return (
-    baseline.worker_profile_id !== current.workerAgentId ||
+    baseline.worker_role_key !== current.workerRoleKey ||
     (baseline.title ?? "") !== current.title ||
     (baseline.description ?? "") !== current.description ||
     (baseline.instructions ?? "") !== current.instructions ||

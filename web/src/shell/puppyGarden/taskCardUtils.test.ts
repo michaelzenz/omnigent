@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TaskWorkerLane } from "@/lib/agentTasksApi";
 import {
   buildWorkerOptions,
   getFoldedExecutions,
@@ -196,10 +197,17 @@ describe("taskCardUtils", () => {
     expect(folded.map((row) => row.id)).toEqual(["2"]);
   });
 
-  it("finds execution by id across worker groups", () => {
-    const workers = [
+  it("finds execution by id across worker lanes", () => {
+    const workers: TaskWorkerLane[] = [
       {
-        profile_id: "w1",
+        worker_id: "w1",
+        role_key: "worker:default",
+        agent_profile_id: null,
+        kind: "managed",
+        session_id: null,
+        state: "new",
+        situation: "New",
+        rows: [],
         executions: [
           {
             id: "exec-1",
@@ -230,19 +238,19 @@ describe("taskCardUtils", () => {
 
   it("builds worker options from proposal and task history", () => {
     const options = buildWorkerOptions(
-      ["worker-b"],
-      { worker_profile_id: "worker-a", model: "composer-2.5" },
+      ["worker:reviewer"],
+      { worker_role_key: "worker:default", model: "composer-2.5" },
       "gpt-5",
     );
     expect(options).toEqual([
-      { workerAgentId: "worker-a", model: "composer-2.5" },
-      { workerAgentId: "worker-b", model: "gpt-5" },
+      { workerRoleKey: "worker:default", model: "composer-2.5" },
+      { workerRoleKey: "worker:reviewer", model: "gpt-5" },
     ]);
   });
 
   it("detects proposal edits", () => {
     const baseline = {
-      worker_profile_id: "worker-a",
+      worker_role_key: "worker:default",
       title: "Title",
       description: "",
       instructions: "Do thing",
@@ -250,7 +258,7 @@ describe("taskCardUtils", () => {
     };
     expect(
       proposalHasEdits(baseline, {
-        workerAgentId: "worker-a",
+        workerRoleKey: "worker:default",
         title: "Title",
         description: "",
         instructions: "Do thing",
@@ -259,7 +267,7 @@ describe("taskCardUtils", () => {
     ).toBe(false);
     expect(
       proposalHasEdits(baseline, {
-        workerAgentId: "worker-b",
+        workerRoleKey: "worker:reviewer",
         title: "Title",
         description: "",
         instructions: "Do thing",

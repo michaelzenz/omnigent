@@ -21,7 +21,9 @@ export function buildInboxLane(inboxItems: TaskItemSummary[]): TaskWorkerLane | 
   const count = inboxItems.length;
   return {
     worker_id: INBOX_LANE_ID,
-    profile_id: INBOX_LANE_ID,
+    role_key: null,
+    agent_profile_id: null,
+    kind: "managed",
     session_id: null,
     state: "new",
     situation: count === 1 ? "1 unassigned" : `${count} unassigned`,

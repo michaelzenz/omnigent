@@ -55,7 +55,7 @@ from omnigent.entities.task import (
     TaskTag,
     Worker,
 )
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile, UserRoleSession
 from omnigent.entities.timer import TimerItem
 
 __all__ = [
@@ -103,10 +103,11 @@ __all__ = [
     "TaskEventRoutingAttempt",
     "TaskItem",
     "TaskItemEvent",
+    "TaskRoleProfile",
     "TaskTag",
     "TerminalCommandData",
     "TimerItem",
-    "UserTaskRoleProfile",
+    "UserRoleSession",
     "Worker",
     "filter_resources_by_type",
     "get_resource_by_id",

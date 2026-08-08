@@ -9,13 +9,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import uuid
 from typing import Literal
 
 DEFAULT_BASE = os.environ.get("OMNIGENT_SERVER_URL", "http://127.0.0.1:6767").rstrip("/")
-MANAGER_AGENT_NAME = os.environ.get("SEED_MANAGER_AGENT_NAME", "task-manager")
-WORKER_AGENT_NAME = os.environ.get("SEED_WORKER_AGENT_NAME", "task-worker")
-WORKER2_AGENT_NAME = os.environ.get("SEED_WORKER2_AGENT_NAME", "task-worker")
 HOST_ID = os.environ.get("SEED_HOST_ID", "a443636bf8be4144ad01f31c6c3acb9f")
 WORKSPACE = os.environ.get("SEED_WORKSPACE", os.path.expanduser("~/Project/omnigent-fork"))
 BOOTSTRAP = {
@@ -32,24 +28,29 @@ DISPATCH_WORKER2 = {
 }
 
 
-def _resolve_agent_ids() -> tuple[str, str, str]:
-    listed = _request("GET", "/v1/agents?limit=200")
-    by_name = {row["name"]: row["id"] for row in listed.get("data", [])}
-    manager_id = by_name.get(MANAGER_AGENT_NAME)
-    worker_id = by_name.get(WORKER_AGENT_NAME)
-    worker2_id = by_name.get(WORKER2_AGENT_NAME)
-    missing = [
-        name
-        for name, value in (
-            (MANAGER_AGENT_NAME, manager_id),
-            (WORKER_AGENT_NAME, worker_id),
-            (WORKER2_AGENT_NAME, worker2_id),
+DEFAULT_WORKER_ROLE = "worker:default"
+
+
+def _ensure_worker_role(slug: str, *, title: str) -> str:
+    role = f"worker:{slug}"
+    try:
+        _request(
+            "POST",
+            "/v1/agent-tasks/roles/worker",
+            body={"slug": slug, "title": title},
         )
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(f"Missing agents after server start: {', '.join(missing)}")
-    return manager_id, worker_id, worker2_id
+        print(f"  created worker role {role!r}")
+    except RuntimeError as exc:
+        if "already exists" not in str(exc):
+            raise
+    return role
+
+
+def _resolve_worker_roles() -> tuple[str, str]:
+    """Return two distinct worker glossary roles for lane assignment demos."""
+    worker_role = DEFAULT_WORKER_ROLE
+    worker2_role = _ensure_worker_role("ci-fixer", title="CI Fixer")
+    return worker_role, worker2_role
 
 
 def _request(
@@ -77,14 +78,11 @@ def _request(
         raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def _create_task(
-    title: str, description: str, internal_note: str, *, agent_profile_id: str
-) -> str:
+def _create_task(title: str, description: str, internal_note: str) -> str:
     task = _request(
         "POST",
         "/v1/agent-tasks",
         body={
-            "agent_profile_id": agent_profile_id,
             "title": title,
             "description": description,
             "internal_note": internal_note,
@@ -137,7 +135,6 @@ def _create_task_package(
     instructions: str,
     internal_note: str | None = None,
     event_ids: list[str],
-    agent_profile_id: str,
     asset_urls: list[tuple[str, str]] | None = None,
 ) -> str:
     package = _request(
@@ -145,7 +142,6 @@ def _create_task_package(
         "/v1/agent-tasks/packages",
         body={
             "title": title,
-            "agent_profile_id": agent_profile_id,
             "items": [
                 {
                     "title": title,
@@ -215,7 +211,7 @@ def _create_assigned_inbox_item(
     title: str,
     instructions: str,
     *,
-    worker_profile_id: str,
+    worker_role_key: str,
 ) -> str:
     item = _request(
         "POST",
@@ -224,11 +220,11 @@ def _create_assigned_inbox_item(
             "title": title,
             "instructions": instructions,
             "submit_for_user_ack": True,
-            "worker_profile_id": worker_profile_id,
+            "worker_role_key": worker_role_key,
             **BOOTSTRAP,
         },
     )
-    print(f"  assigned pending {title!r} ({worker_profile_id[:8]}…) → {item['id'][:8]}…")
+    print(f"  assigned pending {title!r} ({worker_role_key}) → {item['id'][:8]}…")
     return item["id"]
 
 
@@ -246,7 +242,7 @@ def _accept_item(item_id: str) -> None:
     print(f"  accepted {item_id[:8]}… → {body.get('state')}")
 
 
-def _seed_rich_ci_task(ci_task: str, *, worker_profile_id: str, worker2_profile_id: str) -> None:
+def _seed_rich_ci_task(ci_task: str, *, worker_role_key: str, worker2_role_key: str) -> None:
     print("Seeding rich CI worker lanes…")
     _create_unassigned_inbox_item(
         ci_task,
@@ -263,13 +259,13 @@ def _seed_rich_ci_task(ci_task: str, *, worker_profile_id: str, worker2_profile_
         ci_task,
         "Fix flaky integration test",
         "Re-run agent-tasks integration suite and capture logs.",
-        worker_profile_id=worker_profile_id,
+        worker_role_key=worker_role_key,
     )
     _create_assigned_inbox_item(
         ci_task,
         "Update changelog entry",
         "Add a routing-board entry to CHANGELOG after UI lands.",
-        worker_profile_id=worker2_profile_id,
+        worker_role_key=worker2_role_key,
     )
 
     running = _request(
@@ -306,8 +302,8 @@ def _seed_rich_ci_task(ci_task: str, *, worker_profile_id: str, worker2_profile_
 
     _seed_dispatch_failed_items(
         ci_task,
-        worker_profile_id=worker_profile_id,
-        worker2_profile_id=worker2_profile_id,
+        worker_role_key=worker_role_key,
+        worker2_role_key=worker2_role_key,
     )
 
     history_specs = [
@@ -384,30 +380,30 @@ def _create_parked_item(
 def _seed_dispatch_failed_items(
     task_id: str,
     *,
-    worker_profile_id: str,
-    worker2_profile_id: str,
+    worker_role_key: str,
+    worker2_role_key: str,
 ) -> None:
     print("Seeding dispatch-failed worker lanes…")
     specs = [
         (
             "Spawn review worker (dispatch failed)",
             "Runner never accepted the dispatch — retry after host reconnects.",
-            {"worker_profile_id": worker2_profile_id, **BOOTSTRAP},
+            {"worker_role_key": worker2_role_key, **BOOTSTRAP},
         ),
         (
             "Start codecov fixer (dispatch failed)",
             "Dispatch timed out waiting for an idle worker slot.",
-            {"worker_profile_id": worker_profile_id, **BOOTSTRAP},
+            {"worker_role_key": worker_role_key, **BOOTSTRAP},
         ),
         (
             "Route security scan (dispatch failed)",
             "Host reported harness unavailable during dispatch.",
-            {"worker_profile_id": worker2_profile_id, **BOOTSTRAP},
+            {"worker_role_key": worker2_role_key, **BOOTSTRAP},
         ),
         (
             "Enqueue nightly flake repro (dispatch failed)",
             "Queue halted after the previous dispatch failure on this lane.",
-            {"worker_profile_id": worker_profile_id, **BOOTSTRAP},
+            {"worker_role_key": worker_role_key, **BOOTSTRAP},
         ),
     ]
     for title, instructions, dispatch in specs:
@@ -444,28 +440,22 @@ def _finish_execution_for_item(item_id: str, *, summary: str) -> None:
     item_store.update_item(item_id, state="done")
 
 
-def _demo_worker_id(index: int) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_DNS, f"seed-twenty-workers-{index:02d}").hex
-
-
 # Worker 01 → cb7784…; used for inner-scroll / lane row load tests.
 _HEAVY_WORKER_INDEX = 1
 _HEAVY_WORKER_ITEM_COUNT = 10
 _LOAD_TEST_ASSET_COUNT = 40
 
 
-def _seed_twenty_worker_task(*, agent_profile_id: str) -> str:
+def _seed_twenty_worker_task() -> str:
     """Create one active task with twenty distinct worker lanes."""
     print("Seeding 20-worker load test task…")
     task_id = _create_task(
         "20-worker load test",
         "Scroll and accordion stress test with twenty worker lanes",
         "load-test\nworkers\nui",
-        agent_profile_id=agent_profile_id,
     )
     for index in range(1, 21):
-        worker_id = _demo_worker_id(index)
-        dispatch = {**BOOTSTRAP, "worker_profile_id": worker_id}
+        dispatch = {**BOOTSTRAP, "worker_role_key": DEFAULT_WORKER_ROLE}
         if index == _HEAVY_WORKER_INDEX:
             running = _request(
                 "POST",
@@ -509,13 +499,10 @@ def _seed_twenty_worker_task(*, agent_profile_id: str) -> str:
     dash = _request("GET", f"/v1/agent-tasks/{task_id}/dashboard")
     workers = len(dash.get("workers", []))
     assets = len(dash.get("assets", []))
-    heavy_lane = next(
-        (
-            lane
-            for lane in dash.get("workers", [])
-            if lane.get("worker_agent_id", "").startswith("cb7784")
-        ),
-        None,
+    heavy_lane = max(
+        dash.get("workers", []),
+        key=lambda lane: len(lane.get("rows", [])),
+        default=None,
     )
     heavy_rows = len(heavy_lane.get("rows", [])) if heavy_lane else 0
     print(
@@ -542,37 +529,34 @@ def _dispatch_item_with(dispatch: dict, item_id: str) -> None:
 def main() -> int:
     host_header = {"X-Omnigent-Host-Id": HOST_ID}
     offset_base = int(time.time()) % 1_000_000
-    manager_profile_id, worker_profile_id, worker2_profile_id = _resolve_agent_ids()
+    worker_role_key, worker2_role_key = _resolve_worker_roles()
     global DISPATCH, DISPATCH_WORKER2
-    DISPATCH = {"worker_profile_id": worker_profile_id, **BOOTSTRAP}
-    DISPATCH_WORKER2 = {"worker_profile_id": worker2_profile_id, **BOOTSTRAP}
+    DISPATCH = {"worker_role_key": worker_role_key, **BOOTSTRAP}
+    DISPATCH_WORKER2 = {"worker_role_key": worker2_role_key, **BOOTSTRAP}
 
     print("Creating managed tasks…")
     ci_task = _create_task(
         "omnigent-fork CI",
         "CI failures and PR reviews for omnigent-fork",
         "repo:omnigent-fork\nci\npull requests",
-        agent_profile_id=manager_profile_id,
     )
     docs_task = _create_task(
         "docs refresh",
         "Documentation updates and changelog hygiene",
         "repo:omnigent-fork\ndocs\nmarkdown",
-        agent_profile_id=manager_profile_id,
     )
     poll_task = _create_task(
         "poll plugins",
         "Host poll plugin maintenance",
         "poll_plugins\ngithub_pr\nwatchers",
-        agent_profile_id=manager_profile_id,
     )
 
     _seed_rich_ci_task(
         ci_task,
-        worker_profile_id=worker_profile_id,
-        worker2_profile_id=worker2_profile_id,
+        worker_role_key=worker_role_key,
+        worker2_role_key=worker2_role_key,
     )
-    twenty_worker_task = _seed_twenty_worker_task(agent_profile_id=manager_profile_id)
+    twenty_worker_task = _seed_twenty_worker_task()
 
     print("Creating pending task packages…")
     _create_task_package(
@@ -583,7 +567,6 @@ def main() -> int:
         event_ids=_create_events(
             host_header, repo="omnigent-fork", pr=891, offset_base=offset_base
         ),
-        agent_profile_id=manager_profile_id,
         asset_urls=[
             ("PR #891", "https://github.com/databricks/omnigent-fork/pull/891"),
             ("CI checks", "https://github.com/databricks/omnigent-fork/actions"),
@@ -597,7 +580,6 @@ def main() -> int:
         event_ids=_create_events(
             host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10
         ),
-        agent_profile_id=manager_profile_id,
         asset_urls=[
             (
                 "API reference",
@@ -614,7 +596,6 @@ def main() -> int:
         event_ids=_create_events(
             host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20
         ),
-        agent_profile_id=manager_profile_id,
         asset_urls=[
             ("PR #915", "https://github.com/databricks/omnigent-fork/pull/915"),
             (
@@ -631,7 +612,6 @@ def main() -> int:
         event_ids=_create_events(
             host_header, repo="other-repo", pr=12, offset_base=offset_base + 30
         ),
-        agent_profile_id=manager_profile_id,
         asset_urls=[
             ("other-repo PR #12", "https://github.com/example/other-repo/pull/12"),
             ("omnigent-fork (reference)", "https://github.com/databricks/omnigent-fork"),
@@ -658,7 +638,7 @@ def main() -> int:
         docs_task,
         "Polish API_REFERENCE worker section",
         "Document dashboard worker lanes after deploy.",
-        worker_profile_id=worker2_profile_id,
+        worker_role_key=worker2_role_key,
     )
     _create_task_asset(
         docs_task,
@@ -674,7 +654,7 @@ def main() -> int:
         poll_task,
         "Add dedupe test for PR watcher",
         "Unit test duplicate check events do not create extra task events.",
-        worker_profile_id=worker_profile_id,
+        worker_role_key=worker_role_key,
     )
     _create_parked_item(
         docs_task,

@@ -16,7 +16,7 @@ from omnigent.agent_tasks.constants import (
 from omnigent.agent_tasks.session_labels import BROKER_ROLE_VALUE, ROLE_LABEL
 from omnigent.db.utils import generate_task_id, now_epoch
 from omnigent.entities import MessageData, NewConversationItem
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.native_coding_agents import native_coding_agent_for_harness
 from omnigent.runtime import get_agent_cache
@@ -25,6 +25,7 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore, host_is_live
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.stores.user_role_session_store import UserRoleSessionStore
 
 _logger = logging.getLogger(__name__)
 
@@ -74,14 +75,13 @@ def resolve_first_live_host_id(host_store: HostStore, owner: str) -> str | None:
 def ensure_role_profile(
     *,
     role: str,
-    profile_user_id: str,
     auth_user_id: str | None,
     task_role_profile_store: TaskRoleProfileStore,
     agent_store: AgentStore,
     host_store: HostStore | None = None,
-) -> UserTaskRoleProfile:
-    """Ensure a glossary profile row exists, without requiring a live host."""
-    existing = task_role_profile_store.get(profile_user_id, role)
+) -> TaskRoleProfile:
+    """Ensure a glossary role row exists, without requiring a live host."""
+    existing = task_role_profile_store.get(role)
     if existing is not None:
         return existing
 
@@ -96,7 +96,6 @@ def ensure_role_profile(
     # harness/model omitted: the store seeds them from the role's packaged
     # defaults when it creates the row.
     return task_role_profile_store.upsert(
-        profile_user_id,
         role,
         agent_profile_id=agent_profile_id,
         host_id=host_id,
@@ -107,14 +106,13 @@ def ensure_role_profile(
 def get_or_create_role_profile(
     *,
     role: str,
-    profile_user_id: str,
     auth_user_id: str | None,
     task_role_profile_store: TaskRoleProfileStore,
     host_store: HostStore,
     agent_store: AgentStore,
-) -> UserTaskRoleProfile:
-    """Load the role profile, auto-provisioning defaults on first use."""
-    existing = task_role_profile_store.get(profile_user_id, role)
+) -> TaskRoleProfile:
+    """Load the role definition, auto-provisioning defaults on first use."""
+    existing = task_role_profile_store.get(role)
     if existing is not None:
         return existing
 
@@ -124,7 +122,6 @@ def get_or_create_role_profile(
 
     agent_profile_id = resolve_role_agent_profile_id(agent_store, role)
     return task_role_profile_store.upsert(
-        profile_user_id,
         role,
         agent_profile_id=agent_profile_id,
         host_id=host_id,
@@ -136,11 +133,12 @@ def ensure_broker_session(
     *,
     owner_user_id: str,
     task_role_profile_store: TaskRoleProfileStore,
+    user_role_session_store: UserRoleSessionStore,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
     host_store: HostStore,
-) -> UserTaskRoleProfile | None:
-    """Return the owner's broker profile with a live conversation, creating one on demand.
+) -> str | None:
+    """Return the owner's live broker conversation, creating one on demand.
 
     The broker has no UI surface, so nothing bootstraps its session the way the
     secretary rail does. Callers that need a broker to talk to provision it here
@@ -151,7 +149,6 @@ def ensure_broker_session(
     try:
         profile = get_or_create_role_profile(
             role=TASK_BROKER_ROLE,
-            profile_user_id=owner_user_id,
             auth_user_id=auth_user_id,
             task_role_profile_store=task_role_profile_store,
             host_store=host_store,
@@ -160,10 +157,11 @@ def ensure_broker_session(
     except OmnigentError:
         return None
 
-    if profile.conversation_id is not None:
-        if conversation_store.get_conversation(profile.conversation_id) is not None:
-            return profile
-        # The session was deleted out from under the profile; build a fresh one.
+    session = user_role_session_store.get(owner_user_id, TASK_BROKER_ROLE)
+    if session is not None and session.conversation_id is not None:
+        if conversation_store.get_conversation(session.conversation_id) is not None:
+            return session.conversation_id
+        # The session was deleted out from under the binding; build a fresh one.
 
     conversation_id = bootstrap_broker_conversation(
         conversation_store=conversation_store,
@@ -171,23 +169,8 @@ def ensure_broker_session(
         profile=profile,
         seed_prompt=True,
     )
-    return task_role_profile_store.upsert(
-        owner_user_id,
-        TASK_BROKER_ROLE,
-        conversation_id=conversation_id,
-    )
-
-
-def resolve_broker_profile_id(
-    agent_store: AgentStore,
-    profile: UserTaskRoleProfile,
-) -> str:
-    """Prefer the packaged task-broker builtin over a stale profile id."""
-    return resolve_role_agent_profile_id(
-        agent_store,
-        TASK_BROKER_ROLE,
-        fallback_agent_id=profile.agent_profile_id,
-    )
+    user_role_session_store.set_conversation(owner_user_id, TASK_BROKER_ROLE, conversation_id)
+    return conversation_id
 
 
 def apply_broker_session_labels(
@@ -238,26 +221,25 @@ def bootstrap_broker_conversation(
     *,
     conversation_store: ConversationStore,
     agent_store: AgentStore,
-    profile: UserTaskRoleProfile,
+    profile: TaskRoleProfile,
     seed_prompt: bool = True,
 ) -> str:
     """Create a broker conversation with harness/model defaults and optional prompt seed."""
     params = resolve_bootstrap_params(
         host_id=profile.host_id,
         workspace=profile.workspace,
-        harness=resolve_task_harness(profile.harness),
+        harness=profile.harness,
         model=profile.model,
         role_profile=profile,
     )
-    agent_id = resolve_broker_profile_id(agent_store, profile)
     terminal_launch_args = _broker_terminal_launch_args(
         agent_store,
-        agent_id,
+        params.agent_profile_id,
         harness=params.harness,
     )
     conversation = conversation_store.create_conversation(
         title="Task broker",
-        agent_id=agent_id,
+        agent_id=params.agent_profile_id,
         host_id=params.host_id,
         workspace=params.workspace,
         terminal_launch_args=terminal_launch_args,

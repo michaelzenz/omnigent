@@ -24,9 +24,10 @@ class WorkerStore(ABC):
         self,
         worker_id: str,
         task_id: str,
-        profile_id: str,
         *,
         kind: str = WORKER_KIND_MANAGED,
+        role_key: str | None = None,
+        agent_profile_id: str | None = None,
         session_id: str | None = None,
     ) -> Worker:
         """Insert a worker slot for one task."""
@@ -49,7 +50,8 @@ class WorkerStore(ABC):
         worker_id: str,
         *,
         session_id: str | None = _UNSET,
-        profile_id: str | None = None,
+        role_key: str | None = None,
+        agent_profile_id: str | None = None,
         kind: str | None = None,
     ) -> Worker | None:
         """Update mutable worker fields."""

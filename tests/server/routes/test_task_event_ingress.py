@@ -44,7 +44,6 @@ async def test_ingress_auto_routes_matching_task(
     created = await client.post(
         "/v1/agent-tasks",
         json={
-            "agent_profile_id": manager_agent_id,
             "title": "Upload retries",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
@@ -77,7 +76,6 @@ async def test_ingress_fast_paths_explicit_task_id(
     created = await client.post(
         "/v1/agent-tasks",
         json={
-            "agent_profile_id": manager_agent_id,
             "title": "Land PR #123",
             "internal_note": "land pr 123 after blocker merges",
         },
@@ -154,7 +152,6 @@ async def test_complete_requires_routed_state(
     await client.post(
         "/v1/agent-tasks",
         json={
-            "agent_profile_id": manager_agent_id,
             "title": "Upload retries",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },

@@ -17,6 +17,7 @@ from omnigent.agent_tasks.completion import (
     notify_worker_session_status,
 )
 from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
+from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -57,7 +58,6 @@ def completion_setup(db_uri: str) -> dict:
     task_store.create(
         task_id,
         "Completion task",
-        agent_profile_id=manager_agent_id,
         owner_user_id=owner,
         manager_conversation_id=manager_conv.id,
     )
@@ -65,7 +65,11 @@ def completion_setup(db_uri: str) -> dict:
     task_item_id = _uid("item_comp")
     item_store.create_item(task_item_id, task_id, "Fix the login flow", state="running")
 
-    worker = worker_store.create_worker(_uid("worker_comp"), task_id, worker_agent_id)
+    worker = worker_store.create_worker(
+        _uid("worker_comp"),
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+    )
     worker_conv = conversation_store.create_conversation(
         kind="sub_agent",
         title="Worker",
@@ -198,12 +202,15 @@ async def test_orphan_owner_event_uses_anonymous_owner(db_uri: str) -> None:
     task_store.create(
         task_id,
         "Anon task",
-        agent_profile_id=manager_agent_id,
         manager_conversation_id=manager_conv.id,
     )
     task_item_id = _uid("item_anon")
     item_store.create_item(task_item_id, task_id, "Do thing", state="running")
-    worker = worker_store.create_worker(_uid("worker_anon"), task_id, worker_agent_id)
+    worker = worker_store.create_worker(
+        _uid("worker_anon"),
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+    )
     worker_conv = conversation_store.create_conversation(
         kind="sub_agent",
         title="Worker",

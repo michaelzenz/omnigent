@@ -3,10 +3,11 @@ import { ChevronDownIcon, ChevronRightIcon, MessageSquareIcon } from "lucide-rea
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { AvailableAgent } from "@/hooks/useAvailableAgents";
-import type { TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
+import { useRoleProfiles } from "@/hooks/useRoleProfiles";
+import { WORKER_ROLE_PREFIX, type TaskItemSummary, type TaskWorkerLane } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardWorkerRows } from "./TaskCardWorkerRows";
+import { WorkerLaneRolePicker } from "./WorkerLaneRolePicker";
 import { TASK_CARD_INNER_SCROLL_CLASS } from "./taskCardUtils";
 import {
   buildInboxLane,
@@ -22,26 +23,27 @@ interface TaskCardWorkersProps {
   taskId: string;
   inboxItems: TaskItemSummary[];
   workers: TaskWorkerLane[];
-  agents: AvailableAgent[];
   defaultModel: string;
 }
 
-function laneDisplayName(lane: TaskWorkerLane, agents: AvailableAgent[]): string {
+function laneDisplayName(lane: TaskWorkerLane, roleTitleByKey: Map<string, string>): string {
   if (isInboxLane(lane.worker_id)) return "Inbox";
-  const match = agents.find((agent) => agent.id === lane.profile_id);
-  return match?.display_name ?? match?.name ?? lane.profile_id;
+  if (lane.role_key == null) return lane.agent_profile_id ?? "External worker";
+  return roleTitleByKey.get(lane.role_key) ?? lane.role_key;
 }
 
 export function TaskCardWorkers({
   taskId,
   inboxItems,
   workers,
-  agents,
   defaultModel,
 }: TaskCardWorkersProps) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
-  const allAgentIds = useMemo(() => agents.map((agent) => agent.id), [agents]);
-  const workerProfileIds = useMemo(() => workers.map((lane) => lane.profile_id), [workers]);
+  const { data: workerRoles = [] } = useRoleProfiles(WORKER_ROLE_PREFIX);
+  const roleTitleByKey = useMemo(
+    () => new Map(workerRoles.map((role) => [role.role, role.title ?? role.role])),
+    [workerRoles],
+  );
 
   const lanes = useMemo(() => {
     const inboxLane = buildInboxLane(inboxItems);
@@ -109,9 +111,11 @@ export function TaskCardWorkers({
       >
         {lanes.map((lane) => {
           const expanded = expandedLaneId === lane.worker_id;
-          const name = laneDisplayName(lane, agents);
+          const name = laneDisplayName(lane, roleTitleByKey);
           const workerSelected = isWorkerSelected(taskId, lane.worker_id);
-          const rowWorkerProfileIds = isInboxLane(lane.worker_id) ? allAgentIds : workerProfileIds;
+          // A lane without a session has nothing to chat with yet, so it offers
+          // the role choice instead.
+          const awaitingRole = lane.session_id == null && lane.kind !== "external";
 
           return (
             <article
@@ -140,7 +144,12 @@ export function TaskCardWorkers({
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-semibold">{name}</span>
+                      <span
+                        className="truncate text-sm font-semibold"
+                        data-testid={`worker-lane-name-${lane.worker_id}`}
+                      >
+                        {name}
+                      </span>
                       <Badge variant="outline" className="shrink-0 text-[10px]">
                         {workerLaneStateLabel(lane.state)}
                       </Badge>
@@ -148,7 +157,13 @@ export function TaskCardWorkers({
                     <p className="truncate text-xs text-muted-foreground">{lane.situation}</p>
                   </div>
                 </button>
-                {!isInboxLane(lane.worker_id) ? (
+                {isInboxLane(lane.worker_id) ? null : awaitingRole ? (
+                  <WorkerLaneRolePicker
+                    taskId={taskId}
+                    workerId={lane.worker_id}
+                    roleKey={lane.role_key}
+                  />
+                ) : (
                   <Button
                     type="button"
                     variant={workerSelected ? "default" : "outline"}
@@ -169,7 +184,7 @@ export function TaskCardWorkers({
                     <MessageSquareIcon className="size-3.5" />
                     Chat
                   </Button>
-                ) : null}
+                )}
               </div>
 
               {expanded ? (
@@ -183,9 +198,7 @@ export function TaskCardWorkers({
                   <TaskCardWorkerRows
                     taskId={taskId}
                     rows={lane.rows}
-                    workerAgentIds={rowWorkerProfileIds}
                     workerLanes={workers}
-                    agents={agents}
                     defaultModel={defaultModel}
                   />
                 </div>

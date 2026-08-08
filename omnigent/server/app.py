@@ -104,6 +104,7 @@ from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.timer_item_store import TimerItemStore
+from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
@@ -1205,6 +1206,7 @@ def create_app(
     task_asset_store: TaskAssetStore | None = None,
     timer_item_store: TimerItemStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
+    user_role_session_store: UserRoleSessionStore | None = None,
     agent_queue_store: AgentQueueStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
@@ -1259,9 +1261,11 @@ def create_app(
     :param task_item_store: Store for task items and routing proposals.
     :param worker_store: Store for per-task worker slots.
     :param timer_item_store: Store for deferred host timer items.
-    :param task_role_profile_store: Per-user task role profile defaults.
+    :param task_role_profile_store: Global task role definitions.
         When provided with task stores, enables role profile/session
         routes and resolve-time bootstrap defaults.
+    :param user_role_session_store: Per-user live conversation bindings
+        for singleton roles (broker, secretary).
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -1461,10 +1465,14 @@ def create_app(
         _agent_queue_dispatcher: AgentQueueDispatcher | None = None
         _broker_packager: BrokerPackager | None = None
         _manager_packager: ManagerPackager | None = None
-        if agent_queue_store is not None and task_role_profile_store is not None:
+        if (
+            agent_queue_store is not None
+            and task_role_profile_store is not None
+            and user_role_session_store is not None
+        ):
             broker_handler = BrokerDispatchHandler(
                 store=agent_queue_store,
-                task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
                 conversation_store=conversation_store,
                 runner_router=runner_router,
             )
@@ -1545,6 +1553,7 @@ def create_app(
                 store=agent_queue_store,
                 task_event_store=task_event_store,
                 task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
                 task_store=task_store,
                 status_reader=_PackagerCacheReader(),
                 conversation_store=conversation_store,
@@ -2519,6 +2528,7 @@ def create_app(
                 agent_store,
                 conversation_store=conversation_store,
                 task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
                 host_store=host_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
@@ -2533,7 +2543,6 @@ def create_app(
                 task_event_store,
                 worker_store,
                 conversation_store,
-                agent_store,
                 task_role_profile_store=task_role_profile_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,

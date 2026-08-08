@@ -3171,6 +3171,9 @@ def server(
     )
     from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
     from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
+    from omnigent.stores.user_role_session_store.sqlalchemy_store import (
+        SqlAlchemyUserRoleSessionStore,
+    )
     from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
     cfg = _load_config(config_path)
@@ -3206,6 +3209,7 @@ def server(
     task_asset_store = SqlAlchemyTaskAssetStore(db_uri)
     timer_item_store = SqlAlchemyTimerItemStore(db_uri)
     task_role_profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    user_role_session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     agent_queue_store = SqlAlchemyAgentQueueStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
@@ -3371,6 +3375,7 @@ def server(
         task_asset_store=task_asset_store,
         timer_item_store=timer_item_store,
         task_role_profile_store=task_role_profile_store,
+        user_role_session_store=user_role_session_store,
         agent_queue_store=agent_queue_store,
         auth_provider=auth_provider,
         host_store=host_store,

@@ -13,7 +13,9 @@ from omnigent.agent_tasks.agent_builtins import (
     resolve_task_agent_id,
 )
 from omnigent.entities import EventTag, TaskTag
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from tests.server.routes.agent_task_api import put_agent_role_profile
@@ -21,6 +23,12 @@ from tests.server.routes.agent_task_api import put_agent_role_profile
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
+
+
+def _seed_live_host(db_uri: str, seed: str) -> str:
+    host_id = _uid(seed)
+    HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
+    return host_id
 
 
 @pytest_asyncio.fixture()
@@ -61,13 +69,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
         title="Build finished",
         state="awaiting_grouping",
     )
-    create_resp = await client.post(
-        "/v1/agent-tasks",
-        json={
-            "agent_profile_id": manager_agent_profile_id,
-            "title": "Upload retries",
-        },
-    )
+    create_resp = await client.post("/v1/agent-tasks", json={"title": "Upload retries"})
     task_id = create_resp.json()["id"]
 
     resolve_resp = await client.post(
@@ -105,13 +107,14 @@ async def test_dismiss_event(
 async def test_bootstrap_rejects_dead_manager_session(
     client: httpx.AsyncClient,
     manager_agent_profile_id: str,
+    db_uri: str,
 ) -> None:
     await _put_broker_profile(client, manager_agent_profile_id)
+    _seed_live_host(db_uri, "dead-session-host")
     dead_conversation_id = _uid("dead_conv")
     create_resp = await client.post(
         "/v1/agent-tasks",
         json={
-            "agent_profile_id": manager_agent_profile_id,
             "title": "Dead session task",
             "manager_conversation_id": dead_conversation_id,
         },
@@ -126,7 +129,6 @@ async def test_bootstrap_rejects_dead_manager_session(
 
 async def test_ambiguous_inbox_clusters_stalled_events(
     client: httpx.AsyncClient,
-    manager_agent_profile_id: str,
     db_uri: str,
 ) -> None:
     """GET ambiguous-inbox groups stalled events and suggests task candidates."""
@@ -136,7 +138,6 @@ async def test_ambiguous_inbox_clusters_stalled_events(
     task_store.create(
         paused_id,
         "Upload retries",
-        agent_profile_id=manager_agent_profile_id,
         state="pending",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
     )
@@ -160,7 +161,6 @@ async def test_ambiguous_inbox_clusters_stalled_events(
 
 async def test_match_tasks_ranks_pending_tasks(
     client: httpx.AsyncClient,
-    manager_agent_profile_id: str,
     db_uri: str,
 ) -> None:
     """POST match-tasks returns ranked active and pending task candidates."""
@@ -170,7 +170,6 @@ async def test_match_tasks_ranks_pending_tasks(
     task_store.create(
         paused_id,
         "omnigent-fork",
-        agent_profile_id=manager_agent_profile_id,
         state="pending",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
     )

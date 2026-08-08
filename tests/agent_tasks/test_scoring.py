@@ -13,7 +13,6 @@ from omnigent.entities import EventTag, Task, TaskTag
 def _task(task_id: str) -> Task:
     return Task(
         id=task_id,
-        agent_profile_id="a" * 32,
         manager_role_key="manager:default",
         worker_role_key="worker:default",
         owner_user_id=None,

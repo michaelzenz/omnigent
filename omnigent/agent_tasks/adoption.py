@@ -10,9 +10,6 @@ from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams
 from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
-from omnigent.agent_tasks.manager_agent import (
-    resolve_manager_profile_id_for_task,
-)
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
@@ -25,7 +22,6 @@ from omnigent.entities import Task, TaskEvent
 from omnigent.entities.conversation import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
-from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
@@ -189,22 +185,13 @@ def find_open_orphan_event(
     return None
 
 
-def _candidate_payload(
-    ranked: list[tuple[Task, float]],
-    *,
-    agent_store: AgentStore,
-    conversation_store: ConversationStore,
-) -> dict[str, Any]:
+def _candidate_payload(ranked: list[tuple[Task, float]]) -> dict[str, Any]:
     candidates = [
         {
             "task_id": task.id,
             "title": task.title,
             "score": round(score, 4),
-            "agent_profile_id": resolve_manager_profile_id_for_task(
-                task,
-                agent_store=agent_store,
-                conversation_store=conversation_store,
-            ),
+            "manager_role_key": task.manager_role_key,
         }
         for task, score in ranked
     ]
@@ -222,7 +209,6 @@ def propose_session_adoption(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    agent_store: AgentStore,
     owner_user_id: str | None = None,
 ) -> TaskEvent:
     """Score tasks and create a user-gated session adoption proposal."""
@@ -255,11 +241,7 @@ def propose_session_adoption(
         tasks=active_tasks,
         task_store=task_store,
     )
-    payload = _candidate_payload(
-        ranked,
-        agent_store=agent_store,
-        conversation_store=conversation_store,
-    )
+    payload = _candidate_payload(ranked)
     payload["session_id"] = session_id
     payload["routing_tags"] = tags_to_payload(routing_tags)
     event_id = uuid.uuid4().hex
@@ -291,7 +273,6 @@ async def adopt_session(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    agent_store: AgentStore,
     params: BootstrapParams,
     proposal_event: TaskEvent | None = None,
 ) -> tuple[TaskEvent, TaskEvent]:
@@ -318,8 +299,8 @@ async def adopt_session(
     worker_store.create_worker(
         _generate_worker_id(),
         task.id,
-        conv.agent_id,
         kind=WORKER_KIND_EXTERNAL,
+        agent_profile_id=conv.agent_id,
         session_id=session_id,
     )
     adopted_event_id = uuid.uuid4().hex
@@ -337,7 +318,6 @@ async def adopt_session(
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
         params=params,
     )
     processed_proposal = proposal_event
@@ -369,8 +349,7 @@ def reject_session_adoption(
     conversation_store.set_labels(session_id, labels)
     if proposal_event is None:
         return None
-    updated = task_event_store.update_event(proposal_event.id, state="dismissed")
-    return updated
+    return task_event_store.update_event(proposal_event.id, state="dismissed")
 
 
 def find_open_adoption_proposal(

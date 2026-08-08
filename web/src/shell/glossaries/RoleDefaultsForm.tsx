@@ -37,10 +37,10 @@ interface DraftProfile {
 
 function profileToDraft(profile: SecretaryProfile): DraftProfile {
   return {
-    agent_profile_id: profile.agent_profile_id,
+    agent_profile_id: profile.agent_profile_id ?? "",
     host_id: profile.host_id ?? "",
     workspace: profile.workspace ?? "",
-    harness: profile.harness,
+    harness: profile.harness ?? "",
     model: profile.model ?? "",
     conversation_id: profile.conversation_id,
   };
@@ -67,11 +67,11 @@ function HostStatusDot({ host }: { host: Host | undefined }) {
   );
 }
 
-interface PerUserRoleDefaultsFormProps {
+interface RoleDefaultsFormProps {
   roleId: string;
 }
 
-export function PerUserRoleDefaultsForm({ roleId }: PerUserRoleDefaultsFormProps) {
+export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
   const { data: profile, isLoading, error } = useAgentRoleProfile(roleId);
   const { data: hosts = [] } = useHosts();
   const { data: agents = [] } = useAvailableAgents();

@@ -1,6 +1,5 @@
 import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useTaskDashboard } from "@/hooks/useAgentTasks";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardAssets } from "./TaskCardAssets";
@@ -28,7 +27,6 @@ export function TaskCard({
   workerRoleKey,
 }: TaskCardProps) {
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
-  const { data: agents = [] } = useAvailableAgents();
   const { openManager, isManagerSelected } = usePuppyGardenChat();
   const defaultModel = "composer-2.5";
 
@@ -126,7 +124,6 @@ export function TaskCard({
               taskId={taskId}
               inboxItems={dashboard.inbox_items}
               workers={dashboard.workers}
-              agents={agents}
               defaultModel={defaultModel}
             />
           </div>

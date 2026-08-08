@@ -42,7 +42,6 @@ def test_get_or_create_role_profile_uses_first_live_host(db_uri: str) -> None:
 
     profile = get_or_create_role_profile(
         role=TASK_BROKER_ROLE,
-        profile_user_id="__anonymous__",
         auth_user_id=None,
         task_role_profile_store=profile_store,
         host_store=host_store,
@@ -63,7 +62,6 @@ def test_get_or_create_role_profile_fails_without_live_host(db_uri: str) -> None
     with pytest.raises(OmnigentError) as exc_info:
         get_or_create_role_profile(
             role=TASK_BROKER_ROLE,
-            profile_user_id="__anonymous__",
             auth_user_id=None,
             task_role_profile_store=profile_store,
             host_store=HostStore(db_uri),

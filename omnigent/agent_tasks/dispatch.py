@@ -11,7 +11,7 @@ from omnigent.agent_tasks.executions import mark_execution_running, start_execut
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
 from omnigent.entities import Task, TaskEventExecution, TaskItem
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -24,7 +24,8 @@ from omnigent.stores.worker_store import WorkerStore
 class DispatchParams:
     """Resolved worker dispatch inputs."""
 
-    worker_profile_id: str
+    role_key: str
+    agent_profile_id: str
     title: str
     instructions: str
     host_id: str
@@ -61,46 +62,31 @@ def compose_worker_instructions(
     return worker_text
 
 
-def _resolve_worker_profile_id(
-    *,
-    payload: dict[str, Any],
-    worker_profile_id: str | None,
-) -> str | None:
-    if worker_profile_id is not None and str(worker_profile_id).strip():
-        return str(worker_profile_id).strip()
-    value = payload.get("worker_profile_id")
-    if value is not None and str(value).strip():
-        return str(value).strip()
-    return None
-
-
 def resolve_dispatch_params(
     *,
     payload: dict[str, Any],
-    worker_profile_id: str | None = None,
     title: str | None = None,
     instructions: str | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
     harness: str | None = None,
     model: str | None = None,
-    role_profile: UserTaskRoleProfile | None = None,
+    role_profile: TaskRoleProfile | None = None,
 ) -> DispatchParams:
-    """Merge explicit dispatch fields with payload and profile defaults."""
-    resolved_profile = _resolve_worker_profile_id(
-        payload=payload,
-        worker_profile_id=worker_profile_id,
-    )
-    if not resolved_profile and role_profile is not None:
-        resolved_profile = role_profile.agent_profile_id
+    """Merge explicit dispatch fields over the payload and the lane's role."""
     resolved_title = title or payload.get("title")
     resolved_instructions = compose_worker_instructions(
         instructions=instructions if instructions is not None else payload.get("instructions"),
         internal_note=payload.get("internal_note"),
     )
-    if not resolved_profile or not resolved_title or not resolved_instructions:
+    if role_profile is None:
         raise OmnigentError(
-            "worker_profile_id, title, and instructions are required",
+            "a worker role is required to dispatch",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if not resolved_title or not resolved_instructions:
+        raise OmnigentError(
+            "title and instructions are required",
             code=ErrorCode.INVALID_INPUT,
         )
     bootstrap = resolve_bootstrap_params(
@@ -111,7 +97,8 @@ def resolve_dispatch_params(
         role_profile=role_profile,
     )
     return DispatchParams(
-        worker_profile_id=resolved_profile,
+        role_key=role_profile.role,
+        agent_profile_id=bootstrap.agent_profile_id,
         title=str(resolved_title),
         instructions=str(resolved_instructions),
         host_id=bootstrap.host_id,
@@ -154,10 +141,10 @@ def dispatch_worker_for_item(
         )
 
     worker = worker_for_item(item, worker_store=worker_store)
-    if worker is None or worker.profile_id != params.worker_profile_id:
+    if worker is None or worker.role_key != params.role_key:
         item, worker = assign_worker_profile(
             item=item,
-            profile_id=params.worker_profile_id,
+            role_key=params.role_key,
             worker_store=worker_store,
             task_item_store=task_item_store,
         )
@@ -166,7 +153,7 @@ def dispatch_worker_for_item(
         kind="sub_agent",
         title=params.title,
         parent_conversation_id=task.manager_conversation_id,
-        agent_id=worker.profile_id,
+        agent_id=params.agent_profile_id,
         runner_id=manager_conv.runner_id,
         host_id=params.host_id,
         workspace=params.workspace,

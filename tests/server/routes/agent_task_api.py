@@ -19,6 +19,10 @@ def agent_role_session_reset_url(role: str) -> str:
     return f"/v1/agent-tasks/roles/{role}/session/reset"
 
 
+def task_worker_url(worker_id: str) -> str:
+    return f"/v1/task-workers/{worker_id}"
+
+
 async def put_agent_role_profile(
     client: httpx.AsyncClient,
     *,

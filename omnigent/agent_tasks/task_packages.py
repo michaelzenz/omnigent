@@ -190,7 +190,6 @@ def reconcile_events_to_task(
 def create_task_package(
     *,
     owner_user_id: str,
-    agent_profile_id: str,
     title: str,
     items: list[PackageItemSpec],
     task_store: TaskStore,
@@ -218,7 +217,6 @@ def create_task_package(
     task = task_store.create(
         resolved_task_id,
         title,
-        agent_profile_id=agent_profile_id,
         owner_user_id=owner_user_id,
         description=description,
         internal_note=resolved_internal_note,

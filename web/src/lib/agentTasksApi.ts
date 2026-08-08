@@ -5,7 +5,6 @@ export interface AgentTaskSummary {
   title: string;
   description: string | null;
   state: string;
-  agent_profile_id: string;
   manager_role_key: string;
   worker_role_key: string;
   manager_conversation_id: string | null;
@@ -70,17 +69,15 @@ export type TaskWorkerLaneState = "new" | "active" | "idle";
 
 export interface TaskWorkerLane {
   worker_id: string;
-  profile_id: string;
+  /** The worker role this lane runs. Null for externally adopted lanes. */
+  role_key: string | null;
+  /** Set only for externally adopted lanes, which have no role. */
+  agent_profile_id: string | null;
+  kind: string;
   session_id: string | null;
   state: TaskWorkerLaneState;
   situation: string;
   rows: TaskWorkerRow[];
-  executions: TaskExecutionSummary[];
-}
-
-/** @deprecated Use TaskWorkerLane */
-export interface TaskWorkerGroup {
-  profile_id: string;
   executions: TaskExecutionSummary[];
 }
 
@@ -110,7 +107,7 @@ export interface TaskDashboard {
 }
 
 export interface DispatchPayload {
-  worker_profile_id?: string;
+  worker_role_key?: string;
   title?: string;
   description?: string;
   instructions?: string;
@@ -134,15 +131,17 @@ function agentRolePath(role: string, suffix: string): string {
 export interface SecretaryProfile {
   role?: string;
   title?: string;
+  kind?: string;
   system?: boolean;
   deletable?: boolean;
-  agent_profile_id: string;
+  /** Null for external roles, which name no Omnigent agent. */
+  agent_profile_id: string | null;
   conversation_id: string | null;
   /** Null when the harness resolves its own model (e.g. Codex, OpenCode). */
   model: string | null;
-  harness: string;
-  host_id: string;
-  workspace: string;
+  harness: string | null;
+  host_id: string | null;
+  workspace: string | null;
 }
 
 export type RoleProfileSummary = SecretaryProfile & { role: string };
@@ -224,6 +223,28 @@ export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
 export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard> {
   const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}/dashboard`);
   return readJson<TaskDashboard>(res);
+}
+
+export interface WorkerLaneSummary {
+  id: string;
+  task_id: string;
+  kind: string;
+  role_key: string | null;
+  agent_profile_id: string | null;
+  session_id: string | null;
+}
+
+/** Re-point a worker lane at another worker role. Only valid before it has a session. */
+export async function updateWorkerLaneRole(
+  workerId: string,
+  roleKey: string,
+): Promise<WorkerLaneSummary> {
+  const res = await authenticatedFetch(`/v1/task-workers/${encodeURIComponent(workerId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role_key: roleKey }),
+  });
+  return readJsonOrApiError<WorkerLaneSummary>(res);
 }
 
 export interface UpdateAgentRoleProfileRequest {

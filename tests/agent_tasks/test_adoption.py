@@ -16,12 +16,14 @@ from omnigent.agent_tasks.adoption import (
 )
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
+from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY
 from omnigent.agent_tasks.session_labels import (
     ADOPTION_DISMISSED_LABEL,
     ROUTING_REPO_LABEL,
 )
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import TaskTag
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -35,17 +37,17 @@ def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
 
 
-@pytest.fixture()
-def stores(
-    db_uri: str,
-) -> tuple[
+_Stores = tuple[
     SqlAlchemyConversationStore,
     SqlAlchemyTaskStore,
     SqlAlchemyTaskEventStore,
     SqlAlchemyWorkerStore,
-    SqlAlchemyAgentStore,
     str,
-]:
+]
+
+
+@pytest.fixture()
+def stores(db_uri: str) -> _Stores:
     agent_store = SqlAlchemyAgentStore(db_uri)
     manager_agent_id = generate_agent_id()
     agent_store.create(
@@ -58,27 +60,16 @@ def stores(
         SqlAlchemyTaskStore(db_uri),
         SqlAlchemyTaskEventStore(db_uri),
         SqlAlchemyWorkerStore(db_uri),
-        agent_store,
         manager_agent_id,
     )
 
 
-def test_is_orphan_candidate_filters_bound_and_dismissed(
-    stores: tuple[
-        SqlAlchemyConversationStore,
-        SqlAlchemyTaskStore,
-        SqlAlchemyTaskEventStore,
-        SqlAlchemyWorkerStore,
-        SqlAlchemyAgentStore,
-        str,
-    ],
-) -> None:
+def test_is_orphan_candidate_filters_bound_and_dismissed(stores: _Stores) -> None:
     (
         conversation_store,
         task_store,
-        task_event_store,
+        _task_event_store,
         worker_store,
-        agent_store,
         manager_agent_id,
     ) = stores
     conv = conversation_store.create_conversation(title="Orphan", agent_id=manager_agent_id)
@@ -91,12 +82,12 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
         is True
     )
 
-    task = task_store.create(_uid("task-bound"), "Bound task", agent_profile_id=manager_agent_id)
+    task = task_store.create(_uid("task-bound"), "Bound task")
     worker_store.create_worker(
         _uid("worker-bound"),
         task.id,
-        manager_agent_id,
         kind=WORKER_KIND_EXTERNAL,
+        agent_profile_id=manager_agent_id,
         session_id=conv.id,
     )
     assert (
@@ -121,22 +112,12 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(
     )
 
 
-def test_propose_session_adoption_requires_routing_tags(
-    stores: tuple[
-        SqlAlchemyConversationStore,
-        SqlAlchemyTaskStore,
-        SqlAlchemyTaskEventStore,
-        SqlAlchemyWorkerStore,
-        SqlAlchemyAgentStore,
-        str,
-    ],
-) -> None:
+def test_propose_session_adoption_requires_routing_tags(stores: _Stores) -> None:
     (
         conversation_store,
         task_store,
         task_event_store,
         worker_store,
-        agent_store,
         manager_agent_id,
     ) = stores
     conv = conversation_store.create_conversation(title="Needs tags", agent_id=manager_agent_id)
@@ -147,26 +128,15 @@ def test_propose_session_adoption_requires_routing_tags(
             task_event_store=task_event_store,
             worker_store=worker_store,
             conversation_store=conversation_store,
-            agent_store=agent_store,
         )
 
 
-async def test_propose_and_adopt_session(
-    stores: tuple[
-        SqlAlchemyConversationStore,
-        SqlAlchemyTaskStore,
-        SqlAlchemyTaskEventStore,
-        SqlAlchemyWorkerStore,
-        SqlAlchemyAgentStore,
-        str,
-    ],
-) -> None:
+async def test_propose_and_adopt_session(stores: _Stores) -> None:
     (
         conversation_store,
         task_store,
         task_event_store,
         worker_store,
-        agent_store,
         manager_agent_id,
     ) = stores
     conv = conversation_store.create_conversation(
@@ -177,7 +147,6 @@ async def test_propose_and_adopt_session(
     task = task_store.create(
         task_id,
         "Upload retries",
-        agent_profile_id=manager_agent_id,
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
     proposal = propose_session_adoption(
@@ -186,7 +155,6 @@ async def test_propose_and_adopt_session(
         task_event_store=task_event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
     )
     assert proposal.event_type == SESSION_ADOPTION_PROPOSAL
     assert proposal.state == "received"
@@ -197,7 +165,12 @@ async def test_propose_and_adopt_session(
         workspace="/tmp/test",
         harness="cursor",
         model="composer-2.5",
-        role_profile=None,
+        role_profile=TaskRoleProfile(
+            role=MANAGER_DEFAULT_ROLE_KEY,
+            kind="manager",
+            agent_profile_id=manager_agent_id,
+            created_at=1,
+        ),
     )
     processed, adopted = await adopt_session(
         session_id=conv.id,
@@ -206,7 +179,6 @@ async def test_propose_and_adopt_session(
         task_event_store=task_event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
         params=params,
         proposal_event=proposal,
     )
@@ -217,24 +189,18 @@ async def test_propose_and_adopt_session(
     assert worker is not None
     assert worker.kind == WORKER_KIND_EXTERNAL
     assert worker.task_id == task.id
+    # An adopted session was never spawned from a role, so it carries the
+    # session's own agent instead of a role key.
+    assert worker.role_key is None
+    assert worker.agent_profile_id == conv.agent_id
 
 
-def test_reject_session_adoption_sets_dismiss_label(
-    stores: tuple[
-        SqlAlchemyConversationStore,
-        SqlAlchemyTaskStore,
-        SqlAlchemyTaskEventStore,
-        SqlAlchemyWorkerStore,
-        SqlAlchemyAgentStore,
-        str,
-    ],
-) -> None:
+def test_reject_session_adoption_sets_dismiss_label(stores: _Stores) -> None:
     (
         conversation_store,
         task_store,
         task_event_store,
         worker_store,
-        agent_store,
         manager_agent_id,
     ) = stores
     conv = conversation_store.create_conversation(title="Stay orphan", agent_id=manager_agent_id)
@@ -245,7 +211,6 @@ def test_reject_session_adoption_sets_dismiss_label(
         task_event_store=task_event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
     )
     dismissed = reject_session_adoption(
         session_id=conv.id,

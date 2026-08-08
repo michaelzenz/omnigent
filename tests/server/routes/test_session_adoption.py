@@ -9,8 +9,10 @@ import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.agent_tasks.session_labels import ROUTING_REPO_LABEL
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
@@ -18,6 +20,12 @@ from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
+
+
+def _seed_live_host(db_uri: str, seed: str) -> str:
+    host_id = _uid(seed)
+    HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
+    return host_id
 
 
 @pytest_asyncio.fixture()
@@ -55,8 +63,10 @@ async def test_session_adoption_flow(
     task_manager_agent_id: str,
     conversation_store: SqlAlchemyConversationStore,
     worker_store: SqlAlchemyWorkerStore,
+    db_uri: str,
 ) -> None:
     """Propose, adopt, and bind an orphan session to a task."""
+    _seed_live_host(db_uri, "adoption-host")
     conv = conversation_store.create_conversation(
         title="Upload retries",
         agent_id=task_manager_agent_id,
@@ -69,7 +79,6 @@ async def test_session_adoption_flow(
     task_resp = await client.post(
         "/v1/agent-tasks",
         json={
-            "agent_profile_id": task_manager_agent_id,
             "title": "Upload retries",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
@@ -100,6 +109,10 @@ async def test_session_adoption_flow(
     worker = worker_store.get_by_session_id(conv.id)
     assert worker is not None
     assert worker.task_id == task_id
+    # An adopted session was never spawned from a role, so it names its agent.
+    assert worker.kind == WORKER_KIND_EXTERNAL
+    assert worker.role_key is None
+    assert worker.agent_profile_id == task_manager_agent_id
 
 
 async def test_reject_session_adoption(

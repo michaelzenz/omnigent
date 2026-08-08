@@ -1,53 +1,47 @@
-"""Per-user task agent role profile persistence."""
+"""Task agent role definition persistence."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 
 
 class TaskRoleProfileStore(ABC):
-    """Abstract base for per-user task role profile persistence."""
+    """Abstract base for task role definition persistence."""
 
     def __init__(self, storage_location: str) -> None:
         self.storage_location = storage_location
 
     @abstractmethod
-    def get(self, user_id: str, role: str) -> UserTaskRoleProfile | None:
-        """Return the profile for ``user_id`` and ``role``, or ``None`` if unset."""
+    def get(self, role: str) -> TaskRoleProfile | None:
+        """Return the definition for ``role``, or ``None`` if unset."""
 
     @abstractmethod
-    def list_for_user(
-        self,
-        user_id: str,
-        *,
-        role_prefix: str | None = None,
-    ) -> list[UserTaskRoleProfile]:
-        """List profiles for ``user_id``, optionally filtered by role prefix."""
+    def list_roles(self, *, kind: str | None = None) -> list[TaskRoleProfile]:
+        """List role definitions, optionally filtered to one kind."""
 
     @abstractmethod
-    def delete(self, user_id: str, role: str) -> bool:
-        """Delete a profile row. Returns ``False`` when missing."""
+    def delete(self, role: str) -> bool:
+        """Delete a role definition. Returns ``False`` when missing."""
 
     @abstractmethod
     def upsert(
         self,
-        user_id: str,
         role: str,
         *,
+        kind: str | None = None,
         agent_profile_id: str | None = None,
-        conversation_id: str | None = None,
         harness: str | None = None,
         model: str | None = None,
         host_id: str | None = None,
         workspace: str | None = None,
-        clear_conversation_id: bool = False,
         clear_model: bool = False,
-    ) -> UserTaskRoleProfile:
+    ) -> TaskRoleProfile:
         """
-        Create or update a task role profile.
+        Create or update a role definition.
 
         ``None`` leaves a field unchanged. To clear ``model`` back to ``None``
-        (the harness picks its own model), pass ``clear_model=True``.
+        (the harness picks its own model), pass ``clear_model=True``. ``kind``
+        defaults to the family implied by the role key.
         """

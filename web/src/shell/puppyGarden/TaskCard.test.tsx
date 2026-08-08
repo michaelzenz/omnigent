@@ -39,6 +39,10 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutate: vi.fn(),
     isPending: false,
   })),
+  useUpdateWorkerLaneRole: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
 }));
 
 vi.mock("@/hooks/useRoleProfiles", () => ({
@@ -47,15 +51,6 @@ vi.mock("@/hooks/useRoleProfiles", () => ({
       prefix === "worker:"
         ? [{ role: "worker:default", title: "Task worker (default)" }]
         : [{ role: "manager:default", title: "Task manager (default)" }],
-  })),
-}));
-
-vi.mock("@/hooks/useAvailableAgents", () => ({
-  useAvailableAgents: vi.fn(() => ({
-    data: [
-      { id: "worker-1", name: "ci-fixer", display_name: "CI Fixer", harness: null, skills: [] },
-      { id: "worker-2", name: "docs", display_name: "Docs", harness: null, skills: [] },
-    ],
   })),
 }));
 
@@ -119,7 +114,9 @@ describe("TaskCard", () => {
         workers: [
           {
             worker_id: "worker-1",
-            profile_id: "worker-1",
+            role_key: "worker:default",
+            agent_profile_id: null,
+            kind: "managed",
             session_id: null,
             state: "active",
             situation: "Running: Investigate failure",
@@ -180,8 +177,12 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("worker-row-item:item-unassigned")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Route this to someone")).toBeInTheDocument();
     expect(screen.getByText("Workers")).toBeInTheDocument();
-    expect(screen.getByTestId("worker-lane-worker-1")).toBeInTheDocument();
-    expect(screen.getByText("CI Fixer")).toBeInTheDocument();
+    expect(screen.getByTestId("worker-lane-name-worker-1")).toHaveTextContent(
+      "Task worker (default)",
+    );
+    // The lane has no session yet, so it offers the role choice, not Chat.
+    expect(screen.getByTestId("worker-lane-role-worker-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("worker-lane-chat-worker-1")).not.toBeInTheDocument();
     expect(screen.getByTestId("task-card-assets")).toBeInTheDocument();
     expect(screen.queryByText("Sessions")).not.toBeInTheDocument();
     expect(screen.getByTestId("worker-lane-worker-1")).toHaveAttribute("data-expanded", "false");
@@ -195,21 +196,13 @@ describe("TaskCard", () => {
         taskId="task-1"
         inboxItems={[]}
         defaultModel="composer-2.5"
-        agents={[
-          {
-            id: "worker-1",
-            name: "ci-fixer",
-            display_name: "CI Fixer",
-            description: null,
-            harness: null,
-            skills: [],
-          },
-        ]}
         workers={[
           {
             worker_id: "worker-1",
-            profile_id: "worker-1",
-            session_id: null,
+            role_key: "worker:default",
+            agent_profile_id: null,
+            kind: "managed",
+            session_id: "worker-session",
             state: "idle",
             situation: "Idle",
             rows: [
@@ -266,7 +259,9 @@ describe("TaskCard", () => {
   it("always scrolls the worker lane list", () => {
     const workers = Array.from({ length: 5 }, (_, index) => ({
       worker_id: `worker-${index}`,
-      profile_id: `worker-${index}`,
+      role_key: "worker:default",
+      agent_profile_id: null,
+      kind: "managed",
       session_id: null,
       state: "new" as const,
       situation: "New",
@@ -279,7 +274,6 @@ describe("TaskCard", () => {
         taskId="task-many"
         inboxItems={[]}
         defaultModel="composer-2.5"
-        agents={[]}
         workers={workers}
       />,
     );
@@ -294,21 +288,13 @@ describe("TaskCard", () => {
         taskId="task-1"
         inboxItems={[]}
         defaultModel="composer-2.5"
-        agents={[
-          {
-            id: "worker-1",
-            name: "ci-fixer",
-            display_name: "CI Fixer",
-            description: null,
-            harness: null,
-            skills: [],
-          },
-        ]}
         workers={[
           {
             worker_id: "worker-1",
-            profile_id: "worker-1",
-            session_id: null,
+            role_key: "worker:default",
+            agent_profile_id: null,
+            kind: "managed",
+            session_id: "worker-session",
             state: "idle",
             situation: "Idle",
             rows: [

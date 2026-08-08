@@ -10,7 +10,7 @@ from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE, TASK_MANAGER_A
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -38,9 +38,21 @@ def manager_agent_id(db_uri: str) -> str:
     return _ensure_agent(agent_store, agent_id, TASK_MANAGER_AGENT_NAME)
 
 
+def _role_profile(agent_profile_id: str, *, host_seed: str, workspace: str) -> TaskRoleProfile:
+    return TaskRoleProfile(
+        role=TASK_BROKER_ROLE,
+        kind="broker",
+        agent_profile_id=agent_profile_id,
+        harness="cursor",
+        model="composer-2.5",
+        host_id=_uid(host_seed),
+        workspace=workspace,
+        created_at=1,
+    )
+
+
 @pytest.fixture
 def stores(db_uri: str, manager_agent_id: str) -> dict:
-    agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
@@ -50,12 +62,10 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
     task_store.create(
         task_id,
         "Upload retries",
-        agent_profile_id=manager_agent_id,
         internal_note="flaky upload retries repo:omnigent-fork",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
     return {
-        "agent_store": agent_store,
         "task_store": task_store,
         "event_store": event_store,
         "conversation_store": conversation_store,
@@ -79,15 +89,10 @@ async def test_ingress_auto_routes_clear_match(db_uri: str, stores: dict) -> Non
             EventTag(tag_type="repo", tag="omnigent-fork"),
         ],
     )
-    profile = UserTaskRoleProfile(
-        user_id="__anonymous__",
-        role=TASK_BROKER_ROLE,
-        agent_profile_id=stores["agent_profile_id"],
-        harness="cursor",
-        model="composer-2.5",
-        host_id=_uid("host_ingress"),
+    profile = _role_profile(
+        stores["agent_profile_id"],
+        host_seed="host_ingress",
         workspace="/tmp/ingress-test",
-        created_at=1,
     )
     updated = await ingress_event(
         event=event,
@@ -95,7 +100,6 @@ async def test_ingress_auto_routes_clear_match(db_uri: str, stores: dict) -> Non
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        agent_store=stores["agent_store"],
         role_profile=profile,
     )
     assert updated.state == "routed"
@@ -113,7 +117,6 @@ async def test_ingress_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) 
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
-    agent_store = SqlAlchemyAgentStore(db_uri)
     event_id = _uid("stall_event")
     event = event_store.create_event(
         event_id,
@@ -127,7 +130,6 @@ async def test_ingress_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) 
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
         task_role_profile_store=secretary_store,
         owner_user_id="__anonymous__",
     )
@@ -150,7 +152,6 @@ async def test_ingress_skips_session_internal_events(db_uri: str, stores: dict) 
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        agent_store=stores["agent_store"],
     )
     assert updated.state == "received"
 
@@ -166,15 +167,10 @@ async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) ->
         task_id=stores["task_id"],
         state="received",
     )
-    profile = UserTaskRoleProfile(
-        user_id="__anonymous__",
-        role=TASK_BROKER_ROLE,
-        agent_profile_id=stores["agent_profile_id"],
-        harness="cursor",
-        model="composer-2.5",
-        host_id=_uid("host_bound"),
+    profile = _role_profile(
+        stores["agent_profile_id"],
+        host_seed="host_bound",
         workspace="/tmp/ingress-bound",
-        created_at=1,
     )
     updated = await ingress_event(
         event=event,
@@ -182,7 +178,6 @@ async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) ->
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        agent_store=stores["agent_store"],
         role_profile=profile,
     )
     assert updated.state == "routed"

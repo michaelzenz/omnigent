@@ -8,6 +8,7 @@ import pytest
 
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.items import resolve_task_item
+from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
@@ -18,6 +19,7 @@ from omnigent.agent_tasks.task_packages import (
 )
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -44,12 +46,10 @@ def stores(db_uri: str):
 
 def test_routable_tasks_include_paused(stores) -> None:
     task_store = stores["task"]
-    manager_id = generate_agent_id()
-    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
     active_id = _uid("active-task")
     paused_id = _uid("paused-task")
-    task_store.create(active_id, "Active task", agent_profile_id=manager_id, state="active")
-    task_store.create(paused_id, "Paused task", agent_profile_id=manager_id, state="pending")
+    task_store.create(active_id, "Active task", state="active")
+    task_store.create(paused_id, "Paused task", state="pending")
     routable = routable_tasks(task_store)
     assert {task.id for task in routable} == {active_id, paused_id}
 
@@ -57,13 +57,10 @@ def test_routable_tasks_include_paused(stores) -> None:
 def test_rank_tasks_for_events_includes_paused_match(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
-    manager_id = generate_agent_id()
-    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
     paused_id = _uid("paused-match")
     task_store.create(
         paused_id,
         "Paused match",
-        agent_profile_id=manager_id,
         state="pending",
         internal_note="repo:omnigent-fork",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
@@ -90,8 +87,6 @@ def test_create_task_package_reconciles_events(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
-    manager_id = generate_agent_id()
-    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
     event_id = _uid("package-event")
     event_store.create_event(
         event_id,
@@ -105,7 +100,6 @@ def test_create_task_package_reconciles_events(stores) -> None:
 
     task = create_task_package(
         owner_user_id=_uid("owner"),
-        agent_profile_id=manager_id,
         title="CI failure on PR #123",
         items=[
             PackageItemSpec(
@@ -131,8 +125,6 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
-    manager_id = generate_agent_id()
-    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
     e1 = _uid("extend-e1")
     e2 = _uid("extend-e2")
     event_store.create_event(
@@ -153,7 +145,6 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
     )
     task = create_task_package(
         owner_user_id=_uid("owner"),
-        agent_profile_id=manager_id,
         title="PR 891",
         items=[PackageItemSpec(title="Fix PR 891", event_ids=[e1])],
         task_store=task_store,
@@ -184,8 +175,6 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
-    manager_id = generate_agent_id()
-    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
     e1, e2, e3 = (_uid(f"dedup-{i}") for i in range(3))
     for eid, etype in ((e1, "build.finished"), (e2, "build.failed"), (e3, "build.finished")):
         event_store.create_event(eid, etype, "flaky", state="awaiting_grouping")
@@ -193,7 +182,6 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
     task = task_store.create(
         _uid("dedup-task"),
         "Dedup package",
-        agent_profile_id=manager_id,
         owner_user_id=_uid("owner"),
         state="pending",
     )
@@ -222,10 +210,8 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
     item_store = stores["item"]
     agent_store = stores["agent"]
     conversation_store = stores["conversation"]
-    manager_id = generate_agent_id()
-    worker_id = generate_agent_id()
-    agent_store.create(manager_id, name="manager", bundle_location="test:///bundle")
-    agent_store.create(worker_id, name="worker", bundle_location="test:///bundle")
+    worker_agent_id = generate_agent_id()
+    agent_store.create(worker_agent_id, name="worker", bundle_location="test:///bundle")
     event_id = _uid("resolve-event")
     event_store.create_event(
         event_id,
@@ -235,7 +221,6 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
     )
     task = create_task_package(
         owner_user_id=_uid("owner"),
-        agent_profile_id=manager_id,
         title="Package to activate",
         items=[PackageItemSpec(title="Do work", event_ids=[event_id], instructions="Do the work")],
         task_store=task_store,
@@ -254,9 +239,18 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
+        role_profile=TaskRoleProfile(
+            role=WORKER_DEFAULT_ROLE_KEY,
+            kind="worker",
+            agent_profile_id=worker_agent_id,
+            harness="cursor",
+            model="composer-2.5",
+            host_id=_uid("host"),
+            workspace="/tmp/omnigent-task-test",
+            created_at=1,
+        ),
         edited_payload={
-            "worker_profile_id": worker_id,
+            "worker_role_key": WORKER_DEFAULT_ROLE_KEY,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-task-test",
             "harness": "cursor",
@@ -275,10 +269,7 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
-    agent_store = stores["agent"]
     conversation_store = stores["conversation"]
-    manager_id = generate_agent_id()
-    agent_store.create(manager_id, name="manager", bundle_location="test:///bundle")
     event_ids = [_uid("skip-e1"), _uid("skip-e2")]
     for event_id in event_ids:
         event_store.create_event(
@@ -289,7 +280,6 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
         )
     task = create_task_package(
         owner_user_id=_uid("owner"),
-        agent_profile_id=manager_id,
         title="Package to skip",
         items=[
             PackageItemSpec(title="Skip me", event_ids=[event_ids[0]]),
@@ -311,7 +301,6 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
             task_event_store=event_store,
             worker_store=worker_store,
             conversation_store=conversation_store,
-            agent_store=agent_store,
         )
         assert updated.state == "cancelled"
         assert execution is None
@@ -325,9 +314,6 @@ def test_reject_task_package(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
-    agent_store = stores["agent"]
-    manager_id = generate_agent_id()
-    agent_store.create(manager_id, name="manager", bundle_location="test:///bundle")
     reject_event_id = _uid("reject-event")
     event_store.create_event(
         reject_event_id,
@@ -337,7 +323,6 @@ def test_reject_task_package(stores) -> None:
     )
     reject_task = create_task_package(
         owner_user_id=_uid("owner"),
-        agent_profile_id=manager_id,
         title="Package to reject",
         items=[PackageItemSpec(title="Do work", event_ids=[reject_event_id])],
         task_store=task_store,
@@ -361,13 +346,10 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
-    manager_id = generate_agent_id()
-    stores["agent"].create(manager_id, name="manager", bundle_location="test:///bundle")
     paused_id = _uid("paused-inbox")
     task_store.create(
         paused_id,
         "Paused match",
-        agent_profile_id=manager_id,
         state="pending",
         internal_note="repo:omnigent-fork",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],

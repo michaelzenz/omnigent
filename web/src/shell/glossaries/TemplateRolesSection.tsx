@@ -8,7 +8,7 @@ import {
   useRoleProfiles,
 } from "@/hooks/useRoleProfiles";
 import { RoleDefinitionCard } from "./RoleDefinitionCard";
-import { PerUserRoleDefaultsForm } from "./PerUserRoleDefaultsForm";
+import { RoleDefaultsForm } from "./RoleDefaultsForm";
 
 interface TemplateRolesSectionProps {
   rolePrefix: string;
@@ -123,7 +123,7 @@ export function TemplateRolesSection({
               ) : null
             }
           >
-            <PerUserRoleDefaultsForm roleId={profile.role} />
+            <RoleDefaultsForm roleId={profile.role} />
           </RoleDefinitionCard>
         ))
       )}

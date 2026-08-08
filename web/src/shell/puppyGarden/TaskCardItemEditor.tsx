@@ -10,20 +10,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useResolveTaskItem, useUpdateTaskItem } from "@/hooks/useAgentTasks";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
-import type { DispatchPayload, TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
+import { useRoleProfiles } from "@/hooks/useRoleProfiles";
+import {
+  WORKER_ROLE_PREFIX,
+  type DispatchPayload,
+  type TaskItemSummary,
+  type TaskWorkerLane,
+} from "@/lib/agentTasksApi";
 import {
   buildWorkerOptions,
-  profileIdForItem,
   proposalHasEdits,
+  roleKeyForItem,
   workerOptionLabel,
   type WorkerOption,
 } from "./taskCardUtils";
 
 interface ItemEditorState {
-  workerAgentId: string;
+  workerRoleKey: string;
   model: string;
   title: string;
   description: string;
@@ -35,7 +40,7 @@ function itemProposalPayload(
   workerLanes: TaskWorkerLane[],
 ): DispatchPayload & { description?: string } {
   return {
-    worker_profile_id: profileIdForItem(item, workerLanes),
+    worker_role_key: roleKeyForItem(item, workerLanes),
     title: item.title,
     description: item.description ?? "",
     instructions: item.instructions ?? "",
@@ -45,17 +50,16 @@ function itemProposalPayload(
 function initialEditorState(
   item: TaskItemSummary,
   workerOptions: WorkerOption[],
-  workerLanes: TaskWorkerLane[],
+  laneRoleKey: string | undefined,
   defaultModel: string,
 ): ItemEditorState {
-  const workerAgentId =
-    profileIdForItem(item, workerLanes) ?? workerOptions[0]?.workerAgentId ?? "";
+  const workerRoleKey = laneRoleKey ?? workerOptions[0]?.workerRoleKey ?? "";
   const model =
-    workerOptions.find((option) => option.workerAgentId === workerAgentId)?.model ??
+    workerOptions.find((option) => option.workerRoleKey === workerRoleKey)?.model ??
     workerOptions[0]?.model ??
     defaultModel;
   return {
-    workerAgentId,
+    workerRoleKey,
     model,
     title: item.title,
     description: item.description ?? "",
@@ -66,9 +70,7 @@ function initialEditorState(
 interface TaskCardItemEditorProps {
   taskId: string;
   item: TaskItemSummary;
-  workerAgentIds: string[];
   workerLanes: TaskWorkerLane[];
-  agents: AvailableAgent[];
   defaultModel: string;
   mode: "ack" | "edit" | "parked";
 }
@@ -76,49 +78,61 @@ interface TaskCardItemEditorProps {
 export function TaskCardItemEditor({
   taskId,
   item,
-  workerAgentIds,
   workerLanes,
-  agents,
   defaultModel,
   mode,
 }: TaskCardItemEditorProps) {
   const resolveItem = useResolveTaskItem(taskId);
   const updateItem = useUpdateTaskItem(taskId);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
+  const { data: workerRoles = [] } = useRoleProfiles(WORKER_ROLE_PREFIX);
+
+  // The role list and the lane binding are the only inputs to the options, and
+  // both are keyed on strings — memoising on the arrays themselves would rebuild
+  // the options on every dashboard poll and reset the editor mid-edit.
+  const roleKeys = workerRoles.map((role) => role.role).join(",");
+  const laneRoleKey = roleKeyForItem(item, workerLanes);
 
   const workerOptions = useMemo(
-    () => buildWorkerOptions(workerAgentIds, itemProposalPayload(item, workerLanes), defaultModel),
-    [workerAgentIds, workerLanes, item, defaultModel],
+    () =>
+      buildWorkerOptions(
+        roleKeys ? roleKeys.split(",") : [],
+        { worker_role_key: laneRoleKey },
+        defaultModel,
+      ),
+    [roleKeys, laneRoleKey, defaultModel],
   );
 
-  const agentNameById = useMemo(
-    () => new Map(agents.map((agent) => [agent.id, agent.display_name])),
-    [agents],
+  const roleTitleByKey = useMemo(
+    () => new Map(workerRoles.map((role) => [role.role, role.title ?? role.role])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [roleKeys],
   );
 
   const [editor, setEditor] = useState(() =>
-    initialEditorState(item, workerOptions, workerLanes, defaultModel),
+    initialEditorState(item, workerOptions, laneRoleKey, defaultModel),
   );
 
   useEffect(() => {
-    setEditor(initialEditorState(item, workerOptions, workerLanes, defaultModel));
-  }, [item.id, workerOptions, workerLanes, defaultModel]);
+    setEditor(initialEditorState(item, workerOptions, laneRoleKey, defaultModel));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, workerOptions, laneRoleKey, defaultModel]);
 
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12, item.id);
 
   const baseline = {
     ...itemProposalPayload(item, workerLanes),
     model:
-      workerOptions.find((option) => option.workerAgentId === editor.workerAgentId)?.model ??
+      workerOptions.find((option) => option.workerRoleKey === editor.workerRoleKey)?.model ??
       defaultModel,
   };
   const pending = resolveItem.isPending || updateItem.isPending;
 
-  const onWorkerChange = (workerAgentId: string) => {
-    const option = workerOptions.find((row) => row.workerAgentId === workerAgentId);
+  const onWorkerChange = (workerRoleKey: string) => {
+    const option = workerOptions.find((row) => row.workerRoleKey === workerRoleKey);
     setEditor((prev) => ({
       ...prev,
-      workerAgentId,
+      workerRoleKey,
       model: option?.model ?? prev.model,
     }));
   };
@@ -127,7 +141,7 @@ export function TaskCardItemEditor({
     const edited =
       resolution === "edit_and_dispatch"
         ? ({
-            worker_profile_id: editor.workerAgentId,
+            worker_role_key: editor.workerRoleKey,
             model: editor.model,
             title: editor.title,
             description: editor.description,
@@ -151,7 +165,7 @@ export function TaskCardItemEditor({
     await updateItem.mutateAsync({
       taskItemId: item.id,
       body: {
-        worker_profile_id: editor.workerAgentId,
+        worker_role_key: editor.workerRoleKey,
         title: editor.title,
         description: editor.description,
         instructions: editor.instructions,
@@ -171,14 +185,14 @@ export function TaskCardItemEditor({
 
       <div className="flex flex-col gap-0.5">
         <span className="text-xs leading-none text-muted-foreground">Worker</span>
-        <Select value={editor.workerAgentId} onValueChange={onWorkerChange}>
+        <Select value={editor.workerRoleKey} onValueChange={onWorkerChange}>
           <SelectTrigger className="h-7 w-full" size="sm">
-            <SelectValue placeholder="Select worker" />
+            <SelectValue placeholder="Select worker role" />
           </SelectTrigger>
           <SelectContent>
             {workerOptions.map((option) => (
-              <SelectItem key={option.workerAgentId} value={option.workerAgentId}>
-                {workerOptionLabel(option.workerAgentId, option.model, agentNameById)}
+              <SelectItem key={option.workerRoleKey} value={option.workerRoleKey}>
+                {workerOptionLabel(option.workerRoleKey, option.model, roleTitleByKey)}
               </SelectItem>
             ))}
           </SelectContent>

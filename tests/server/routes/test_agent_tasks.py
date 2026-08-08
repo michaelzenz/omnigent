@@ -11,6 +11,7 @@ import pytest_asyncio
 from omnigent.agent_tasks.agent_builtins import (
     TASK_BROKER_ROLE,
     TASK_MANAGER_AGENT_NAME,
+    TASK_SECRETARY_AGENT_NAME,
     TASK_SECRETARY_ROLE,
     resolve_task_agent_id,
 )
@@ -22,11 +23,13 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 from tests.server.routes.agent_task_api import (
     agent_role_profile_url,
     agent_role_session_reset_url,
     agent_role_session_url,
     put_agent_role_profile,
+    task_worker_url,
 )
 
 
@@ -42,17 +45,23 @@ async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def secretary_agent_id(db_uri: str) -> str:
-    """Register a secretary agent for profile tests."""
+async def secretary_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    """Return the seeded task-secretary built-in agent id."""
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_SECRETARY_AGENT_NAME)
+
+
+@pytest_asyncio.fixture()
+async def custom_agent_id(db_uri: str) -> str:
+    """Register an agent that is none of the packaged task built-ins."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="secretary-agent", bundle_location="test:///bundle")
+    agent_store.create(agent_id, name="custom-agent", bundle_location="test:///bundle")
     return agent_id
 
 
-def _create_payload(agent_profile_id: str, **overrides: object) -> dict:
+def _create_payload(**overrides: object) -> dict:
     base: dict = {
-        "agent_profile_id": agent_profile_id,
         "title": "S3 upload reliability",
         "internal_note": "retry flaky uploads",
         "tags": [{"tag_type": "domain", "tag": "s3"}],
@@ -61,22 +70,17 @@ def _create_payload(agent_profile_id: str, **overrides: object) -> dict:
     return base
 
 
-async def test_create_and_get_task(
-    client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-) -> None:
+async def test_create_and_get_task(client: httpx.AsyncClient) -> None:
     """Creating a task returns the task snapshot; GET includes tags."""
-    create_resp = await client.post(
-        "/v1/agent-tasks",
-        json=_create_payload(task_manager_agent_id),
-    )
+    create_resp = await client.post("/v1/agent-tasks", json=_create_payload())
     assert create_resp.status_code == 200
     created = create_resp.json()
     assert created["object"] == "agent.task"
-    assert created["agent_profile_id"] == task_manager_agent_id
     assert created["state"] == "idle"
     assert created["manager_role_key"] == "manager:default"
     assert created["worker_role_key"] == "worker:default"
+    # The agent behind each lane is named by the role, not by the task.
+    assert "agent_profile_id" not in created
     assert created["tags"] == [{"tag_type": "domain", "tag": "s3"}]
 
     get_resp = await client.get(f"/v1/agent-tasks/{created['id']}")
@@ -87,11 +91,13 @@ async def test_create_and_get_task(
     assert loaded["tags"] == created["tags"]
 
 
-async def test_create_defaults_agent_profile_to_task_manager(
+async def test_create_defaults_manager_role_to_task_manager_agent(
     client: httpx.AsyncClient,
+    db_uri: str,
     task_manager_agent_id: str,
 ) -> None:
-    """Omitting agent_profile_id uses the built-in task-manager profile."""
+    """A task with no role keys runs the built-in task-manager through manager:default."""
+    _seed_live_host(db_uri, "default-manager-host")
     create_resp = await client.post(
         "/v1/agent-tasks",
         json={
@@ -100,33 +106,34 @@ async def test_create_defaults_agent_profile_to_task_manager(
         },
     )
     assert create_resp.status_code == 200
-    assert create_resp.json()["agent_profile_id"] == task_manager_agent_id
+    assert create_resp.json()["manager_role_key"] == "manager:default"
+
+    profile_resp = await client.get(agent_role_profile_url("manager:default"))
+    assert profile_resp.status_code == 200
+    assert profile_resp.json()["agent_profile_id"] == task_manager_agent_id
 
 
-async def test_create_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
-    """Unknown agent_profile_id returns 404."""
-    resp = await client.post(
-        "/v1/agent-tasks",
-        json={
-            "agent_profile_id": _uid("missing_profile"),
-            "title": "Orphan task",
-        },
+async def test_role_profile_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
+    """Pointing a role at an unknown agent_profile_id returns 404."""
+    resp = await put_agent_role_profile(
+        client,
+        role=TASK_BROKER_ROLE,
+        agent_profile_id=_uid("missing_profile"),
+        host_id=_uid("missing_profile_host"),
+        workspace="/tmp/broker",
     )
     assert resp.status_code == 404
 
 
-async def test_list_tasks_filters_by_state(
-    client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-) -> None:
+async def test_list_tasks_filters_by_state(client: httpx.AsyncClient) -> None:
     """List endpoint filters by state query param."""
     idle_task = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(task_manager_agent_id, title="Idle task"),
+        json=_create_payload(title="Idle task"),
     )
     archived = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(task_manager_agent_id, title="Archived task"),
+        json=_create_payload(title="Archived task"),
     )
     await client.delete(f"/v1/agent-tasks/{archived.json()['id']}")
 
@@ -137,14 +144,9 @@ async def test_list_tasks_filters_by_state(
     assert archived.json()["id"] not in ids
 
 
-async def test_patch_task(
-    client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-) -> None:
+async def test_patch_task(client: httpx.AsyncClient) -> None:
     """PATCH updates mutable fields."""
-    created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
-    ).json()
+    created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     patch_resp = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
         json={"title": "Renamed task", "state": "pending"},
@@ -155,14 +157,9 @@ async def test_patch_task(
     assert body["state"] == "pending"
 
 
-async def test_put_tags_replaces_all(
-    client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-) -> None:
+async def test_put_tags_replaces_all(client: httpx.AsyncClient) -> None:
     """PUT /tags replaces the full tag set."""
-    created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
-    ).json()
+    created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     put_resp = await client.put(
         f"/v1/agent-tasks/{created['id']}/tags",
         json={
@@ -180,15 +177,9 @@ async def test_put_tags_replaces_all(
     ]
 
 
-async def test_list_executions(
-    client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-    db_uri: str,
-) -> None:
+async def test_list_executions(client: httpx.AsyncClient, db_uri: str) -> None:
     """Execution history is exposed for a task."""
-    created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
-    ).json()
+    created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     task_id = created["id"]
     event_store = SqlAlchemyTaskEventStore(db_uri)
     item_store = SqlAlchemyTaskItemStore(db_uri)
@@ -224,14 +215,9 @@ async def test_list_executions(
     assert rows[0]["status"] == "succeeded"
 
 
-async def test_delete_archives_task(
-    client: httpx.AsyncClient,
-    task_manager_agent_id: str,
-) -> None:
+async def test_delete_archives_task(client: httpx.AsyncClient) -> None:
     """DELETE soft-archives the task."""
-    created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
-    ).json()
+    created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     delete_resp = await client.delete(f"/v1/agent-tasks/{created['id']}")
     assert delete_resp.status_code == 200
     assert delete_resp.json()["deleted"] is True
@@ -249,25 +235,28 @@ async def test_unknown_task_agent_role_returns_404(client: httpx.AsyncClient) ->
 
 async def test_broker_profile_round_trip(
     client: httpx.AsyncClient,
-    secretary_agent_id: str,
+    custom_agent_id: str,
 ) -> None:
     """Broker role accepts and stores a profile independent of secretary."""
     profile_resp = await put_agent_role_profile(
         client,
         role=TASK_BROKER_ROLE,
-        agent_profile_id=secretary_agent_id,
+        agent_profile_id=custom_agent_id,
         host_id=_uid("broker_host"),
         workspace="/tmp/broker",
     )
     assert profile_resp.status_code == 200
     body = profile_resp.json()
     assert body["role"] == TASK_BROKER_ROLE
-    assert body["agent_profile_id"] == secretary_agent_id
+    assert body["kind"] == "broker"
+    assert body["agent_profile_id"] == custom_agent_id
 
     loaded = await client.get(agent_role_profile_url(TASK_BROKER_ROLE))
     assert loaded.status_code == 200
     assert loaded.json()["workspace"] == "/tmp/broker"
-    assert loaded.json()["agent_profile_id"] == secretary_agent_id
+    assert loaded.json()["agent_profile_id"] == custom_agent_id
+    # Definitions are shared; only the live session is per user.
+    assert loaded.json()["conversation_id"] is None
 
 
 def _seed_live_host(db_uri: str, seed: str) -> str:
@@ -323,9 +312,7 @@ async def test_patch_manager_role_key_pending_only(
         "/v1/agent-tasks/roles/manager",
         json={"slug": "alt", "agent_profile_id": task_manager_agent_id},
     )
-    created = (
-        await client.post("/v1/agent-tasks", json=_create_payload(task_manager_agent_id))
-    ).json()
+    created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     pending_state = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
         json={"state": "pending"},
@@ -352,10 +339,91 @@ async def test_patch_manager_role_key_pending_only(
     assert blocked_patch.status_code == 409
 
 
+async def _worker_lane_id(
+    client: httpx.AsyncClient,
+    *,
+    task_id: str,
+    role_key: str = "worker:default",
+) -> str:
+    """Create an item bound to a worker lane and return the lane id."""
+    item_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/items",
+        json={"title": "Investigate failure", "worker_role_key": role_key},
+    )
+    assert item_resp.status_code == 200
+    worker_id = item_resp.json()["worker_id"]
+    assert worker_id is not None
+    return worker_id
+
+
+async def test_patch_worker_lane_role(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    """A lane that has not run yet can be re-pointed at another worker role."""
+    _seed_live_host(db_uri, "worker-lane-host")
+    await client.post(
+        "/v1/agent-tasks/roles/worker",
+        json={"slug": "reviewer", "agent_profile_id": task_manager_agent_id},
+    )
+    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+    worker_id = await _worker_lane_id(client, task_id=task_id)
+
+    patch_resp = await client.patch(
+        task_worker_url(worker_id),
+        json={"role_key": "worker:reviewer"},
+    )
+    assert patch_resp.status_code == 200
+    body = patch_resp.json()
+    assert body["object"] == "agent.task.worker"
+    assert body["role_key"] == "worker:reviewer"
+    assert body["kind"] == "managed"
+    assert body["agent_profile_id"] is None
+
+
+async def test_patch_worker_lane_rejects_unknown_worker(client: httpx.AsyncClient) -> None:
+    """An unknown lane id is a 404."""
+    resp = await client.patch(
+        task_worker_url(_uid("missing_worker")),
+        json={"role_key": "worker:default"},
+    )
+    assert resp.status_code == 404
+
+
+async def test_patch_worker_lane_rejects_non_worker_role(client: httpx.AsyncClient) -> None:
+    """Only worker roles may run a worker lane."""
+    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+    worker_id = await _worker_lane_id(client, task_id=task_id)
+
+    resp = await client.patch(
+        task_worker_url(worker_id),
+        json={"role_key": "manager:default"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_input"
+
+
+async def test_patch_worker_lane_conflicts_once_it_has_a_session(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A lane that already ran keeps its history under the old role."""
+    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+    worker_id = await _worker_lane_id(client, task_id=task_id)
+    SqlAlchemyWorkerStore(db_uri).update_worker(worker_id, session_id=_uid("lane_session"))
+
+    resp = await client.patch(
+        task_worker_url(worker_id),
+        json={"role_key": "worker:default"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "conflict"
+
+
 async def test_secretary_profile_and_bootstrap(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
-    secretary_agent_id: str,
 ) -> None:
     """Manager glossary defaults feed manager bootstrap."""
     from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY
@@ -369,10 +437,7 @@ async def test_secretary_profile_and_bootstrap(
     )
     assert profile_resp.status_code == 200
 
-    created = await client.post(
-        "/v1/agent-tasks",
-        json={"agent_profile_id": task_manager_agent_id, "title": "Bootstrap me"},
-    )
+    created = await client.post("/v1/agent-tasks", json={"title": "Bootstrap me"})
     task_id = created.json()["id"]
     bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
     assert bootstrap_resp.status_code == 200
@@ -449,7 +514,11 @@ async def test_reset_secretary_session_reseeds_prompt(
     assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
 
     profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
-    assert profile_resp.json()["conversation_id"] == reset_body["conversation_id"]
+    profile = profile_resp.json()
+    assert profile["conversation_id"] == reset_body["conversation_id"]
+    # Only the session is reset; the role keeps the harness and model it was given.
+    assert profile["harness"] == "cursor"
+    assert profile["model"] == "composer-2.5"
 
 
 async def test_ensure_secretary_session_auto_provisions_profile(

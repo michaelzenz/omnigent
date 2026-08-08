@@ -50,7 +50,6 @@ from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_ma
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
@@ -58,6 +57,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.user_role_session_store import UserRoleSessionStore
 
 _logger = logging.getLogger(__name__)
 
@@ -218,6 +218,7 @@ class BrokerPackager(Packager):
         store: AgentQueueStore,
         task_event_store: TaskEventStore,
         task_role_profile_store: TaskRoleProfileStore,
+        user_role_session_store: UserRoleSessionStore,
         task_store: TaskStore,
         status_reader: _StatusReader,
         *,
@@ -238,6 +239,7 @@ class BrokerPackager(Packager):
         )
         self._task_event_store = task_event_store
         self._task_role_profile_store = task_role_profile_store
+        self._user_role_session_store = user_role_session_store
         self._task_store = task_store
         self._status_reader = status_reader
         self._conversation_store = conversation_store
@@ -246,8 +248,8 @@ class BrokerPackager(Packager):
         self._similarity_threshold = similarity_threshold
         self._candidate_limit = candidate_limit
 
-    def _live_broker_profile(self, owner_user_id: str) -> UserTaskRoleProfile | None:
-        """Return the owner's broker profile, booting its session if needed."""
+    def _live_broker_conversation_id(self, owner_user_id: str) -> str | None:
+        """Return the owner's live broker conversation, booting one if needed."""
         if (
             self._conversation_store is not None
             and self._agent_store is not None
@@ -257,6 +259,7 @@ class BrokerPackager(Packager):
                 return ensure_broker_session(
                     owner_user_id=owner_user_id,
                     task_role_profile_store=self._task_role_profile_store,
+                    user_role_session_store=self._user_role_session_store,
                     conversation_store=self._conversation_store,
                     agent_store=self._agent_store,
                     host_store=self._host_store,
@@ -265,10 +268,10 @@ class BrokerPackager(Packager):
                 # One owner's bootstrap must not abort the scan for the rest.
                 _logger.exception("broker packager: failed to boot broker for %s", owner_user_id)
                 return None
-        profile = self._task_role_profile_store.get(owner_user_id, TASK_BROKER_ROLE)
-        if profile is None or profile.conversation_id is None:
+        session = self._user_role_session_store.get(owner_user_id, TASK_BROKER_ROLE)
+        if session is None:
             return None
-        return profile
+        return session.conversation_id
 
     @property
     def role(self) -> str:
@@ -330,14 +333,14 @@ class BrokerPackager(Packager):
         return batches
 
     def _is_idle(self, key: AgentQueueKey) -> bool:
-        profile = self._live_broker_profile(key.owner_user_id)
-        if profile is None or profile.conversation_id is None:
+        conversation_id = self._live_broker_conversation_id(key.owner_user_id)
+        if conversation_id is None:
             return False
-        return self._status_reader.status_for(profile.conversation_id) == "idle"
+        return self._status_reader.status_for(conversation_id) == "idle"
 
     def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
-        profile = self._live_broker_profile(batch.key.owner_user_id)
-        if profile is None or profile.conversation_id is None:
+        conversation_id = self._live_broker_conversation_id(batch.key.owner_user_id)
+        if conversation_id is None:
             _logger.debug(
                 "broker packager: no live broker for %s; %d events stay in awaiting_grouping",
                 batch.key.owner_user_id,

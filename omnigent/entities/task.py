@@ -17,9 +17,10 @@ class Task:
     A managed task persisted in the ``tasks`` table.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
-    :param agent_profile_id: Registered agent profile that runs the task manager.
     :param manager_role_key: Glossary manager template key, e.g. ``"manager:default"``.
+        The role resolves the agent profile that runs the task manager.
     :param worker_role_key: Glossary worker template key, e.g. ``"worker:default"``.
+        Seeds the role of each new worker lane on this task.
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
@@ -32,7 +33,6 @@ class Task:
     """
 
     id: str
-    agent_profile_id: str
     manager_role_key: str
     worker_role_key: str
     owner_user_id: str | None
@@ -145,8 +145,10 @@ class Worker:
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param task_id: Parent managed task.
-    :param profile_id: Registered agent profile for this slot.
     :param kind: ``"managed"`` for dispatched workers, ``"external"`` for adopted sessions.
+    :param role_key: Role this lane runs, set on managed lanes only.
+    :param agent_profile_id: Agent behind an adopted session, which was never
+        spawned from a role. Set on external lanes only.
     :param session_id: Live session id when spawned or adopted, or ``None`` before bind.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
@@ -154,9 +156,10 @@ class Worker:
 
     id: str
     task_id: str
-    profile_id: str
     kind: str
     created_at: int
+    role_key: str | None = None
+    agent_profile_id: str | None = None
     session_id: str | None = None
     updated_at: int | None = None
 

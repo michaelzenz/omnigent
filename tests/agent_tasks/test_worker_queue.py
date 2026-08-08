@@ -19,20 +19,36 @@ from starlette.testclient import TestClient
 from omnigent.agent_tasks.items import resolve_task_item
 from omnigent.agent_tasks.queue.dispatcher import DispatchFailed, DispatchTarget
 from omnigent.agent_tasks.queue.handlers import WorkerDispatchHandler
+from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import generate_agent_id, now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.server.routes.agent_queues import create_agent_queues_router
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
+    SqlAlchemyTaskRoleProfileStore,
+)
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
+
+
+def _worker_role_profile(agent_profile_id: str, *, workspace: str) -> TaskRoleProfile:
+    return TaskRoleProfile(
+        role=WORKER_DEFAULT_ROLE_KEY,
+        kind="worker",
+        agent_profile_id=agent_profile_id,
+        host_id=_uid("host"),
+        workspace=workspace,
+        created_at=1,
+    )
 
 
 def _queue_item(
@@ -63,12 +79,25 @@ def worker_setup(db_uri: str) -> dict:
     item_store = SqlAlchemyTaskItemStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
 
     manager_agent_id = generate_agent_id()
-    worker_profile_id = generate_agent_id()
+    worker_agent_id = generate_agent_id()
     agent_store.create(manager_agent_id, name="task-manager-agent", bundle_location="test:///b")
-    agent_store.create(worker_profile_id, name="worker-profile", bundle_location="test:///b")
+    agent_store.create(worker_agent_id, name="worker-profile", bundle_location="test:///b")
+    profile_store.upsert(
+        MANAGER_DEFAULT_ROLE_KEY,
+        agent_profile_id=manager_agent_id,
+        host_id=_uid("host"),
+        workspace="/tmp/mgr",
+    )
+    profile_store.upsert(
+        WORKER_DEFAULT_ROLE_KEY,
+        agent_profile_id=worker_agent_id,
+        host_id=_uid("host"),
+        workspace="/tmp/worker",
+    )
 
     manager_conv = conversation_store.create_conversation(
         title="Manager",
@@ -80,11 +109,14 @@ def worker_setup(db_uri: str) -> dict:
     task_store.create(
         task_id,
         "Worker task",
-        agent_profile_id=manager_agent_id,
         owner_user_id="user-w",
         manager_conversation_id=manager_conv.id,
     )
-    worker = worker_store.create_worker(_uid("worker"), task_id, worker_profile_id)
+    worker = worker_store.create_worker(
+        _uid("worker"),
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+    )
     item = item_store.create_item(
         _uid("item"),
         task_id,
@@ -102,7 +134,7 @@ def worker_setup(db_uri: str) -> dict:
         worker_store=worker_store,
         conversation_store=conversation_store,
         agent_store=agent_store,
-        task_role_profile_store=None,
+        task_role_profile_store=profile_store,
         runner_router=None,
         ensure_runner=ensure_runner,
     )
@@ -114,6 +146,8 @@ def worker_setup(db_uri: str) -> dict:
         "worker_store": worker_store,
         "conversation_store": conversation_store,
         "agent_store": agent_store,
+        "profile_store": profile_store,
+        "worker_agent_id": worker_agent_id,
         "task_id": task_id,
         "worker": worker,
         "item": item,
@@ -142,7 +176,7 @@ async def test_resolve_target_uses_prior_session_harness(worker_setup: dict) -> 
         kind="sub_agent",
         title="Prev item",
         parent_conversation_id=worker_setup["manager_conv_id"],
-        agent_id=worker.profile_id,
+        agent_id=worker_setup["worker_agent_id"],
         host_id=_uid("host"),
         workspace="/tmp/prev",
     )
@@ -183,7 +217,7 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
             "title": item.title,
             "instructions": item.instructions or "",
             "internal_note": item.internal_note,
-            "worker_profile_id": worker.profile_id,
+            "worker_role_key": worker.role_key,
             "host_id": _uid("host"),
             "workspace": "/tmp/worker",
             "harness": "claude-native",
@@ -222,9 +256,9 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
 
     manager_id = generate_agent_id()
-    worker_profile_id = generate_agent_id()
+    worker_agent_id = generate_agent_id()
     agent_store.create(manager_id, name="manager", bundle_location="test:///b")
-    agent_store.create(worker_profile_id, name="worker", bundle_location="test:///b")
+    agent_store.create(worker_agent_id, name="worker", bundle_location="test:///b")
     manager_conv = conversation_store.create_conversation(
         title="Manager",
         agent_id=manager_id,
@@ -235,7 +269,6 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
     task = task_store.create(
         task_id,
         "Accept task",
-        agent_profile_id=manager_id,
         owner_user_id="user-accept",
         manager_conversation_id=manager_conv.id,
     )
@@ -256,9 +289,9 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
+        role_profile=_worker_role_profile(worker_agent_id, workspace="/tmp/omnigent-accept"),
         edited_payload={
-            "worker_profile_id": worker_profile_id,
+            "worker_role_key": WORKER_DEFAULT_ROLE_KEY,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-accept",
         },
@@ -278,7 +311,7 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
     assert items[0].kind == "item.dispatch"
     assert items[0].source_ids == [item.id]
     payload = json.loads(items[0].payload)
-    assert payload["worker_profile_id"] == worker_profile_id
+    assert payload["worker_role_key"] == WORKER_DEFAULT_ROLE_KEY
 
 
 def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> None:
@@ -290,9 +323,9 @@ def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> 
     conversation_store = SqlAlchemyConversationStore(db_uri)
 
     manager_id = generate_agent_id()
-    worker_profile_id = generate_agent_id()
+    worker_agent_id = generate_agent_id()
     agent_store.create(manager_id, name="manager", bundle_location="test:///b")
-    agent_store.create(worker_profile_id, name="worker", bundle_location="test:///b")
+    agent_store.create(worker_agent_id, name="worker", bundle_location="test:///b")
     manager_conv = conversation_store.create_conversation(
         title="Manager",
         agent_id=manager_id,
@@ -303,7 +336,6 @@ def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> 
     task = task_store.create(
         task_id,
         "Legacy task",
-        agent_profile_id=manager_id,
         owner_user_id="user-legacy",
         manager_conversation_id=manager_conv.id,
     )
@@ -324,9 +356,9 @@ def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> 
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
+        role_profile=_worker_role_profile(worker_agent_id, workspace="/tmp/omnigent-legacy"),
         edited_payload={
-            "worker_profile_id": worker_profile_id,
+            "worker_role_key": WORKER_DEFAULT_ROLE_KEY,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-legacy",
         },

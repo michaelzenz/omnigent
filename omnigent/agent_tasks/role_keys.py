@@ -13,6 +13,16 @@ WORKER_DEFAULT_ROLE_KEY = "worker:default"
 TASK_BROKER_ROLE_KEY = "broker"
 TASK_SECRETARY_ROLE_KEY = "secretary"
 
+ROLE_KIND_MANAGER = "manager"
+ROLE_KIND_WORKER = "worker"
+ROLE_KIND_BROKER = "broker"
+ROLE_KIND_SECRETARY = "secretary"
+ROLE_KIND_EXTERNAL = "external"
+
+# Roles a user talks to directly, so their session is per-user rather than
+# bound to a task or worker lane.
+SINGLETON_ROLE_KINDS: frozenset[str] = frozenset({ROLE_KIND_BROKER, ROLE_KIND_SECRETARY})
+
 SYSTEM_ROLE_KEYS: frozenset[str] = frozenset(
     {
         TASK_BROKER_ROLE_KEY,
@@ -123,6 +133,24 @@ def normalize_role_profile_key(role: str) -> str:
         f"Unsupported task agent role: {role}",
         code=ErrorCode.NOT_FOUND,
     )
+
+
+def role_kind_from_key(role: str) -> str:
+    """Return the role family a key belongs to."""
+    if role == TASK_BROKER_ROLE_KEY:
+        return ROLE_KIND_BROKER
+    if role == TASK_SECRETARY_ROLE_KEY:
+        return ROLE_KIND_SECRETARY
+    if is_manager_role_key(role):
+        return ROLE_KIND_MANAGER
+    if is_worker_role_key(role):
+        return ROLE_KIND_WORKER
+    return ROLE_KIND_EXTERNAL
+
+
+def is_singleton_role_key(role: str) -> bool:
+    """Whether the role's session is per-user rather than per task or lane."""
+    return role_kind_from_key(role) in SINGLETON_ROLE_KINDS
 
 
 def is_editable_role_profile_key(role: str) -> bool:

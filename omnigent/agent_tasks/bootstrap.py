@@ -10,22 +10,21 @@ from omnigent.agent_tasks.constants import (
     resolve_task_harness,
 )
 from omnigent.entities import Task
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
-from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
 
 @dataclass(frozen=True)
 class BootstrapParams:
-    """Resolved host/workspace/harness/model inputs for manager bootstrap."""
+    """Everything a role resolves to for one session spawn."""
 
     host_id: str
     workspace: str
     harness: str
     model: str | None
+    agent_profile_id: str
 
 
 def resolve_bootstrap_params(
@@ -34,9 +33,9 @@ def resolve_bootstrap_params(
     workspace: str | None,
     harness: str | None,
     model: str | None,
-    role_profile: UserTaskRoleProfile | None,
+    role_profile: TaskRoleProfile | None,
 ) -> BootstrapParams:
-    """Merge explicit bootstrap inputs with role profile defaults."""
+    """Merge explicit bootstrap inputs over the role's defaults."""
     resolved_host_id = host_id or (role_profile.host_id if role_profile else None)
     resolved_workspace = (
         workspace or (role_profile.workspace if role_profile else None) or DEFAULT_TASK_WORKSPACE
@@ -44,15 +43,21 @@ def resolve_bootstrap_params(
     resolved_harness = resolve_task_harness(
         harness or (role_profile.harness if role_profile else None) or DEFAULT_TASK_HARNESS
     )
-    # The role profile stores harness and model as a matched pair (the glossary
-    # clears the model when the harness picks its own), so it is passed through
-    # as-is; empty means "let the harness choose".
+    # The role stores harness and model as a matched pair (the glossary clears
+    # the model when the harness picks its own), so it is passed through as-is;
+    # empty means "let the harness choose".
     resolved_model = (
         model if model is not None else (role_profile.model if role_profile else None)
     ) or None
+    resolved_agent_id = role_profile.agent_profile_id if role_profile else None
     if not resolved_host_id or not resolved_workspace:
         raise OmnigentError(
             "host_id and workspace are required to bootstrap a manager session",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if not resolved_agent_id:
+        raise OmnigentError(
+            "the role must name an agent profile to bootstrap a session",
             code=ErrorCode.INVALID_INPUT,
         )
     return BootstrapParams(
@@ -60,6 +65,7 @@ def resolve_bootstrap_params(
         workspace=resolved_workspace,
         harness=resolved_harness,
         model=resolved_model,
+        agent_profile_id=resolved_agent_id,
     )
 
 
@@ -67,9 +73,7 @@ def bootstrap_task_manager(
     *,
     task: Task,
     task_store: TaskStore,
-    task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
-    agent_store: AgentStore,
     params: BootstrapParams,
 ) -> Task:
     """
@@ -87,11 +91,9 @@ def bootstrap_task_manager(
             )
         return task
 
-    manager_agent_id = task.agent_profile_id
-
     conversation = conversation_store.create_conversation(
         title=f"Task manager: {task.title}",
-        agent_id=manager_agent_id,
+        agent_id=params.agent_profile_id,
         host_id=params.host_id,
         workspace=params.workspace,
     )

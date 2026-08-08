@@ -3,8 +3,8 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RolesTab } from "./RolesTab";
 
-vi.mock("./PerUserRoleDefaultsForm", () => ({
-  PerUserRoleDefaultsForm: ({ roleId }: { roleId: string }) => (
+vi.mock("./RoleDefaultsForm", () => ({
+  RoleDefaultsForm: ({ roleId }: { roleId: string }) => (
     <div data-testid={`glossary-role-defaults-${roleId}`} />
   ),
 }));

@@ -16,10 +16,9 @@ from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
 from omnigent.entities.agent_queue import AgentQueueKey
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_queue_store import AgentQueueStore
-from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -53,8 +52,8 @@ def _item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
     }
 
 
-def _profile_id_from_payload(payload: dict[str, Any]) -> str | None:
-    value = payload.get("worker_profile_id")
+def _role_key_from_payload(payload: dict[str, Any]) -> str | None:
+    value = payload.get("worker_role_key")
     if value is not None and str(value).strip():
         return str(value).strip()
     return None
@@ -70,7 +69,7 @@ def create_task_item(
     description: str | None = None,
     instructions: str | None = None,
     internal_note: str | None = None,
-    worker_profile_id: str | None = None,
+    worker_role_key: str | None = None,
     created_by: str = "manager",
     event_ids: list[str] | None = None,
     task_event_store: TaskEventStore | None = None,
@@ -86,11 +85,11 @@ def create_task_item(
         internal_note=internal_note,
         created_by=created_by,
     )
-    profile_id = worker_profile_id.strip() if worker_profile_id else None
-    if profile_id:
+    role_key = worker_role_key.strip() if worker_role_key else None
+    if role_key:
         item, _worker = assign_worker_profile(
             item=item,
-            profile_id=profile_id,
+            role_key=role_key,
             worker_store=worker_store,
             task_item_store=task_item_store,
         )
@@ -109,10 +108,8 @@ def ensure_task_manager_for_dispatch(
     *,
     task: Task,
     task_store: TaskStore,
-    task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
-    agent_store: AgentStore,
-    role_profile: UserTaskRoleProfile | None = None,
+    role_profile: TaskRoleProfile | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
     harness: str | None = None,
@@ -135,9 +132,7 @@ def ensure_task_manager_for_dispatch(
     return bootstrap_task_manager(
         task=task,
         task_store=task_store,
-        task_event_store=task_event_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
         params=params,
     )
 
@@ -173,9 +168,8 @@ def resolve_task_item(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    agent_store: AgentStore,
     edited_payload: dict[str, Any] | None = None,
-    role_profile: UserTaskRoleProfile | None = None,
+    role_profile: TaskRoleProfile | None = None,
     agent_queue_store: AgentQueueStore | None = None,
     owner_user_id: str | None = None,
 ) -> tuple[TaskItem, TaskEventExecution | None]:
@@ -203,9 +197,7 @@ def resolve_task_item(
     task = ensure_task_manager_for_dispatch(
         task=task,
         task_store=task_store,
-        task_event_store=task_event_store,
         conversation_store=conversation_store,
-        agent_store=agent_store,
         role_profile=role_profile,
         host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
         workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
@@ -227,24 +219,26 @@ def resolve_task_item(
         item = refreshed
         payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
 
-    profile_id = _profile_id_from_payload(payload)
-    if profile_id is not None:
-        item, worker = assign_worker_profile(
+    role_key = _role_key_from_payload(payload)
+    if role_key is not None:
+        item, assigned = assign_worker_profile(
             item=item,
-            profile_id=profile_id,
+            role_key=role_key,
             worker_store=worker_store,
             task_item_store=task_item_store,
         )
+        worker = assigned
     else:
-        worker = worker_for_item(item, worker_store=worker_store)
-        if worker is None:
+        existing = worker_for_item(item, worker_store=worker_store)
+        if existing is None:
             raise OmnigentError(
-                "worker_profile_id is required for unassigned inbox items",
+                "worker_role_key is required for unassigned inbox items",
                 code=ErrorCode.INVALID_INPUT,
             )
+        worker = existing
 
     params = resolve_dispatch_params(
-        payload={**payload, "worker_profile_id": worker.profile_id},
+        payload={**payload, "worker_role_key": worker.role_key},
         role_profile=role_profile,
         host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
         workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
@@ -256,7 +250,7 @@ def resolve_task_item(
         # worker session off the request path. No execution/runner here.
         updated = task_item_store.update_item(item.id, state="queued")
         assert updated is not None
-        queue_payload = {**payload, "worker_profile_id": worker.profile_id}
+        queue_payload = {**payload, "worker_role_key": worker.role_key}
         agent_queue_store.enqueue(
             uuid.uuid4().hex,
             AgentQueueKey(
@@ -331,7 +325,7 @@ def patch_task_item(
     description: str | None = None,
     instructions: str | None = None,
     internal_note: str | None = None,
-    worker_profile_id: str | None = None,
+    worker_role_key: str | None = None,
 ) -> TaskItem:
     """Update a queued work item before it is dispatched."""
     if item.state not in _EDITABLE_WORK_ITEM_STATES:
@@ -350,10 +344,10 @@ def patch_task_item(
     )
     if updated is None:
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
-    if worker_profile_id is not None and worker_profile_id.strip():
+    if worker_role_key is not None and worker_role_key.strip():
         updated, _worker = assign_worker_profile(
             item=updated,
-            profile_id=worker_profile_id,
+            role_key=worker_role_key,
             worker_store=worker_store,
             task_item_store=task_item_store,
         )

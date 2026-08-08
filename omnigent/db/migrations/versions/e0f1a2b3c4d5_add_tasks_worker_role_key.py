@@ -31,4 +31,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("tasks", "worker_role_key")
+    with op.batch_alter_table("tasks") as batch_op:
+        batch_op.drop_column("worker_role_key")

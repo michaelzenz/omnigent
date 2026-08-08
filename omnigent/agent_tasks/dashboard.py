@@ -169,7 +169,8 @@ def _worker_lane(
 
     return {
         "worker_id": worker.id,
-        "profile_id": worker.profile_id,
+        "role_key": worker.role_key,
+        "agent_profile_id": worker.agent_profile_id,
         "session_id": worker.session_id,
         "kind": worker.kind,
         "state": state,

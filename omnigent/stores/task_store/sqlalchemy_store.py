@@ -28,7 +28,6 @@ def _tag_to_entity(row: SqlTaskTag) -> TaskTag:
 def _to_entity(row: SqlTask) -> Task:
     return Task(
         id=row.id,
-        agent_profile_id=row.agent_profile_id,
         manager_role_key=row.manager_role_key,
         worker_role_key=row.worker_role_key,
         manager_conversation_id=row.manager_conversation_id,
@@ -55,7 +54,6 @@ class SqlAlchemyTaskStore(TaskStore):
         task_id: str,
         title: str,
         *,
-        agent_profile_id: str,
         owner_user_id: str | None = None,
         manager_role_key: str | None = None,
         worker_role_key: str | None = None,
@@ -68,7 +66,6 @@ class SqlAlchemyTaskStore(TaskStore):
         tag_rows = tags or []
         row = SqlTask(
             id=task_id,
-            agent_profile_id=agent_profile_id,
             manager_role_key=manager_role_key or MANAGER_DEFAULT_ROLE_KEY,
             worker_role_key=worker_role_key or WORKER_DEFAULT_ROLE_KEY,
             manager_conversation_id=manager_conversation_id,
@@ -134,7 +131,6 @@ class SqlAlchemyTaskStore(TaskStore):
         internal_note: str | None = None,
         manager_conversation_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
-        agent_profile_id: str | None = None,
         manager_role_key: str | None = None,
         worker_role_key: str | None = None,
         state: str | None = None,
@@ -160,9 +156,6 @@ class SqlAlchemyTaskStore(TaskStore):
                 changed = True
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
                 row.owner_user_id = owner_user_id
-                changed = True
-            if agent_profile_id is not None and row.agent_profile_id != agent_profile_id:
-                row.agent_profile_id = agent_profile_id
                 changed = True
             if manager_role_key is not None and row.manager_role_key != manager_role_key:
                 row.manager_role_key = manager_role_key

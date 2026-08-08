@@ -5,7 +5,7 @@ import {
   WORKER_ROLE_DEFINITION,
 } from "./rolesCatalog";
 import { RoleDefinitionCard } from "./RoleDefinitionCard";
-import { PerUserRoleDefaultsForm } from "./PerUserRoleDefaultsForm";
+import { RoleDefaultsForm } from "./RoleDefaultsForm";
 import { TemplateRolesSection } from "./TemplateRolesSection";
 import { MANAGER_ROLE_PREFIX, WORKER_ROLE_PREFIX } from "@/lib/agentTasksApi";
 
@@ -27,7 +27,7 @@ export function RolesTab() {
           onSelect={() => setSelectedRoleId(entry.id)}
         >
           {entry.defaultsKind === "per_user" && entry.profileRoleId ? (
-            <PerUserRoleDefaultsForm roleId={entry.profileRoleId} />
+            <RoleDefaultsForm roleId={entry.profileRoleId} />
           ) : null}
         </RoleDefinitionCard>
       ))}

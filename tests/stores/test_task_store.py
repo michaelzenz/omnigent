@@ -23,7 +23,6 @@ def test_create_and_get_round_trip(store: SqlAlchemyTaskStore) -> None:
     task = store.create(
         task_id=_uid("task_1"),
         title="S3 reliability",
-        agent_profile_id=_uid("profile_1"),
         owner_user_id="alice@example.com",
         internal_note="upload retries and backoff",
         manager_conversation_id=_uid("conv_mgr"),
@@ -31,8 +30,28 @@ def test_create_and_get_round_trip(store: SqlAlchemyTaskStore) -> None:
     )
     assert task.id == _uid("task_1")
     assert task.manager_conversation_id == _uid("conv_mgr")
+    # A task names the roles that run it, not the agent profiles behind them.
+    assert task.manager_role_key == "manager:default"
+    assert task.worker_role_key == "worker:default"
     loaded = store.get(_uid("task_1"))
     assert loaded == task
+
+
+def test_create_accepts_custom_role_keys(store: SqlAlchemyTaskStore) -> None:
+    """Manager and worker lanes can be pointed at custom glossary roles."""
+    task_id = _uid("task_roles")
+    store.create(
+        task_id=task_id,
+        title="Research spike",
+        manager_role_key="manager:research",
+        worker_role_key="worker:reviewer",
+    )
+    loaded = store.get(task_id)
+    assert loaded is not None
+    assert loaded.manager_role_key == "manager:research"
+    assert loaded.worker_role_key == "worker:reviewer"
+    assert store.count_by_manager_role_key("manager:research") == 1
+    assert store.count_by_worker_role_key("worker:reviewer") == 1
 
 
 def test_set_tags_replaces_task_tags(store: SqlAlchemyTaskStore) -> None:
@@ -40,7 +59,6 @@ def test_set_tags_replaces_task_tags(store: SqlAlchemyTaskStore) -> None:
     store.create(
         task_id=task_id,
         title="Title",
-        agent_profile_id=_uid("profile_1"),
         internal_note="routing context",
     )
     store.set_tags(
@@ -60,8 +78,8 @@ def test_set_tags_replaces_task_tags(store: SqlAlchemyTaskStore) -> None:
 def test_list_task_ids_by_tag(store: SqlAlchemyTaskStore) -> None:
     task_a = _uid("task_a")
     task_b = _uid("task_b")
-    store.create(task_id=task_a, title="A", agent_profile_id=_uid("profile_a"))
-    store.create(task_id=task_b, title="B", agent_profile_id=_uid("profile_b"))
+    store.create(task_id=task_a, title="A")
+    store.create(task_id=task_b, title="B")
     store.set_tags(task_a, [TaskTag(task_id=task_a, tag_type="domain", tag="s3")])
     store.set_tags(task_b, [TaskTag(task_id=task_b, tag_type="domain", tag="s3")])
     assert sorted(store.list_task_ids_by_tag("domain", "s3")) == sorted([task_a, task_b])
@@ -72,13 +90,13 @@ def test_delete_removes_tags_and_workers(store: SqlAlchemyTaskStore) -> None:
 
     task_id = _uid("task_delete")
     session_id = _uid("sess_delete")
-    store.create(task_id=task_id, title="Delete me", agent_profile_id=_uid("profile_del"))
+    store.create(task_id=task_id, title="Delete me")
     store.set_tags(task_id, [TaskTag(task_id=task_id, tag_type="domain", tag="x")])
     worker_store = SqlAlchemyWorkerStore(store.storage_location)
     worker_store.create_worker(
         _uid("worker_delete"),
         task_id,
-        _uid("profile_del"),
+        role_key="worker:default",
         session_id=session_id,
     )
     assert store.delete(task_id) is True

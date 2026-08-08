@@ -53,6 +53,7 @@ from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemS
 from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
+from omnigent.stores.user_role_session_store.sqlalchemy_store import SqlAlchemyUserRoleSessionStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 # ── Controllable mock LLM ─────────────────────────────
@@ -612,6 +613,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         task_asset_store=SqlAlchemyTaskAssetStore(db_uri),
         timer_item_store=SqlAlchemyTimerItemStore(db_uri),
         task_role_profile_store=SqlAlchemyTaskRoleProfileStore(db_uri),
+        user_role_session_store=SqlAlchemyUserRoleSessionStore(db_uri),
         agent_queue_store=SqlAlchemyAgentQueueStore(db_uri),
         host_store=HostStore(db_uri),
     )

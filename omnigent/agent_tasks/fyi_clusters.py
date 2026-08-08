@@ -11,7 +11,6 @@ from omnigent.agent_tasks.constants import (
     CLASSIFIED_FYI_EVENT_STATE,
     FYI_CLUSTER_OPEN_STATE,
 )
-from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     create_task_package,
@@ -20,7 +19,6 @@ from omnigent.agent_tasks.task_packages import (
 from omnigent.db.utils import now_epoch
 from omnigent.entities import FyiCluster, TaskItem
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
@@ -151,16 +149,9 @@ def resolve_fyi_cluster(
     task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
-    agent_store: AgentStore,
     routing_title: str | None = None,
     routing_instructions: str | None = None,
     suggested_task_id: str | None = None,
-    worker_profile_id: str | None = None,
-    model: str | None = None,
-    host_id: str | None = None,
-    workspace: str | None = None,
-    harness: str | None = None,
-    agent_profile_id: str | None = None,
     proposed_task_title: str | None = None,
     proposed_task_internal_note: str | None = None,
 ) -> tuple[FyiCluster, TaskItem | None]:
@@ -193,7 +184,6 @@ def resolve_fyi_cluster(
     assert updated is not None
 
     title = routing_title or cluster.headline
-    profile_id = resolve_agent_profile_id(agent_store, agent_profile_id)
 
     if suggested_task_id is not None:
         task = task_store.get(suggested_task_id)
@@ -224,7 +214,6 @@ def resolve_fyi_cluster(
 
     task = create_task_package(
         owner_user_id=owner_user_id,
-        agent_profile_id=profile_id,
         title=proposed_task_title or title,
         items=[
             PackageItemSpec(

@@ -1489,7 +1489,6 @@ class SqlTask(OmnigentBase):
         default=current_workspace_id,
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     manager_role_key: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
@@ -1512,7 +1511,7 @@ class SqlTask(OmnigentBase):
     __table_args__ = (
         CheckConstraint("state IN (1, 2, 3, 4)", name="ck_tasks_state"),
         Index("ix_tasks_state_updated", "workspace_id", "state", "updated_at", "id"),
-        Index("ix_tasks_agent_profile_id", "workspace_id", "agent_profile_id", "id"),
+        Index("ix_tasks_manager_role_key", "workspace_id", "manager_role_key", "id"),
         Index("ix_tasks_created_at", "workspace_id", "created_at", "id"),
         Index(
             "ix_tasks_manager_conversation",
@@ -1633,7 +1632,10 @@ class SqlWorker(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
-    profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    # Managed lanes resolve their agent through ``role_key``. Adopted sessions
+    # were never spawned from a role, so they carry the agent id directly.
+    role_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="managed")
     session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
@@ -1641,8 +1643,13 @@ class SqlWorker(OmnigentBase):
 
     __table_args__ = (
         CheckConstraint("kind IN ('managed', 'external')", name="ck_workers_kind"),
+        CheckConstraint(
+            "(kind = 'managed' AND role_key IS NOT NULL AND agent_profile_id IS NULL) "
+            "OR (kind = 'external' AND role_key IS NULL AND agent_profile_id IS NOT NULL)",
+            name="ck_workers_role_or_agent",
+        ),
         Index("ix_workers_task", "workspace_id", "task_id", "id"),
-        Index("ix_workers_profile", "workspace_id", "profile_id", "task_id"),
+        Index("ix_workers_role_key", "workspace_id", "role_key", "task_id"),
         Index("ix_workers_session", "workspace_id", "session_id"),
     )
 
@@ -1789,10 +1796,55 @@ class SqlTimerItem(OmnigentBase):
     )
 
 
-class SqlUserTaskRoleProfile(OmnigentBase):
-    """SQLAlchemy model for per-user task agent role configuration."""
+class SqlTaskRoleProfile(OmnigentBase):
+    """
+    SQLAlchemy model for a task agent role definition.
 
-    __tablename__ = "user_task_role_profiles"
+    A role names an agent profile together with where it runs (host,
+    workspace) and what drives it (harness, model). Everything but the key
+    and kind is optional so externally-defined roles, which carry their own
+    metadata, can omit the fields Omnigent would otherwise resolve.
+    """
+
+    __tablename__ = "task_role_profiles"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    harness: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # NULL when the harness resolves its own model (e.g. Codex, OpenCode).
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('manager', 'worker', 'broker', 'secretary', 'external')",
+            name="ck_task_role_profiles_kind",
+        ),
+        Index("ix_task_role_profiles_kind", "workspace_id", "kind", "role"),
+    )
+
+
+class SqlUserRoleSession(OmnigentBase):
+    """
+    SQLAlchemy model for a user's live session against a singleton role.
+
+    Roles that are instantiated per task or per worker lane keep their
+    conversation on that binding instead; this table covers the roles a user
+    talks to directly, such as the broker and secretary.
+    """
+
+    __tablename__ = "user_role_sessions"
 
     workspace_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -1803,19 +1855,13 @@ class SqlUserTaskRoleProfile(OmnigentBase):
     )
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     role: Mapped[str] = mapped_column(String(64), primary_key=True)
-    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    harness: Mapped[str] = mapped_column(String(64), nullable=False)
-    # NULL when the harness resolves its own model (e.g. Codex, OpenCode).
-    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         Index(
-            "ix_user_task_role_profiles_conversation",
+            "ix_user_role_sessions_conversation",
             "workspace_id",
             "conversation_id",
         ),

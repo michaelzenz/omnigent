@@ -2,26 +2,28 @@
 
 from __future__ import annotations
 
+import pytest
+
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
+from omnigent.errors import ErrorCode, OmnigentError
 
 
-def _profile(*, harness: str, model: str | None) -> UserTaskRoleProfile:
-    return UserTaskRoleProfile(
-        user_id="user",
+def _profile(*, harness: str, model: str | None) -> TaskRoleProfile:
+    return TaskRoleProfile(
         role="manager:default",
+        kind="manager",
         agent_profile_id="agent",
         harness=harness,
         model=model,
         created_at=0,
-        conversation_id=None,
         host_id="host",
         workspace="~/",
         updated_at=None,
     )
 
 
-def _resolve(profile: UserTaskRoleProfile | None, **overrides: str | None):
+def _resolve(profile: TaskRoleProfile | None, **overrides: str | None):
     return resolve_bootstrap_params(
         host_id="host",
         workspace="~/",
@@ -60,7 +62,8 @@ def test_explicit_model_overrides_profile() -> None:
     assert params.model == "opus"
 
 
-def test_missing_profile_defers_model_to_harness() -> None:
-    params = _resolve(None)
-    assert params.harness == "cursor-native"
-    assert params.model is None
+def test_missing_agent_profile_is_rejected() -> None:
+    """A role without an agent profile cannot name what to launch."""
+    with pytest.raises(OmnigentError) as exc:
+        _resolve(None)
+    assert exc.value.code == ErrorCode.INVALID_INPUT

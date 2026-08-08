@@ -15,6 +15,7 @@ import {
   resolveTaskItem,
   retryTaskItemDispatch,
   updateTaskItem,
+  updateWorkerLaneRole,
   type DispatchPayload,
   type ItemResolution,
   type TaskDashboard,
@@ -294,6 +295,18 @@ export function useUpdateAgentTaskManagerRole(taskId: string) {
   return useMutation({
     mutationFn: (managerRoleKey: string) =>
       patchAgentTask(taskId, { manager_role_key: managerRoleKey }),
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+/** Re-point one worker lane at another worker role, before it has a session. */
+export function useUpdateWorkerLaneRole(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workerId, roleKey }: { workerId: string; roleKey: string }) =>
+      updateWorkerLaneRole(workerId, roleKey),
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
     },

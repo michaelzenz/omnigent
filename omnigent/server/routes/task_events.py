@@ -19,12 +19,11 @@ from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import EventTag, Task, TaskEvent, TaskEventRoutingAttempt
-from omnigent.entities.task_role_profile import UserTaskRoleProfile
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.host.identity import HOST_ID_HEADER
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
-from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
@@ -163,7 +162,6 @@ def create_task_events_router(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    agent_store: AgentStore,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
@@ -188,13 +186,10 @@ def create_task_events_router(
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         return event
 
-    async def _load_broker_profile(user_id: str | None) -> UserTaskRoleProfile | None:
+    async def _load_broker_profile() -> TaskRoleProfile | None:
         if task_role_profile_store is None:
             return None
-        effective_user_id = user_id if user_id is not None else "__anonymous__"
-        return await asyncio.to_thread(
-            task_role_profile_store.get, effective_user_id, TASK_BROKER_ROLE
-        )
+        return await asyncio.to_thread(task_role_profile_store.get, TASK_BROKER_ROLE)
 
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
@@ -242,7 +237,7 @@ def create_task_events_router(
             if existing is not None:
                 return _event_to_response(existing)
 
-        profile = await _load_broker_profile(user_id)
+        profile = await _load_broker_profile()
         event_id = uuid.uuid4().hex
         tags = [EventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in body.tags]
 
@@ -269,7 +264,6 @@ def create_task_events_router(
             task_event_store=task_event_store,
             worker_store=worker_store,
             conversation_store=conversation_store,
-            agent_store=agent_store,
             task_role_profile_store=task_role_profile_store,
             role_profile=profile,
             owner_user_id=_effective_user_id(user_id),
@@ -307,7 +301,7 @@ def create_task_events_router(
         }
 
     @router.get("/task-events/{event_id}")
-    async def get_task_event(request: Request, event_id: str) -> dict[str, Any]:
+    async def get_task_event(_request: Request, event_id: str) -> dict[str, Any]:
         """Return one task event with routing attempts."""
         event = await _get_event_or_404(event_id)
         attempts = await asyncio.to_thread(task_event_store.list_routing_attempts, event_id)
@@ -350,7 +344,7 @@ def create_task_events_router(
         if task is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         _require_task_access(task, user_id)
-        profile = await _load_broker_profile(user_id)
+        profile = await _load_broker_profile()
         resolved: list[dict[str, Any]] = []
         for event_id in body.event_ids:
             event = await _get_event_or_404(event_id)
@@ -359,9 +353,7 @@ def create_task_events_router(
                 task_store=task_store,
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
-                agent_store=agent_store,
                 task=task,
-                resolved_by_user_id=user_id,
                 host_id=body.host_id,
                 workspace=body.workspace,
                 harness=body.harness,

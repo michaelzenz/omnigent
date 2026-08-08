@@ -9,7 +9,9 @@ import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.db.utils import generate_agent_id
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
@@ -31,6 +33,23 @@ async def worker_agent_id(db_uri: str) -> str:
     agent_id = generate_agent_id()
     agent_store.create(agent_id, name="task-worker-agent", bundle_location="test:///bundle")
     return agent_id
+
+
+@pytest_asyncio.fixture()
+async def worker_role_key(client: httpx.AsyncClient, worker_agent_id: str) -> str:
+    """Register the worker role a resolved package item is handed to."""
+    resp = await client.post(
+        "/v1/agent-tasks/roles/worker",
+        json={"slug": "packager", "agent_profile_id": worker_agent_id},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["role"]
+
+
+def _seed_live_host(db_uri: str, seed: str) -> str:
+    host_id = _uid(seed)
+    HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
+    return host_id
 
 
 def _bootstrap_body() -> dict[str, str]:
@@ -61,7 +80,6 @@ async def test_create_task_package_lists_as_paused_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "CI failure on PR #123",
-            "agent_profile_id": manager_agent_id,
             "items": [
                 {
                     "title": "Investigate CI failure",
@@ -88,11 +106,11 @@ async def test_create_task_package_lists_as_paused_task(
 
 async def test_resolve_inbox_item_activates_paused_package(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
-    worker_agent_id: str,
+    worker_role_key: str,
     db_uri: str,
 ) -> None:
     """Go on a pending package inbox item activates the task and dispatches a worker."""
+    _seed_live_host(db_uri, "package-resolve-host")
     event_store = SqlAlchemyTaskEventStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_id = _uid("resolve-route-event")
@@ -107,7 +125,6 @@ async def test_resolve_inbox_item_activates_paused_package(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to activate",
-            "agent_profile_id": manager_agent_id,
             "items": [
                 {"title": "Do work", "event_ids": [event_id], "instructions": "Do the work"},
             ],
@@ -124,7 +141,7 @@ async def test_resolve_inbox_item_activates_paused_package(
         json={
             "resolution": "edit_and_dispatch",
             "edited_payload": {
-                "worker_profile_id": worker_agent_id,
+                "worker_role_key": worker_role_key,
                 **_bootstrap_body(),
             },
         },
@@ -165,7 +182,6 @@ async def test_skip_inbox_items_keeps_paused_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to skip",
-            "agent_profile_id": manager_agent_id,
             "items": [
                 {"title": "Skip me", "event_ids": [event_ids[0]]},
                 {"title": "Skip me too", "event_ids": [event_ids[1]]},
@@ -210,7 +226,6 @@ async def test_reconcile_events_extends_package_item(
         "/v1/agent-tasks/packages",
         json={
             "title": "Upload retries",
-            "agent_profile_id": manager_agent_id,
             "items": [
                 {
                     "title": "First failure",
@@ -265,7 +280,6 @@ async def test_reconcile_events_batch_creates_multiple_items(
         "/v1/agent-tasks/packages",
         json={
             "title": "Upload retries",
-            "agent_profile_id": manager_agent_id,
             "items": [
                 {"title": "Seed item", "event_ids": [events[0]]},
             ],

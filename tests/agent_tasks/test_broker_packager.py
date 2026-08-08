@@ -34,6 +34,9 @@ from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
     SqlAlchemyTaskRoleProfileStore,
 )
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.user_role_session_store.sqlalchemy_store import (
+    SqlAlchemyUserRoleSessionStore,
+)
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
 
@@ -59,6 +62,7 @@ def broker_setup(db_uri: str) -> dict:
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
     manager_agent_id = generate_agent_id()
     agent_store.create(
@@ -72,18 +76,18 @@ def broker_setup(db_uri: str) -> dict:
         workspace="/tmp/broker",
     )
     profile_store.upsert(
-        user_id,
-        "broker",
+        TASK_BROKER_ROLE,
         agent_profile_id=manager_agent_id,
-        conversation_id=broker_conv.id,
         host_id=_uid("host_broker"),
         workspace="/tmp/broker",
     )
+    session_store.set_conversation(user_id, TASK_BROKER_ROLE, broker_conv.id)
     status_reader = _StaticStatusReader("idle")
     packager = BrokerPackager(
         store=queue_store,
         task_event_store=event_store,
         task_role_profile_store=profile_store,
+        user_role_session_store=session_store,
         task_store=task_store,
         status_reader=status_reader,
         # Negative threshold so freshly-created events qualify immediately when
@@ -99,6 +103,7 @@ def broker_setup(db_uri: str) -> dict:
         "worker_store": worker_store,
         "conversation_store": conversation_store,
         "profile_store": profile_store,
+        "session_store": session_store,
         "queue_store": queue_store,
         "user_id": user_id,
         "broker_conv_id": broker_conv.id,
@@ -122,8 +127,8 @@ def _lazy_packager(
     tmp_path: Path,
     *,
     with_live_host: bool,
-) -> tuple[BrokerPackager, SqlAlchemyTaskRoleProfileStore]:
-    """Build a broker packager wired for on-demand session bootstrap, with no profile."""
+) -> tuple[BrokerPackager, SqlAlchemyTaskRoleProfileStore, SqlAlchemyUserRoleSessionStore]:
+    """Build a broker packager wired for on-demand session bootstrap, with no role."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_store.create(generate_agent_id(), name="task-broker", bundle_location="test:///bundle")
     conversation_store = SqlAlchemyConversationStore(db_uri)
@@ -138,11 +143,13 @@ def _lazy_packager(
     if with_live_host:
         host_store.upsert_on_connect(_uid("lazy_host"), "lazy-host", RESERVED_USER_LOCAL)
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
     packager = BrokerPackager(
         store=queue_store,
         task_event_store=SqlAlchemyTaskEventStore(db_uri),
         task_role_profile_store=profile_store,
+        user_role_session_store=session_store,
         task_store=SqlAlchemyTaskStore(db_uri),
         status_reader=_StaticStatusReader("idle"),
         conversation_store=conversation_store,
@@ -151,15 +158,15 @@ def _lazy_packager(
         age_threshold_s=-1.0,
         batch_size=10,
     )
-    return packager, profile_store
+    return packager, profile_store, session_store
 
 
 @pytest.mark.asyncio
 async def test_packager_boots_broker_session_on_demand(db_uri: str, tmp_path: Path) -> None:
     """The broker has no UI rail, so the packager provisions its session itself."""
-    packager, profile_store = _lazy_packager(db_uri, tmp_path, with_live_host=True)
+    packager, profile_store, session_store = _lazy_packager(db_uri, tmp_path, with_live_host=True)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    assert profile_store.get("__anonymous__", TASK_BROKER_ROLE) is None
+    assert profile_store.get(TASK_BROKER_ROLE) is None
 
     event_store.create_event(
         _uid("lazy_evt"),
@@ -170,9 +177,10 @@ async def test_packager_boots_broker_session_on_demand(db_uri: str, tmp_path: Pa
     )
     packager.scan_once_sync()
 
-    profile = profile_store.get("__anonymous__", TASK_BROKER_ROLE)
-    assert profile is not None
-    assert profile.conversation_id is not None
+    assert profile_store.get(TASK_BROKER_ROLE) is not None
+    session = session_store.get("__anonymous__", TASK_BROKER_ROLE)
+    assert session is not None
+    assert session.conversation_id is not None
     assert len(packager._store.list_items(_key("__anonymous__"))) == 1
 
 
@@ -182,7 +190,7 @@ async def test_packager_leaves_events_queued_without_a_live_host(
     tmp_path: Path,
 ) -> None:
     """No host means no broker to boot, so events stay in awaiting_grouping."""
-    packager, profile_store = _lazy_packager(db_uri, tmp_path, with_live_host=False)
+    packager, profile_store, session_store = _lazy_packager(db_uri, tmp_path, with_live_host=False)
     event_store = SqlAlchemyTaskEventStore(db_uri)
 
     event_store.create_event(
@@ -194,7 +202,8 @@ async def test_packager_leaves_events_queued_without_a_live_host(
     )
     packager.scan_once_sync()
 
-    assert profile_store.get("__anonymous__", TASK_BROKER_ROLE) is None
+    assert profile_store.get(TASK_BROKER_ROLE) is None
+    assert session_store.get("__anonymous__", TASK_BROKER_ROLE) is None
     assert packager._store.list_items(_key("__anonymous__")) == []
 
 
@@ -302,7 +311,6 @@ async def test_stall_via_ingress_is_picked_up_by_poll(broker_setup: dict) -> Non
         task_event_store=event_store,
         worker_store=broker_setup["worker_store"],
         conversation_store=broker_setup["conversation_store"],
-        agent_store=broker_setup["agent_store"],
         owner_user_id=broker_setup["user_id"],
     )
     assert updated.state == "awaiting_grouping"
@@ -361,7 +369,7 @@ async def test_no_live_broker_holds_events(broker_setup: dict) -> None:
     event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
     queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
     packager: BrokerPackager = broker_setup["packager"]
-    # A user with no broker profile.
+    # A user with no broker session binding.
     event_store.create_event(
         _uid("orphan"),
         "build.finished",
@@ -503,7 +511,6 @@ async def test_similar_events_packaged_into_one_notice_with_candidates(
     task_store.create(
         task_id,
         "Widget CI",
-        agent_profile_id=broker_setup["agent_store"].get_by_name("task-manager-agent").id,
         state="pending",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="acme/widgets")],
     )
