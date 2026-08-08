@@ -79,6 +79,7 @@ from omnigent.agent_tasks.task_match import (
 )
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
+    accept_task_package,
     create_task_package,
     reconcile_events_to_task_batch,
     reject_task_package,
@@ -1771,6 +1772,28 @@ def create_agent_tasks_router(
                 "object": "agent.task.board",
                 "fyi": fyi,
             }
+
+        @router.post("/agent-tasks/{task_id}/accept-package")
+        async def accept_task_package_route(
+            request: Request,
+            task_id: str,
+        ) -> dict[str, Any]:
+            """Promote a pending package to an idle task."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            if task_role_profile_store is None:
+                raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
+
+            def _accept() -> Task:
+                return accept_task_package(
+                    task=task,
+                    task_store=task_store,
+                    task_role_profile_store=task_role_profile_store,
+                )
+
+            accepted = await asyncio.to_thread(_accept)
+            tags = await asyncio.to_thread(task_store.get_tags, task_id)
+            return _task_to_response(accepted, tags=tags)
 
         @router.post("/agent-tasks/{task_id}/reject-package")
         async def reject_task_package_route(

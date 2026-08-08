@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
+  acceptAgentTaskPackage,
   cancelAgentQueueItem,
   ensureBrokerSession,
   ensureSecretarySession,
@@ -9,6 +10,7 @@ import {
   fetchSecretaryProfile,
   fetchTaskDashboard,
   interruptAgentQueueItem,
+  rejectAgentTaskPackage,
   resetBrokerSession,
   resetSecretarySession,
   patchAgentTask,
@@ -301,23 +303,34 @@ export function useUpdateAgentTaskManagerRole(taskId: string) {
   });
 }
 
-/** Re-point one worker lane at another worker role, before it has a session. */
+export function useAcceptAgentTaskPackage(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => acceptAgentTaskPackage(taskId),
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
+    },
+  });
+}
+
+export function useRejectAgentTaskPackage(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => rejectAgentTaskPackage(taskId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
+    },
+  });
+}
+
 export function useUpdateWorkerLaneRole(taskId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ workerId, roleKey }: { workerId: string; roleKey: string }) =>
       updateWorkerLaneRole(workerId, roleKey),
-    onSuccess: async () => {
-      await invalidateTaskQueries(queryClient, taskId);
-    },
-  });
-}
-
-export function useUpdateAgentTaskWorkerRole(taskId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (workerRoleKey: string) =>
-      patchAgentTask(taskId, { worker_role_key: workerRoleKey }),
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
     },

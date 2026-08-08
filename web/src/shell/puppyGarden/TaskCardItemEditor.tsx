@@ -29,7 +29,6 @@ import {
 
 interface ItemEditorState {
   workerRoleKey: string;
-  model: string;
   title: string;
   description: string;
   instructions: string;
@@ -51,16 +50,10 @@ function initialEditorState(
   item: TaskItemSummary,
   workerOptions: WorkerOption[],
   laneRoleKey: string | undefined,
-  defaultModel: string,
 ): ItemEditorState {
   const workerRoleKey = laneRoleKey ?? workerOptions[0]?.workerRoleKey ?? "";
-  const model =
-    workerOptions.find((option) => option.workerRoleKey === workerRoleKey)?.model ??
-    workerOptions[0]?.model ??
-    defaultModel;
   return {
     workerRoleKey,
-    model,
     title: item.title,
     description: item.description ?? "",
     instructions: item.instructions ?? "",
@@ -71,7 +64,6 @@ interface TaskCardItemEditorProps {
   taskId: string;
   item: TaskItemSummary;
   workerLanes: TaskWorkerLane[];
-  defaultModel: string;
   mode: "ack" | "edit" | "parked";
 }
 
@@ -79,7 +71,6 @@ export function TaskCardItemEditor({
   taskId,
   item,
   workerLanes,
-  defaultModel,
   mode,
 }: TaskCardItemEditorProps) {
   const resolveItem = useResolveTaskItem(taskId);
@@ -87,20 +78,15 @@ export function TaskCardItemEditor({
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
   const { data: workerRoles = [] } = useRoleProfiles(WORKER_ROLE_PREFIX);
 
-  // The role list and the lane binding are the only inputs to the options, and
-  // both are keyed on strings — memoising on the arrays themselves would rebuild
-  // the options on every dashboard poll and reset the editor mid-edit.
   const roleKeys = workerRoles.map((role) => role.role).join(",");
   const laneRoleKey = roleKeyForItem(item, workerLanes);
 
   const workerOptions = useMemo(
     () =>
-      buildWorkerOptions(
-        roleKeys ? roleKeys.split(",") : [],
-        { worker_role_key: laneRoleKey },
-        defaultModel,
-      ),
-    [roleKeys, laneRoleKey, defaultModel],
+      buildWorkerOptions(roleKeys ? roleKeys.split(",") : [], {
+        worker_role_key: laneRoleKey,
+      }),
+    [roleKeys, laneRoleKey],
   );
 
   const roleTitleByKey = useMemo(
@@ -110,30 +96,23 @@ export function TaskCardItemEditor({
   );
 
   const [editor, setEditor] = useState(() =>
-    initialEditorState(item, workerOptions, laneRoleKey, defaultModel),
+    initialEditorState(item, workerOptions, laneRoleKey),
   );
 
   useEffect(() => {
-    setEditor(initialEditorState(item, workerOptions, laneRoleKey, defaultModel));
+    setEditor(initialEditorState(item, workerOptions, laneRoleKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, workerOptions, laneRoleKey, defaultModel]);
+  }, [item.id, workerOptions, laneRoleKey]);
 
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12, item.id);
 
-  const baseline = {
-    ...itemProposalPayload(item, workerLanes),
-    model:
-      workerOptions.find((option) => option.workerRoleKey === editor.workerRoleKey)?.model ??
-      defaultModel,
-  };
+  const baseline = itemProposalPayload(item, workerLanes);
   const pending = resolveItem.isPending || updateItem.isPending;
 
   const onWorkerChange = (workerRoleKey: string) => {
-    const option = workerOptions.find((row) => row.workerRoleKey === workerRoleKey);
     setEditor((prev) => ({
       ...prev,
       workerRoleKey,
-      model: option?.model ?? prev.model,
     }));
   };
 
@@ -142,7 +121,6 @@ export function TaskCardItemEditor({
       resolution === "edit_and_dispatch"
         ? ({
             worker_role_key: editor.workerRoleKey,
-            model: editor.model,
             title: editor.title,
             description: editor.description,
             instructions: editor.instructions,
@@ -192,7 +170,7 @@ export function TaskCardItemEditor({
           <SelectContent>
             {workerOptions.map((option) => (
               <SelectItem key={option.workerRoleKey} value={option.workerRoleKey}>
-                {workerOptionLabel(option.workerRoleKey, option.model, roleTitleByKey)}
+                {workerOptionLabel(option.workerRoleKey, roleTitleByKey)}
               </SelectItem>
             ))}
           </SelectContent>

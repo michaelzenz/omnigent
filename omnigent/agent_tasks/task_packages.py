@@ -7,7 +7,12 @@ from dataclasses import dataclass
 
 from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
-from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
+from omnigent.agent_tasks.role_keys import (
+    MANAGER_DEFAULT_ROLE_KEY,
+    MANAGER_ROLE_PREFIX,
+    WORKER_DEFAULT_ROLE_KEY,
+    is_manager_role_key,
+)
 from omnigent.agent_tasks.task_match import (
     internal_note_from_event_tags,
     task_tags_from_event_tags,
@@ -17,6 +22,7 @@ from omnigent.entities import Task, TaskEvent, TaskItem, TaskTag
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
@@ -239,6 +245,37 @@ def create_task_package(
             code=ErrorCode.CONFLICT,
         )
     return task_store.get(resolved_task_id) or task
+
+
+def accept_task_package(
+    *,
+    task: Task,
+    task_store: TaskStore,
+    task_role_profile_store: TaskRoleProfileStore,
+) -> Task:
+    """Promote a pending package to an idle task after the manager role is set."""
+    _require_pending_package_task(task)
+    manager_role_key = (task.manager_role_key or "").strip()
+    if not manager_role_key or not is_manager_role_key(manager_role_key):
+        raise OmnigentError(
+            "manager_role_key must be set to a manager glossary role before accept",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    profile = task_role_profile_store.get(manager_role_key)
+    if profile is None:
+        raise OmnigentError(
+            f"Task role profile not found: {manager_role_key}",
+            code=ErrorCode.NOT_FOUND,
+        )
+    if not profile.agent_profile_id:
+        raise OmnigentError(
+            "the manager role must name an agent profile before accept",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    activated = task_store.update(task.id, state="idle")
+    if activated is None:
+        raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+    return activated
 
 
 def reject_task_package(

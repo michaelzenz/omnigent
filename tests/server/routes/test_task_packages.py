@@ -15,6 +15,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from tests.server.routes.agent_task_api import put_agent_role_profile
 
 
 def _uid(seed: str) -> str:
@@ -25,6 +26,25 @@ def _uid(seed: str) -> str:
 async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
     del client
     return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
+
+
+@pytest_asyncio.fixture()
+async def manager_role_key(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+    db_uri: str,
+) -> str:
+    """Ensure manager:default exists with an agent profile before accept."""
+    _seed_live_host(db_uri, "manager-role-host")
+    resp = await put_agent_role_profile(
+        client,
+        role="manager:default",
+        agent_profile_id=manager_agent_id,
+        host_id=_uid("manager-role-host"),
+        workspace="/tmp/omnigent-manager-test",
+    )
+    assert resp.status_code == 200, resp.text
+    return "manager:default"
 
 
 @pytest_asyncio.fixture()
@@ -104,12 +124,50 @@ async def test_create_task_package_lists_as_paused_task(
     assert event.state == "reconciled"
 
 
-async def test_resolve_inbox_item_activates_paused_package(
+async def test_accept_package_promotes_pending_task(
     client: httpx.AsyncClient,
-    worker_role_key: str,
+    manager_agent_id: str,
+    manager_role_key: str,
     db_uri: str,
 ) -> None:
-    """Go on a pending package inbox item activates the task and dispatches a worker."""
+    """Accepting a pending package moves it to idle and locks the manager role."""
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    event_id = _uid("accept-route-event")
+    event_store.create_event(
+        event_id,
+        "github.pr.checks_failed",
+        "PR checks failed",
+        state="awaiting_grouping",
+    )
+
+    created = await client.post(
+        "/v1/agent-tasks/packages",
+        json={
+            "title": "Package to accept",
+            "items": [{"title": "Do work", "event_ids": [event_id]}],
+        },
+    )
+    assert created.status_code == 200
+    task_id = created.json()["id"]
+
+    accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["state"] == "idle"
+
+    locked = await client.patch(
+        f"/v1/agent-tasks/{task_id}",
+        json={"manager_role_key": "manager:custom"},
+    )
+    assert locked.status_code == 409
+
+
+async def test_resolve_inbox_item_activates_accepted_package(
+    client: httpx.AsyncClient,
+    worker_role_key: str,
+    manager_role_key: str,
+    db_uri: str,
+) -> None:
+    """Go on an accepted package inbox item dispatches a worker."""
     _seed_live_host(db_uri, "package-resolve-host")
     event_store = SqlAlchemyTaskEventStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
@@ -132,6 +190,8 @@ async def test_resolve_inbox_item_activates_paused_package(
     )
     assert created.status_code == 200
     task_id = created.json()["id"]
+    accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
+    assert accepted.status_code == 200
 
     item_store = SqlAlchemyTaskItemStore(db_uri)
     item = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0]
@@ -154,10 +214,50 @@ async def test_resolve_inbox_item_activates_paused_package(
 
     activated = task_store.get(task_id)
     assert activated is not None
-    # The task leaves ``pending`` (activated) but has no running worker yet, so
-    # it sits idle with a queued backlog rather than going active.
+    # The task is idle with a queued backlog rather than active until a worker runs.
     assert activated.state == "idle"
     assert activated.manager_conversation_id is not None
+
+
+async def test_resolve_inbox_item_requires_accepted_package(
+    client: httpx.AsyncClient,
+    worker_role_key: str,
+    db_uri: str,
+) -> None:
+    """Dispatching from a still-pending package is rejected."""
+    _seed_live_host(db_uri, "package-pending-host")
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    event_id = _uid("pending-resolve-event")
+    event_store.create_event(
+        event_id,
+        "github.pr.checks_failed",
+        "PR checks failed",
+        state="awaiting_grouping",
+    )
+
+    created = await client.post(
+        "/v1/agent-tasks/packages",
+        json={
+            "title": "Still pending",
+            "items": [{"title": "Do work", "event_ids": [event_id]}],
+        },
+    )
+    assert created.status_code == 200
+    task_id = created.json()["id"]
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    item = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0]
+
+    resolved = await client.post(
+        f"/v1/task-items/{item.id}/resolve",
+        json={
+            "resolution": "edit_and_dispatch",
+            "edited_payload": {
+                "worker_role_key": worker_role_key,
+                **_bootstrap_body(),
+            },
+        },
+    )
+    assert resolved.status_code == 409
 
 
 async def test_skip_inbox_items_keeps_paused_task(

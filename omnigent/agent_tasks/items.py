@@ -115,12 +115,12 @@ def ensure_task_manager_for_dispatch(
     harness: str | None = None,
     model: str | None = None,
 ) -> Task:
-    """Activate pending packages and ensure a manager session exists before dispatch."""
+    """Ensure a manager session exists before dispatch."""
     if task.state == "pending":
-        activated = task_store.update(task.id, state="idle")
-        if activated is None:
-            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-        task = activated
+        raise OmnigentError(
+            "Accept the task package before dispatching work",
+            code=ErrorCode.CONFLICT,
+        )
 
     params = resolve_bootstrap_params(
         host_id=host_id,

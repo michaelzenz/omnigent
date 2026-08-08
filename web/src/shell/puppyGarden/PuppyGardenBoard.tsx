@@ -70,7 +70,6 @@ export function PuppyGardenBoard() {
                 description={task.description}
                 state={task.state}
                 managerRoleKey={task.manager_role_key}
-                workerRoleKey={task.worker_role_key}
               />
             ))}
           </section>
@@ -86,7 +85,6 @@ export function PuppyGardenBoard() {
                 description={task.description}
                 state={task.state}
                 managerRoleKey={task.manager_role_key}
-                workerRoleKey={task.worker_role_key}
               />
             ))}
           </section>

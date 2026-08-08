@@ -35,7 +35,11 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutate: vi.fn(),
     isPending: false,
   })),
-  useUpdateAgentTaskWorkerRole: vi.fn(() => ({
+  useAcceptAgentTaskPackage: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
+  useRejectAgentTaskPackage: vi.fn(() => ({
     mutate: vi.fn(),
     isPending: false,
   })),
@@ -70,7 +74,6 @@ function renderCard() {
             description="Fix upload retries"
             state="active"
             managerRoleKey="manager:default"
-            workerRoleKey="worker:default"
           />
         </PuppyGardenChatProvider>
       </MemoryRouter>
@@ -195,7 +198,6 @@ describe("TaskCard", () => {
       <TaskCardWorkers
         taskId="task-1"
         inboxItems={[]}
-        defaultModel="composer-2.5"
         workers={[
           {
             worker_id: "worker-1",
@@ -269,14 +271,7 @@ describe("TaskCard", () => {
       executions: [],
     }));
 
-    renderWorkers(
-      <TaskCardWorkers
-        taskId="task-many"
-        inboxItems={[]}
-        defaultModel="composer-2.5"
-        workers={workers}
-      />,
-    );
+    renderWorkers(<TaskCardWorkers taskId="task-many" inboxItems={[]} workers={workers} />);
 
     expect(screen.getByTestId("task-card-workers").className).toContain("overflow-y-auto");
     expect(screen.getByTestId("task-card-workers").className).toContain("flex-1");
@@ -287,7 +282,6 @@ describe("TaskCard", () => {
       <TaskCardWorkers
         taskId="task-1"
         inboxItems={[]}
-        defaultModel="composer-2.5"
         workers={[
           {
             worker_id: "worker-1",
@@ -404,7 +398,6 @@ describe("TaskCard", () => {
               description={null}
               state="pending"
               managerRoleKey="manager:default"
-              workerRoleKey="worker:default"
             />
           </PuppyGardenChatProvider>
         </MemoryRouter>

@@ -22,15 +22,9 @@ interface TaskCardWorkerRowsProps {
   taskId: string;
   rows: TaskWorkerRow[];
   workerLanes: TaskWorkerLane[];
-  defaultModel: string;
 }
 
-export function TaskCardWorkerRows({
-  taskId,
-  rows,
-  workerLanes,
-  defaultModel,
-}: TaskCardWorkerRowsProps) {
+export function TaskCardWorkerRows({ taskId, rows, workerLanes }: TaskCardWorkerRowsProps) {
   const visibleRows = visibleWorkerRows(rows);
   const [folded, setFolded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(visibleRows.map((row) => [rowKey(row), row.default_folded])),
@@ -95,7 +89,6 @@ export function TaskCardWorkerRows({
                         taskId={taskId}
                         item={row.item}
                         workerLanes={workerLanes}
-                        defaultModel={defaultModel}
                         mode={
                           row.item.state === "awaiting_user_ack"
                             ? "ack"

@@ -23,7 +23,6 @@ interface TaskCardWorkersProps {
   taskId: string;
   inboxItems: TaskItemSummary[];
   workers: TaskWorkerLane[];
-  defaultModel: string;
 }
 
 function laneDisplayName(lane: TaskWorkerLane, roleTitleByKey: Map<string, string>): string {
@@ -32,12 +31,7 @@ function laneDisplayName(lane: TaskWorkerLane, roleTitleByKey: Map<string, strin
   return roleTitleByKey.get(lane.role_key) ?? lane.role_key;
 }
 
-export function TaskCardWorkers({
-  taskId,
-  inboxItems,
-  workers,
-  defaultModel,
-}: TaskCardWorkersProps) {
+export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkersProps) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
   const { data: workerRoles = [] } = useRoleProfiles(WORKER_ROLE_PREFIX);
   const roleTitleByKey = useMemo(
@@ -157,7 +151,12 @@ export function TaskCardWorkers({
                     <p className="truncate text-xs text-muted-foreground">{lane.situation}</p>
                   </div>
                 </button>
-                {isInboxLane(lane.worker_id) ? null : awaitingRole ? (
+                {isInboxLane(lane.worker_id) ? null : lane.kind === "external" &&
+                  lane.session_id == null ? (
+                  <span className="shrink-0 px-2 text-[10px] text-muted-foreground">
+                    External — no chat yet
+                  </span>
+                ) : awaitingRole ? (
                   <WorkerLaneRolePicker
                     taskId={taskId}
                     workerId={lane.worker_id}
@@ -199,7 +198,6 @@ export function TaskCardWorkers({
                     taskId={taskId}
                     rows={lane.rows}
                     workerLanes={workers}
-                    defaultModel={defaultModel}
                   />
                 </div>
               ) : null}

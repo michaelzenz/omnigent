@@ -12,6 +12,7 @@ from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
+    accept_task_package,
     create_task_package,
     reconcile_events_to_task,
     reconcile_events_to_task_batch,
@@ -24,6 +25,7 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
@@ -204,12 +206,20 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
         assert event_store.get_event(eid).state == "reconciled"
 
 
-def test_resolve_inbox_item_activates_paused_package(stores) -> None:
+def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
     agent_store = stores["agent"]
     conversation_store = stores["conversation"]
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    manager_agent_id = generate_agent_id()
+    agent_store.create(manager_agent_id, name="task-manager", bundle_location="test:///bundle")
+    profile_store.upsert(
+        "manager:default",
+        kind="manager",
+        agent_profile_id=manager_agent_id,
+    )
     worker_agent_id = generate_agent_id()
     agent_store.create(worker_agent_id, name="worker", bundle_location="test:///bundle")
     event_id = _uid("resolve-event")
@@ -219,7 +229,7 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
         "PR checks failed",
         state="awaiting_grouping",
     )
-    task = create_task_package(
+    pending_task = create_task_package(
         owner_user_id=_uid("owner"),
         title="Package to activate",
         items=[PackageItemSpec(title="Do work", event_ids=[event_id], instructions="Do the work")],
@@ -227,6 +237,11 @@ def test_resolve_inbox_item_activates_paused_package(stores) -> None:
         task_item_store=item_store,
         task_event_store=event_store,
         worker_store=stores["worker"],
+    )
+    task = accept_task_package(
+        task=pending_task,
+        task_store=task_store,
+        task_role_profile_store=profile_store,
     )
     worker_store = stores["worker"]
     item = item_store.list_items_for_task(task.id, state="awaiting_user_ack")[0]
@@ -308,6 +323,43 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
     unchanged = task_store.get(task.id)
     assert unchanged is not None
     assert unchanged.state == "pending"
+
+
+def test_accept_task_package(stores, db_uri: str) -> None:
+    task_store = stores["task"]
+    event_store = stores["event"]
+    item_store = stores["item"]
+    agent_store = stores["agent"]
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name="task-manager", bundle_location="test:///bundle")
+    profile_store.upsert(
+        "manager:default",
+        kind="manager",
+        agent_profile_id=agent_id,
+    )
+    event_id = _uid("accept-event")
+    event_store.create_event(
+        event_id,
+        "github.pr.checks_failed",
+        "failure",
+        state="awaiting_grouping",
+    )
+    pending_task = create_task_package(
+        owner_user_id=_uid("owner"),
+        title="Package to accept",
+        items=[PackageItemSpec(title="Do work", event_ids=[event_id])],
+        task_store=task_store,
+        task_item_store=item_store,
+        task_event_store=event_store,
+        worker_store=stores["worker"],
+    )
+    accepted = accept_task_package(
+        task=pending_task,
+        task_store=task_store,
+        task_role_profile_store=profile_store,
+    )
+    assert accepted.state == "idle"
 
 
 def test_reject_task_package(stores) -> None:

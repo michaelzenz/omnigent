@@ -305,6 +305,22 @@ export async function patchAgentTask(
   return readJsonOrApiError<AgentTaskSummary>(res);
 }
 
+export async function acceptAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/accept-package`,
+    { method: "POST" },
+  );
+  return readJsonOrApiError<AgentTaskSummary>(res);
+}
+
+export async function rejectAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/reject-package`,
+    { method: "POST" },
+  );
+  return readJsonOrApiError<AgentTaskSummary>(res);
+}
+
 export async function fetchAgentRoleProfile(role: string): Promise<SecretaryProfile> {
   const res = await authenticatedFetch(agentRolePath(role, "profile"));
   return readJsonOrApiError<SecretaryProfile>(res);

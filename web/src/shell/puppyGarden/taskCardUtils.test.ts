@@ -237,14 +237,10 @@ describe("taskCardUtils", () => {
   });
 
   it("builds worker options from proposal and task history", () => {
-    const options = buildWorkerOptions(
-      ["worker:reviewer"],
-      { worker_role_key: "worker:default", model: "composer-2.5" },
-      "gpt-5",
-    );
+    const options = buildWorkerOptions(["worker:reviewer"], { worker_role_key: "worker:default" });
     expect(options).toEqual([
-      { workerRoleKey: "worker:default", model: "composer-2.5" },
-      { workerRoleKey: "worker:reviewer", model: "gpt-5" },
+      { workerRoleKey: "worker:default" },
+      { workerRoleKey: "worker:reviewer" },
     ]);
   });
 
@@ -254,7 +250,6 @@ describe("taskCardUtils", () => {
       title: "Title",
       description: "",
       instructions: "Do thing",
-      model: "composer-2.5",
     };
     expect(
       proposalHasEdits(baseline, {
@@ -262,7 +257,6 @@ describe("taskCardUtils", () => {
         title: "Title",
         description: "",
         instructions: "Do thing",
-        model: "composer-2.5",
       }),
     ).toBe(false);
     expect(
@@ -271,7 +265,6 @@ describe("taskCardUtils", () => {
         title: "Title",
         description: "",
         instructions: "Do thing",
-        model: "composer-2.5",
       }),
     ).toBe(true);
   });

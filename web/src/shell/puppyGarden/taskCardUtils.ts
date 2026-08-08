@@ -97,7 +97,6 @@ export function isTaskCardSparse(dashboard: {
 
 export interface WorkerOption {
   workerRoleKey: string;
-  model: string;
 }
 
 export function workStateLabel(status: string): WorkStateLabel {
@@ -158,19 +157,18 @@ export function roleKeyForItem(
 export function buildWorkerOptions(
   workerRoleKeys: string[],
   proposalPayload: DispatchPayload,
-  defaultModel: string,
 ): WorkerOption[] {
   const byId = new Map<string, WorkerOption>();
 
-  const add = (workerRoleKey: string | undefined, model: string) => {
+  const add = (workerRoleKey: string | undefined) => {
     if (!workerRoleKey) return;
     if (byId.has(workerRoleKey)) return;
-    byId.set(workerRoleKey, { workerRoleKey, model });
+    byId.set(workerRoleKey, { workerRoleKey });
   };
 
-  add(proposalPayload.worker_role_key, proposalPayload.model ?? defaultModel);
+  add(proposalPayload.worker_role_key);
   for (const workerRoleKey of workerRoleKeys) {
-    add(workerRoleKey, defaultModel);
+    add(workerRoleKey);
   }
 
   return Array.from(byId.values());
@@ -178,11 +176,9 @@ export function buildWorkerOptions(
 
 export function workerOptionLabel(
   workerRoleKey: string,
-  model: string,
   roleTitleByKey: Map<string, string>,
 ): string {
-  const name = roleTitleByKey.get(workerRoleKey) ?? workerRoleKey;
-  return `${name} (${model})`;
+  return roleTitleByKey.get(workerRoleKey) ?? workerRoleKey;
 }
 
 export function proposalHasEdits(
@@ -192,14 +188,12 @@ export function proposalHasEdits(
     title: string;
     description: string;
     instructions: string;
-    model: string;
   },
 ): boolean {
   return (
     baseline.worker_role_key !== current.workerRoleKey ||
     (baseline.title ?? "") !== current.title ||
     (baseline.description ?? "") !== current.description ||
-    (baseline.instructions ?? "") !== current.instructions ||
-    (baseline.model ?? "") !== current.model
+    (baseline.instructions ?? "") !== current.instructions
   );
 }

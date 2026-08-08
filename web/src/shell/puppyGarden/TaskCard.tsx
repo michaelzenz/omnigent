@@ -1,10 +1,14 @@
 import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useTaskDashboard } from "@/hooks/useAgentTasks";
+import { Button } from "@/components/ui/button";
+import {
+  useAcceptAgentTaskPackage,
+  useRejectAgentTaskPackage,
+  useTaskDashboard,
+} from "@/hooks/useAgentTasks";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardAssets } from "./TaskCardAssets";
 import { TaskCardManagerRolePicker } from "./TaskCardManagerRolePicker";
-import { TaskCardWorkerRolePicker } from "./TaskCardWorkerRolePicker";
 import { TaskCardWorkers } from "./TaskCardWorkers";
 import { TASK_CARD_BODY_CLASS, isTaskCardSparse, taskCardBodyStyle } from "./taskCardUtils";
 import { cn } from "@/lib/utils";
@@ -15,26 +19,45 @@ interface TaskCardProps {
   description: string | null;
   state: string;
   managerRoleKey: string;
-  workerRoleKey: string;
 }
 
-export function TaskCard({
-  taskId,
-  title,
-  description,
-  state,
-  managerRoleKey,
-  workerRoleKey,
-}: TaskCardProps) {
+function taskStateBadge(state: string): {
+  label: string;
+  className: string;
+} {
+  if (state === "pending") {
+    return {
+      label: "Pending",
+      className: "border-amber-200 bg-amber-50 text-amber-900",
+    };
+  }
+  if (state === "active") {
+    return {
+      label: "Active",
+      className: "border-emerald-600 bg-emerald-600 text-white",
+    };
+  }
+  return {
+    label: "Idle",
+    className: "border-slate-200 bg-slate-50 text-slate-700",
+  };
+}
+
+export function TaskCard({ taskId, title, description, state, managerRoleKey }: TaskCardProps) {
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
   const { openManager, isManagerSelected } = usePuppyGardenChat();
-  const defaultModel = "composer-2.5";
+  const acceptPackage = useAcceptAgentTaskPackage(taskId);
+  const rejectPackage = useRejectAgentTaskPackage(taskId);
 
-  const isActive = state === "active";
   const isPending = state === "pending";
-  const managerSelected = isManagerSelected(taskId);
+  const isActive = state === "active";
+  const managerSelected = !isPending && isManagerSelected(taskId);
+  const badge = taskStateBadge(state);
+  const canAccept = isPending && managerRoleKey.trim().length > 0;
+  const packageActionPending = acceptPackage.isPending || rejectPackage.isPending;
 
   const handleHeaderClick = () => {
+    if (isPending) return;
     openManager(taskId, dashboard?.task.manager_conversation_id ?? null, title);
   };
 
@@ -50,16 +73,23 @@ export function TaskCard({
       onClick={(event) => event.stopPropagation()}
     >
       <header
-        role="button"
-        tabIndex={0}
-        className="flex cursor-pointer items-start justify-between gap-2 border-b border-border bg-white px-3 py-2 hover:bg-muted/30"
-        onClick={handleHeaderClick}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            handleHeaderClick();
-          }
-        }}
+        role={isPending ? undefined : "button"}
+        tabIndex={isPending ? undefined : 0}
+        className={cn(
+          "flex items-start justify-between gap-2 border-b border-border bg-white px-3 py-2",
+          isPending ? "cursor-default" : "cursor-pointer hover:bg-muted/30",
+        )}
+        onClick={isPending ? undefined : handleHeaderClick}
+        onKeyDown={
+          isPending
+            ? undefined
+            : (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleHeaderClick();
+                }
+              }
+        }
         data-testid={`task-card-header-${taskId}`}
       >
         <div className="min-w-0">
@@ -71,37 +101,48 @@ export function TaskCard({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {dashboard?.derived.has_running_workers ? (
+          {!isPending && dashboard?.derived.has_running_workers ? (
             <Loader2Icon
               className="size-4 animate-spin text-muted-foreground"
               aria-label="Workers running"
             />
           ) : null}
-          <Badge
-            variant={isActive ? "default" : "outline"}
-            className={
-              isActive
-                ? "border-emerald-600 bg-emerald-600 text-white"
-                : "border-amber-200 bg-amber-50 text-amber-900"
-            }
-          >
-            {isActive ? "Active" : "New"}
+          <Badge variant={isActive ? "default" : "outline"} className={badge.className}>
+            {badge.label}
           </Badge>
         </div>
       </header>
 
-      <div className="space-y-2 border-b border-border bg-white px-3 py-2">
-        <TaskCardManagerRolePicker
-          taskId={taskId}
-          managerRoleKey={managerRoleKey}
-          editable={isPending}
-        />
-        <TaskCardWorkerRolePicker
-          taskId={taskId}
-          workerRoleKey={workerRoleKey}
-          editable={isPending}
-        />
-      </div>
+      {isPending ? (
+        <div className="space-y-2 border-b border-border bg-white px-3 py-2">
+          <TaskCardManagerRolePicker
+            taskId={taskId}
+            managerRoleKey={managerRoleKey}
+            editable
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={packageActionPending}
+              onClick={() => rejectPackage.mutate()}
+              data-testid={`task-reject-${taskId}`}
+            >
+              Reject
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!canAccept || packageActionPending}
+              onClick={() => acceptPackage.mutate()}
+              data-testid={`task-accept-${taskId}`}
+            >
+              Accept
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {isLoading ? (
         <div className="flex min-h-[160px] items-center justify-center p-8 text-sm text-muted-foreground">
@@ -124,7 +165,6 @@ export function TaskCard({
               taskId={taskId}
               inboxItems={dashboard.inbox_items}
               workers={dashboard.workers}
-              defaultModel={defaultModel}
             />
           </div>
           <TaskCardAssets assets={dashboard.assets ?? []} />
