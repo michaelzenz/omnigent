@@ -67,12 +67,7 @@ interface TaskCardItemEditorProps {
   mode: "ack" | "edit" | "parked";
 }
 
-export function TaskCardItemEditor({
-  taskId,
-  item,
-  workerLanes,
-  mode,
-}: TaskCardItemEditorProps) {
+export function TaskCardItemEditor({ taskId, item, workerLanes, mode }: TaskCardItemEditorProps) {
   const resolveItem = useResolveTaskItem(taskId);
   const updateItem = useUpdateTaskItem(taskId);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
@@ -95,9 +90,7 @@ export function TaskCardItemEditor({
     [roleKeys],
   );
 
-  const [editor, setEditor] = useState(() =>
-    initialEditorState(item, workerOptions, laneRoleKey),
-  );
+  const [editor, setEditor] = useState(() => initialEditorState(item, workerOptions, laneRoleKey));
 
   useEffect(() => {
     setEditor(initialEditorState(item, workerOptions, laneRoleKey));

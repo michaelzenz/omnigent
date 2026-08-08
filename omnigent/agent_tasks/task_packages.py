@@ -9,7 +9,6 @@ from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.role_keys import (
     MANAGER_DEFAULT_ROLE_KEY,
-    MANAGER_ROLE_PREFIX,
     WORKER_DEFAULT_ROLE_KEY,
     is_manager_role_key,
 )
