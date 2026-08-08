@@ -214,11 +214,12 @@ async def validate_workspace(
         The exception message is suitable for surfacing to the
         API caller verbatim.
     """
-    if not workspace.startswith("/"):
-        # Belt-and-suspenders. The Pydantic schema layer also
-        # rejects this; pin it here so direct callers (tests,
-        # other server-internal paths) can't bypass.
-        raise WorkspaceValidationError("workspace must be an absolute path starting with /")
+    # Tilde-prefixed paths (e.g. "~/") are allowed — the host
+    # expands them via os.path.expanduser in its stat handler and
+    # returns the canonical absolute path. Relative paths are
+    # still rejected.
+    if not workspace.startswith(("/", "~")):
+        raise WorkspaceValidationError("workspace must be an absolute path or tilde-prefixed path")
 
     display_host = host_name_for_errors or host_id
 

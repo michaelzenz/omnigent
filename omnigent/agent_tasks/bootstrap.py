@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_HARNESS,
@@ -43,9 +44,6 @@ def resolve_bootstrap_params(
     resolved_harness = resolve_task_harness(
         harness or (role_profile.harness if role_profile else None) or DEFAULT_TASK_HARNESS
     )
-    # The role stores harness and model as a matched pair (the glossary clears
-    # the model when the harness picks its own), so it is passed through as-is;
-    # empty means "let the harness choose".
     resolved_model = (
         model if model is not None else (role_profile.model if role_profile else None)
     ) or None
@@ -67,6 +65,61 @@ def resolve_bootstrap_params(
         model=resolved_model,
         agent_profile_id=resolved_agent_id,
     )
+
+
+def build_role_session_request(
+    profile: TaskRoleProfile,
+    *,
+    title: str,
+    labels: dict[str, str] | None = None,
+    parent_session_id: str | None = None,
+    sub_agent_name: str | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> Any:
+    """Build a ``SessionCreateRequest`` from a glossary role profile.
+
+    This lets role bootstraps (secretary, broker, manager, worker) go
+    through the same ``create_session_internal`` path as user-initiated
+    ``POST /v1/sessions`` — validation, runner launch, permissions,
+    adoption, and terminal-first flags all come for free.
+
+    :param profile: The glossary role profile (agent, host, workspace,
+        harness, model).
+    :param title: Session title.
+    :param labels: Role labels (e.g. ``{ROLE_LABEL: SECRETARY_ROLE_VALUE}``).
+    :param parent_session_id: Parent conversation id for worker
+        sub-agent sessions. ``None`` for top-level roles.
+    :param sub_agent_name: Sub-agent type name within the parent's spec
+        tree. ``None`` for top-level roles and for workers that bind
+        their own ``agent_id`` directly.
+    :param overrides: Optional dict merged into the request body to
+        override profile-derived values (e.g. ``terminal_launch_args``).
+    :returns: A ``SessionCreateRequest`` instance.
+    """
+    from omnigent.server.schemas import SessionCreateRequest
+
+    params = resolve_bootstrap_params(
+        host_id=profile.host_id,
+        workspace=profile.workspace,
+        harness=profile.harness,
+        model=profile.model,
+        role_profile=profile,
+    )
+    body = SessionCreateRequest(
+        agent_id=params.agent_profile_id,
+        title=title,
+        host_id=params.host_id,
+        workspace=params.workspace,
+        harness_override=params.harness,
+        model_override=params.model,
+        labels=labels or {},
+        parent_session_id=parent_session_id,
+        sub_agent_name=sub_agent_name,
+    )
+    if overrides:
+        for key, value in overrides.items():
+            setattr(body, key, value)
+    return body
 
 
 def bootstrap_task_manager(

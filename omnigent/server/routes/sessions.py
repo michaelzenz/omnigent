@@ -6489,9 +6489,9 @@ async def _validate_session_workspace(
             "workspace required when host_id is set",
             code=ErrorCode.INVALID_INPUT,
         )
-    if not workspace.startswith("/"):
+    if not workspace.startswith(("/", "~")):
         raise OmnigentError(
-            "workspace must be an absolute path starting with /",
+            "workspace must be an absolute path or tilde-prefixed path",
             code=ErrorCode.INVALID_INPUT,
         )
     if agent_cache is None:
@@ -14714,6 +14714,213 @@ async def _read_upload_capped(file: UploadFile, limit_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+def _make_internal_request(app_state: Any) -> Any:
+    """Build a minimal Request-like object for background session creation.
+
+    ``create_session_internal`` and ``_create_session_from_existing_agent``
+    read ``request.app.state`` (host registry, host store, tunnel registry)
+    and ``request.headers`` (telemetry). Background callers that lack a
+    real FastAPI ``Request`` pass this mock so they reuse the same create
+    path as user-initiated ``POST /v1/sessions``.
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        app=SimpleNamespace(state=app_state),
+        headers={},
+    )
+
+
+async def create_session_internal(
+    *,
+    conversation_store: ConversationStore,
+    agent_store: AgentStore,
+    runner_router: RunnerRouter | None,
+    agent_cache: AgentCache | None,
+    permission_store: PermissionStore | None,
+    liveness_lookup: Callable[..., Any] | None,
+    file_store: FileStore | None,
+    artifact_store: ArtifactStore | None,
+    body: SessionCreateRequest,
+    request: Request,
+    user_id: str | None,
+) -> SessionResponse:
+    """Create a session from a validated request, reusing the full
+    ``POST /v1/sessions`` JSON path — validation, runner launch, permissions,
+    adoption, terminal-first flags.
+
+    Called by the ``create_session`` route handler for user-initiated
+    creates, and by managed-task role bootstraps (secretary, broker,
+    manager, worker) so every session goes through the same mechanism.
+    Background callers pass a minimal ``Request``-like object built by
+    ``_make_internal_request`` whose ``app.state`` carries the server's
+    host registry and stores.
+    """
+    resp = await _create_session_from_existing_agent(
+        conversation_store,
+        agent_store,
+        runner_router,
+        body,
+        request,
+        agent_cache=agent_cache,
+        user_id=user_id,
+        permission_store=permission_store,
+        liveness_lookup=liveness_lookup,
+        file_store=file_store,
+        artifact_store=artifact_store,
+    )
+    conv = conversation_store.get_conversation(resp.id)
+    _terminal_first_create = (
+        conv is not None
+        and body.host_id is not None
+        and conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE
+    )
+    if _terminal_first_create:
+        _publish_terminal_pending(resp.id, True)
+    _rc = await _get_runner_client(resp.id, runner_router)
+    if _rc is not None and conv is not None:
+        try:
+            await _rc.post(
+                "/v1/sessions",
+                json={
+                    "session_id": resp.id,
+                    "agent_id": conv.agent_id,
+                    "sub_agent_name": conv.sub_agent_name,
+                },
+                timeout=10.0,
+            )
+        except (httpx.HTTPError, ConnectionError):
+            _logger.warning(
+                "Failed to notify runner about session %s",
+                resp.id,
+                exc_info=True,
+            )
+    if permission_store is not None and user_id is not None:
+        await asyncio.to_thread(permission_store.ensure_user, user_id)
+        await asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
+        resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
+    _announce_session_added(user_id, resp.id)
+    from omnigent.agent_tasks.adoption import notify_new_session
+
+    await notify_new_session(resp.id, user_id=user_id, host_id=body.host_id)
+
+    launch_host_id = body.host_id
+    if body.host_type == "managed" and resp.runner_id is None:
+        sandbox_config = getattr(request.app.state, "sandbox_config", None)
+        host_store_for_managed = getattr(request.app.state, "host_store", None)
+        managed_launches = getattr(request.app.state, "managed_launches", None)
+        if sandbox_config is None or host_store_for_managed is None or managed_launches is None:
+            raise OmnigentError(
+                "managed hosts are not configured on this server — add a "
+                "'sandbox:' section to the server config",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        from omnigent.server.auth import RESERVED_USER_LOCAL
+        from omnigent.server.managed_hosts import (
+            MANAGED_REPO_LABEL_KEY,
+            parse_repo_workspace,
+        )
+
+        repo = parse_repo_workspace(body.workspace) if body.workspace is not None else None
+        if body.workspace is not None:
+            await asyncio.to_thread(
+                conversation_store.set_labels,
+                resp.id,
+                {MANAGED_REPO_LABEL_KEY: body.workspace},
+            )
+        managed_launches.begin(resp.id)
+        _publish_sandbox_status(resp.id, "provisioning")
+        launch_task = asyncio.create_task(
+            _run_managed_launch(
+                session_id=resp.id,
+                owner=user_id if user_id is not None else RESERVED_USER_LOCAL,
+                sandbox_config=sandbox_config,
+                repo=repo,
+                tracker=managed_launches,
+                conversation_store=conversation_store,
+                host_store=host_store_for_managed,
+                host_registry=getattr(request.app.state, "host_registry", None),
+                tunnel_registry=getattr(request.app.state, "tunnel_registry", None),
+            )
+        )
+        _managed_launch_tasks.add(launch_task)
+        launch_task.add_done_callback(_managed_launch_tasks.discard)
+
+    if launch_host_id is not None and resp.runner_id is None:
+        host_registry = getattr(request.app.state, "host_registry", None)
+        host_store_inst = getattr(request.app.state, "host_store", None)
+        if host_registry is not None and host_store_inst is not None:
+            from omnigent.host.frames import (
+                HostLaunchRunnerFrame,
+                encode_host_frame,
+            )
+            from omnigent.runner.identity import token_bound_runner_id
+            from omnigent.server.routes._host_launch import resolve_host_launch
+
+            target = await asyncio.to_thread(
+                resolve_host_launch,
+                user_id=user_id,
+                host_id=launch_host_id,
+                session_id=resp.id,
+                host_store=host_store_inst,
+                host_registry=host_registry,
+                conversation_store=conversation_store,
+                permission_store=permission_store,
+            )
+            conn = target.conn
+            binding_token = secrets.token_urlsafe(32)
+            runner_id = token_bound_runner_id(binding_token)
+            bound = await asyncio.to_thread(
+                conversation_store.set_runner_id,
+                resp.id,
+                runner_id,
+            )
+            if not bound:
+                raise OmnigentError(
+                    f"Session {resp.id!r} already has a runner bound",
+                    code=ErrorCode.CONFLICT,
+                )
+            request_id = secrets.token_hex(8)
+            future: asyncio.Future[dict[str, str | None]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            conn.pending_launches[request_id] = future
+            if resp.workspace is None:  # pragma: no cover — schema guards
+                raise OmnigentError(
+                    "session has host_id but no workspace; "
+                    "schema constraint should have prevented this",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            launch_frame = encode_host_frame(
+                HostLaunchRunnerFrame(
+                    request_id=request_id,
+                    binding_token=binding_token,
+                    workspace=resp.workspace,
+                    session_id=resp.id,
+                    harness=resp.harness,
+                )
+            )
+            host_registry.send_text(conn, launch_frame)
+            try:
+                result = await asyncio.wait_for(future, timeout=30.0)
+            except asyncio.TimeoutError:
+                conn.pending_launches.pop(request_id, None)
+                result = {"status": "failed", "error": "host launch timed out"}
+            if result.get("status") == "failed":
+                _logger.warning(
+                    "Host %s failed to launch runner for session %s: %s",
+                    launch_host_id,
+                    resp.id,
+                    result.get("error"),
+                )
+                if _terminal_first_create:
+                    _publish_terminal_pending(resp.id, False)
+            resp.runner_id = runner_id
+            resp.host_id = launch_host_id
+
+    return resp
+
+
 def create_sessions_router(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
@@ -14879,245 +15086,19 @@ def create_sessions_router(
             # message survives in each entry's `msg`.
             raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
-        resp = await _create_session_from_existing_agent(
-            conversation_store,
-            agent_store,
-            runner_router,
-            body,
-            request,
+        return await create_session_internal(
+            conversation_store=conversation_store,
+            agent_store=agent_store,
+            runner_router=runner_router,
             agent_cache=agent_cache,
-            user_id=user_id,
             permission_store=permission_store,
             liveness_lookup=liveness_lookup,
             file_store=file_store,
             artifact_store=artifact_store,
+            body=body,
+            request=request,
+            user_id=user_id,
         )
-        # Notify the runner about the new session so it can resolve
-        # the spec and cache sub_agent_name before the first turn.
-        # Without this, the runner doesn't know this session exists
-        # until the first forwarded event.
-        conv = conversation_store.get_conversation(resp.id)
-        # Mark the terminal spin-up flag at creation — the earliest
-        # possible point — for a host-launched terminal-first session
-        # (claude-native / codex-native). The runner's own pending emit
-        # arrives much later (after host launch, runner boot, spec
-        # resolve, and harness spawn — each a round-trip), so the spinner
-        # would otherwise only flash for the sub-second window before the
-        # already-spawned terminal resolves. Gated on host_id because the
-        # runner only auto-creates (and thus only clears) a terminal for
-        # host-launched sessions; a CLI-bound terminal-first session
-        # manages its own terminal and would strand the flag. Clears come
-        # from the runner's finally, the relay's resource.created
-        # self-heal, or the host-launch-failure path below.
-        _terminal_first_create = (
-            conv is not None
-            and body.host_id is not None
-            and conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE
-        )
-        if _terminal_first_create:
-            _publish_terminal_pending(resp.id, True)
-        _rc = await _get_runner_client(resp.id, runner_router)
-        if _rc is not None and conv is not None:
-            try:
-                await _rc.post(
-                    "/v1/sessions",
-                    json={
-                        "session_id": resp.id,
-                        "agent_id": conv.agent_id,
-                        "sub_agent_name": conv.sub_agent_name,
-                    },
-                    timeout=10.0,
-                )
-            except (httpx.HTTPError, ConnectionError):
-                _logger.warning(
-                    "Failed to notify runner about session %s",
-                    resp.id,
-                    exc_info=True,
-                )
-        # Grant the creator ownership BEFORE any host launch so the
-        # launch's session-ownership check (shared with
-        # POST /v1/hosts/{host_id}/runners via resolve_host_launch)
-        # sees the grant.
-        if permission_store is not None and user_id is not None:
-            await asyncio.to_thread(permission_store.ensure_user, user_id)
-            await asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
-            resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
-        # Push the new session to this user's other open tabs (see the
-        # multipart path above for the rationale).
-        _announce_session_added(user_id, resp.id)
-        from omnigent.agent_tasks.adoption import notify_new_session
-
-        await notify_new_session(resp.id, user_id=user_id, host_id=body.host_id)
-
-        # Managed host: schedule a BACKGROUND sandbox provision bound
-        # to this session and return immediately — provisioning takes
-        # tens of seconds and must not block the create POST. The
-        # background task binds host + workspace to the session row
-        # and launches the runner once the sandbox host registers; a
-        # message POST racing the provision rendezvouses on the
-        # tracker entry registered here (see post_event). Config
-        # problems and malformed repo workspaces still fail the POST
-        # synchronously.
-        launch_host_id = body.host_id
-        if body.host_type == "managed" and resp.runner_id is None:
-            sandbox_config = getattr(request.app.state, "sandbox_config", None)
-            host_store_for_managed = getattr(request.app.state, "host_store", None)
-            managed_launches = getattr(request.app.state, "managed_launches", None)
-            if (
-                sandbox_config is None
-                or host_store_for_managed is None
-                or managed_launches is None
-            ):
-                raise OmnigentError(
-                    "managed hosts are not configured on this server — add a "
-                    "'sandbox:' section to the server config",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            from omnigent.server.auth import RESERVED_USER_LOCAL
-            from omnigent.server.managed_hosts import (
-                MANAGED_REPO_LABEL_KEY,
-                parse_repo_workspace,
-            )
-
-            # A managed workspace is a repository URL (schema-
-            # validated) the launch clones inside the sandbox; parse
-            # it now so a malformed URL is a synchronous 4xx, not a
-            # background failure.
-            repo = parse_repo_workspace(body.workspace) if body.workspace is not None else None
-            if body.workspace is not None:
-                # The session row's workspace is overwritten with the
-                # CLONED path at bind time; record the raw request
-                # value so a sandbox relaunch can re-clone the same
-                # repository into the new generation.
-                await asyncio.to_thread(
-                    conversation_store.set_labels,
-                    resp.id,
-                    {MANAGED_REPO_LABEL_KEY: body.workspace},
-                )
-            managed_launches.begin(resp.id)
-            # Seed the launch-progress indicator before the background
-            # task starts, so the first GET snapshot (the Web UI
-            # navigates to the session page immediately after this
-            # 201) already carries the "provisioning" stage.
-            _publish_sandbox_status(resp.id, "provisioning")
-            launch_task = asyncio.create_task(
-                _run_managed_launch(
-                    session_id=resp.id,
-                    # On auth-disabled servers user_id is None; the
-                    # sandbox host registers under the reserved local
-                    # owner, same as a directly-connected host would.
-                    owner=user_id if user_id is not None else RESERVED_USER_LOCAL,
-                    sandbox_config=sandbox_config,
-                    repo=repo,
-                    tracker=managed_launches,
-                    conversation_store=conversation_store,
-                    host_store=host_store_for_managed,
-                    host_registry=getattr(request.app.state, "host_registry", None),
-                    tunnel_registry=getattr(request.app.state, "tunnel_registry", None),
-                )
-            )
-            _managed_launch_tasks.add(launch_task)
-            launch_task.add_done_callback(_managed_launch_tasks.discard)
-
-        # Host launch: if a host is targeted (caller-supplied or
-        # managed) and no runner is bound yet, authorize (caller must
-        # own the host AND the session), atomically bind, then launch.
-        # Same authorization path as POST /v1/hosts/{host_id}/runners.
-        if launch_host_id is not None and resp.runner_id is None:
-            host_registry = getattr(request.app.state, "host_registry", None)
-            host_store_inst = getattr(request.app.state, "host_store", None)
-            if host_registry is not None and host_store_inst is not None:
-                from omnigent.host.frames import (
-                    HostLaunchRunnerFrame,
-                    encode_host_frame,
-                )
-                from omnigent.runner.identity import token_bound_runner_id
-                from omnigent.server.routes._host_launch import resolve_host_launch
-
-                target = await asyncio.to_thread(
-                    resolve_host_launch,
-                    user_id=user_id,
-                    host_id=launch_host_id,
-                    session_id=resp.id,
-                    host_store=host_store_inst,
-                    host_registry=host_registry,
-                    conversation_store=conversation_store,
-                    permission_store=permission_store,
-                )
-                conn = target.conn
-                binding_token = secrets.token_urlsafe(32)
-                runner_id = token_bound_runner_id(binding_token)
-                # Atomic bind (WHERE runner_id IS NULL) closes the TOCTOU.
-                bound = await asyncio.to_thread(
-                    conversation_store.set_runner_id,
-                    resp.id,
-                    runner_id,
-                )
-                if not bound:
-                    raise OmnigentError(
-                        f"Session {resp.id!r} already has a runner bound",
-                        code=ErrorCode.CONFLICT,
-                    )
-                # host_id and workspace were already written by
-                # _create_session_from_existing_agent; we only need
-                # to set runner_id atomically (above) and send the
-                # launch frame.
-                request_id = secrets.token_hex(8)
-                future: asyncio.Future[dict[str, str | None]] = (
-                    asyncio.get_running_loop().create_future()
-                )
-                conn.pending_launches[request_id] = future
-                if resp.workspace is None:  # pragma: no cover — schema guards
-                    raise OmnigentError(
-                        "session has host_id but no workspace; "
-                        "schema constraint should have prevented this",
-                        code=ErrorCode.INTERNAL_ERROR,
-                    )
-                launch_frame = encode_host_frame(
-                    HostLaunchRunnerFrame(
-                        request_id=request_id,
-                        binding_token=binding_token,
-                        workspace=resp.workspace,
-                        session_id=resp.id,
-                        # Already canonical (see _resolve_harness); lets
-                        # the host refuse an unconfigured harness before
-                        # spawning. None (agent not resolvable) skips the
-                        # host-side check.
-                        harness=resp.harness,
-                    )
-                )
-                host_registry.send_text(conn, launch_frame)
-                try:
-                    result = await asyncio.wait_for(future, timeout=30.0)
-                except asyncio.TimeoutError:
-                    conn.pending_launches.pop(request_id, None)
-                    result = {"status": "failed", "error": "host launch timed out"}
-                if result.get("status") == "failed":
-                    # Lenient on every create-time launch failure, including
-                    # an unconfigured harness: the picker's readiness data
-                    # can be stale (the user may have run `omnigent setup`
-                    # since the host last connected), so we never block the
-                    # create. The session opens with the binding intact; the
-                    # first message drives the real runner start, and if the
-                    # host still refuses there, that path consults the daemon
-                    # and persists a transcript error (see post_event's
-                    # relaunch branch). No create-time harness gating.
-                    _logger.warning(
-                        "Host %s failed to launch runner for session %s: %s",
-                        launch_host_id,
-                        resp.id,
-                        result.get("error"),
-                    )
-                    # The runner never booted, so its pending=False clear
-                    # will never fire. Clear the spin-up flag here so a
-                    # failed launch doesn't strand the Terminal-pill
-                    # spinner. No-op when we never set it.
-                    if _terminal_first_create:
-                        _publish_terminal_pending(resp.id, False)
-                resp.runner_id = runner_id
-                resp.host_id = launch_host_id
-
-        return resp
 
     async def _create_bundled_session_from_multipart(
         request: Request,

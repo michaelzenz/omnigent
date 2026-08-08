@@ -1,6 +1,7 @@
 """FastAPI application — main entry point for the omnigent server."""
 
 import asyncio
+import functools
 import logging
 import mimetypes
 import os
@@ -73,6 +74,7 @@ from omnigent.server.routes.sessions import (
     ServerRunnerInfrastructure,
     SessionLiveness,
     announce_hosts_changed,
+    create_session_internal,
     create_sessions_router,
     set_server_runner_infrastructure,
     set_server_runner_router,
@@ -2533,6 +2535,17 @@ def create_app(
                 auth_provider=auth_provider,
                 permission_store=permission_store,
                 agent_queue_store=agent_queue_store,
+                session_creator=functools.partial(
+                    create_session_internal,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    runner_router=runner_router,
+                    agent_cache=agent_cache,
+                    permission_store=permission_store,
+                    liveness_lookup=_bulk_session_liveness,
+                    file_store=file_store,
+                    artifact_store=artifact_store,
+                ),
             ),
             prefix="/v1",
             tags=["agent_tasks"],

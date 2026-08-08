@@ -635,6 +635,105 @@ def _bootstrap_role_session(
     )
 
 
+def _role_session_labels(role: str, harness: str) -> dict[str, str]:
+    """Build the labels dict for a role session (role + native presentation)."""
+    from omnigent.agent_tasks.constants import resolve_task_harness
+    from omnigent.agent_tasks.session_labels import (
+        BROKER_ROLE_VALUE,
+        ROLE_LABEL,
+        SECRETARY_ROLE_VALUE,
+    )
+    from omnigent.native_coding_agents import native_coding_agent_for_harness
+
+    if role == TASK_BROKER_ROLE:
+        labels = {ROLE_LABEL: BROKER_ROLE_VALUE}
+    elif role == TASK_SECRETARY_ROLE:
+        labels = {ROLE_LABEL: SECRETARY_ROLE_VALUE}
+    else:
+        labels = {}
+    native_agent = native_coding_agent_for_harness(resolve_task_harness(harness))
+    if native_agent is not None:
+        labels.update(native_agent.presentation_labels)
+    return labels
+
+
+def _role_seed_prompt(role: str) -> str | None:
+    """Return the seed prompt text for a role, or None if no seed."""
+    if role == TASK_SECRETARY_ROLE:
+        from omnigent.agent_tasks.secretary_session import SECRETARY_SEED_PROMPT
+
+        return SECRETARY_SEED_PROMPT
+    if role == TASK_BROKER_ROLE:
+        from omnigent.agent_tasks.broker_session import BROKER_SEED_PROMPT
+
+        return BROKER_SEED_PROMPT
+    return None
+
+
+def _append_seed_prompt(
+    conversation_store: ConversationStore,
+    conversation_id: str,
+    prompt_text: str,
+) -> None:
+    """Append a hidden meta user message as agent context (not shown in UI)."""
+    from omnigent.db.utils import generate_task_id
+    from omnigent.entities import MessageData, NewConversationItem
+
+    item = NewConversationItem(
+        type="message",
+        response_id=generate_task_id(),
+        data=MessageData(
+            role="user",
+            content=[{"type": "input_text", "text": prompt_text}],
+            is_meta=True,
+        ),
+    )
+    conversation_store.append(conversation_id, [item])
+
+
+async def _create_role_session_via_create_path(
+    role: str,
+    *,
+    profile,
+    request: Request,
+    user_id: str | None,
+    session_creator: Any,
+    conversation_store: ConversationStore,
+    parent_session_id: str | None = None,
+    sub_agent_name: str | None = None,
+    title: str | None = None,
+    seed_prompt: bool = True,
+) -> str:
+    """Create a role session through the same ``POST /v1/sessions`` path.
+
+    Builds a ``SessionCreateRequest`` from the glossary profile, calls
+    ``session_creator`` (which wraps ``create_session_internal``), then
+    layers on role-specific extras: seed prompt and labels are passed in
+    the request body so the create path applies them atomically.
+    """
+    from omnigent.agent_tasks.bootstrap import build_role_session_request
+
+    role_title = title or ("Task broker" if role == TASK_BROKER_ROLE else "Task secretary")
+    labels = _role_session_labels(role, profile.harness or "")
+    body = build_role_session_request(
+        profile,
+        title=role_title,
+        labels=labels,
+        parent_session_id=parent_session_id,
+        sub_agent_name=sub_agent_name,
+    )
+    resp = await session_creator(
+        body=body,
+        request=request,
+        user_id=user_id,
+    )
+    if seed_prompt:
+        prompt_text = _role_seed_prompt(role)
+        if prompt_text is not None:
+            _append_seed_prompt(conversation_store, resp.id, prompt_text)
+    return resp.id
+
+
 def _agent_role_profile_to_response(
     role: str,
     profile: TaskRoleProfile,
@@ -736,6 +835,7 @@ def create_agent_tasks_router(
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
     agent_queue_store: AgentQueueStore | None = None,
+    session_creator: Any | None = None,
 ) -> APIRouter:
     """Build the managed-task router.
 
@@ -1152,19 +1252,29 @@ def create_agent_tasks_router(
                         conversation_id=existing.id,
                         created=False,
                     )
-                conversation_id = await asyncio.to_thread(
-                    _bootstrap_role_session,
-                    role,
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    profile=profile,
-                )
+                if session_creator is not None:
+                    conversation_id = await _create_role_session_via_create_path(
+                        role,
+                        profile=profile,
+                        request=request,
+                        user_id=user_id,
+                        session_creator=session_creator,
+                        conversation_store=conversation_store,
+                    )
+                else:
+                    conversation_id = await asyncio.to_thread(
+                        _bootstrap_role_session,
+                        role,
+                        conversation_store=conversation_store,
+                        agent_store=agent_store,
+                        profile=profile,
+                    )
+                    await _best_effort_ensure_conversation_runner(
+                        request,
+                        conversation_id,
+                        conversation_store,
+                    )
                 await _bind_role_session(effective_user_id, role, conversation_id)
-                await _best_effort_ensure_conversation_runner(
-                    request,
-                    conversation_id,
-                    conversation_store,
-                )
                 return _agent_role_session_to_response(
                     role,
                     conversation_id=conversation_id,
@@ -1185,22 +1295,30 @@ def create_agent_tasks_router(
                 bound_conversation_id = await _role_conversation_id(role, user_id)
                 if bound_conversation_id is not None:
                     await conversation_store.delete_conversation(bound_conversation_id)
-                # Only the session is reset; the role definition itself, with
-                # its harness and model, must survive a respawn.
                 await _bind_role_session(effective_user_id, role, None)
-                conversation_id = await asyncio.to_thread(
-                    _bootstrap_role_session,
-                    role,
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    profile=profile,
-                )
+                if session_creator is not None:
+                    conversation_id = await _create_role_session_via_create_path(
+                        role,
+                        profile=profile,
+                        request=request,
+                        user_id=user_id,
+                        session_creator=session_creator,
+                        conversation_store=conversation_store,
+                    )
+                else:
+                    conversation_id = await asyncio.to_thread(
+                        _bootstrap_role_session,
+                        role,
+                        conversation_store=conversation_store,
+                        agent_store=agent_store,
+                        profile=profile,
+                    )
+                    await _best_effort_ensure_conversation_runner(
+                        request,
+                        conversation_id,
+                        conversation_store,
+                    )
                 await _bind_role_session(effective_user_id, role, conversation_id)
-                await _best_effort_ensure_conversation_runner(
-                    request,
-                    conversation_id,
-                    conversation_store,
-                )
                 # Orphan sessions are now durable ``session.orphan`` events the
                 # broker packager polls, so there is nothing to flush here.
                 return _agent_role_session_to_response(
@@ -1352,6 +1470,27 @@ def create_agent_tasks_router(
                 model=body.model,
                 role_profile=profile,
             )
+            if session_creator is not None and profile is not None:
+                from omnigent.server.schemas import SessionCreateRequest
+
+                manager_body = SessionCreateRequest(
+                    agent_id=params.agent_profile_id,
+                    title=f"Task manager: {task.title}",
+                    host_id=params.host_id,
+                    workspace=params.workspace,
+                    harness_override=params.harness,
+                    model_override=params.model,
+                    labels={},
+                )
+                resp = await session_creator(
+                    body=manager_body,
+                    request=request,
+                    user_id=user_id,
+                )
+                updated = task_store.update(task.id, manager_conversation_id=resp.id)
+                if updated is None:
+                    raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+                return _task_to_response(updated)
             bootstrapped = await asyncio.to_thread(
                 bootstrap_task_manager,
                 task=task,
@@ -1417,6 +1556,61 @@ def create_agent_tasks_router(
             task = await _get_task_or_404(worker.task_id, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
             worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
+
+            if session_creator is not None and worker_profile is not None:
+                from omnigent.server.schemas import SessionCreateRequest
+
+                # Ensure the manager is bootstrapped first — the worker
+                # sub-agent inherits the manager's runner.
+                def _ensure_manager() -> str:
+                    from omnigent.agent_tasks.items import ensure_task_manager_for_dispatch
+
+                    updated_task = ensure_task_manager_for_dispatch(
+                        task=task,
+                        task_store=task_store,
+                        conversation_store=conversation_store,
+                        role_profile=manager_profile,
+                        host_id=worker_profile.host_id,
+                        workspace=worker_profile.workspace,
+                        harness=worker_profile.harness,
+                        model=worker_profile.model,
+                    )
+                    return updated_task.manager_conversation_id or ""
+
+                manager_conversation_id = await asyncio.to_thread(_ensure_manager)
+                if not manager_conversation_id:
+                    raise OmnigentError(
+                        "Task manager is not bootstrapped",
+                        code=ErrorCode.CONFLICT,
+                    )
+                role_key = (worker.role_key or "").strip()
+                worker_params = resolve_bootstrap_params(
+                    host_id=worker_profile.host_id,
+                    workspace=worker_profile.workspace,
+                    harness=worker_profile.harness,
+                    model=worker_profile.model,
+                    role_profile=worker_profile,
+                )
+                worker_body = SessionCreateRequest(
+                    agent_id=worker_params.agent_profile_id,
+                    title=role_key,
+                    host_id=worker_params.host_id,
+                    workspace=worker_params.workspace,
+                    harness_override=worker_params.harness,
+                    model_override=worker_params.model,
+                    parent_session_id=manager_conversation_id,
+                    sub_agent_name=role_key,
+                    labels={},
+                )
+                resp = await session_creator(
+                    body=worker_body,
+                    request=request,
+                    user_id=user_id,
+                )
+                updated = worker_store.update_worker(worker.id, session_id=resp.id)
+                if updated is None:
+                    raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                return _worker_to_response(updated)
 
             def _activate() -> Worker:
                 activated, _conversation_id = activate_worker_lane(

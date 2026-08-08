@@ -6,6 +6,7 @@ import uuid
 from urllib.parse import quote
 
 import httpx
+import pytest
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
@@ -35,6 +36,63 @@ from tests.server.routes.agent_task_api import (
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
+
+
+def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip host liveness + workspace stat checks for role-session unit tests.
+
+    The full ``POST /v1/sessions`` path validates the workspace against a
+    live host connection and launches a runner; role-session tests don't
+    stand up a real host, so patch ``_validate_session_workspace``,
+    ``resolve_host_launch``, and ``HostRegistry.send_text`` to skip the
+    live-host requirement.
+    """
+
+    async def _skip_validation(*args: object, **kwargs: object) -> str | None:
+        return kwargs.get("workspace")
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._validate_session_workspace",
+        _skip_validation,
+    )
+
+    from omnigent.server.routes._host_launch import HostLaunchTarget
+
+    class _AutoResolveDict(dict):
+        """Dict that auto-resolves any future stored in it with a success result."""
+
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if hasattr(value, "set_result") and not value.done():
+                value.set_result({"status": "ok"})
+
+    def _skip_launch(*args: object, **kwargs: object) -> HostLaunchTarget:
+        host_id = kwargs.get("host_id", "")
+        fake_conn = type(
+            "FakeConn",
+            (),
+            {
+                "host_id": host_id,
+                "pending_launches": _AutoResolveDict(),
+                "pending_stats": {},
+            },
+        )()
+        return HostLaunchTarget(
+            host=type("FakeHost", (), {"name": "test-host", "host_id": host_id})(),
+            conn=fake_conn,  # type: ignore[arg-type]
+            conv=type("FakeConv", (), {"id": kwargs.get("session_id", "")})(),
+        )
+
+    monkeypatch.setattr(
+        "omnigent.server.routes._host_launch.resolve_host_launch",
+        _skip_launch,
+    )
+
+    # HostRegistry.send_text raises ConnectionError for unknown/replaced
+    # connections; patch it to a no-op so the launch-frame send succeeds.
+    from omnigent.server.host_registry import HostRegistry
+
+    monkeypatch.setattr(HostRegistry, "send_text", staticmethod(lambda conn, data: None))
 
 
 @pytest_asyncio.fixture()
@@ -424,15 +482,20 @@ async def test_patch_worker_lane_conflicts_once_it_has_a_session(
 async def test_secretary_profile_and_bootstrap(
     client: httpx.AsyncClient,
     task_manager_agent_id: str,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Manager glossary defaults feed manager bootstrap."""
+    _patch_workspace_validation(monkeypatch)
     from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY
 
+    manager_host_id = _uid("manager_host")
+    HostStore(db_uri).upsert_on_connect(manager_host_id, "manager-host", RESERVED_USER_LOCAL)
     profile_resp = await put_agent_role_profile(
         client,
         role=MANAGER_DEFAULT_ROLE_KEY,
         agent_profile_id=task_manager_agent_id,
-        host_id=_uid("manager_host"),
+        host_id=manager_host_id,
         workspace="/tmp/manager",
     )
     assert profile_resp.status_code == 200
@@ -444,25 +507,37 @@ async def test_secretary_profile_and_bootstrap(
     assert bootstrap_resp.json()["manager_conversation_id"] is not None
 
 
-async def _put_secretary_profile(client: httpx.AsyncClient, secretary_agent_id: str) -> None:
+async def _put_secretary_profile(
+    client: httpx.AsyncClient,
+    secretary_agent_id: str,
+    *,
+    db_uri: str,
+) -> str:
+    """PUT the secretary profile and register the host so workspace validation passes."""
+    host_id = _uid("secretary_host")
+    HostStore(db_uri).upsert_on_connect(host_id, "secretary-host", RESERVED_USER_LOCAL)
     profile_resp = await put_agent_role_profile(
         client,
         role=TASK_SECRETARY_ROLE,
         agent_profile_id=secretary_agent_id,
-        host_id=_uid("secretary_host"),
+        host_id=host_id,
         workspace="/tmp/secretary",
     )
     assert profile_resp.status_code == 200
     body = profile_resp.json()
     assert body["agent_profile_id"] == secretary_agent_id
     assert "agent_id" not in body
+    return host_id
 
 
 async def test_ensure_secretary_session_seeds_prompt(
     client: httpx.AsyncClient,
     secretary_agent_id: str,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    await _put_secretary_profile(client, secretary_agent_id)
+    _patch_workspace_validation(monkeypatch)
+    await _put_secretary_profile(client, secretary_agent_id, db_uri=db_uri)
 
     ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_resp.status_code == 200
@@ -492,8 +567,11 @@ async def test_ensure_secretary_session_seeds_prompt(
 async def test_reset_secretary_session_reseeds_prompt(
     client: httpx.AsyncClient,
     secretary_agent_id: str,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    await _put_secretary_profile(client, secretary_agent_id)
+    _patch_workspace_validation(monkeypatch)
+    await _put_secretary_profile(client, secretary_agent_id, db_uri=db_uri)
     first = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     first_id = first.json()["conversation_id"]
 
@@ -524,8 +602,10 @@ async def test_reset_secretary_session_reseeds_prompt(
 async def test_ensure_secretary_session_auto_provisions_profile(
     client: httpx.AsyncClient,
     db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """First ensure creates the profile and session without a prior PUT."""
+    _patch_workspace_validation(monkeypatch)
     host_id = _uid("auto_secretary_host")
     HostStore(db_uri).upsert_on_connect(host_id, "auto-secretary-host", RESERVED_USER_LOCAL)
 
