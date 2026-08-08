@@ -1,9 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  PuppyGardenChatProvider,
-  usePuppyGardenChat,
-} from "./PuppyGardenChatContext";
+import { PuppyGardenChatProvider, usePuppyGardenChat } from "./PuppyGardenChatContext";
 
 function Probe() {
   const chat = usePuppyGardenChat();
@@ -14,16 +11,10 @@ function Probe() {
       <button type="button" onClick={() => chat.setRole("broker")}>
         broker
       </button>
-      <button
-        type="button"
-        onClick={() => chat.openManager("t1", "mgr-1", "My task")}
-      >
+      <button type="button" onClick={() => chat.openManager("t1", "mgr-1", "My task")}>
         manager
       </button>
-      <button
-        type="button"
-        onClick={() => chat.openWorker("t1", "w1", "worker-1", "CI Fixer")}
-      >
+      <button type="button" onClick={() => chat.openWorker("t1", "w1", "worker-1", "CI Fixer")}>
         worker
       </button>
       <button type="button" onClick={() => chat.dismissToRole()}>

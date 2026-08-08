@@ -7,7 +7,7 @@ from omnigent.agent_tasks.constants import (
     AUTO_ROUTE_MIN_CONFIDENCE,
     AUTO_ROUTE_MIN_MARGIN,
 )
-from omnigent.entities import Task, EventTag, TaskTag
+from omnigent.entities import EventTag, Task, TaskTag
 from omnigent.stores.agent_task.tags import tag_pair, task_tag_pairs
 from omnigent.stores.task_store import TaskStore
 

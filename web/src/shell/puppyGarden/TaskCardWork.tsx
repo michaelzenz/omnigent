@@ -54,7 +54,9 @@ function WorkItemRow({
             {execution.event_title ?? "Work item"}
           </p>
           {subtitle ? (
-            <p className="mt-px line-clamp-2 text-xs leading-snug text-muted-foreground">{subtitle}</p>
+            <p className="mt-px line-clamp-2 text-xs leading-snug text-muted-foreground">
+              {subtitle}
+            </p>
           ) : null}
         </div>
         <WorkStateBadge status={execution.status} />
@@ -114,7 +116,9 @@ function WorkerGroup({
           ) : null}
         </button>
       ) : (
-        <h4 className="mb-1 text-xs leading-none font-medium text-muted-foreground">{workerName}</h4>
+        <h4 className="mb-1 text-xs leading-none font-medium text-muted-foreground">
+          {workerName}
+        </h4>
       )}
 
       {visibleExecutions.length === 0 ? (

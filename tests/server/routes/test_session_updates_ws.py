@@ -40,7 +40,10 @@ def test_discovery_key_maps_local_to_shared_channel() -> None:
     from omnigent.server.auth import RESERVED_USER_LOCAL
 
     assert sessions_routes._discovery_key(None) == sessions_routes._SHARED_DISCOVERY_KEY
-    assert sessions_routes._discovery_key(RESERVED_USER_LOCAL) == sessions_routes._SHARED_DISCOVERY_KEY
+    assert (
+        sessions_routes._discovery_key(RESERVED_USER_LOCAL)
+        == sessions_routes._SHARED_DISCOVERY_KEY
+    )
     assert sessions_routes._discovery_key(ALICE) == ALICE
 
 

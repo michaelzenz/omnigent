@@ -226,9 +226,7 @@ export function TaskCardItemDetail({
                 rows={1}
                 value={editor.instructions}
                 onChange={(event) =>
-                  setEditor((prev) =>
-                    prev ? { ...prev, instructions: event.target.value } : prev,
-                  )
+                  setEditor((prev) => (prev ? { ...prev, instructions: event.target.value } : prev))
                 }
                 className="field-sizing-fixed min-h-7 resize-none overflow-y-auto py-1"
               />

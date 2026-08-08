@@ -492,9 +492,7 @@ describe("Sidebar tabs", () => {
     const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
     const search = screen.getByTestId("sidebar-search-button");
 
-    expect(newSession.compareDocumentPosition(puppyGarden)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(newSession.compareDocumentPosition(puppyGarden)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(puppyGarden.compareDocumentPosition(search)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(puppyGarden).toHaveAttribute("href", "/puppy-garden");
   });

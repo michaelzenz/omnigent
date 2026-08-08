@@ -59,8 +59,7 @@ function fromApiPayload(body: {
 }): SshConnectionsPayload {
   return {
     connections: (body.connections ?? []).map(fromApiConnection),
-    packageIndexUrl:
-      typeof body.package_index_url === "string" ? body.package_index_url : null,
+    packageIndexUrl: typeof body.package_index_url === "string" ? body.package_index_url : null,
   };
 }
 

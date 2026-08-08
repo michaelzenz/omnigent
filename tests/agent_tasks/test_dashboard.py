@@ -7,9 +7,9 @@ import uuid
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.executions import start_execution_for_item
 from omnigent.db.utils import generate_agent_id, now_epoch
+from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
-from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
@@ -169,7 +169,9 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     folded = [row["default_folded"] for row in lane["rows"]]
     assert False in folded
     assert True in folded
-    assert queued_item.title in {row["item"]["title"] for row in lane["rows"] if row["kind"] == "item"}
+    assert queued_item.title in {
+        row["item"]["title"] for row in lane["rows"] if row["kind"] == "item"
+    }
     # Finished work stays on the execution history row, not as a task-item row.
     done_titles = {row["item"]["title"] for row in lane["rows"] if row["kind"] == "item"}
     assert done_item.title not in done_titles

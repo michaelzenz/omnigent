@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from omnigent.ssh_probe import SshProbeRequest, build_ssh_probe_command, probe_ssh, validate_ssh_alias
+from omnigent.ssh_probe import (
+    SshProbeRequest,
+    build_ssh_probe_command,
+    probe_ssh,
+    validate_ssh_alias,
+)
 
 
 def test_validate_ssh_alias_rejects_invalid_values() -> None:

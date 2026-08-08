@@ -7,8 +7,8 @@ import uuid
 import pytest
 
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
-from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.items import resolve_task_item
+from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     create_task_package,

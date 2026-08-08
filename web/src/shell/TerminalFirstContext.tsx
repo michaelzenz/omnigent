@@ -181,8 +181,7 @@ export function useEmbeddedTerminalFirstContext(
     !terminalsAvailable &&
     sessionStatus !== "failed" &&
     (liveness.kind === "starting" || terminalPending);
-  const isShellView =
-    terminalFirst && !!panelInitialKey && !isAgentTerminalKey(panelInitialKey);
+  const isShellView = terminalFirst && !!panelInitialKey && !isAgentTerminalKey(panelInitialKey);
 
   return useMemo(
     () => ({

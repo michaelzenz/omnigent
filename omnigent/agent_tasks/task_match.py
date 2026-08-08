@@ -6,7 +6,7 @@ from typing import Any
 
 from omnigent.agent_tasks.constants import AUTO_ROUTE_MAX_CANDIDATES
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
-from omnigent.entities import Task, TaskEvent, EventTag, TaskTag
+from omnigent.entities import EventTag, Task, TaskEvent, TaskTag
 from omnigent.stores.agent_task.tags import merge_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore

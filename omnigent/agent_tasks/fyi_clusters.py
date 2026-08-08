@@ -5,12 +5,12 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal
 
+from omnigent.agent_tasks.broker_inbox import event_summary
 from omnigent.agent_tasks.constants import (
+    AMBIGUOUS_EVENT_STATES,
     CLASSIFIED_FYI_EVENT_STATE,
     FYI_CLUSTER_OPEN_STATE,
-    AMBIGUOUS_EVENT_STATES,
 )
-from omnigent.agent_tasks.broker_inbox import event_summary
 from omnigent.agent_tasks.manager_agent import resolve_agent_profile_id
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
@@ -114,10 +114,10 @@ def list_fyi_board_cards(
     clusters = task_item_store.list_fyi_clusters(state=FYI_CLUSTER_OPEN_STATE)
     cards: list[dict[str, Any]] = []
     for cluster in clusters:
-        if (
-            owner_user_id is not None
-            and cluster.owner_user_id not in {owner_user_id, "__anonymous__"}
-        ):
+        if owner_user_id is not None and cluster.owner_user_id not in {
+            owner_user_id,
+            "__anonymous__",
+        }:
             continue
         event_ids = task_item_store.list_fyi_cluster_event_ids(cluster.id)
         events = []

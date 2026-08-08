@@ -77,7 +77,9 @@ def _request(
         raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def _create_task(title: str, description: str, internal_note: str, *, agent_profile_id: str) -> str:
+def _create_task(
+    title: str, description: str, internal_note: str, *, agent_profile_id: str
+) -> str:
     task = _request(
         "POST",
         "/v1/agent-tasks",
@@ -508,17 +510,27 @@ def _seed_twenty_worker_task(*, agent_profile_id: str) -> str:
     workers = len(dash.get("workers", []))
     assets = len(dash.get("assets", []))
     heavy_lane = next(
-        (lane for lane in dash.get("workers", []) if lane.get("worker_agent_id", "").startswith("cb7784")),
+        (
+            lane
+            for lane in dash.get("workers", [])
+            if lane.get("worker_agent_id", "").startswith("cb7784")
+        ),
         None,
     )
     heavy_rows = len(heavy_lane.get("rows", [])) if heavy_lane else 0
-    print(f"  20-worker load test: {workers} workers, {assets} assets, heavy lane rows={heavy_rows}")
+    print(
+        f"  20-worker load test: {workers} workers, {assets} assets, heavy lane rows={heavy_rows}"
+    )
     if workers != 20:
-        print(f"  warning: expected 20 worker lanes, got {workers} (stale workers from prior seeds?)")
+        print(
+            f"  warning: expected 20 worker lanes, got {workers} (stale workers from prior seeds?)"
+        )
     if assets != _LOAD_TEST_ASSET_COUNT:
         raise RuntimeError(f"Expected {_LOAD_TEST_ASSET_COUNT} assets, got {assets}")
     if heavy_rows != _HEAVY_WORKER_ITEM_COUNT:
-        print(f"  warning: expected {_HEAVY_WORKER_ITEM_COUNT} items on heavy worker, got {heavy_rows}")
+        print(
+            f"  warning: expected {_HEAVY_WORKER_ITEM_COUNT} items on heavy worker, got {heavy_rows}"
+        )
     return task_id
 
 
@@ -568,7 +580,9 @@ def main() -> int:
         description="CI failed on your open PR and reviewers asked for lint fixes.",
         instructions="Investigate lint failure and address review feedback on PR #891.",
         internal_note="PR #891, repo omnigent-fork. Lint job failed on main merge base.",
-        event_ids=_create_events(host_header, repo="omnigent-fork", pr=891, offset_base=offset_base),
+        event_ids=_create_events(
+            host_header, repo="omnigent-fork", pr=891, offset_base=offset_base
+        ),
         agent_profile_id=manager_profile_id,
         asset_urls=[
             ("PR #891", "https://github.com/databricks/omnigent-fork/pull/891"),
@@ -580,10 +594,15 @@ def main() -> int:
         description="Routing UI shipped; docs still describe the old inbox flow.",
         instructions="Refresh TASK_BROKER.md and API_REFERENCE after routing cards shipped.",
         internal_note="See PR #902 and docs/agent-tasks/ for current API shapes.",
-        event_ids=_create_events(host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10),
+        event_ids=_create_events(
+            host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10
+        ),
         agent_profile_id=manager_profile_id,
         asset_urls=[
-            ("API reference", "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/API_REFERENCE.md"),
+            (
+                "API reference",
+                "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/API_REFERENCE.md",
+            ),
             ("PR #902", "https://github.com/databricks/omnigent-fork/pull/902"),
         ],
     )
@@ -592,11 +611,16 @@ def main() -> int:
         description="Poll plugin reported a stale PR state that blocked routing.",
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
         internal_note="Repro linked from PR #915 comments; watcher host poll_plugins.",
-        event_ids=_create_events(host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20),
+        event_ids=_create_events(
+            host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20
+        ),
         agent_profile_id=manager_profile_id,
         asset_urls=[
             ("PR #915", "https://github.com/databricks/omnigent-fork/pull/915"),
-            ("Poll plugin code", "https://github.com/databricks/omnigent-fork/tree/main/omnigent/host/polling"),
+            (
+                "Poll plugin code",
+                "https://github.com/databricks/omnigent-fork/tree/main/omnigent/host/polling",
+            ),
         ],
     )
     _create_task_package(
@@ -604,7 +628,9 @@ def main() -> int:
         description="Alert fired from another repo; confirm whether we own the fix.",
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
         internal_note="other-repo PR #12; no omnigent-fork code touched yet.",
-        event_ids=_create_events(host_header, repo="other-repo", pr=12, offset_base=offset_base + 30),
+        event_ids=_create_events(
+            host_header, repo="other-repo", pr=12, offset_base=offset_base + 30
+        ),
         agent_profile_id=manager_profile_id,
         asset_urls=[
             ("other-repo PR #12", "https://github.com/example/other-repo/pull/12"),
@@ -613,7 +639,9 @@ def main() -> int:
     )
 
     print("Creating FYI clusters…")
-    fyi_events = _create_events(host_header, repo="dependabot-fork", pr=44, offset_base=offset_base + 40)
+    fyi_events = _create_events(
+        host_header, repo="dependabot-fork", pr=44, offset_base=offset_base + 40
+    )
     _create_fyi_cluster(
         headline="Dependabot PR checks passed (unrelated repo)",
         rationale="Informational only — different repo, not tagged for you.",

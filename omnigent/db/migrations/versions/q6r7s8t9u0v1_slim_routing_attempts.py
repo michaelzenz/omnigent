@@ -19,7 +19,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_index("ix_task_event_routing_resolutions_event", table_name="task_event_routing_resolutions")
+    op.drop_index(
+        "ix_task_event_routing_resolutions_event", table_name="task_event_routing_resolutions"
+    )
     op.drop_table("task_event_routing_resolutions")
 
     with op.batch_alter_table("task_events", schema=None) as batch_op:
@@ -52,7 +54,9 @@ def downgrade() -> None:
         batch_op.add_column(
             sa.Column("decision", sa.SmallInteger(), nullable=False, server_default="1"),
         )
-        batch_op.add_column(sa.Column("rank", sa.SmallInteger(), nullable=False, server_default="1"))
+        batch_op.add_column(
+            sa.Column("rank", sa.SmallInteger(), nullable=False, server_default="1")
+        )
         batch_op.add_column(sa.Column("candidate_manager_agent_id", Uuid16(), nullable=False))
         batch_op.create_check_constraint(
             "ck_task_event_routing_attempts_decision",

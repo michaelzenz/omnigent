@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem, Worker
+from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
-from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.worker_store import WorkerStore
 
 _RUNNING_EXECUTION_STATUSES = frozenset({"queued", "running"})
@@ -28,9 +28,7 @@ def build_task_dashboard(
     """Build a card-shaped snapshot for one managed task."""
     items = task_item_store.list_items_for_task(task.id)
     inbox_items = [
-        item
-        for item in items
-        if item.worker_id is None and item.state == "awaiting_user_ack"
+        item for item in items if item.worker_id is None and item.state == "awaiting_user_ack"
     ]
     reconcile_queue = task_event_store.list_events(state="routed", task_id=task.id)
     executions = task_event_store.list_executions_for_task(task.id)
@@ -62,11 +60,7 @@ def build_task_dashboard(
     has_running_workers = any(
         execution.status in _RUNNING_EXECUTION_STATUSES for execution in executions
     )
-    assets = (
-        task_asset_store.list_assets_for_task(task.id)
-        if task_asset_store is not None
-        else []
-    )
+    assets = task_asset_store.list_assets_for_task(task.id) if task_asset_store is not None else []
 
     return {
         "object": "agent.task.dashboard",
@@ -132,7 +126,13 @@ def _worker_lane(
     for item in worker_items:
         if item.id in covered_item_ids:
             continue
-        if item.state in {"awaiting_user_ack", "queued", "running", "interrupted", "dispatch_failed"}:
+        if item.state in {
+            "awaiting_user_ack",
+            "queued",
+            "running",
+            "interrupted",
+            "dispatch_failed",
+        }:
             rows.append(
                 _item_row(
                     item,
@@ -205,9 +205,7 @@ def _worker_state_and_situation(
             return "new", f"New{suffix}"
         return "new", "New"
 
-    pending = sum(
-        1 for item in worker_items if item.state in {"awaiting_user_ack", "queued"}
-    )
+    pending = sum(1 for item in worker_items if item.state in {"awaiting_user_ack", "queued"})
     if pending:
         return "idle", f"Idle · {pending} pending"
     return "idle", "Idle"

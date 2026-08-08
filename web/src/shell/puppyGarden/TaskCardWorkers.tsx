@@ -7,9 +7,7 @@ import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardWorkerRows } from "./TaskCardWorkerRows";
-import {
-  TASK_CARD_INNER_SCROLL_CLASS,
-} from "./taskCardUtils";
+import { TASK_CARD_INNER_SCROLL_CLASS } from "./taskCardUtils";
 import {
   buildInboxLane,
   INBOX_LANE_ID,
@@ -43,10 +41,7 @@ export function TaskCardWorkers({
 }: TaskCardWorkersProps) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
   const allAgentIds = useMemo(() => agents.map((agent) => agent.id), [agents]);
-  const workerProfileIds = useMemo(
-    () => workers.map((lane) => lane.profile_id),
-    [workers],
-  );
+  const workerProfileIds = useMemo(() => workers.map((lane) => lane.profile_id), [workers]);
 
   const lanes = useMemo(() => {
     const inboxLane = buildInboxLane(inboxItems);
@@ -116,9 +111,7 @@ export function TaskCardWorkers({
           const expanded = expandedLaneId === lane.worker_id;
           const name = laneDisplayName(lane, agents);
           const workerSelected = isWorkerSelected(taskId, lane.worker_id);
-          const rowWorkerProfileIds = isInboxLane(lane.worker_id)
-            ? allAgentIds
-            : workerProfileIds;
+          const rowWorkerProfileIds = isInboxLane(lane.worker_id) ? allAgentIds : workerProfileIds;
 
           return (
             <article
@@ -162,7 +155,8 @@ export function TaskCardWorkers({
                     size="sm"
                     className={cn(
                       "h-7 shrink-0 gap-1 px-2 text-xs",
-                      !workerSelected && "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10",
+                      !workerSelected &&
+                        "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10",
                     )}
                     aria-label={`Open ${name} chat`}
                     aria-pressed={workerSelected}

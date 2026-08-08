@@ -74,10 +74,7 @@ def merge_event_tags(events: list[Any]) -> list[EventTag]:
     for event in events:
         for tag in event.tags:
             tag_map[normalize_tag_type(tag.tag_type)] = normalize_tag_value(tag.tag)
-    return [
-        EventTag(tag_type=tag_type, tag=tag)
-        for tag_type, tag in sorted(tag_map.items())
-    ]
+    return [EventTag(tag_type=tag_type, tag=tag) for tag_type, tag in sorted(tag_map.items())]
 
 
 def task_tag_pairs(task_tags: list[TaskTag]) -> set[tuple[str, str]]:

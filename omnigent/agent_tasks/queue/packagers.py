@@ -303,9 +303,7 @@ class BrokerPackager(Packager):
             # that would overflow the remaining capacity is capped to its oldest
             # ``remaining`` events (the rest stay ``awaiting_grouping`` and are
             # re-clustered next poll). Similar events stay contiguous per cluster.
-            clusters = cluster_events_by_similarity(
-                routed, threshold=self._similarity_threshold
-            )
+            clusters = cluster_events_by_similarity(routed, threshold=self._similarity_threshold)
             clusters.sort(key=lambda c: (c.events[0].created_at, c.events[0].id))
             included_clusters: list[AmbiguousEventCluster] = []
             included_events: list[TaskEvent] = []
@@ -341,8 +339,7 @@ class BrokerPackager(Packager):
         profile = self._live_broker_profile(batch.key.owner_user_id)
         if profile is None or profile.conversation_id is None:
             _logger.debug(
-                "broker packager: no live broker for %s; "
-                "%d events stay in awaiting_grouping",
+                "broker packager: no live broker for %s; %d events stay in awaiting_grouping",
                 batch.key.owner_user_id,
                 len(batch.events),
             )

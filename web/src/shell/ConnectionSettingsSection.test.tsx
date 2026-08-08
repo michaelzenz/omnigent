@@ -135,10 +135,7 @@ describe("ConnectionSettingsBody", () => {
     fireEvent.click(screen.getByTestId("ssh-package-index-save"));
 
     await waitFor(() => {
-      expect(mocks.saveSshConnections).toHaveBeenCalledWith(
-        [],
-        "https://pypi.example.com/simple",
-      );
+      expect(mocks.saveSshConnections).toHaveBeenCalledWith([], "https://pypi.example.com/simple");
     });
   });
 });

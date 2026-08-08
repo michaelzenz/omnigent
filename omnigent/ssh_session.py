@@ -35,7 +35,9 @@ def control_path_for_alias(alias: str, control_dir: Path | None = None) -> Path:
     return (control_dir or default_control_dir()) / f"{digest}.sock"
 
 
-def ssh_multiplex_options(control_path: Path, *, connect_timeout_s: float = _DEFAULT_TIMEOUT_S) -> list[str]:
+def ssh_multiplex_options(
+    control_path: Path, *, connect_timeout_s: float = _DEFAULT_TIMEOUT_S
+) -> list[str]:
     """Build OpenSSH options that enable connection multiplexing."""
     return [
         "-o",

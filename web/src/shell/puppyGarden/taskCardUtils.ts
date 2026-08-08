@@ -1,4 +1,10 @@
-import type { DispatchPayload, TaskExecutionSummary, TaskItemSummary, TaskWorkerGroup, TaskWorkerLane } from "@/lib/agentTasksApi";
+import type {
+  DispatchPayload,
+  TaskExecutionSummary,
+  TaskItemSummary,
+  TaskWorkerGroup,
+  TaskWorkerLane,
+} from "@/lib/agentTasksApi";
 
 export type WorkStateLabel = "To Run" | "Running" | "Done";
 

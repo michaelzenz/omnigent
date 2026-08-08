@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 const LAST_ROLE_KEY = "puppy-garden:last-role";
 
@@ -86,12 +79,7 @@ export function PuppyGardenChatProvider({ children }: { children: ReactNode }) {
   );
 
   const openWorker = useCallback(
-    (
-      taskId: string,
-      workerId: string,
-      conversationId: string | null,
-      label: string,
-    ) => {
+    (taskId: string, workerId: string, conversationId: string | null, label: string) => {
       setTarget({ kind: "worker", taskId, workerId, conversationId, label });
     },
     [],

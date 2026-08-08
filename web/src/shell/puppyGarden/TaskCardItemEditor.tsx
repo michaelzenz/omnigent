@@ -200,9 +200,7 @@ export function TaskCardItemEditor({
           ref={instructionsRef}
           rows={1}
           value={editor.instructions}
-          onChange={(event) =>
-            setEditor((prev) => ({ ...prev, instructions: event.target.value }))
-          }
+          onChange={(event) => setEditor((prev) => ({ ...prev, instructions: event.target.value }))}
           className="field-sizing-fixed min-h-7 resize-none overflow-y-auto py-1"
         />
       </div>

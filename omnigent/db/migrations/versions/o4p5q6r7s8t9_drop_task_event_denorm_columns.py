@@ -30,7 +30,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     with op.batch_alter_table("task_events", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("priority", sa.SmallInteger(), nullable=False, server_default="0"))
+        batch_op.add_column(
+            sa.Column("priority", sa.SmallInteger(), nullable=False, server_default="0")
+        )
         batch_op.add_column(sa.Column("manager_agent_id", Uuid16(), nullable=True))
         batch_op.add_column(sa.Column("manager_conversation_id", Uuid16(), nullable=True))
     op.create_index(

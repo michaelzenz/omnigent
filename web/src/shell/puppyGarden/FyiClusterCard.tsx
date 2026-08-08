@@ -24,9 +24,7 @@ export function FyiClusterCard({ card }: FyiClusterCardProps) {
       data-testid={`fyi-card-${card.id}`}
     >
       <header className="mb-2 border-l-2 border-foreground/25 pl-2.5">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground/55">
-          FYI
-        </p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground/55">FYI</p>
         <h3 className="text-sm font-semibold leading-snug text-foreground">{card.headline}</h3>
         <p className="mt-0.5 text-xs font-medium text-foreground/70">{signalLabel}</p>
       </header>
@@ -75,7 +73,9 @@ export function FyiClusterCard({ card }: FyiClusterCardProps) {
           size="sm"
           variant="outline"
           disabled={resolveFyi.isPending}
-          onClick={() => void resolveFyi.mutateAsync({ clusterId: card.id, resolution: "dismiss_fyi" })}
+          onClick={() =>
+            void resolveFyi.mutateAsync({ clusterId: card.id, resolution: "dismiss_fyi" })
+          }
         >
           Dismiss
         </Button>

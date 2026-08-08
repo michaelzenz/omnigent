@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from typing import Any
 
@@ -16,7 +15,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.host.identity import HOST_ID_HEADER
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import AuthProvider
-from omnigent.server.routes._auth_helpers import get_user_id, require_user
+from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.timer_item_store import TimerItemStore
@@ -148,7 +147,9 @@ def create_timer_items_router(
         return _item_to_response(item)
 
     @router.post("/timer-items/dispatch-prompt")
-    async def dispatch_prompt_timer(request: Request, body: DispatchPromptRequest) -> dict[str, bool]:
+    async def dispatch_prompt_timer(
+        request: Request, body: DispatchPromptRequest
+    ) -> dict[str, bool]:
         """Inject a timer prompt into a session and wake its runner."""
         _require_host_id(request)
         conv = await asyncio.to_thread(

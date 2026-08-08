@@ -1,10 +1,6 @@
 import { Loader2Icon, RotateCcwIcon, SquareIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  useRemoveTaskItem,
-  useRetryTaskItem,
-  useStopTaskItem,
-} from "@/hooks/useAgentTasks";
+import { useRemoveTaskItem, useRetryTaskItem, useStopTaskItem } from "@/hooks/useAgentTasks";
 import type { TaskItemSummary } from "@/lib/agentTasksApi";
 import { isParkedItemState } from "./taskCardUtils";
 

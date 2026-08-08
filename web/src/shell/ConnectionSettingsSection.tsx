@@ -75,28 +75,25 @@ export function ConnectionSettingsBody() {
     return loaded;
   }, []);
 
-  const persist = useCallback(
-    async (next: SshConnection[], nextPackageIndexUrl: string | null) => {
-      const generation = ++requestGeneration.current;
-      const saved = await saveSshConnections(next, nextPackageIndexUrl);
-      if (generation === requestGeneration.current) {
-        setConnections(saved.connections);
-        setPackageIndexUrl(saved.packageIndexUrl ?? "");
-      }
-      try {
-        const refreshed = await fetchSshConnections();
-        if (generation !== requestGeneration.current) return refreshed;
-        setConnections(refreshed.connections);
-        setPackageIndexUrl(refreshed.packageIndexUrl ?? "");
-        setLoadError(null);
-        return refreshed;
-      } catch (error) {
-        setLoadError(error instanceof Error ? error.message : "Failed to refresh connections");
-      }
-      return saved;
-    },
-    [],
-  );
+  const persist = useCallback(async (next: SshConnection[], nextPackageIndexUrl: string | null) => {
+    const generation = ++requestGeneration.current;
+    const saved = await saveSshConnections(next, nextPackageIndexUrl);
+    if (generation === requestGeneration.current) {
+      setConnections(saved.connections);
+      setPackageIndexUrl(saved.packageIndexUrl ?? "");
+    }
+    try {
+      const refreshed = await fetchSshConnections();
+      if (generation !== requestGeneration.current) return refreshed;
+      setConnections(refreshed.connections);
+      setPackageIndexUrl(refreshed.packageIndexUrl ?? "");
+      setLoadError(null);
+      return refreshed;
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to refresh connections");
+    }
+    return saved;
+  }, []);
 
   const runProbe = useCallback(async (connection: SshConnection) => {
     setStatusById((prev) => ({
@@ -235,9 +232,9 @@ export function ConnectionSettingsBody() {
     async (id: string) => {
       if (saving || retryingIds.size > 0) return;
       const next = connections.filter((c) => c.id !== id);
-    setSaving(true);
-    try {
-      await persist(next, packageIndexUrl.trim() || null);
+      setSaving(true);
+      try {
+        await persist(next, packageIndexUrl.trim() || null);
         setStatusById((prev) => {
           const copy = { ...prev };
           delete copy[id];
@@ -295,9 +292,7 @@ export function ConnectionSettingsBody() {
             disabled={saving || retryingIds.size > 0}
             onClick={() => void handleSavePackageIndex()}
           >
-            {saving ? (
-              <Loader2Icon className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : null}
+            {saving ? <Loader2Icon className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
             Save package index
           </Button>
         </div>

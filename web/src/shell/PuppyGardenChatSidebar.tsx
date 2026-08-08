@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ChevronDownIcon,
-  Loader2Icon,
-  Maximize2Icon,
-  RotateCcwIcon,
-  XIcon,
-} from "lucide-react";
+import { ChevronDownIcon, Loader2Icon, Maximize2Icon, RotateCcwIcon, XIcon } from "lucide-react";
 import { useNavigate } from "@/lib/routing";
 import { buildBubbles, createBubbleCache, type Bubble } from "@/lib/renderItems";
 import { getCurrentAuthorId } from "@/lib/identity";
-import {
-  isCostRoutingSession,
-  parseCostRoutingVerdict,
-} from "@/components/CostRoutingControl";
+import { isCostRoutingSession, parseCostRoutingVerdict } from "@/components/CostRoutingControl";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { type Agent, useAgents, useSessionAgent } from "@/hooks/useAgents";
 import {
@@ -25,10 +16,7 @@ import {
 } from "@/hooks/useAgentTasks";
 import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRefresh";
 import { useSessionRunnerOnline, useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
-import {
-  livenessRowFromSession,
-  useSessionLiveness,
-} from "@/hooks/useSessionLiveness";
+import { livenessRowFromSession, useSessionLiveness } from "@/hooks/useSessionLiveness";
 import { useSession } from "@/hooks/useSession";
 import {
   buildPendingBubbles,
@@ -82,8 +70,12 @@ interface PuppyGardenSessionViewProps {
  * the main chat page.
  */
 function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
-  const { data: agents, isLoading: agentsLoading, error: agentsError, refetch: refetchAgents } =
-    useAgents();
+  const {
+    data: agents,
+    isLoading: agentsLoading,
+    error: agentsError,
+    refetch: refetchAgents,
+  } = useAgents();
   const { data: boundAgentBySession } = useSessionAgent(sessionId);
   const { session: activeSession, isLoading: sessionLoading } = useSession(sessionId);
   const runnerHealthSessions = useMemo(() => [{ id: sessionId }], [sessionId]);
@@ -162,7 +154,9 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
       if (!agentId) return;
       if (isUnreachable) return;
       const chat = useChatStore.getState();
-      if (shouldQueueSend(chat.conversationId, chat.status, chat.sessionStatus, chat.queuedMessages)) {
+      if (
+        shouldQueueSend(chat.conversationId, chat.status, chat.sessionStatus, chat.queuedMessages)
+      ) {
         chat.enqueueMessage(text, files);
         return;
       }
@@ -348,9 +342,7 @@ export function PuppyGardenChatSidebar() {
 
   const conversationId = useMemo(() => {
     if (target.kind === "role") {
-      return target.role === "broker"
-        ? brokerBootstrap.sessionId
-        : secretaryBootstrap.sessionId;
+      return target.role === "broker" ? brokerBootstrap.sessionId : secretaryBootstrap.sessionId;
     }
     return target.conversationId;
   }, [target, brokerBootstrap.sessionId, secretaryBootstrap.sessionId]);
@@ -481,7 +473,12 @@ export function PuppyGardenChatSidebar() {
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-sm">
           <p>Could not load the session.</p>
           {target.kind === "role" ? (
-            <Button type="button" variant="outline" size="sm" onClick={activeRoleBootstrap.onReload}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={activeRoleBootstrap.onReload}
+            >
               Retry
             </Button>
           ) : null}
@@ -495,7 +492,8 @@ export function PuppyGardenChatSidebar() {
           <DialogContent aria-describedby="puppy-garden-reset-description">
             <DialogHeader>
               <DialogTitle>
-                Reset task {target.kind === "role" && target.role === "broker" ? "broker" : "secretary"}?
+                Reset task{" "}
+                {target.kind === "role" && target.role === "broker" ? "broker" : "secretary"}?
               </DialogTitle>
               <DialogDescription id="puppy-garden-reset-description">
                 This deletes the current chat and starts a fresh session seeded with the role

@@ -9,7 +9,6 @@ import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.agent_tasks.session_labels import ROUTING_REPO_LABEL
-from omnigent.db.utils import generate_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore

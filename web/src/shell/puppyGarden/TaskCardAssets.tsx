@@ -43,7 +43,9 @@ export function TaskCardAssets({ assets }: TaskCardAssetsProps) {
                   className="flex items-start gap-1.5 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs hover:bg-muted/60"
                 >
                   <ExternalLinkIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 break-words font-medium text-primary">{asset.title}</span>
+                  <span className="min-w-0 break-words font-medium text-primary">
+                    {asset.title}
+                  </span>
                 </a>
               ) : (
                 <span className="block rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs">
