@@ -194,7 +194,7 @@ def test_task_events_state_9_allowed(db_engine: Engine) -> None:
 
 
 def test_task_events_state_10_rejected(db_engine: Engine) -> None:
-    """The removed awaiting_user_ack state code is rejected."""
+    """The removed pending state code is rejected."""
     with db_engine.begin() as conn:
         with pytest.raises(IntegrityError):
             conn.execute(

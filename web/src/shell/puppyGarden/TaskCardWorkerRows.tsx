@@ -90,7 +90,7 @@ export function TaskCardWorkerRows({ taskId, rows, workerLanes }: TaskCardWorker
                         item={row.item}
                         workerLanes={workerLanes}
                         mode={
-                          row.item.state === "awaiting_user_ack"
+                          row.item.state === "pending"
                             ? "ack"
                             : row.item.state === "queued"
                               ? "edit"

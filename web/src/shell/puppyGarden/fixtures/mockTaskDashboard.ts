@@ -42,7 +42,7 @@ export function buildFixtureDashboard(taskId: string): TaskDashboard | null {
           description: "Customer asked whether the hotfix shipped",
           instructions: "Read the Slack thread and propose a task",
           internal_note: null,
-          state: "awaiting_user_ack",
+          state: "pending",
           worker_id: null,
           queue_item_id: "fixture-queue-inbox-1",
           created_at: NOW - 120,

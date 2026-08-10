@@ -154,7 +154,7 @@ def test_shipped_codes_are_stable() -> None:
     # old row can never be reinterpreted as a newer state.
     assert ec.TASK_ITEM_STATE == {
         "draft": 1,
-        "awaiting_user_ack": 2,
+        "pending": 2,
         "queued": 4,
         "running": 5,
         "done": 6,

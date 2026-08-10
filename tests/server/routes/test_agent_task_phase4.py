@@ -161,7 +161,7 @@ async def test_item_accept_enqueues_worker(
     )
     assert item_resp.status_code == 200
     item_id = item_resp.json()["id"]
-    assert item_resp.json()["state"] == "awaiting_user_ack"
+    assert item_resp.json()["state"] == "pending"
 
     resolve_resp = await client.post(
         f"/v1/task-items/{item_id}/resolve",

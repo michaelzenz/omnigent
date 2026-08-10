@@ -133,7 +133,7 @@ def reconcile_events_to_task_batch(
             existing = task_item_store.get_item(spec.item_id)
             if existing is None or existing.task_id != task.id:
                 raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
-            if existing.state != "awaiting_user_ack":
+            if existing.state not in ("pending", "queued"):
                 raise OmnigentError(
                     f"Cannot extend item in state {existing.state!r}",
                     code=ErrorCode.CONFLICT,
@@ -165,7 +165,7 @@ def reconcile_events_to_task_batch(
                 description=spec.description,
                 instructions=spec.instructions,
                 internal_note=spec.internal_note,
-                state="awaiting_user_ack",
+                state="pending",
                 created_by="broker",
                 event_ids=[event.id for event in events],
             )

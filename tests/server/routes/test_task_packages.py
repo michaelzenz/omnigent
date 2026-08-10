@@ -194,7 +194,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
     assert accepted.status_code == 200
 
     item_store = SqlAlchemyTaskItemStore(db_uri)
-    item = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0]
+    item = item_store.list_items_for_task(task_id, state="pending")[0]
 
     resolved = await client.post(
         f"/v1/task-items/{item.id}/resolve",
@@ -245,7 +245,7 @@ async def test_resolve_inbox_item_requires_accepted_package(
     assert created.status_code == 200
     task_id = created.json()["id"]
     item_store = SqlAlchemyTaskItemStore(db_uri)
-    item = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0]
+    item = item_store.list_items_for_task(task_id, state="pending")[0]
 
     resolved = await client.post(
         f"/v1/task-items/{item.id}/resolve",
@@ -291,7 +291,7 @@ async def test_skip_inbox_items_keeps_paused_task(
     assert created.status_code == 200
     task_id = created.json()["id"]
 
-    for item in item_store.list_items_for_task(task_id, state="awaiting_user_ack"):
+    for item in item_store.list_items_for_task(task_id, state="pending"):
         skipped = await client.post(
             f"/v1/task-items/{item.id}/resolve",
             json={"resolution": "reject_item"},
@@ -337,7 +337,7 @@ async def test_reconcile_events_extends_package_item(
     )
     assert package.status_code == 200
     task_id = package.json()["id"]
-    item_id = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0].id
+    item_id = item_store.list_items_for_task(task_id, state="pending")[0].id
 
     reconciled = await client.post(
         f"/v1/agent-tasks/{task_id}/reconcile-events",
@@ -389,7 +389,7 @@ async def test_reconcile_events_batch_creates_multiple_items(
     task_id = package.json()["id"]
 
     # One call, two new items — one fresh and one extending the seed item.
-    seed_item_id = item_store.list_items_for_task(task_id, state="awaiting_user_ack")[0].id
+    seed_item_id = item_store.list_items_for_task(task_id, state="pending")[0].id
     reconciled = await client.post(
         f"/v1/agent-tasks/{task_id}/reconcile-events",
         json={

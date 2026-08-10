@@ -13,7 +13,7 @@ export function isDoneTaskItem(state: string): boolean {
 
 export function isEditableItemState(state: string): boolean {
   return (
-    state === "awaiting_user_ack" ||
+    state === "pending" ||
     state === "queued" ||
     state === "interrupted" ||
     state === "dispatch_failed"
@@ -26,7 +26,7 @@ export function isParkedItemState(state: string): boolean {
 
 export function itemStateLabel(state: string): string {
   switch (state) {
-    case "awaiting_user_ack":
+    case "pending":
       return "Needs ack";
     case "queued":
       return "Queued";

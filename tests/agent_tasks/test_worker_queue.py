@@ -276,7 +276,7 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
         _uid("inbox_item"),
         task_id,
         "Do work",
-        state="awaiting_user_ack",
+        state="pending",
         instructions="Do the work",
     )
 
@@ -343,7 +343,7 @@ def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> 
         _uid("legacy_item"),
         task_id,
         "Do work",
-        state="awaiting_user_ack",
+        state="pending",
         instructions="Do the work",
     )
 

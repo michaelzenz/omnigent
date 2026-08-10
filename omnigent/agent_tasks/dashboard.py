@@ -13,7 +13,7 @@ from omnigent.stores.worker_store import WorkerStore
 _RUNNING_EXECUTION_STATUSES = frozenset({"queued", "running"})
 _TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 _WORKER_LANE_ITEM_STATES = frozenset(
-    {"awaiting_user_ack", "queued", "running", "interrupted", "dispatch_failed"}
+    {"pending", "queued", "running", "interrupted", "dispatch_failed"}
 )
 _WORKER_STATE = Literal["new", "active", "idle"]
 
@@ -28,7 +28,7 @@ def build_task_dashboard(
     """Build a card-shaped snapshot for one managed task."""
     items = task_item_store.list_items_for_task(task.id)
     inbox_items = [
-        item for item in items if item.worker_id is None and item.state == "awaiting_user_ack"
+        item for item in items if item.worker_id is None and item.state == "pending"
     ]
     reconcile_queue = task_event_store.list_events(state="routed", task_id=task.id)
     executions = task_event_store.list_executions_for_task(task.id)
@@ -127,7 +127,7 @@ def _worker_lane(
         if item.id in covered_item_ids:
             continue
         if item.state in {
-            "awaiting_user_ack",
+            "pending",
             "queued",
             "running",
             "interrupted",
@@ -200,13 +200,13 @@ def _worker_state_and_situation(
         return "active", f"Running: {title}"
 
     if not has_ever_executed:
-        awaiting = sum(1 for item in worker_items if item.state == "awaiting_user_ack")
+        awaiting = sum(1 for item in worker_items if item.state == "pending")
         if awaiting:
             suffix = f" · {awaiting} awaiting" if awaiting > 1 else " · 1 awaiting"
             return "new", f"New{suffix}"
         return "new", "New"
 
-    pending = sum(1 for item in worker_items if item.state in {"awaiting_user_ack", "queued"})
+    pending = sum(1 for item in worker_items if item.state in {"pending", "queued"})
     if pending:
         return "idle", f"Idle · {pending} pending"
     return "idle", "Idle"

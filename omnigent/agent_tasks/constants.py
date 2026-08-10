@@ -27,8 +27,8 @@ BROKER_CANDIDATE_LIMIT = 5
 UNRECONCILED_EVENT_STATES = frozenset({"routed"})
 AMBIGUOUS_EVENT_STATES = frozenset({"awaiting_grouping"})
 CLASSIFIED_FYI_EVENT_STATE = "classified_fyi"
-FYI_CLUSTER_OPEN_STATE = "awaiting_user_ack"
-DISPATCHABLE_ITEM_STATES = frozenset({"awaiting_user_ack"})
+FYI_CLUSTER_OPEN_STATE = "pending"
+DISPATCHABLE_ITEM_STATES = frozenset({"pending"})
 
 
 def resolve_task_harness(harness: str) -> str:

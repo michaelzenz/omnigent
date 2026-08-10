@@ -247,7 +247,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         headline: str,
         *,
         rationale: str | None = None,
-        state: str = "awaiting_user_ack",
+        state: str = "pending",
     ) -> FyiCluster:
         row = SqlFyiCluster(
             id=cluster_id,
@@ -282,7 +282,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 .where(SqlFyiClusterEvent.workspace_id == current_workspace_id())
                 .where(SqlFyiClusterEvent.event_id == event_id)
                 .where(
-                    SqlFyiCluster.state == encode_fyi_cluster_state("awaiting_user_ack"),
+                    SqlFyiCluster.state == encode_fyi_cluster_state("pending"),
                 )
                 .order_by(desc(SqlFyiCluster.created_at), desc(SqlFyiCluster.id))
                 .limit(1)
@@ -306,7 +306,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 .where(SqlFyiClusterEvent.workspace_id == current_workspace_id())
                 .where(SqlFyiClusterEvent.event_id.in_(event_ids))
                 .where(
-                    SqlFyiCluster.state == encode_fyi_cluster_state("awaiting_user_ack"),
+                    SqlFyiCluster.state == encode_fyi_cluster_state("pending"),
                 )
             )
             return {row[0] for row in session.execute(stmt).all()}

@@ -11,7 +11,7 @@ export function TaskCardItemStateBadge({ state }: TaskCardItemStateBadgeProps) {
   const variant =
     state === "running"
       ? "default"
-      : state === "queued" || state === "awaiting_user_ack"
+      : state === "queued" || state === "pending"
         ? "secondary"
         : state === "dispatch_failed"
           ? "destructive"

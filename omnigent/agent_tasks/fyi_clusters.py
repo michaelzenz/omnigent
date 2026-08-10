@@ -228,5 +228,5 @@ def resolve_fyi_cluster(
         worker_store=worker_store,
         internal_note=proposed_task_internal_note,
     )
-    items = task_item_store.list_items_for_task(task.id, state="awaiting_user_ack")
+    items = task_item_store.list_items_for_task(task.id, state="pending")
     return updated, items[0] if items else None

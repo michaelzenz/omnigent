@@ -56,10 +56,10 @@ async def test_list_task_items_filters_by_state(
 
     resp = await client.get(
         f"/v1/agent-tasks/{task_id}/items",
-        params={"state": "awaiting_user_ack"},
+        params={"state": "pending"},
     )
     assert resp.status_code == 200
     items = resp.json()["data"]
     assert len(items) == 1
-    assert items[0]["state"] == "awaiting_user_ack"
+    assert items[0]["state"] == "pending"
     assert items[0]["internal_note"] == "workflow run 42 failed on lint"

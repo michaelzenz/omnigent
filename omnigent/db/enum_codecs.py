@@ -129,13 +129,13 @@ TASK_EVENT_STATE: dict[str, int] = {
 }
 
 FYI_CLUSTER_STATE: dict[str, int] = {
-    "awaiting_user_ack": 1,
+    "pending": 1,
     "dismissed": 2,
 }
 
 TASK_ITEM_STATE: dict[str, int] = {
     "draft": 1,
-    "awaiting_user_ack": 2,
+    "pending": 2,
     # 3 was "approved", removed: accepting an item goes straight to "queued".
     "queued": 4,
     "running": 5,

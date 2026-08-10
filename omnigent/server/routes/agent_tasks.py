@@ -419,6 +419,7 @@ class ReconcileEventsToTaskRequest(BaseModel):
     instructions: str | None = None
     internal_note: str | None = None
     item_id: str | None = None
+    task_internal_note: str | None = None
 
     @model_validator(mode="after")
     def _normalize(self) -> ReconcileEventsToTaskRequest:
@@ -1919,7 +1920,13 @@ def create_agent_tasks_router(
                 )
 
             results = await asyncio.to_thread(_reconcile)
-            if all(result is None for result in results):
+            if body.task_internal_note is not None:
+                await asyncio.to_thread(
+                    task_store.update,
+                    task_id,
+                    internal_note=body.task_internal_note,
+                )
+            if specs and all(result is None for result in results):
                 raise OmnigentError(
                     "No claimable ambiguous events for task package item",
                     code=ErrorCode.CONFLICT,

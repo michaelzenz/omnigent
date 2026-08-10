@@ -38,7 +38,7 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
         _uid("unassigned"),
         task_id,
         "Pick a worker",
-        state="awaiting_user_ack",
+        state="pending",
         instructions="No worker yet",
     )
     worker = worker_store.create_worker(
@@ -50,7 +50,7 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
         _uid("assigned"),
         task_id,
         "Assigned proposal",
-        state="awaiting_user_ack",
+        state="pending",
         instructions="Already routed",
         worker_id=worker.id,
     )

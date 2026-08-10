@@ -116,7 +116,7 @@ def test_create_task_package_reconciles_events(stores) -> None:
         worker_store=stores["worker"],
     )
     assert task.state == "pending"
-    items = item_store.list_items_for_task(task.id, state="awaiting_user_ack")
+    items = item_store.list_items_for_task(task.id, state="pending")
     assert len(items) == 1
     event = event_store.get_event(event_id)
     assert event is not None
@@ -244,7 +244,7 @@ def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> N
         task_role_profile_store=profile_store,
     )
     worker_store = stores["worker"]
-    item = item_store.list_items_for_task(task.id, state="awaiting_user_ack")[0]
+    item = item_store.list_items_for_task(task.id, state="pending")[0]
     updated, execution = resolve_task_item(
         item=item,
         resolution="edit_and_dispatch",
@@ -306,7 +306,7 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
         worker_store=stores["worker"],
     )
     worker_store = stores["worker"]
-    for item in item_store.list_items_for_task(task.id, state="awaiting_user_ack"):
+    for item in item_store.list_items_for_task(task.id, state="pending"):
         updated, execution = resolve_task_item(
             item=item,
             resolution="reject_item",

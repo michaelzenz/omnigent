@@ -99,7 +99,7 @@ class TaskItemStore(ABC):
         headline: str,
         *,
         rationale: str | None = None,
-        state: str = "awaiting_user_ack",
+        state: str = "pending",
     ) -> FyiCluster:
         """Insert an FYI cluster."""
 

@@ -89,7 +89,7 @@ X-Omnigent-Host-Id: HOST_ID
 - [ ] Event 2 is `reconciled` on the **same** package item (or broker clearly linked both before user acts).
 - [ ] Broker received a stall wake (check broker session or server log).
 - [ ] `GET /v1/agent-tasks?state=pending` shows one pending task with both events on inbox items (preferred) or two packages the user can tell belong together.
-- [ ] Package task state is `pending` with `awaiting_user_ack` inbox items.
+- [ ] Package task state is `pending` with `pending` inbox items.
 - [ ] Broker did **not** bootstrap a manager session yet.
 
 **After user Go on an inbox item**

@@ -26,7 +26,7 @@ from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item"]
-_INBOX_STATES = frozenset({"awaiting_user_ack"})
+_INBOX_STATES = frozenset({"pending"})
 # Editable while the work is waiting: before it is handed over, and after it is
 # parked. A parked item is stopped precisely so its instructions can be fixed
 # before the retry.
@@ -139,7 +139,7 @@ def ensure_task_manager_for_dispatch(
 
 def submit_item_for_user_ack(task_item_store: TaskItemStore, item_id: str) -> TaskItem:
     """Move a draft item into the user inbox."""
-    updated = task_item_store.update_item(item_id, state="awaiting_user_ack")
+    updated = task_item_store.update_item(item_id, state="pending")
     if updated is None:
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
     return updated

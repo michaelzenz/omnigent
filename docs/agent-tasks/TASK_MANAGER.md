@@ -1,50 +1,89 @@
 # Task manager manual
 
-You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer
-can route inbound events.
+You are the task manager, your duty is to steer the task towards the goal, the system will feed you the events so you have full context
 
-## Triggers
+You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer can route inbound events.
 
-Wake notices:
+## API access
 
-- `[System: task event … routed to this manager]`
-- `[System: worker execution … for item …]`
+Call the Omnigent task APIs with `curl` from the runner workspace.
+The runner sets `RUNNER_SERVER_URL` to the server base URL (for example `http://127.0.0.1:6767`).
+
+```bash
+curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>"
+```
+
+Use Bash for every endpoint below. Do not use browser tools for routing work.
 
 ## Reconcile routed events
 
-When events reach `routed`, reconcile them into **task items**:
+The manager packager wraps routed events into a dispatch notice and sends
+it to your session. Each notice lists every routed event the task has not
+yet reconciled — you don't need to poll for them yourself.
 
-1. `GET /v1/agent-tasks/{id}/reconcile-queue` — events awaiting reconciliation
-2. `POST /v1/agent-tasks/{id}/reconcile-events` — create or extend task item(s) and mark events reconciled (batch: pass `items` for several at once)
-3. Or create items directly: `POST /v1/agent-tasks/{id}/items`
-4. `POST /v1/agent-tasks/{id}/ack` — ack routed events as processed without creating items
+### Gather context
 
-Task items are the user-facing backlog unit (Puppy Garden INBOX).
+Before reconciling, here is how you can read the current state:
 
-## Task items
+- **Task info** — `GET /v1/agent-tasks/{id}` — the task itself, including
+  `internal_note` (previous context left by you or the broker) and tags.
+- **Task items** — `GET /v1/agent-tasks/{id}/items` — existing pending/queued
+  items. Each item has `internal_note` (prior conclusions for that item),
+  `title`, `description`, `instructions`, and `state`. Read these to decide
+  whether an event extends an existing item or needs a new one. Only pull the pending or queued items.
 
-Create or update items with `worker_profile_id`, `title`, `instructions`, `host_id`,
-`workspace`, `harness`, and `model`.
+### Reconcile
 
-- **Needs user approval** → submit item for inbox (`awaiting_user_ack`)
-- **Dispatch worker** → `POST /v1/task-items/{id}/dispatch` after user accepts
+Reconcile the events into **task items**:
 
-Mark routed source events `reconciled` once items are created.
+- `POST /v1/agent-tasks/{id}/reconcile-events` — create or extend task item(s)
+  and mark events reconciled (batch: pass `items` for several at once).
+  Used when trying to reconcile events
 
-## Do not
+Example — create a new item from a routed event:
 
-- Ingest `build.*` or other external event types yourself.
-- Resolve inbox items yourself (the user does that via Go/Skip).
-
-## Poll plugins
-
-Follow-up events from poll plugins may include an explicit `task_id` (via
-`watches.json` `context.task_id`). Those events skip ingress scoring and
-route to your task directly.
-
-When a blocker PR must be watched, ask the poll plugin author to add an
-explicit watch with your managed task id, for example:
-
-```json
-{"repo": "org/repo", "pr": 456, "context": {"blocked_pr": 123, "task_id": "<your-task-id>"}}
+```bash
+curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "task_internal_note":"<agent context — routing rationale for the task, update if necessary>",
+    "items":[
+      {
+        "event_ids":["<event_id>"],
+        "title":"<item title>",
+        "description":"<why this item exists for the user>",
+        "instructions":"<worker instructions>",
+        "internal_note":"<agent context — prior conclusions for taskItem>"
+      }
+    ]
+  }'
 ```
+
+Example — extend an existing item with more events (pass `item_id`):
+
+```bash
+curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "items":[
+      {
+        "event_ids":["<event_id>"],
+        "item_id":"<existing_item_id>",
+        "title":"<updated title>",
+        "description":"<updated why>",
+        "instructions":"<updated worker instructions>",
+        "internal_note":"<updated agent context>"
+      }
+    ]
+  }'
+```
+
+* Omit `item_id` to create a new item; pass `item_id` to extend an existing
+  `pending` or `queued` item (title/description/instructions/internal_note
+  are overwritten). 
+* `task_internal_note` updates the task-level routing context so future
+  events can be scored without re-reading sources.
+
+- Create/update items directly: `POST/PATCH /v1/agent-tasks/{id}/items`, used when no eventids to link
+- `POST /v1/agent-tasks/{id}/ack` — ack routed events as processed without
+  creating taskItem
