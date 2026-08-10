@@ -5,9 +5,14 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import pytest
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
+from omnigent.agent_tasks.agent_builtins import (
+    TASK_MANAGER_AGENT_NAME,
+    TASK_WORKER_AGENT_NAME,
+    resolve_task_agent_id,
+)
 from omnigent.agent_tasks.completion import (
     TaskCompletionContext,
     configure_task_completion,
@@ -32,6 +37,52 @@ def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
 
 
+@pytest.fixture(autouse=True)
+def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip host liveness checks — route tests don't run a real host."""
+    async def _skip_validation(*args: object, **kwargs: object) -> str | None:
+        return kwargs.get("workspace")
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._validate_session_workspace",
+        _skip_validation,
+    )
+
+    from omnigent.server.routes._host_launch import HostLaunchTarget
+
+    class _AutoResolveDict(dict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if hasattr(value, "set_result") and not value.done():
+                value.set_result({"status": "ok"})
+
+    def _skip_launch(*args: object, **kwargs: object) -> HostLaunchTarget:
+        host_id = kwargs.get("host_id", "")
+        fake_conn = type(
+            "FakeConn",
+            (),
+            {
+                "host_id": host_id,
+                "pending_launches": _AutoResolveDict(),
+                "pending_stats": {},
+            },
+        )()
+        return HostLaunchTarget(
+            host=type("FakeHost", (), {"name": "test-host", "host_id": host_id})(),
+            conn=fake_conn,
+            conv=type("FakeConv", (), {"id": kwargs.get("session_id", "")})(),
+        )
+
+    monkeypatch.setattr(
+        "omnigent.server.routes._host_launch.resolve_host_launch",
+        _skip_launch,
+    )
+
+    from omnigent.server.host_registry import HostRegistry
+
+    monkeypatch.setattr(HostRegistry, "send_text", staticmethod(lambda conn, data: None))
+
+
 @pytest_asyncio.fixture()
 async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
     del client
@@ -39,19 +90,23 @@ async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def worker_agent_id(db_uri: str) -> str:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-worker-agent", bundle_location="test:///bundle")
-    return agent_id
+async def worker_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
+    del client
+    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_WORKER_AGENT_NAME)
 
 
 @pytest_asyncio.fixture()
-async def worker_role_key(client: httpx.AsyncClient, worker_agent_id: str) -> str:
+async def worker_role_key(client: httpx.AsyncClient, worker_agent_id: str, db_uri: str) -> str:
     """Register the custom worker role the phase 4 items are dispatched under."""
+    host_id = _seed_live_host(db_uri, "worker-role-host")
     resp = await client.post(
         "/v1/agent-tasks/roles/worker",
-        json={"slug": WORKER_ROLE_SLUG, "agent_profile_id": worker_agent_id},
+        json={
+            "slug": WORKER_ROLE_SLUG,
+            "agent_profile_id": worker_agent_id,
+            "host_id": host_id,
+            "workspace": "/tmp/omnigent-worker",
+        },
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["role"]
@@ -65,7 +120,6 @@ def _seed_live_host(db_uri: str, seed: str) -> str:
 
 def _bootstrap_body() -> dict[str, str]:
     return {
-        "host_id": _uid("host_test"),
         "workspace": "/tmp/omnigent-task-test",
         "harness": "cursor",
         "model": "composer-2.5",

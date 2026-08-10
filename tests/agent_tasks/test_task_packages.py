@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -206,7 +207,8 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
         assert event_store.get_event(eid).state == "reconciled"
 
 
-def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> None:
+@pytest.mark.asyncio
+async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
@@ -245,7 +247,15 @@ def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> N
     )
     worker_store = stores["worker"]
     item = item_store.list_items_for_task(task.id, state="pending")[0]
-    updated, execution = resolve_task_item(
+    async def _mock_session_creator(*, body, request, user_id, **kwargs):
+        return conversation_store.create_conversation(
+            title=body.title or "Task manager",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+        )
+
+    updated, execution = await resolve_task_item(
         item=item,
         resolution="edit_and_dispatch",
         task=task,
@@ -271,6 +281,8 @@ def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> N
             "harness": "cursor",
             "model": "composer-2.5",
         },
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
     )
     assert updated.state == "running"
     assert execution is not None
@@ -280,7 +292,8 @@ def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> N
     assert activated.manager_conversation_id is not None
 
 
-def test_skip_inbox_items_keeps_paused_task(stores) -> None:
+@pytest.mark.asyncio
+async def test_skip_inbox_items_keeps_paused_task(stores) -> None:
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
@@ -307,7 +320,7 @@ def test_skip_inbox_items_keeps_paused_task(stores) -> None:
     )
     worker_store = stores["worker"]
     for item in item_store.list_items_for_task(task.id, state="pending"):
-        updated, execution = resolve_task_item(
+        updated, execution = await resolve_task_item(
             item=item,
             resolution="reject_item",
             task=task,

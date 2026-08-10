@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, bootstrap_task_manager
 from omnigent.db.utils import now_epoch
@@ -35,7 +37,7 @@ def record_routing_attempt(
     return attempt_id
 
 
-def route_event_to_task(
+async def route_event_to_task(
     *,
     event: TaskEvent,
     task: Task,
@@ -45,6 +47,9 @@ def route_event_to_task(
     params: BootstrapParams,
     routing_reason: str | None = None,
     routing_score: float | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> TaskEvent:
     """Bootstrap the task manager when needed and bind the event for triage."""
     if routing_reason is not None:
@@ -55,11 +60,14 @@ def route_event_to_task(
             reason=routing_reason,
             score=routing_score,
         )
-    bootstrapped = bootstrap_task_manager(
+    bootstrapped = await bootstrap_task_manager(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
         params=params,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )
     routed_at = now_epoch()
     updated = task_event_store.update_event(

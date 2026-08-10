@@ -304,7 +304,6 @@ class DispatchTaskItemRequest(BaseModel):
     """Request body for ``POST /v1/task-items/{item_id}/dispatch``."""
 
     worker_role_key: str | None = None
-    title: str | None = None
     instructions: str | None = None
     host_id: str | None = None
     workspace: str | None = None
@@ -1413,33 +1412,14 @@ def create_agent_tasks_router(
                 model=body.model,
                 role_profile=profile,
             )
-            if session_creator is not None and profile is not None:
-                from omnigent.server.schemas import SessionCreateRequest
-
-                manager_body = SessionCreateRequest(
-                    agent_id=params.agent_profile_id,
-                    title=f"Task manager: {task.title}",
-                    host_id=params.host_id,
-                    workspace=params.workspace,
-                    harness_override=params.harness,
-                    model_override=params.model,
-                    labels={},
-                )
-                resp = await session_creator(
-                    body=manager_body,
-                    request=request,
-                    user_id=user_id,
-                )
-                updated = task_store.update(task.id, manager_conversation_id=resp.id)
-                if updated is None:
-                    raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-                return _task_to_response(updated)
-            bootstrapped = await asyncio.to_thread(
-                bootstrap_task_manager,
+            bootstrapped = await bootstrap_task_manager(
                 task=task,
                 task_store=task_store,
                 conversation_store=conversation_store,
                 params=params,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
             )
             return _task_to_response(bootstrapped)
 
@@ -1500,74 +1480,18 @@ def create_agent_tasks_router(
             manager_profile = await _manager_role_profile_for_task(task, user_id)
             worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
 
-            if session_creator is not None and worker_profile is not None:
-                from omnigent.server.schemas import SessionCreateRequest
-
-                # Ensure the manager is bootstrapped first — the worker
-                # sub-agent inherits the manager's runner.
-                def _ensure_manager() -> str:
-                    from omnigent.agent_tasks.items import ensure_task_manager_for_dispatch
-
-                    updated_task = ensure_task_manager_for_dispatch(
-                        task=task,
-                        task_store=task_store,
-                        conversation_store=conversation_store,
-                        role_profile=manager_profile,
-                        host_id=worker_profile.host_id,
-                        workspace=worker_profile.workspace,
-                        harness=worker_profile.harness,
-                        model=worker_profile.model,
-                    )
-                    return updated_task.manager_conversation_id or ""
-
-                manager_conversation_id = await asyncio.to_thread(_ensure_manager)
-                if not manager_conversation_id:
-                    raise OmnigentError(
-                        "Task manager is not bootstrapped",
-                        code=ErrorCode.CONFLICT,
-                    )
-                role_key = (worker.role_key or "").strip()
-                worker_params = resolve_bootstrap_params(
-                    host_id=worker_profile.host_id,
-                    workspace=worker_profile.workspace,
-                    harness=worker_profile.harness,
-                    model=worker_profile.model,
-                    role_profile=worker_profile,
-                )
-                worker_body = SessionCreateRequest(
-                    agent_id=worker_params.agent_profile_id,
-                    title=role_key,
-                    host_id=worker_params.host_id,
-                    workspace=worker_params.workspace,
-                    harness_override=worker_params.harness,
-                    model_override=worker_params.model,
-                    parent_session_id=manager_conversation_id,
-                    sub_agent_name=role_key,
-                    labels={},
-                )
-                resp = await session_creator(
-                    body=worker_body,
-                    request=request,
-                    user_id=user_id,
-                )
-                updated = worker_store.update_worker(worker.id, session_id=resp.id)
-                if updated is None:
-                    raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-                return _worker_to_response(updated)
-
-            def _activate() -> Worker:
-                activated, _conversation_id = activate_worker_lane(
-                    task=task,
-                    worker=worker,
-                    task_store=task_store,
-                    worker_store=worker_store,
-                    conversation_store=conversation_store,
-                    manager_role_profile=manager_profile,
-                    worker_role_profile=worker_profile,
-                )
-                return activated
-
-            activated = await asyncio.to_thread(_activate)
+            activated, _conversation_id = await activate_worker_lane(
+                task=task,
+                worker=worker,
+                task_store=task_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                manager_role_profile=manager_profile,
+                worker_role_profile=worker_profile,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
             if activated.session_id is not None:
                 await _best_effort_ensure_conversation_runner(
                     request,
@@ -1714,23 +1638,23 @@ def create_agent_tasks_router(
             if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
                 raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
 
-            def _resolve() -> tuple[TaskItem, TaskEventExecution | None]:
-                return resolve_task_item(
-                    item=item,
-                    resolution=body.resolution,
-                    task=task,
-                    task_store=task_store,
-                    task_item_store=task_item_store,
-                    task_event_store=task_event_store,
-                    worker_store=worker_store,
-                    conversation_store=conversation_store,
-                    edited_payload=body.edited_payload,
-                    role_profile=worker_profile or manager_profile,
-                    agent_queue_store=agent_queue_store,
-                    owner_user_id=_effective_user_id(user_id),
-                )
-
-            updated, execution = await asyncio.to_thread(_resolve)
+            updated, execution = await resolve_task_item(
+                item=item,
+                resolution=body.resolution,
+                task=task,
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                edited_payload=body.edited_payload,
+                role_profile=worker_profile or manager_profile,
+                agent_queue_store=agent_queue_store,
+                owner_user_id=_effective_user_id(user_id),
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
             response = _item_to_response(updated)
             if execution is not None:
                 response["execution_id"] = execution.id
@@ -1778,13 +1702,11 @@ def create_agent_tasks_router(
             payload = {
                 "worker_role_key": body.worker_role_key
                 or (worker.role_key if worker is not None else None),
-                "title": item.title,
                 "instructions": item.instructions or "",
                 "internal_note": item.internal_note,
             }
             params = resolve_dispatch_params(
                 payload=payload,
-                title=body.title,
                 instructions=body.instructions,
                 host_id=body.host_id,
                 workspace=body.workspace,
@@ -1793,19 +1715,19 @@ def create_agent_tasks_router(
                 role_profile=worker_profile or manager_profile,
             )
 
-            def _dispatch() -> tuple[TaskEventExecution, str]:
-                return dispatch_worker_for_item(
-                    task=task,
-                    item=item,
-                    params=params,
-                    task_store=task_store,
-                    task_item_store=task_item_store,
-                    task_event_store=task_event_store,
-                    worker_store=worker_store,
-                    conversation_store=conversation_store,
-                )
-
-            execution, worker_conversation_id = await asyncio.to_thread(_dispatch)
+            execution, worker_conversation_id = await dispatch_worker_for_item(
+                task=task,
+                item=item,
+                params=params,
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
             return {
                 "object": "agent.task.dispatch",
                 "execution_id": execution.id,
@@ -2127,6 +2049,9 @@ def create_agent_tasks_router(
                 conversation_store=conversation_store,
                 params=params,
                 proposal_event=proposal,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
             )
             worker = await asyncio.to_thread(worker_store.get_by_session_id, session_id)
             return {

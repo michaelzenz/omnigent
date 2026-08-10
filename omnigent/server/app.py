@@ -1504,6 +1504,8 @@ def create_app(
                         tunnel_registry,
                         runner_exit_reports,
                     ),
+                    session_creator=_session_creator,
+                    app_state=app_inst.state,
                 )
 
             class _CacheStatusReader(StatusReader):
@@ -2563,6 +2565,7 @@ def create_app(
                 task_role_profile_store=task_role_profile_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,
+                session_creator=_session_creator,
             ),
             prefix="/v1",
             tags=["task_events"],

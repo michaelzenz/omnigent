@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any, Literal
@@ -46,7 +47,6 @@ def _merge_payload(base: dict[str, Any], overrides: dict[str, Any] | None) -> di
 
 def _item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
     return {
-        "title": item.title,
         "instructions": item.instructions or "",
         "internal_note": item.internal_note,
     }
@@ -104,7 +104,7 @@ def create_task_item(
     return item
 
 
-def ensure_task_manager_for_dispatch(
+async def ensure_task_manager_for_dispatch(
     *,
     task: Task,
     task_store: TaskStore,
@@ -114,6 +114,9 @@ def ensure_task_manager_for_dispatch(
     workspace: str | None = None,
     harness: str | None = None,
     model: str | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> Task:
     """Ensure a manager session exists before dispatch."""
     if task.state == "pending":
@@ -129,11 +132,14 @@ def ensure_task_manager_for_dispatch(
         model=model,
         role_profile=role_profile,
     )
-    return bootstrap_task_manager(
+    return await bootstrap_task_manager(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
         params=params,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )
 
 
@@ -158,7 +164,7 @@ def reject_task_item(*, item: TaskItem, task_item_store: TaskItemStore) -> TaskI
     return updated
 
 
-def resolve_task_item(
+async def resolve_task_item(
     *,
     item: TaskItem,
     resolution: ItemResolution,
@@ -172,6 +178,9 @@ def resolve_task_item(
     role_profile: TaskRoleProfile | None = None,
     agent_queue_store: AgentQueueStore | None = None,
     owner_user_id: str | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> tuple[TaskItem, TaskEventExecution | None]:
     """Accept, edit, or reject a user-inbox task item.
 
@@ -188,13 +197,15 @@ def resolve_task_item(
             code=ErrorCode.CONFLICT,
         )
     if resolution == "reject_item":
-        updated = task_item_store.update_item(item.id, state="cancelled")
-        if updated is None:
-            raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+        updated = await asyncio.to_thread(
+            reject_task_item,
+            item=item,
+            task_item_store=task_item_store,
+        )
         return updated, None
 
     payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
-    task = ensure_task_manager_for_dispatch(
+    task = await ensure_task_manager_for_dispatch(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
@@ -203,6 +214,9 @@ def resolve_task_item(
         workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
         harness=str(payload.get("harness")) if payload.get("harness") is not None else None,
         model=str(payload.get("model")) if payload.get("model") is not None else None,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )
     if resolution == "edit_and_dispatch":
         update_kwargs: dict[str, Any] = {
@@ -213,15 +227,16 @@ def resolve_task_item(
             update_kwargs["description"] = str(payload.get("description") or "")
         if edited_payload is not None and "internal_note" in edited_payload:
             update_kwargs["internal_note"] = str(payload.get("internal_note") or "")
-        task_item_store.update_item(item.id, **update_kwargs)
-        refreshed = task_item_store.get_item(item.id)
+        await asyncio.to_thread(task_item_store.update_item, item.id, **update_kwargs)
+        refreshed = await asyncio.to_thread(task_item_store.get_item, item.id)
         assert refreshed is not None
         item = refreshed
         payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
 
     role_key = _role_key_from_payload(payload)
     if role_key is not None:
-        item, assigned = assign_worker_profile(
+        item, assigned = await asyncio.to_thread(
+            assign_worker_profile,
             item=item,
             role_key=role_key,
             worker_store=worker_store,
@@ -248,10 +263,15 @@ def resolve_task_item(
     if agent_queue_store is not None:
         # Phase 4: enqueue for the worker slot; the dispatcher launches the
         # worker session off the request path. No execution/runner here.
-        updated = task_item_store.update_item(item.id, state="queued")
+        updated = await asyncio.to_thread(
+            task_item_store.update_item,
+            item.id,
+            state="queued",
+        )
         assert updated is not None
         queue_payload = {**payload, "worker_role_key": worker.role_key}
-        agent_queue_store.enqueue(
+        await asyncio.to_thread(
+            agent_queue_store.enqueue,
             uuid.uuid4().hex,
             AgentQueueKey(
                 role="worker",
@@ -269,7 +289,7 @@ def resolve_task_item(
         )
         return updated, None
 
-    execution, _worker_id = dispatch_worker_for_item(
+    execution, _worker_id = await dispatch_worker_for_item(
         task=task,
         item=item,
         params=params,
@@ -278,8 +298,11 @@ def resolve_task_item(
         task_event_store=task_event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )
-    updated = task_item_store.get_item(item.id)
+    updated = await asyncio.to_thread(task_item_store.get_item, item.id)
     assert updated is not None
     task = sync_task_activity_state(
         task,

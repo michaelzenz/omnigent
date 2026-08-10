@@ -32,4 +32,4 @@ export const MANAGER_ROLE_DEFINITION =
   "You are a task manager for one managed task. Follow docs/agent-tasks/TASK_MANAGER.md. Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.";
 
 export const WORKER_ROLE_DEFINITION =
-  "You are a task worker. Follow docs/agent-tasks/TASK_WORKER.md. Execute the assigned task item instructions, report progress, and finish when done.";
+  "You are a task worker. Execute the instructions provided to you.";

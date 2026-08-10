@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -26,7 +27,6 @@ class DispatchParams:
 
     role_key: str
     agent_profile_id: str
-    title: str
     instructions: str
     host_id: str
     workspace: str
@@ -65,7 +65,6 @@ def compose_worker_instructions(
 def resolve_dispatch_params(
     *,
     payload: dict[str, Any],
-    title: str | None = None,
     instructions: str | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
@@ -74,7 +73,6 @@ def resolve_dispatch_params(
     role_profile: TaskRoleProfile | None = None,
 ) -> DispatchParams:
     """Merge explicit dispatch fields over the payload and the lane's role."""
-    resolved_title = title or payload.get("title")
     resolved_instructions = compose_worker_instructions(
         instructions=instructions if instructions is not None else payload.get("instructions"),
         internal_note=payload.get("internal_note"),
@@ -84,9 +82,9 @@ def resolve_dispatch_params(
             "a worker role is required to dispatch",
             code=ErrorCode.INVALID_INPUT,
         )
-    if not resolved_title or not resolved_instructions:
+    if not resolved_instructions:
         raise OmnigentError(
-            "title and instructions are required",
+            "instructions are required",
             code=ErrorCode.INVALID_INPUT,
         )
     bootstrap = resolve_bootstrap_params(
@@ -99,7 +97,6 @@ def resolve_dispatch_params(
     return DispatchParams(
         role_key=role_profile.role,
         agent_profile_id=bootstrap.agent_profile_id,
-        title=str(resolved_title),
         instructions=str(resolved_instructions),
         host_id=bootstrap.host_id,
         workspace=bootstrap.workspace,
@@ -108,7 +105,7 @@ def resolve_dispatch_params(
     )
 
 
-def dispatch_worker_for_item(
+async def dispatch_worker_for_item(
     *,
     task: Task,
     item: TaskItem,
@@ -118,8 +115,17 @@ def dispatch_worker_for_item(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> tuple[TaskEventExecution, str]:
-    """Spawn a worker sub-agent session for one task item."""
+    """Dispatch one task item to a worker, reusing or creating its session.
+
+    The worker session is long-lived: the first dispatch creates it via
+    ``session_creator`` (the ``POST /v1/sessions`` path); subsequent
+    dispatches reuse the existing conversation and append the instructions
+    as a real user message.
+    """
     if task.manager_conversation_id is None:
         raise OmnigentError(
             "Task manager is not bootstrapped",
@@ -127,7 +133,10 @@ def dispatch_worker_for_item(
         )
     if item.task_id != task.id:
         raise OmnigentError("Task item does not belong to task", code=ErrorCode.INVALID_INPUT)
-    manager_conv = conversation_store.get_conversation(task.manager_conversation_id)
+    manager_conv = await asyncio.to_thread(
+        conversation_store.get_conversation,
+        task.manager_conversation_id,
+    )
     if manager_conv is None:
         raise OmnigentError(
             "Manager session is missing",
@@ -142,47 +151,111 @@ def dispatch_worker_for_item(
 
     worker = worker_for_item(item, worker_store=worker_store)
     if worker is None or worker.role_key != params.role_key:
-        item, worker = assign_worker_profile(
+        item, worker = await asyncio.to_thread(
+            assign_worker_profile,
             item=item,
             role_key=params.role_key,
             worker_store=worker_store,
             task_item_store=task_item_store,
         )
 
-    worker_conv = conversation_store.create_conversation(
-        kind="sub_agent",
-        title=params.title,
-        parent_conversation_id=task.manager_conversation_id,
-        agent_id=params.agent_profile_id,
-        runner_id=manager_conv.runner_id,
-        host_id=params.host_id,
-        workspace=params.workspace,
+    # Reuse the worker's existing session, or create one on first dispatch.
+    worker_conv_id = worker.session_id
+    if worker_conv_id is not None:
+        existing = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            worker_conv_id,
+        )
+        if existing is None:
+            worker_conv_id = None
+
+    if worker_conv_id is None:
+        if session_creator is None or app_state is None:
+            raise OmnigentError(
+                "session_creator and app_state are required to create a worker session",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        from omnigent.agent_tasks.bootstrap import build_role_session_request
+        from omnigent.server.routes.sessions import _make_internal_request
+
+        body = build_role_session_request(
+            _worker_profile_from_params(params, task),
+            title=params.role_key,
+            parent_session_id=task.manager_conversation_id,
+            sub_agent_name=params.role_key,
+        )
+        request = _make_internal_request(app_state)
+        resp = await session_creator(
+            body=body,
+            request=request,
+            user_id=user_id,
+        )
+        worker_conv_id = resp.id
+        await asyncio.to_thread(
+            worker_store.update_worker,
+            worker.id,
+            session_id=worker_conv_id,
+        )
+
+    # Send the instructions as a real user message (not meta) so the worker
+    # picks them up as its next turn.
+    from omnigent.db.utils import generate_task_id
+    from omnigent.entities import MessageData, NewConversationItem
+
+    message_item = NewConversationItem(
+        type="message",
+        response_id=generate_task_id(),
+        data=MessageData(
+            role="user",
+            content=[{"type": "input_text", "text": params.instructions}],
+        ),
     )
-    conversation_store.update_conversation(
-        worker_conv.id,
-        harness_override=params.harness,
-        model_override=params.model,
-        _unset_model_override=params.model is None,
+    await asyncio.to_thread(
+        conversation_store.append,
+        worker_conv_id,
+        [message_item],
     )
-    worker_store.update_worker(worker.id, session_id=worker_conv.id)
+
     execution = start_execution_for_item(
         task=task,
         item=item,
         task_event_store=task_event_store,
-        conversation_id=worker_conv.id,
+        conversation_id=worker_conv_id,
         status="running",
     )
     mark_execution_running(
         task_event_store,
         execution.id,
-        conversation_id=worker_conv.id,
+        conversation_id=worker_conv_id,
     )
-    task_item_store.update_item(item.id, state="running")
+    await asyncio.to_thread(task_item_store.update_item, item.id, state="running")
     sync_task_activity_state(
         task,
         task_store=task_store,
         task_item_store=task_item_store,
     )
-    refreshed = task_event_store.get_execution(execution.id)
+    refreshed = await asyncio.to_thread(task_event_store.get_execution, execution.id)
     assert refreshed is not None
-    return refreshed, worker_conv.id
+    return refreshed, worker_conv_id
+
+
+def _worker_profile_from_params(
+    params: DispatchParams,
+    task: Task,
+) -> TaskRoleProfile:
+    """Build a minimal TaskRoleProfile from resolved dispatch params.
+
+    ``build_role_session_request`` expects a profile, but the dispatcher
+    has already resolved the bootstrap params. This adapter reconstructs
+    just enough for the builder to work.
+    """
+    return TaskRoleProfile(
+        role=params.role_key,
+        kind="worker",
+        agent_profile_id=params.agent_profile_id,
+        host_id=params.host_id,
+        workspace=params.workspace,
+        harness=params.harness,
+        model=params.model,
+        created_at=0,
+    )

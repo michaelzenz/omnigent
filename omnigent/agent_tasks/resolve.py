@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.entities import Task, TaskEvent
@@ -55,6 +57,9 @@ async def resolve_task_event(
     harness: str | None = None,
     model: str | None = None,
     role_profile: TaskRoleProfile | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> TaskEvent:
     """Route a stalled event to a task manager, bootstrapping when needed.
 
@@ -74,7 +79,7 @@ async def resolve_task_event(
         model=model,
         role_profile=role_profile,
     )
-    return route_event_to_task(
+    return await route_event_to_task(
         event=event,
         task=task,
         task_store=task_store,
@@ -82,4 +87,7 @@ async def resolve_task_event(
         conversation_store=conversation_store,
         params=params,
         routing_reason="broker-resolve",
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )

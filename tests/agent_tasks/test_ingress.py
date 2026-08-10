@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -49,6 +51,18 @@ def _role_profile(agent_profile_id: str, *, host_seed: str, workspace: str) -> T
         workspace=workspace,
         created_at=1,
     )
+
+
+def _mock_session_creator(conversation_store: SqlAlchemyConversationStore):
+    async def _creator(*, body: Any, request: Any, user_id: Any, **kwargs: Any):
+        return conversation_store.create_conversation(
+            title=body.title or "Task manager",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+        )
+
+    return _creator
 
 
 @pytest.fixture
@@ -101,6 +115,8 @@ async def test_ingress_auto_routes_clear_match(db_uri: str, stores: dict) -> Non
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         role_profile=profile,
+        session_creator=_mock_session_creator(stores["conversation_store"]),
+        app_state=SimpleNamespace(),
     )
     assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]
@@ -179,6 +195,8 @@ async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) ->
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
         role_profile=profile,
+        session_creator=_mock_session_creator(stores["conversation_store"]),
+        app_state=SimpleNamespace(),
     )
     assert updated.state == "routed"
     assert updated.task_id == stores["task_id"]

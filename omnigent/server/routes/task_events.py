@@ -165,6 +165,7 @@ def create_task_events_router(
     task_role_profile_store: TaskRoleProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
+    session_creator: Any | None = None,
 ) -> APIRouter:
     """Build the managed task-event router."""
     router = APIRouter()
@@ -267,6 +268,9 @@ def create_task_events_router(
             task_role_profile_store=task_role_profile_store,
             role_profile=profile,
             owner_user_id=_effective_user_id(user_id),
+            session_creator=session_creator,
+            app_state=request.app.state,
+            user_id=user_id,
         )
         return _event_to_response(distributed)
 
@@ -359,6 +363,9 @@ def create_task_events_router(
                 harness=body.harness,
                 model=body.model,
                 role_profile=profile,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
             )
             resolved.append(_event_to_response(updated))
         return {"object": "list", "data": resolved}

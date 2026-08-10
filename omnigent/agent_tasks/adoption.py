@@ -275,6 +275,9 @@ async def adopt_session(
     conversation_store: ConversationStore,
     params: BootstrapParams,
     proposal_event: TaskEvent | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> tuple[TaskEvent, TaskEvent]:
     """
     Bind an orphan session to a task and wake its manager.
@@ -312,13 +315,16 @@ async def adopt_session(
         source="adoption",
         state="received",
     )
-    routed = route_event_to_task(
+    routed = await route_event_to_task(
         event=adopted_event,
         task=task,
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
         params=params,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )
     processed_proposal = proposal_event
     if proposal_event is not None:

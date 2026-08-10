@@ -213,6 +213,8 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         task_role_profile_store: TaskRoleProfileStore,
         runner_router: RunnerRouter | None,
         ensure_runner: EnsureRunner = None,
+        session_creator: Any | None = None,
+        app_state: Any | None = None,
     ) -> None:
         self._store = store
         self._task_store = task_store
@@ -224,6 +226,8 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         self._task_role_profile_store = task_role_profile_store
         self._runner_router = runner_router
         self._ensure_runner = ensure_runner
+        self._session_creator = session_creator
+        self._app_state = app_state
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         if item.key.scope_id is None:
@@ -283,19 +287,18 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             value = payload.get(key)
             return str(value) if value is not None else None
 
-        def _bootstrap() -> Task:
-            return ensure_task_manager_for_dispatch(
-                task=task,
-                task_store=self._task_store,
-                conversation_store=self._conversation_store,
-                role_profile=manager_role_profile,
-                host_id=_opt_str("host_id"),
-                workspace=_opt_str("workspace"),
-                harness=_opt_str("harness"),
-                model=_opt_str("model"),
-            )
-
-        task = await asyncio.to_thread(_bootstrap)
+        task = await ensure_task_manager_for_dispatch(
+            task=task,
+            task_store=self._task_store,
+            conversation_store=self._conversation_store,
+            role_profile=manager_role_profile,
+            host_id=_opt_str("host_id"),
+            workspace=_opt_str("workspace"),
+            harness=_opt_str("harness"),
+            model=_opt_str("model"),
+            session_creator=self._session_creator,
+            app_state=self._app_state,
+        )
         params = resolve_dispatch_params(
             payload=payload,
             role_profile=worker_role_profile or manager_role_profile,
@@ -305,19 +308,18 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             model=_opt_str("model"),
         )
 
-        def _dispatch() -> tuple[Any, str]:
-            return dispatch_worker_for_item(
-                task=task,
-                item=task_item,
-                params=params,
-                task_store=self._task_store,
-                task_item_store=self._task_item_store,
-                task_event_store=self._task_event_store,
-                worker_store=self._worker_store,
-                conversation_store=self._conversation_store,
-            )
-
-        _execution, worker_conv_id = await asyncio.to_thread(_dispatch)
+        _execution, worker_conv_id = await dispatch_worker_for_item(
+            task=task,
+            item=task_item,
+            params=params,
+            task_store=self._task_store,
+            task_item_store=self._task_item_store,
+            task_event_store=self._task_event_store,
+            worker_store=self._worker_store,
+            conversation_store=self._conversation_store,
+            session_creator=self._session_creator,
+            app_state=self._app_state,
+        )
         # Cache the new conversation so the status feed can complete this item
         # when the worker session settles.
         self._store.set_queue_conversation(item.key, worker_conv_id)

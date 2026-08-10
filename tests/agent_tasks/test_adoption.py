@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -172,6 +174,14 @@ async def test_propose_and_adopt_session(stores: _Stores) -> None:
             created_at=1,
         ),
     )
+    async def _mock_session_creator(*, body: Any, request: Any, user_id: Any, **kwargs: Any):
+        return conversation_store.create_conversation(
+            title=body.title or "Task manager",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+        )
+
     processed, adopted = await adopt_session(
         session_id=conv.id,
         task_id=task.id,
@@ -181,6 +191,8 @@ async def test_propose_and_adopt_session(stores: _Stores) -> None:
         conversation_store=conversation_store,
         params=params,
         proposal_event=proposal,
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
     )
     assert processed.state == "reconciled"
     assert adopted.event_type == SESSION_ADOPTED

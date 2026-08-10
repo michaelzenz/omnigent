@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from typing import Any
 
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.entities import Task, TaskItem, Worker
@@ -63,7 +65,7 @@ def worker_for_item(
     return worker_store.get_worker(item.worker_id)
 
 
-def activate_worker_lane(
+async def activate_worker_lane(
     *,
     task: Task,
     worker: Worker,
@@ -72,6 +74,9 @@ def activate_worker_lane(
     conversation_store: ConversationStore,
     manager_role_profile: TaskRoleProfile | None,
     worker_role_profile: TaskRoleProfile | None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> tuple[Worker, str]:
     """Start a worker sub-agent session for a lane that has not run yet."""
     if worker.task_id != task.id:
@@ -82,7 +87,10 @@ def activate_worker_lane(
             code=ErrorCode.CONFLICT,
         )
     if worker.session_id is not None:
-        existing = conversation_store.get_conversation(worker.session_id)
+        existing = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            worker.session_id,
+        )
         if existing is not None:
             return worker, worker.session_id
         raise OmnigentError(
@@ -103,7 +111,7 @@ def activate_worker_lane(
 
     from omnigent.agent_tasks.items import ensure_task_manager_for_dispatch
 
-    task = ensure_task_manager_for_dispatch(
+    task = await ensure_task_manager_for_dispatch(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
@@ -112,6 +120,9 @@ def activate_worker_lane(
         workspace=worker_role_profile.workspace,
         harness=worker_role_profile.harness,
         model=worker_role_profile.model,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
     )
     manager_conversation_id = task.manager_conversation_id
     if manager_conversation_id is None:
@@ -119,7 +130,10 @@ def activate_worker_lane(
             "Task manager is not bootstrapped",
             code=ErrorCode.CONFLICT,
         )
-    manager_conv = conversation_store.get_conversation(manager_conversation_id)
+    manager_conv = await asyncio.to_thread(
+        conversation_store.get_conversation,
+        manager_conversation_id,
+    )
     if manager_conv is None:
         raise OmnigentError(
             "Manager session is missing",
@@ -131,32 +145,31 @@ def activate_worker_lane(
             code=ErrorCode.CONFLICT,
         )
 
-    bootstrap = resolve_bootstrap_params(
-        host_id=worker_role_profile.host_id,
-        workspace=worker_role_profile.workspace,
-        harness=worker_role_profile.harness,
-        model=worker_role_profile.model,
-        role_profile=worker_role_profile,
-    )
-    worker_conv = conversation_store.create_conversation(
-        kind="sub_agent",
+    from omnigent.agent_tasks.bootstrap import build_role_session_request
+    from omnigent.server.routes.sessions import _make_internal_request
+
+    body = build_role_session_request(
+        worker_role_profile,
         title=role_key,
-        parent_conversation_id=manager_conversation_id,
-        agent_id=bootstrap.agent_profile_id,
-        runner_id=manager_conv.runner_id,
-        host_id=bootstrap.host_id,
-        workspace=bootstrap.workspace,
+        parent_session_id=manager_conversation_id,
+        sub_agent_name=role_key,
     )
-    conversation_store.update_conversation(
-        worker_conv.id,
-        harness_override=bootstrap.harness,
-        model_override=bootstrap.model,
-        _unset_model_override=bootstrap.model is None,
+    request = _make_internal_request(app_state)
+    if session_creator is None:
+        raise OmnigentError(
+            "session_creator is required to activate a worker lane",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    resp = await session_creator(
+        body=body,
+        request=request,
+        user_id=user_id,
     )
-    updated = worker_store.update_worker(
+    updated = await asyncio.to_thread(
+        worker_store.update_worker,
         worker.id,
-        session_id=worker_conv.id,
+        session_id=resp.id,
     )
     if updated is None:
         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-    return updated, worker_conv.id
+    return updated, resp.id

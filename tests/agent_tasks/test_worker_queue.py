@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -126,6 +127,17 @@ def worker_setup(db_uri: str) -> dict:
         worker_id=worker.id,
     )
     ensure_runner = AsyncMock()
+
+    async def _mock_session_creator(*, body, request, user_id, **kwargs):
+        return conversation_store.create_conversation(
+            title=body.title or "Worker",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+            kind="sub_agent" if getattr(body, "parent_session_id", None) else "default",
+            parent_conversation_id=getattr(body, "parent_session_id", None),
+        )
+
     handler = WorkerDispatchHandler(
         store=queue_store,
         task_store=task_store,
@@ -137,6 +149,8 @@ def worker_setup(db_uri: str) -> dict:
         task_role_profile_store=profile_store,
         runner_router=None,
         ensure_runner=ensure_runner,
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
     )
     return {
         "handler": handler,
@@ -214,7 +228,6 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
         key,
         source_id=item.id,
         payload={
-            "title": item.title,
             "instructions": item.instructions or "",
             "internal_note": item.internal_note,
             "worker_role_key": worker.role_key,
@@ -246,7 +259,8 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
     assert worker_setup["ensure_runner"].call_args.args[0] == queue.conversation_id
 
 
-def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
+@pytest.mark.asyncio
+async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
@@ -280,7 +294,7 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
         instructions="Do the work",
     )
 
-    updated, execution = resolve_task_item(
+    updated, execution = await resolve_task_item(
         item=item,
         resolution="accept_item",
         task=task,
@@ -314,7 +328,8 @@ def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> None:
     assert payload["worker_role_key"] == WORKER_DEFAULT_ROLE_KEY
 
 
-def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> None:
+@pytest.mark.asyncio
+async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
@@ -347,7 +362,17 @@ def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> 
         instructions="Do the work",
     )
 
-    updated, execution = resolve_task_item(
+    async def _mock_session_creator(*, body, request, user_id, **kwargs):
+        return conversation_store.create_conversation(
+            title=body.title or "Worker",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+            kind="sub_agent",
+            parent_conversation_id=task.manager_conversation_id,
+        )
+
+    updated, execution = await resolve_task_item(
         item=item,
         resolution="accept_item",
         task=task,
@@ -362,6 +387,8 @@ def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: str) -> 
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-legacy",
         },
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
     )
     # No queue store wired → legacy synchronous dispatch path.
     assert execution is not None

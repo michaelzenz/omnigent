@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
 
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
@@ -19,7 +24,8 @@ def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
 
 
-def test_activate_worker_lane_starts_session(db_uri: str) -> None:
+@pytest.mark.asyncio
+async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
     task_store = SqlAlchemyTaskStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
@@ -65,11 +71,24 @@ def test_activate_worker_lane_starts_session(db_uri: str) -> None:
         model=manager_profile.model,
         role_profile=manager_profile,
     )
-    task = bootstrap_task_manager(
+
+    async def _mock_session_creator(*, body: Any, request: Any, user_id: Any, **kwargs: Any):
+        return conversation_store.create_conversation(
+            title=body.title or "Task manager",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+            kind=getattr(body, "parent_session_id", None) and "sub_agent" or "default",
+            parent_conversation_id=getattr(body, "parent_session_id", None),
+        )
+
+    task = await bootstrap_task_manager(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
         params=params,
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
     )
 
     worker = worker_store.create_worker(
@@ -77,7 +96,7 @@ def test_activate_worker_lane_starts_session(db_uri: str) -> None:
         task.id,
         role_key=WORKER_DEFAULT_ROLE_KEY,
     )
-    activated, conversation_id = activate_worker_lane(
+    activated, conversation_id = await activate_worker_lane(
         task=task,
         worker=worker,
         task_store=task_store,
@@ -85,6 +104,8 @@ def test_activate_worker_lane_starts_session(db_uri: str) -> None:
         conversation_store=conversation_store,
         manager_role_profile=manager_profile,
         worker_role_profile=worker_profile,
+        session_creator=_mock_session_creator,
+        app_state=SimpleNamespace(),
     )
     assert activated.session_id == conversation_id
     assert activated.agent_profile_id is None

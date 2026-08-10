@@ -2,8 +2,7 @@
 
 name: task-worker
 prompt: |
-  You are a task worker. Follow docs/agent-tasks/TASK_WORKER.md.
-  Execute the assigned task item instructions, report progress, and finish when done.
+  You are a task worker. Execute the instructions provided to you.
 
 executor:
   harness: cursor-native

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -122,21 +123,31 @@ def build_role_session_request(
     return body
 
 
-def bootstrap_task_manager(
+async def bootstrap_task_manager(
     *,
     task: Task,
     task_store: TaskStore,
     conversation_store: ConversationStore,
     params: BootstrapParams,
+    session_creator: Any,
+    app_state: Any,
+    user_id: str | None = None,
 ) -> Task:
     """
     Ensure ``task`` has a live manager conversation.
 
     Idempotent when ``manager_conversation_id`` points at an existing conversation.
     Returns ``CONFLICT`` when the stored id is set but the conversation is gone.
+
+    The session is created through ``create_session_internal`` (the same path
+    as ``POST /v1/sessions``) so workspace validation, runner launch,
+    permissions, and adoption all apply.
     """
     if task.manager_conversation_id is not None:
-        existing = conversation_store.get_conversation(task.manager_conversation_id)
+        existing = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            task.manager_conversation_id,
+        )
         if existing is None:
             raise OmnigentError(
                 "Manager session is missing; clear manager_conversation_id before re-bootstrap",
@@ -144,21 +155,28 @@ def bootstrap_task_manager(
             )
         return task
 
-    conversation = conversation_store.create_conversation(
-        title=f"Task manager: {task.title}",
+    from omnigent.server.routes.sessions import _make_internal_request
+    from omnigent.server.schemas import SessionCreateRequest
+
+    body = SessionCreateRequest(
         agent_id=params.agent_profile_id,
+        title=f"Task manager: {task.title}",
         host_id=params.host_id,
         workspace=params.workspace,
-    )
-    conversation_store.update_conversation(
-        conversation.id,
         harness_override=params.harness,
         model_override=params.model,
-        _unset_model_override=params.model is None,
+        labels={},
     )
-    updated = task_store.update(
+    request = _make_internal_request(app_state)
+    resp = await session_creator(
+        body=body,
+        request=request,
+        user_id=user_id,
+    )
+    updated = await asyncio.to_thread(
+        task_store.update,
         task.id,
-        manager_conversation_id=conversation.id,
+        manager_conversation_id=resp.id,
     )
     if updated is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)

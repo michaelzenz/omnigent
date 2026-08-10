@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
 from omnigent.agent_tasks.event_types import is_ingress_candidate
@@ -55,6 +56,9 @@ async def ingress_event(
     task_role_profile_store: TaskRoleProfileStore | None = None,
     role_profile: TaskRoleProfile | None = None,
     owner_user_id: str | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> TaskEvent:
     """
     Route an ingress-candidate event to a task manager or stall for broker help.
@@ -83,6 +87,9 @@ async def ingress_event(
                 params=params,
                 owner_user_id=owner_user_id,
                 routing_reason="explicit-task",
+                session_creator=session_creator,
+                app_state=app_state,
+                user_id=user_id,
             )
         return await _stall(
             event=event,
@@ -111,6 +118,9 @@ async def ingress_event(
                 params=params,
                 owner_user_id=owner_user_id,
                 routing_reason="session-binding",
+                session_creator=session_creator,
+                app_state=app_state,
+                user_id=user_id,
             )
 
     active_tasks = live_tasks(task_store)
@@ -165,6 +175,9 @@ async def ingress_event(
             owner_user_id=owner_user_id,
             routing_reason=f"auto-route score={auto_score:.4f}",
             routing_score=auto_score,
+            session_creator=session_creator,
+            app_state=app_state,
+            user_id=user_id,
         )
 
     return await _stall(
@@ -185,9 +198,12 @@ async def _finish_route(
     owner_user_id: str | None = None,
     routing_reason: str | None = None,
     routing_score: float | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
 ) -> TaskEvent:
     try:
-        updated = route_event_to_task(
+        updated = await route_event_to_task(
             event=event,
             task=task,
             task_store=task_store,
@@ -196,6 +212,9 @@ async def _finish_route(
             params=params,
             routing_reason=routing_reason,
             routing_score=routing_score,
+            session_creator=session_creator,
+            app_state=app_state,
+            user_id=user_id,
         )
     except OmnigentError as exc:
         if exc.code != ErrorCode.INVALID_INPUT:
