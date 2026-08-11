@@ -10,14 +10,14 @@ environment.
 
 ---
 
-## Scenario 1 — CI failure + Slack follow-up on fix PR (empty DB)
+## Scenario 1 — CI failure on USM schema parse + Slack follow-up on fix PR (empty DB)
 
-**Story.** PR #123 fails CI. Later, John posts on Slack that PR #456 contains the
-fix for #123 and is waiting on merge approval. There are no managed tasks yet.
+**Story.** PR [#2248509](https://github.com/databricks-eng/universe/pull/2248509)
+in `databricks-eng/universe` fails CI with a USM schema-parse error. Later,
+Veeresh posts in Slack channel `#usm-help` (C04LQT17RKM) that the fix PR is
+ready and waiting for merge approval. There are no managed tasks yet.
 
-**Goal.** Ingress stalls both events; broker wakes and creates a **pending
-task package** for the user. After the user accepts the package, the task becomes
-active and the manager reconciles routed work.
+**Goal.** _To be defined._
 
 ### Preconditions
 
@@ -34,7 +34,7 @@ Post in order (replace `HOST_ID` with your registered host id). Wait for broker
 triage after event 1 before posting event 2, or post both and let the broker
 catch up in one batch.
 
-**Event 1 — CI failure on PR #123**
+**Event 1 — CI failure on PR #2248509**
 
 ```http
 POST /v1/task-events
@@ -42,20 +42,24 @@ X-Omnigent-Host-Id: HOST_ID
 
 {
   "event_type": "github.pr.checks_failed",
-  "title": "PR #123 checks failed",
-  "summary": "repo:acme/widgets pr:123 ci failure on main merge queue",
-  "source": "test:scenario-1",
-  "source_key": "acme/widgets#123",
+  "title": "PR #2248509 checks failed",
+  "summary": "repo:databricks-eng/universe pr:2248509 Failed to parse USM generated schema json: Please report this to #usm-help channel and add the label: bypass-usm-ci-checks to bypass the USM CI checks.",
+  "source": "github",
+  "source_key": "databricks-eng/universe#2248509",
   "source_offset": 1,
   "tags": [
-    {"tag_type": "repo", "tag": "acme/widgets"},
-    {"tag_type": "pr", "tag": "123"}
+    {"tag_type": "repo", "tag": "databricks-eng/universe"},
+    {"tag_type": "pr", "tag": "2248509"}
   ],
-  "payload": {"repo": "acme/widgets", "pr_number": 123}
+  "payload": {
+    "repo": "databricks-eng/universe",
+    "pr_number": 2248509,
+    "failure": "Failed to parse USM generated schema json: Please report this to #usm-help channel and add the label: bypass-usm-ci-checks to bypass the USM CI checks."
+  }
 }
 ```
 
-**Event 2 — Slack: fix PR pending approval**
+**Event 2 — Slack: Veeresh says fix PR is ready, waiting for approval**
 
 ```http
 POST /v1/task-events
@@ -63,54 +67,33 @@ X-Omnigent-Host-Id: HOST_ID
 
 {
   "event_type": "slack.message",
-  "title": "John: PR #456 fixes #123, pending merge approval",
-  "summary": "repo:acme/widgets pr:456 pr:123 slack thread:eng-releases John says PR #456 is the fix for PR #123 and is pending approval before merge",
-  "source": "test:scenario-1",
-  "source_key": "slack:C123:1234567890.123456",
+  "title": "Veeresh: fix PR is ready, waiting for approval",
+  "summary": "repo:databricks-eng/universe slack:C04LQT17RKM Veeresh says the fix PR is ready and waiting for merge approval",
+  "source": "slack",
+  "source_key": "slack:C04LQT17RKM:1784710613514779",
   "source_offset": 2,
   "tags": [
-    {"tag_type": "repo", "tag": "acme/widgets"},
-    {"tag_type": "pr", "tag": "456"},
-    {"tag_type": "thread", "tag": "eng-releases"}
+    {"tag_type": "repo", "tag": "databricks-eng/universe"},
+    {"tag_type": "slack_channel", "tag": "C04LQT17RKM"}
   ],
   "payload": {
-    "channel": "eng-releases",
-    "author": "john",
-    "text": "PR #456 is the fix for PR #123 — pending approval for merge"
+    "channel": "C04LQT17RKM",
+    "channel_name": "usm-help",
+    "author": "veeresh",
+    "text": "fix PR is ready, waiting for approval",
+    "thread_ts": "1784650136.994509",
+    "message_ts": "1784710613514779"
   }
 }
 ```
 
 ### Pass criteria
 
-**After events are posted (before user accepts)**
-
-- [ ] Event 1 state is `reconciled` on a pending package item, not `routed`.
-- [ ] Event 2 is `reconciled` on the **same** package item (or broker clearly linked both before user acts).
-- [ ] Broker received a stall wake (check broker session or server log).
-- [ ] `GET /v1/agent-tasks?state=pending` shows one pending task with both events on inbox items (preferred) or two packages the user can tell belong together.
-- [ ] Package task state is `pending` with `pending` inbox items.
-- [ ] Broker did **not** bootstrap a manager session yet.
-
-**After user Go on an inbox item**
-
-- [ ] Exactly **one** active task exists for the incident (first Go activates the package).
-- [ ] Both events remain `reconciled` on that task.
-- [ ] Go dispatches a worker for that item; remaining inbox items stay until the user acts.
-- [ ] Manager session is bootstrapped on first Go; no worker dispatched without user Go.
-
-**After user skips every inbox item**
-
-- [ ] Pending task remains on the board (no auto-archive).
+_To be defined._
 
 ### Failure modes to watch
 
-- Events left in `awaiting_grouping` after broker turn (no package created).
-- Broker auto-resolves to a non-existent or wrong active task instead of opening a package.
-- Two unrelated packages with no link between PR #123 CI failure and PR #456 Slack follow-up.
-- Broker marks Slack message as FYI only and drops the follow-up signal.
-- Duplicate tasks created when user Go on multiple items without reconciling first.
-- Manager auto-dispatches workers without user Go on inbox items.
+_To be defined._
 
 ### Verify
 
@@ -119,6 +102,3 @@ GET /v1/task-events/ambiguous-inbox
 GET /v1/agent-tasks?state=pending
 GET /v1/agent-tasks/{task_id}/reconcile-queue
 ```
-
-Check event `state`, `task_id`, and board cards after ingest, after broker
-triage, and after user Go or Skip on inbox items.

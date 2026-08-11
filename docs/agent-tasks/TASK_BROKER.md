@@ -123,3 +123,12 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/fyi-clusters" \
   for later extends.
 - Pass `cluster_id` to attach more events to an open FYI card.
 - Linked events move to `classified_fyi`; user dismisses on the board.
+
+# Managing the Task
+For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, resolve the taskItems when you know that it's already done(like a taskItem is to monitor the status of the pr, if the pr is merged, then it should be resolved). You just dont assign workers for an item
+
+# Hint
+There are two infra in this system that you can use, you dont need to know the details, just generate corresponding instruction
+
+* Poller infra: polls the source(pr, slack reply thread, google doc) with an interval. so that you can generate instructions like "monitor this pr/slack reply thread/google doc" in the taskItem. the manager will take care of it
+* Timer infra: do something at a scheduled time. With this, you can generate instructions like "Check if pr is merged 10min later/Follow up to XXX 1h later/check the status of deployment tomorrow". again, just generate the instructions, manager will handle it.
