@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import json
 import os
-import time
+import urllib.request
 from pathlib import Path
 
-import urllib.request
 import yaml
 
 PLUGIN_DIR = Path(os.environ["OMNIGENT_PLUGIN_DIR"])

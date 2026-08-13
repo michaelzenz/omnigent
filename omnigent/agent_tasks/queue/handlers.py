@@ -26,7 +26,7 @@ from omnigent.agent_tasks.queue.dispatcher import (
 )
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.worker_role_profile import load_worker_role_profile
-from omnigent.entities import AgentQueueItem, Task
+from omnigent.entities import AgentQueueItem
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore

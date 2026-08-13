@@ -71,8 +71,7 @@ def test_script_timer_plugins_defaults(tmp_path: Path) -> None:
 def test_script_timer_plugins_defaults_from_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
-        "host:\n  polling:\n    timer_plugins:\n"
-        "      default_timeout_s: 90\n      tick_s: 10\n"
+        "host:\n  polling:\n    timer_plugins:\n      default_timeout_s: 90\n      tick_s: 10\n"
     )
     config = load_script_timer_plugins_defaults(config_path)
     assert config.default_timeout_s == 90.0
@@ -141,9 +140,7 @@ async def test_run_plugin_executes_run_py(tmp_path: Path) -> None:
 
     ctx = _make_ctx()
     poller = ScriptTimerPluginsPoller(config_path=tmp_path / "missing.yaml")
-    await poller._run_plugin(
-        plugin_dir, ctx=ctx, fire_at=1700000000.0, timeout_s=10.0
-    )
+    await poller._run_plugin(plugin_dir, ctx=ctx, fire_at=1700000000.0, timeout_s=10.0)
     assert (plugin_dir / "ran.txt").read_text() == "1"
     # Success → no fire_failed event posted.
     assert ctx.client.posts == []
@@ -174,9 +171,7 @@ async def test_poll_once_skips_plugin_not_due_yet(tmp_path: Path, monkeypatch) -
     assert not (plugin_dir / PLUGIN_STATE_NAME).exists()
 
 
-async def test_poll_once_fires_due_plugin_and_writes_state(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_poll_once_fires_due_plugin_and_writes_state(tmp_path: Path, monkeypatch) -> None:
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / RUN_SCRIPT_NAME).write_text(
@@ -202,9 +197,7 @@ async def test_poll_once_fires_due_plugin_and_writes_state(
     assert state.fired_at > 0
 
 
-async def test_poll_once_does_not_refire_after_state_written(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_poll_once_does_not_refire_after_state_written(tmp_path: Path, monkeypatch) -> None:
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / RUN_SCRIPT_NAME).write_text(
@@ -275,9 +268,7 @@ async def test_poll_once_refires_after_run_py_advances_fire_at(
     assert (plugin_dir / "ran.txt").read_text() == "1"
 
 
-async def test_poll_once_skips_plugin_with_null_fire_at(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_poll_once_skips_plugin_with_null_fire_at(tmp_path: Path, monkeypatch) -> None:
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / RUN_SCRIPT_NAME).write_text(
@@ -301,9 +292,7 @@ async def test_poll_once_skips_plugin_with_null_fire_at(
     assert not (plugin_dir / "ran.txt").exists()
 
 
-async def test_poll_once_marks_fired_even_when_run_py_fails(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_poll_once_marks_fired_even_when_run_py_fails(tmp_path: Path, monkeypatch) -> None:
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / RUN_SCRIPT_NAME).write_text("import sys; sys.exit(1)\n")

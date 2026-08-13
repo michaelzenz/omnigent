@@ -18,7 +18,6 @@ from omnigent.agent_tasks.completion import (
     configure_task_completion,
     notify_worker_session_status,
 )
-from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -40,6 +39,7 @@ def _uid(seed: str) -> str:
 @pytest.fixture(autouse=True)
 def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Skip host liveness checks — route tests don't run a real host."""
+
     async def _skip_validation(*args: object, **kwargs: object) -> str | None:
         return kwargs.get("workspace")
 

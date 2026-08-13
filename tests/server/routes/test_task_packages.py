@@ -26,6 +26,7 @@ def _uid(seed: str) -> str:
 @pytest.fixture(autouse=True)
 def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Skip host liveness checks — route tests don't run a real host."""
+
     async def _skip_validation(*args: object, **kwargs: object) -> str | None:
         return kwargs.get("workspace")
 

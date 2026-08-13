@@ -6,7 +6,6 @@ import asyncio
 import uuid
 from typing import Any
 
-from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.entities import Task, TaskItem, Worker
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError

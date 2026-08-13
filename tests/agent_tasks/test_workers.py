@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -78,7 +77,7 @@ async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
             agent_id=body.agent_id,
             host_id=body.host_id,
             workspace=body.workspace,
-            kind=getattr(body, "parent_session_id", None) and "sub_agent" or "default",
+            kind=(getattr(body, "parent_session_id", None) and "sub_agent") or "default",
             parent_conversation_id=getattr(body, "parent_session_id", None),
         )
 

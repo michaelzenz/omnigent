@@ -27,9 +27,7 @@ def build_task_dashboard(
 ) -> dict[str, Any]:
     """Build a card-shaped snapshot for one managed task."""
     items = task_item_store.list_items_for_task(task.id)
-    inbox_items = [
-        item for item in items if item.worker_id is None and item.state == "pending"
-    ]
+    inbox_items = [item for item in items if item.worker_id is None and item.state == "pending"]
     reconcile_queue = task_event_store.list_events(state="routed", task_id=task.id)
     executions = task_event_store.list_executions_for_task(task.id)
     item_by_id = {item.id: item for item in items}

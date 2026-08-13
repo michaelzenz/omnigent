@@ -174,6 +174,7 @@ async def test_propose_and_adopt_session(stores: _Stores) -> None:
             created_at=1,
         ),
     )
+
     async def _mock_session_creator(*, body: Any, request: Any, user_id: Any, **kwargs: Any):
         return conversation_store.create_conversation(
             title=body.title or "Task manager",
