@@ -150,6 +150,26 @@ exists — the watcher is just a `run.py` + `config.yaml` + `state.yaml`.
    `external.session.updated` with the new transcript snippet and a stable
    session hint.
 
+### Sink time (3-minute debounce)
+
+The watcher does **not** emit events for sessions that are actively being
+used. Before reporting a discovered or updated session, the watcher checks
+the transcript file's last-modified time and waits until the session has
+been **idle for at least 3 minutes**.
+
+This prevents the system from triaging a session that is mid-turn — the
+broker would see a partial transcript and the user might still be steering
+the external session. Once the user stops interacting and 3 minutes pass,
+the session is considered "settled" and the event is emitted.
+
+Implementation: the watcher's `state.yaml` tracks `last_modified_at` per
+session. On each poll tick, if `now - last_modified_at < sink_time_s`, the
+session is skipped. The sink time is configurable:
+
+```yaml
+sink_time_s: 180
+```
+
 ### Why a poll plugin (not built-in)
 
 The ambient polling stack was removed intentionally — external TUIs load
@@ -193,6 +213,7 @@ scan_dirs:
   - ~/.codex/sessions
   - ~/.cursor/projects
 snippet_lines: 50
+sink_time_s: 180  # only report sessions idle for >= 3 minutes
 ```
 
 ## Component 2 — Event types & ingress
