@@ -17,6 +17,7 @@ Each plugin folder must include **`config.yaml`** with at least:
 
 ```yaml
 interval_s: 60
+description: <a one line description what this plugin does>
 ```
 
 Optional per-plugin overrides:
@@ -42,9 +43,9 @@ when its own `interval_s` has elapsed.
 
 Rules:
 
-- **One folder per plugin** — stable name (`github_pr`, `ci_watch`, …).
+- **One folder per plugin** — stable name (`github_pr`, `slack_watch`, …).
 - **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
-- **All other files are plugin-private** — watches, cursors, snapshots; agents choose the schema.
+- **All other files are plugin-private** — watches, cursors, snapshots; agents design the plugin schema or other metadata file as they want.
 - Do not edit Omnigent host code to add behavior — add or update a plugin folder.
 
 ## Host contract
@@ -113,9 +114,6 @@ plugin). The ingress scorer routes directly to that task and skips scoring.
 
 Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server returns existing event.
 
-Use **dense `summary` text** so the ingress scorer can route to the right task
-(`pr:123`, `repo:org/repo`, `unblocks:pr:456`, etc.).
-
 ### Suggested `event_type` prefixes
 
 - `github.pr.merged`
@@ -169,16 +167,10 @@ See `examples/poll_plugins/github_pr/run.py` in the repository.
 ## Example: blocked PR scenario
 
 1. `github_pr` plugin auto-discovers your open PR #123.
-2. CI fails → `run.py` posts `github.pr.checks_failed` → task manager triages.
-3. Manager (or poll author agent) adds to `watches.json`: watch PR #456 with
-   `blocked_pr: 123` and `task_id` set to the managed task that owns PR #123.
-4. When #456 merges → `run.py` posts `github.pr.merged` with `task_id` and
-   `unblocks:pr:123` in summary.
-5. Ingress fast-paths to that task → manager dispatches rerun/merge.
+2. CI fails → `run.py` posts `github.pr.checks_failed` with `task_id`
+3. Ingress fast-paths to that task → manager suggest "investigate the CI failure" as taskItem.
 
 ## Do not
 
 - Rename `run.py` or expect the host to run other files.
-- Store secrets in the plugin folder (use `gh auth`, env on host).
-- Block the host — keep `run.py` short; heavy work can spawn subprocesses inside the plugin.
 - Edit `omnigent/host/` for plugin behavior — use this folder instead.

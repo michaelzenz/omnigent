@@ -1792,7 +1792,11 @@ class HostProcess:
         self._reaper_task = asyncio.create_task(
             self._orphan_reaper_loop(), name="host-orphan-reaper"
         )
-        from omnigent.host.polling import PollScheduler, ScriptPollPluginsPoller
+        from omnigent.host.polling import (
+            PollScheduler,
+            ScriptPollPluginsPoller,
+            ScriptTimerPluginsPoller,
+        )
         from omnigent.host.timer import TimerScheduler
 
         self._poll_scheduler = PollScheduler(
@@ -1800,6 +1804,7 @@ class HostProcess:
             host_id=self._identity.host_id,
         )
         self._poll_scheduler.register(ScriptPollPluginsPoller())
+        self._poll_scheduler.register(ScriptTimerPluginsPoller())
         await self._poll_scheduler.start()
         self._timer_scheduler = TimerScheduler(
             server_url=self._server_url,
