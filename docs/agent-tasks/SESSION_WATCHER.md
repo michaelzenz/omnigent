@@ -27,38 +27,108 @@ external session.
 
 ## Architecture
 
+### Discovery & adoption
+
+```mermaid
+flowchart TD
+    subgraph Host["Host process"]
+        WP["Watcher poll plugin<br/>scan local session dirs"]
+    end
+
+    subgraph Server["Server"]
+        ING["Ingress"]
+        BP["BrokerPackager"]
+        ADOPT["adopt_session"]
+        GC["Event GC"]
+    end
+
+    subgraph Broker["Broker agent"]
+        BR["Read transcript snippet<br/>Decide: adopt or FYI?"]
+    end
+
+    subgraph Manager["Manager agent"]
+        MGR["Review adopted session"]
+    end
+
+    subgraph Frontend["Frontend"]
+        CARD["Task card<br/>adoption proposal section"]
+        FYI["FYI card<br/>(dismissible)"]
+    end
+
+    WP -->|"POST external.session.discovered<br/>(path, transcript_snippet, session_hint)"| ING
+    ING -->|"no match → awaiting_grouping"| BP
+    BP -->|"enqueue orphan notice (one-per-event)"| BR
+
+    BR -->|"Matches existing task?"| ADOPT
+    BR -->|"Substantial, no task?<br/>Create pending task"| ADOPT
+    ADOPT -->|"session.adoption event<br/>(routed to task)"| CARD
+    CARD -->|"User clicks Accept"| ADOPT
+    ADOPT -->|"WORKER_KIND_EXTERNAL worker<br/>store session_hint on worker row<br/>session.adopted event"| MGR
+
+    BR -->|"Ad hoc, no task?"| FYI
+    FYI -->|"create_fyi_cluster<br/>event → classified_fyi"| FYI
+
+    GC -.->|"Purge session.adoption<br/>older than 1 day"| CARD
+    FYI -.->|"User dismisses"| GC
 ```
-[Local poll plugin]              [Server]            [Broker]          [Manager]        [Frontend]
-     |                               |                   |                 |                |
-  scan local session dirs            |                   |                 |                |
-  new session?                       |                   |                 |                |
-  POST external.session.discovered ->|                   |                 |                |
-     |                          ingress → awaiting_grouping               |                 |                |
-     |                          BrokerPackager polls                      |                 |                |
-     |                   enqueue orphan notice ------------------>         |                 |                |
-     |                               |          broker reads transcript snippet from payload                |
-     |                               |          decides: adopt or FYI?     |                 |                |
-     |                               |          ┌─ adopt to existing/new task                 |                |
-     |                               |          │   calls propose-adoption     |                 |                |
-     |                               |          │   session.adoption event (pending)  |                |
-     |                               |          │   ------------------------------->  |  adoption row on task card
-     |                               |          │                              |  user accepts       |
-     |                               |          │   adopt_session              |                      |
-     |                               |          │   WORKER_KIND_EXTERNAL worker on task          |
-     |                               |          │   session.adopted → routed to manager  |
-     |                               |          │                              |                      |
-     |                               |          └─ FYI cluster (ad hoc, no task)  |                |
-     |                               |              create_fyi_cluster          |                |
-     |                               |              event → classified_fyi    |                |
-     |                               |              dismissible FYI card on board                |
-     |                               |                 |                      |                |
-  known session, transcript grew?    |                 |                                   |
-  POST external.session.updated --->|                 |                                   |
-     |                          ingress auto-routes to task (via session hint lookup)        |
-     |                          ManagerPackager polls  |                                   |
-     |                   enqueue manager notice ------->|                                   |
-     |                               |          manager reviews delta, updates task/items  |
-     |                               |          suggests new item (Copy) ------------------>|
+
+### Transcript update watching
+
+```mermaid
+flowchart TD
+    subgraph Host["Host process"]
+        WP["Watcher poll plugin<br/>detect transcript delta"]
+    end
+
+    subgraph Server["Server"]
+        ING["Ingress<br/>lookup worker by session_hint<br/>→ auto-route to task"]
+        MP["ManagerPackager"]
+    end
+
+    subgraph Manager["Manager agent"]
+        MGR["Review transcript delta<br/>Update task status / items"]
+    end
+
+    subgraph Frontend["Frontend"]
+        UI["Task card<br/>worker lane (external)"]
+    end
+
+    WP -->|"POST external.session.updated<br/>(session_hint, transcript_delta)"| ING
+    ING -->|"auto-route to task"| MP
+    MP -->|"enqueue manager notice<br/>(transcript delta)"| MGR
+    MGR -->|"Update item state<br/>Suggest new item (Copy)"| UI
+    UI -->|"Copy button → clipboard<br/>User pastes into external TUI"| WP
+```
+
+### Full lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered: watcher finds new local session
+    Discovered --> AwaitingGrouping: POST external.session.discovered
+    AwaitingGrouping --> BrokerTriage: BrokerPackager enqueues notice
+
+    BrokerTriage --> Proposed: broker matches task → propose-adoption
+    BrokerTriage --> ProposedNew: broker creates task → propose-adoption
+    BrokerTriage --> FYI: broker classifies as ad hoc → create_fyi_cluster
+
+    Proposed --> Adopted: user accepts
+    Proposed --> Dismissed: user rejects
+    ProposedNew --> Adopted: user accepts
+    ProposedNew --> Dismissed: user rejects
+    Proposed --> Expired: GC purges after 1 day
+    ProposedNew --> Expired: GC purges after 1 day
+
+    FYI --> Dismissed: user dismisses FYI card
+    FYI --> AwaitingGrouping: user promotes to routing (API)
+
+    Adopted --> Watching: watcher continues polling
+    Watching --> Updated: transcript delta detected
+    Updated --> Watching: manager reviews, updates items
+    Updated --> Watching: manager suggests item (Copy)
+
+    Dismissed --> [*]
+    Expired --> [*]
 ```
 
 ## Component 1 — Watcher poll plugin (host-side)
