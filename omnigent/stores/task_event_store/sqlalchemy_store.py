@@ -389,3 +389,18 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             )
             rows = session.execute(stmt).scalars().all()
             return [_execution_to_entity(row) for row in rows]
+
+    def purge_old_events(self, *, before_ts: int, states: list[str]) -> int:
+        from sqlalchemy import delete
+
+        encoded_states = [encode_task_event_state(s) for s in states]
+        with self._session() as session:
+            stmt = (
+                delete(SqlTaskEvent)
+                .where(SqlTaskEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskEvent.created_at < before_ts)
+                .where(SqlTaskEvent.state.in_(encoded_states))
+            )
+            result = session.execute(stmt)
+            session.flush()
+            return result.rowcount or 0

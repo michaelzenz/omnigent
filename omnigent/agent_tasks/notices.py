@@ -56,6 +56,43 @@ def _format_execution_detail(event) -> str:
     return f"Worker execution {status} for item {item_title!r}{summary_block}"
 
 
+def _format_worker_notice(event) -> str:
+    """Format a structured notice for a single worker.execution.finished event.
+
+    Unlike ``_format_manager_notice`` (which batches multiple events into a
+    one-liner-per-event summary), this produces a rich, structured prompt with
+    the worker's full output so the manager can decide whether to update the
+    task or suggest a new taskItem.
+    """
+    payload: dict = {}
+    if event.payload:
+        try:
+            payload = json.loads(event.payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    status = payload.get("status", "finished")
+    item_title = payload.get("item_title", event.title)
+    instructions = payload.get("instructions")
+    summary = (payload.get("result_summary") or payload.get("error") or "").strip()
+    output = payload.get("output")
+
+    lines = [
+        f"[System: Worker finished a turn (status: {status})]",
+        f"Item: {item_title}",
+    ]
+    if instructions:
+        lines.append(f"Instructions sent to worker: {instructions}")
+    if summary:
+        lines.append(f"Worker summary: {summary}")
+    if output:
+        lines.append(f"Worker output:\n{output}")
+    lines.append(
+        "Review the worker's output. Update the task status. "
+        "If follow-up work is needed, suggest a new taskItem for user review."
+    )
+    return "\n".join(lines)
+
+
 def _format_broker_stall_notice(
     events: list,
     *,

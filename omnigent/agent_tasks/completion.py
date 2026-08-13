@@ -10,10 +10,13 @@ from typing import Literal
 
 from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.executions import complete_execution
+from omnigent.agent_tasks.notices import _format_worker_notice
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEventExecution
+from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.runner.routing import RunnerRouter
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -34,6 +37,7 @@ class TaskCompletionContext:
     task_item_store: TaskItemStore
     conversation_store: ConversationStore
     worker_store: WorkerStore
+    agent_queue_store: AgentQueueStore | None = None
     runner_router: RunnerRouter | None = None
 
 
@@ -61,11 +65,14 @@ async def notify_worker_session_status(
     Update task execution state and emit a manager-facing event when a worker
     session settles.
 
-    The manager is no longer woken directly. Instead a ``worker.execution.finished``
-    event is created pre-routed to the task, and the manager packager picks it up
-    on its next poll — the same durable pipe every other routed event uses. The
-    emission is best-effort: a failure is logged and never blocks the execution
-    and item state updates that already succeeded above.
+    A ``worker.execution.finished`` event is created pre-routed to the task.
+    When an ``agent_queue_store`` is configured, a notice is enqueued directly
+    onto the manager's agent queue so the manager is woken without waiting for
+    the packager's poll cycle. The event is then marked ``reconciled`` so the
+    packager does not duplicate the work.
+
+    The emission is best-effort: a failure is logged and never blocks the
+    execution and item state updates that already succeeded above.
 
     :returns: ``True`` when a managed worker session was handled.
     """
@@ -106,34 +113,42 @@ async def notify_worker_session_status(
         )
     if task is None:
         return True
-    _emit_worker_execution_finished_event(task=task, execution=completed)
+    await _emit_worker_execution_finished_event(
+        task=task,
+        execution=completed,
+        output=output,
+    )
     return True
 
 
-def _emit_worker_execution_finished_event(
+async def _emit_worker_execution_finished_event(
     *,
     task: Task,
     execution: TaskEventExecution,
+    output: str | None = None,
 ) -> None:
-    """Create a pre-routed event so the manager packager notices the worker settled.
+    """Create a pre-routed event and directly enqueue a manager notice.
 
-    Born ``routed`` to the task with the owner attributed, so the manager packager
-    polls it like any other routed event. ``source_key`` is the execution id, so a
-    duplicate completion edge cannot double-emit.
+    Born ``routed`` to the task with the owner attributed. When an
+    ``agent_queue_store`` is available, a notice is enqueued directly onto the
+    manager queue and the event is immediately marked ``reconciled`` so the
+    packager skips it. ``source_key`` is the execution id, so a duplicate
+    completion edge cannot double-emit.
     """
     assert _context is not None
-    item_title = execution.task_item_id
     item = _context.task_item_store.get_item(execution.task_item_id)
-    if item is not None:
-        item_title = item.title
+    item_title = item.title if item is not None else execution.task_item_id
+    item_instructions = item.instructions if item is not None else None
     payload = json.dumps(
         {
             "execution_id": execution.id,
             "status": execution.status,
             "task_item_id": execution.task_item_id,
             "item_title": item_title,
+            "instructions": item_instructions,
             "result_summary": execution.result_summary,
             "error": execution.error,
+            "output": output,
         }
     )
     title = f"Worker execution {execution.status} for item {item_title}"
@@ -161,3 +176,31 @@ def _emit_worker_execution_finished_event(
             execution.id,
             task.id,
         )
+        return
+
+    if _context.agent_queue_store is not None:
+        notice = _format_worker_notice(event)
+        try:
+            _context.agent_queue_store.enqueue(
+                uuid.uuid4().hex,
+                AgentQueueKey(
+                    role="manager",
+                    owner_user_id=owner,
+                    scope_id=task.id,
+                ),
+                "notice",
+                source_ids=[event.id],
+                payload=notice,
+            )
+            _context.task_event_store.update_event(
+                event.id,
+                state="reconciled",
+                processed_at=now_epoch(),
+            )
+        except Exception:
+            _logger.warning(
+                "failed to enqueue manager notice for event %s; "
+                "packager will pick it up on next poll",
+                event.id,
+                exc_info=True,
+            )

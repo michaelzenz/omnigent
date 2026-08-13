@@ -274,3 +274,12 @@ class AgentQueueStore(ABC):
         items. Returns ``None`` for items that are not found or are in flight /
         done (not cancelable).
         """
+
+    # ── GC ─────────────────────────────────────────────
+
+    @abstractmethod
+    def purge_old_items(self, *, before_ts: int, states: list[str]) -> int:
+        """Delete queue items in the given states older than ``before_ts``.
+
+        :returns: Number of rows deleted.
+        """

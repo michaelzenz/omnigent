@@ -654,6 +654,21 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             session.flush()
             return _item_to_entity(row)
 
+    def purge_old_items(self, *, before_ts: int, states: list[str]) -> int:
+        from sqlalchemy import delete
+
+        encoded_states = [encode_agent_queue_item_state(s) for s in states]
+        with self._session() as session:
+            stmt = (
+                delete(SqlAgentQueueItem)
+                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
+                .where(SqlAgentQueueItem.created_at < before_ts)
+                .where(SqlAgentQueueItem.state.in_(encoded_states))
+            )
+            result = session.execute(stmt)
+            session.flush()
+            return result.rowcount or 0
+
     # ── Internals ──────────────────────────────────────
 
     def _get_queue_row(self, session: Any, key: AgentQueueKey) -> SqlAgentQueue | None:

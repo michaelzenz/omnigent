@@ -156,3 +156,12 @@ class TaskEventStore(ABC):
     @abstractmethod
     def list_executions_for_item(self, task_item_id: str) -> list[TaskEventExecution]:
         """List executions for a task item ordered by ``attempt_no ASC, id ASC``."""
+
+    # ── GC ─────────────────────────────────────────────────────
+
+    @abstractmethod
+    def purge_old_events(self, *, before_ts: int, states: list[str]) -> int:
+        """Delete events in the given states older than ``before_ts``.
+
+        :returns: Number of rows deleted.
+        """

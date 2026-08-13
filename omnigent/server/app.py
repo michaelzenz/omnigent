@@ -1672,6 +1672,18 @@ def create_app(
                     exc,
                 )
 
+        # Background GC for old reconciled/dismissed events and completed
+        # queue items so large worker-output payloads do not accumulate.
+        event_gc_task: asyncio.Task | None = None
+        if agent_queue_store is not None:
+            from omnigent.agent_tasks.event_gc import run_event_gc
+
+            event_gc_task = asyncio.create_task(
+                run_event_gc(task_event_store, agent_queue_store),
+                name="event-gc",
+            )
+            app_inst.state.event_gc_task = event_gc_task
+
         ssh_host_manager = None
         # The reverse tunnel forwards to this server's own listener, so without a
         # known port there is nothing valid to point remote hosts at.
@@ -1705,6 +1717,10 @@ def create_app(
                 await ssh_host_manager.stop()
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
+            if event_gc_task is not None:
+                event_gc_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await event_gc_task
             metrics_publish_task.cancel()
             with suppress(asyncio.CancelledError):
                 await metrics_publish_task
@@ -2593,6 +2609,7 @@ def create_app(
                 task_item_store=task_item_store,
                 conversation_store=conversation_store,
                 worker_store=worker_store,
+                agent_queue_store=agent_queue_store,
                 runner_router=runner_router,
             )
         )
