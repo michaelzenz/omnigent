@@ -56,7 +56,6 @@ from omnigent.entities.task import (
     Worker,
 )
 from omnigent.entities.task_role_profile import TaskRoleProfile, UserRoleSession
-from omnigent.entities.timer import TimerItem
 
 __all__ = [
     "AGENT_QUEUE_ITEM_KINDS",
@@ -106,7 +105,6 @@ __all__ = [
     "TaskRoleProfile",
     "TaskTag",
     "TerminalCommandData",
-    "TimerItem",
     "UserRoleSession",
     "Worker",
     "filter_resources_by_type",

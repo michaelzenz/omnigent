@@ -83,7 +83,6 @@ from omnigent.server.routes.sharing import create_sharing_router
 from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
-from omnigent.server.routes.timer_items import create_timer_items_router
 from omnigent.server.scheduled import ScheduledTaskScheduler
 from omnigent.server.ws_origin import WebSocketOriginMiddleware
 from omnigent.stores import (
@@ -105,7 +104,6 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
-from omnigent.stores.timer_item_store import TimerItemStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_store import WorkerStore
 
@@ -1206,7 +1204,6 @@ def create_app(
     task_item_store: TaskItemStore | None = None,
     worker_store: WorkerStore | None = None,
     task_asset_store: TaskAssetStore | None = None,
-    timer_item_store: TimerItemStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     user_role_session_store: UserRoleSessionStore | None = None,
     agent_queue_store: AgentQueueStore | None = None,
@@ -1262,7 +1259,6 @@ def create_app(
     :param task_event_store: Store for task events and execution history.
     :param task_item_store: Store for task items and routing proposals.
     :param worker_store: Store for per-task worker slots.
-    :param timer_item_store: Store for deferred host timer items.
     :param task_role_profile_store: Global task role definitions.
         When provided with task stores, enables role profile/session
         routes and resolve-time bootstrap defaults.
@@ -2610,16 +2606,6 @@ def create_app(
                 host_store=host_store,
                 runner_router=runner_router,
             )
-        )
-    if timer_item_store is not None:
-        app.include_router(
-            create_timer_items_router(
-                timer_item_store,
-                conversation_store,
-                auth_provider=auth_provider,
-            ),
-            prefix="/v1",
-            tags=["timer_items"],
         )
     if policy_store is not None:
         app.include_router(

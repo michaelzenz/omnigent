@@ -98,7 +98,6 @@ from omnigent.version import VERSION
 
 if TYPE_CHECKING:
     from omnigent.host.polling import PollScheduler
-    from omnigent.host.timer import TimerScheduler
 
 _logger = logging.getLogger(__name__)
 
@@ -683,8 +682,6 @@ class HostProcess:
         self._reaper_task: asyncio.Task[None] | None = None
         # Scheduled poll plugins owned by this host.
         self._poll_scheduler: PollScheduler | None = None
-        # Deferred timer items for this host.
-        self._timer_scheduler: TimerScheduler | None = None
         # Number of host-owned ``subprocess`` operations (e.g. the git worktree
         # commands in :mod:`omnigent.host.git_worktree`) currently in flight.
         # The orphan reaper skips its sweep while this is >0 so it never
@@ -1797,7 +1794,6 @@ class HostProcess:
             ScriptPollPluginsPoller,
             ScriptTimerPluginsPoller,
         )
-        from omnigent.host.timer import TimerScheduler
 
         self._poll_scheduler = PollScheduler(
             server_url=self._server_url,
@@ -1806,11 +1802,6 @@ class HostProcess:
         self._poll_scheduler.register(ScriptPollPluginsPoller())
         self._poll_scheduler.register(ScriptTimerPluginsPoller())
         await self._poll_scheduler.start()
-        self._timer_scheduler = TimerScheduler(
-            server_url=self._server_url,
-            host_id=self._identity.host_id,
-        )
-        await self._timer_scheduler.start()
         backoff = _RECONNECT_BASE_S
         try:
             while True:
@@ -1885,9 +1876,6 @@ class HostProcess:
             if self._poll_scheduler is not None:
                 await self._poll_scheduler.stop()
                 self._poll_scheduler = None
-            if self._timer_scheduler is not None:
-                await self._timer_scheduler.stop()
-                self._timer_scheduler = None
             from omnigent.ssh_session import shutdown_ssh_pool
 
             await shutdown_ssh_pool()

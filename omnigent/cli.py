@@ -3170,7 +3170,6 @@ def server(
         SqlAlchemyTaskRoleProfileStore,
     )
     from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
-    from omnigent.stores.timer_item_store.sqlalchemy_store import SqlAlchemyTimerItemStore
     from omnigent.stores.user_role_session_store.sqlalchemy_store import (
         SqlAlchemyUserRoleSessionStore,
     )
@@ -3207,7 +3206,6 @@ def server(
     task_item_store = SqlAlchemyTaskItemStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     task_asset_store = SqlAlchemyTaskAssetStore(db_uri)
-    timer_item_store = SqlAlchemyTimerItemStore(db_uri)
     task_role_profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     user_role_session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     agent_queue_store = SqlAlchemyAgentQueueStore(db_uri)
@@ -3373,7 +3371,6 @@ def server(
         task_item_store=task_item_store,
         worker_store=worker_store,
         task_asset_store=task_asset_store,
-        timer_item_store=timer_item_store,
         task_role_profile_store=task_role_profile_store,
         user_role_session_store=user_role_session_store,
         agent_queue_store=agent_queue_store,

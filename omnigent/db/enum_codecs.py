@@ -174,13 +174,6 @@ AGENT_QUEUE_STATE: dict[str, int] = {
     "halted": 3,
 }
 
-TIMER_ITEM_STATE: dict[str, int] = {
-    "pending": 1,
-    "running": 2,
-    "done": 3,
-    "failed": 4,
-}
-
 TASK_EVENT_EXECUTION_STATUS: dict[str, int] = {
     "queued": 1,
     "running": 2,
@@ -458,13 +451,3 @@ def encode_agent_queue_state(name: str) -> int:
 def decode_agent_queue_state(code: int) -> str:
     """Decode an ``agent_queues.state`` int code to its name."""
     return _decode(AGENT_QUEUE_STATE, code, field="agent_queues.state")
-
-
-def encode_timer_item_state(name: str) -> int:
-    """Encode a ``timer_items.state`` name to its int code."""
-    return _encode(TIMER_ITEM_STATE, name, field="timer_items.state")
-
-
-def decode_timer_item_state(code: int) -> str:
-    """Decode a ``timer_items.state`` int code to its name."""
-    return _decode(TIMER_ITEM_STATE, code, field="timer_items.state")
