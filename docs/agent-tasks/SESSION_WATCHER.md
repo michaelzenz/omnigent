@@ -37,16 +37,21 @@ external session.
      |                          BrokerPackager polls                      |                 |                |
      |                   enqueue orphan notice ------------------>         |                 |                |
      |                               |          broker reads transcript snippet from payload                |
-     |                               |          writes routing tags         |                 |                |
-     |                               |          calls propose-adoption     |                 |                |
-     |                               |          (creates task if none)    |                 |                |
-     |                               |                 |  session.adoption event (pending)  |                |
-     |                               |                 |  ------------------------------->  |  adoption row on task card
-     |                               |                 |                                   |  user accepts
-     |                               |          adopt_session                                |
-     |                               |          WORKER_KIND_EXTERNAL worker on task          |
-     |                               |          session.adopted event → routed to manager  |
-     |                               |                 |                                   |
+     |                               |          decides: adopt or FYI?     |                 |                |
+     |                               |          ┌─ adopt to existing/new task                 |                |
+     |                               |          │   calls propose-adoption     |                 |                |
+     |                               |          │   session.adoption event (pending)  |                |
+     |                               |          │   ------------------------------->  |  adoption row on task card
+     |                               |          │                              |  user accepts       |
+     |                               |          │   adopt_session              |                      |
+     |                               |          │   WORKER_KIND_EXTERNAL worker on task          |
+     |                               |          │   session.adopted → routed to manager  |
+     |                               |          │                              |                      |
+     |                               |          └─ FYI cluster (ad hoc, no task)  |                |
+     |                               |              create_fyi_cluster          |                |
+     |                               |              event → classified_fyi    |                |
+     |                               |              dismissible FYI card on board                |
+     |                               |                 |                      |                |
   known session, transcript grew?    |                 |                                   |
   POST external.session.updated --->|                 |                                   |
      |                          ingress auto-routes to task (via session hint lookup)        |
@@ -159,10 +164,18 @@ event (one-per-notice, no clustering).
 2. Enqueues a single-event notice to the broker queue.
 3. Broker agent receives the notice, reads the `transcript_snippet` from the
    payload, summarizes and understands what the session is about.
-4. Broker writes routing tags (`omnigent.task.routing_repo`,
-   `omnigent.task.routing_intent`) on the conversation.
-5. Broker calls `POST /v1/agent-tasks/sessions/{id}/propose-adoption` with a
-   target task ID (existing task or a new one the broker creates).
+4. Broker decides one of three outcomes:
+
+   | Outcome | When | Action |
+   |---------|------|--------|
+   | **Adopt to existing task** | Session matches an active task | Write routing tags, call `propose-adoption` with the matched task ID |
+   | **Adopt to new task** | Session is substantial work but no matching task | Create a new pending task, call `propose-adoption` against it |
+   | **FYI cluster** | Session is ad hoc work, not related to any task and not worth creating a task | Call `POST /v1/task-events/fyi-clusters` to classify as FYI |
+
+   The FYI path reuses the existing `create_fyi_cluster` flow: the event
+   becomes `classified_fyi`, a dismissible FYI card appears on the board,
+   and the user can dismiss it or (via API) promote it back to routing later
+   if circumstances change.
 
 ### `propose-adoption` for external sessions
 
@@ -346,6 +359,11 @@ server:
   on the proposal event payload.
 - [ ] Allow broker to create a new pending task when no match is found, then
   propose adoption against it.
+- [ ] Broker agent instructions: for `external.session.discovered`, decide
+  among adopt-to-existing-task, adopt-to-new-task, or FYI cluster. Use
+  existing `create_fyi_cluster` for the FYI path.
+- [ ] Broker prompt: include the FYI option in the orphan notice text so the
+  broker agent knows it can classify as FYI instead of forcing adoption.
 
 ### Phase 3: Adoption flow
 
@@ -395,10 +413,11 @@ server:
    task card shows each as a worker lane with a Copy button.
 
 3. **Re-discovery after dismissal:** If the user rejects an adoption proposal
-   but the watcher keeps polling, will it re-emit `external.session.discovered`
-   for the same session? The watcher's `state.yaml` should track dismissed
-   sessions and skip them. Alternatively, the server can dedupe by
-   `session_hint` + `adoption_dismissed` label.
+   or dismisses an FYI cluster, but the watcher keeps polling, will it
+   re-emit `external.session.discovered` for the same session? The watcher's
+   `state.yaml` should track dismissed sessions and skip them. Alternatively,
+   the server can dedupe by `session_hint` + `adoption_dismissed` label or
+   `classified_fyi` / `dismissed` event state.
 
 4. **External worker item states:** When the manager assigns an item to an
    external worker and the user copies instructions, the item starts as
