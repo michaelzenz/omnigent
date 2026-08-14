@@ -21,11 +21,7 @@ import sys
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-<<<<<<< HEAD
-from typing import Any, Literal, Protocol, SupportsIndex, SupportsInt, cast
-=======
-from typing import TYPE_CHECKING
->>>>>>> michaelzenz/session-watcher
+from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, SupportsInt, cast
 
 import websockets.asyncio.client
 from websockets.exceptions import ConnectionClosed, InvalidStatus, InvalidURI
@@ -131,14 +127,11 @@ from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_INTERVAL_S,
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
 )
-<<<<<<< HEAD
-from omnigent.tls import client_ssl_context
-=======
 from omnigent.server_transport import (
     OMNIGENT_SERVER_UNIX_SOCKET,
     server_unix_socket_path,
 )
->>>>>>> michaelzenz/session-watcher
+from omnigent.tls import client_ssl_context
 from omnigent.version import VERSION
 
 if TYPE_CHECKING:
@@ -515,7 +508,6 @@ _RUNNER_ENV_ALLOWLIST: frozenset[str] = frozenset(
         # host→runner intrinsically, so the setter need not also list it in
         # OMNIGENT_RUNNER_ENV_PASSTHROUGH.
         "OMNIGENT_DATABRICKS_EXTRA_HEADERS",
-<<<<<<< HEAD
         # The operator's env-forwarding control var itself. Without it here, the
         # var is stripped before it reaches the daemon in --server mode (the
         # remote daemon prefixes are DATABRICKS_ + LC_/MLFLOW_/OTEL_/OMNIGENT_OTEL_,
@@ -524,11 +516,9 @@ _RUNNER_ENV_ALLOWLIST: frozenset[str] = frozenset(
         # NAMES, not secrets, so allowlisting it leaks nothing on its own.
         # (Literal, not RUNNER_ENV_PASSTHROUGH_ENV_VAR, which is defined below.)
         "OMNIGENT_RUNNER_ENV_PASSTHROUGH",
-=======
         # Optional local transport to the logical remote server. Runners must
         # dial the same socket as their owning host.
         OMNIGENT_SERVER_UNIX_SOCKET,
->>>>>>> michaelzenz/session-watcher
     }
     # Windows system / profile constants (SYSTEMROOT is mandatory for Winsock,
     # USERPROFILE for Path.home(), etc.); a no-op on POSIX. See _platform.
@@ -2554,7 +2544,6 @@ class HostProcess:
         self._reaper_task = asyncio.create_task(
             self._orphan_reaper_loop(), name="host-orphan-reaper"
         )
-<<<<<<< HEAD
         # Warm the runner zygote now: start() blocks on its one-time import
         # of the runner graph (~1-2s), which otherwise lands inside the first
         # session launch of the daemon's life. Best-effort — a failure
@@ -2564,7 +2553,6 @@ class HostProcess:
                 asyncio.to_thread(self._ensure_zygote_started),
                 name="host-zygote-prestart",
             )
-=======
         from omnigent.host.polling import (
             PollScheduler,
             ScriptPollPluginsPoller,
@@ -2578,7 +2566,6 @@ class HostProcess:
         self._poll_scheduler.register(ScriptPollPluginsPoller())
         self._poll_scheduler.register(ScriptTimerPluginsPoller())
         await self._poll_scheduler.start()
->>>>>>> michaelzenz/session-watcher
         backoff = _RECONNECT_BASE_S
         try:
             while True:
@@ -2704,17 +2691,14 @@ class HostProcess:
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
-<<<<<<< HEAD
             # Await the cancellations: a bare cancel() leaves the tasks
             # pending at loop close ("Task was destroyed but it is pending!").
-=======
             if self._poll_scheduler is not None:
                 await self._poll_scheduler.stop()
                 self._poll_scheduler = None
             from omnigent.ssh_session import shutdown_ssh_pool
 
             await shutdown_ssh_pool()
->>>>>>> michaelzenz/session-watcher
             if self._reaper_task is not None:
                 self._reaper_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -2777,26 +2761,13 @@ class HostProcess:
         # ``ssl=None`` for ws:// is the library default (no TLS).
         ssl_ctx = client_ssl_context() if url.startswith("wss://") else None
         try:
-<<<<<<< HEAD
-            ws_cm = websockets.asyncio.client.connect(
-                url,
-                additional_headers=headers,
-                max_size=100 * 1024 * 1024,
-                ssl=ssl_ctx,
-                # Align the host->server tunnel's protocol keepalive to the same
-                # 90 s app-level budget as the runner tunnel (not the 20 s library
-                # default that drops a busy-but-healthy tunnel with 1011 — #1116).
-                # Symmetric with serve.py's runner-side connect().
-                ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
-                ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
-            )
-=======
             socket_path = server_unix_socket_path()
             if socket_path is None:
                 ws_cm = websockets.asyncio.client.connect(
                     url,
                     additional_headers=headers,
                     max_size=100 * 1024 * 1024,
+                    ssl=ssl_ctx,
                     # Align the host->server tunnel's protocol keepalive to the same
                     # 90 s app-level budget as the runner tunnel (not the 20 s library
                     # default that drops a busy-but-healthy tunnel with 1011 — #1116).
@@ -2813,7 +2784,6 @@ class HostProcess:
                     ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
                     ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
                 )
->>>>>>> michaelzenz/session-watcher
             ws = await ws_cm.__aenter__()
         except (InvalidURI, InvalidStatus) as exc:
             # The upgrade itself was rejected. Fail loud on permanent
