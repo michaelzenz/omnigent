@@ -1648,7 +1648,7 @@ class SqlWorker(OmnigentBase):
         CheckConstraint("kind IN ('managed', 'external')", name="ck_workers_kind"),
         CheckConstraint(
             "(kind = 'managed' AND role_key IS NOT NULL AND agent_profile_id IS NULL) "
-            "OR (kind = 'external' AND role_key IS NULL AND agent_profile_id IS NOT NULL)",
+            "OR (kind = 'external' AND role_key IS NULL)",
             name="ck_workers_role_or_agent",
         ),
         Index("ix_workers_task", "workspace_id", "task_id", "id"),

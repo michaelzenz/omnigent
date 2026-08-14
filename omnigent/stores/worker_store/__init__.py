@@ -29,6 +29,7 @@ class WorkerStore(ABC):
         role_key: str | None = None,
         agent_profile_id: str | None = None,
         session_id: str | None = None,
+        external_session_hint: str | None = None,
     ) -> Worker:
         """Insert a worker slot for one task."""
 

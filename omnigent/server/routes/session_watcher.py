@@ -90,7 +90,19 @@ def create_session_watcher_router(
         worker = await asyncio.to_thread(
             worker_store.get_by_external_hint, body.session_hint
         )
-        track = worker is not None
+        # Check if the session was rejected (dismissed adoption proposal).
+        is_rejected = False
+        for evt in task_event_store.list_events(
+            state="dismissed",
+            event_type="session.adoption",
+        ):
+            if evt.source_key == body.session_hint:
+                is_rejected = True
+                break
+
+        # Track unless explicitly rejected. Adopted sessions and new
+        # (not-yet-triaged) sessions both keep tracking.
+        track = not is_rejected
 
         # Build the event payload.
         event_payload: dict[str, Any] = {

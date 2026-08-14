@@ -370,3 +370,163 @@ def find_open_adoption_proposal(
         if event.source_key == session_id:
             return event
     return None
+
+
+# ── External session adoption (watcher-discovered sessions) ────────
+
+
+def find_open_external_adoption_proposal(
+    task_event_store: TaskEventStore,
+    session_hint: str,
+) -> TaskEvent | None:
+    """Return the open adoption proposal for an external session hint."""
+    for event in task_event_store.list_events(
+        state="received",
+        event_type=SESSION_ADOPTION_PROPOSAL,
+    ):
+        if event.source_key == session_hint:
+            return event
+    return None
+
+
+def propose_external_session_adoption(
+    *,
+    session_hint: str,
+    task_id: str | None,
+    task_store: TaskStore,
+    task_event_store: TaskEventStore,
+    owner_user_id: str | None = None,
+    transcript_snippet: str | None = None,
+    routing_tags: list | None = None,
+) -> tuple[Task, TaskEvent]:
+    """Create a user-gated adoption proposal for a watcher-discovered session.
+
+    If ``task_id`` is ``None`` the broker creates a new pending task so the
+    proposal has somewhere to land. The proposal event carries the
+    ``session_hint`` in its payload so the accept flow can wire the worker.
+    """
+    if task_id is not None:
+        task = task_store.get(task_id)
+        if task is None:
+            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+    else:
+        task_id = uuid.uuid4().hex
+        task_store.create(task_id, f"External session: {session_hint}")
+        task = task_store.get(task_id)
+        assert task is not None
+
+    payload: dict[str, Any] = {
+        "session_hint": session_hint,
+        "external": True,
+    }
+    if transcript_snippet:
+        payload["transcript_snippet"] = transcript_snippet
+    if routing_tags:
+        payload["routing_tags"] = tags_to_payload(routing_tags)
+
+    event_id = uuid.uuid4().hex
+    proposal = task_event_store.create_event(
+        event_id,
+        SESSION_ADOPTION_PROPOSAL,
+        f"Adopt external session: {session_hint}",
+        source_key=session_hint,
+        source="broker",
+        payload=json.dumps(payload),
+        task_id=task.id,
+        state="received",
+        owner_user_id=owner_user_id,
+    )
+    # Mark the discovered event as reconciled — the broker has triaged it.
+    from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
+
+    for disc in task_event_store.list_events(
+        state="awaiting_grouping",
+        event_type=EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+    ):
+        if disc.source_key == session_hint:
+            task_event_store.update_event(
+                disc.id,
+                state="reconciled",
+                processed_at=now_epoch(),
+            )
+            break
+    return task, proposal
+
+
+async def adopt_external_session(
+    *,
+    session_hint: str,
+    task_id: str,
+    task_store: TaskStore,
+    task_event_store: TaskEventStore,
+    worker_store: WorkerStore,
+    conversation_store: ConversationStore,
+    params: BootstrapParams,
+    proposal_event: TaskEvent | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
+) -> tuple[TaskEvent, TaskEvent]:
+    """Bind a watcher-discovered external session to a task.
+
+    Creates a ``WORKER_KIND_EXTERNAL`` worker with ``external_session_hint``
+    so future ``external.session.updated`` events auto-route to this task.
+    """
+    task = task_store.get(task_id)
+    if task is None:
+        raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+
+    worker_store.create_worker(
+        _generate_worker_id(),
+        task.id,
+        kind=WORKER_KIND_EXTERNAL,
+        agent_profile_id=None,
+        session_id=None,
+        external_session_hint=session_hint,
+    )
+    adopted_event = task_event_store.create_event(
+        uuid.uuid4().hex,
+        SESSION_ADOPTED,
+        f"External session adopted: {session_hint}",
+        source_key=session_hint,
+        source="adoption",
+        state="received",
+        task_id=task.id,
+    )
+    routed = await route_event_to_task(
+        event=adopted_event,
+        task=task,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        conversation_store=conversation_store,
+        params=params,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
+    )
+    processed_proposal = proposal_event
+    if proposal_event is not None:
+        updated = task_event_store.update_event(
+            proposal_event.id,
+            state="reconciled",
+            processed_at=now_epoch(),
+            task_id=task.id,
+        )
+        processed_proposal = updated if updated is not None else proposal_event
+    return processed_proposal or routed, routed
+
+
+def reject_external_session_adoption(
+    *,
+    session_hint: str,
+    task_event_store: TaskEventStore,
+    proposal_event: TaskEvent | None = None,
+) -> TaskEvent | None:
+    """Dismiss an external session adoption proposal.
+
+    The dismissal is recorded so the session-watcher update endpoint can
+    return ``track: false`` for this hint.
+    """
+    if proposal_event is None:
+        return None
+    return task_event_store.update_event(proposal_event.id, state="dismissed")

@@ -16,9 +16,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from omnigent.agent_tasks.adoption import (
     SESSION_ADOPTION_PROPOSAL,
+    adopt_external_session,
     adopt_session,
     find_open_adoption_proposal,
+    find_open_external_adoption_proposal,
+    propose_external_session_adoption,
     propose_session_adoption,
+    reject_external_session_adoption,
     reject_session_adoption,
 )
 from omnigent.agent_tasks.agent_builtins import (
@@ -2090,6 +2094,122 @@ def create_agent_tasks_router(
             return {
                 "object": "agent.task.session_adoption_rejection",
                 "session_id": session_id,
+                "proposal": _event_to_response(dismissed) if dismissed is not None else None,
+            }
+
+        # ── External session adoption (watcher-discovered) ──────────
+
+        class ProposeExternalAdoptionRequest(BaseModel):
+            """Request body for ``POST /v1/agent-tasks/external-sessions/propose-adoption``."""
+
+            session_hint: str
+            task_id: str | None = None
+            transcript_snippet: str | None = None
+
+        class AdoptExternalSessionRequest(BaseModel):
+            """Request body for ``POST /v1/agent-tasks/external-sessions/{session_hint}/adopt``."""
+
+            task_id: str
+            host_id: str | None = None
+            workspace: str | None = None
+            harness: str | None = None
+            model: str | None = None
+
+        @router.post("/agent-tasks/external-sessions/propose-adoption")
+        async def propose_external_adoption_route(
+            request: Request,
+            body: ProposeExternalAdoptionRequest,
+        ) -> dict[str, Any]:
+            """Create a user-gated adoption proposal for a watcher-discovered session."""
+            user_id = require_user(request, auth_provider)
+            task, created = await asyncio.to_thread(
+                propose_external_session_adoption,
+                session_hint=body.session_hint,
+                task_id=body.task_id,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                owner_user_id=_effective_user_id(user_id),
+                transcript_snippet=body.transcript_snippet,
+            )
+            return {
+                "object": "agent.task.external_session_adoption_proposal",
+                "task_id": task.id,
+                "session_hint": body.session_hint,
+                "event": _event_to_response(created),
+            }
+
+        @router.post("/agent-tasks/external-sessions/{session_hint}/adopt")
+        async def adopt_external_session_route(
+            request: Request,
+            session_hint: str,
+            body: AdoptExternalSessionRequest,
+        ) -> dict[str, Any]:
+            """Bind a watcher-discovered external session to a task."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(body.task_id, user_id)
+            profile = await _manager_role_profile_for_task(task, user_id)
+            params = resolve_bootstrap_params(
+                host_id=body.host_id,
+                workspace=body.workspace,
+                harness=body.harness,
+                model=body.model,
+                role_profile=profile,
+            )
+            proposal = await asyncio.to_thread(
+                find_open_external_adoption_proposal,
+                task_event_store,
+                session_hint,
+            )
+            proposal_event, adopted_event = await adopt_external_session(
+                session_hint=session_hint,
+                task_id=body.task_id,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                params=params,
+                proposal_event=proposal,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
+            worker = await asyncio.to_thread(
+                worker_store.get_by_external_hint, session_hint
+            )
+            return {
+                "object": "agent.task.external_session_adoption",
+                "session_hint": session_hint,
+                "task_id": body.task_id,
+                "worker_id": worker.id if worker is not None else None,
+                "proposal": (
+                    _event_to_response(proposal_event)
+                    if proposal_event.event_type == SESSION_ADOPTION_PROPOSAL
+                    else None
+                ),
+                "event": _event_to_response(adopted_event),
+            }
+
+        @router.post("/agent-tasks/external-sessions/{session_hint}/reject-adoption")
+        async def reject_external_adoption_route(
+            request: Request,
+            session_hint: str,
+        ) -> dict[str, Any]:
+            """Dismiss an external session adoption proposal."""
+            user_id = require_user(request, auth_provider)
+            proposal = await asyncio.to_thread(
+                find_open_external_adoption_proposal,
+                task_event_store,
+                session_hint,
+            )
+            dismissed = await asyncio.to_thread(
+                reject_external_session_adoption,
+                session_hint=session_hint,
+                task_event_store=task_event_store,
+                proposal_event=proposal,
+            )
+            return {
+                "object": "agent.task.external_session_adoption_rejection",
+                "session_hint": session_hint,
                 "proposal": _event_to_response(dismissed) if dismissed is not None else None,
             }
 

@@ -310,3 +310,207 @@ async def test_ingress_stalls_external_session_updated_unknown_hint(
         conversation_store=conv_store,
     )
     assert distributed.state == "awaiting_grouping"
+
+
+# ── Phase 3: External session adoption flow ─────────────────────────
+
+
+def test_propose_external_session_adoption_creates_new_task(db_uri: str) -> None:
+    """Proposing adoption with no task_id creates a new pending task."""
+    from omnigent.agent_tasks.adoption import propose_external_session_adoption
+
+    task_store = SqlAlchemyTaskStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+
+    hint = "codex-propose-new"
+    task, proposal = propose_external_session_adoption(
+        session_hint=hint,
+        task_id=None,
+        task_store=task_store,
+        task_event_store=event_store,
+        owner_user_id="__anonymous__",
+        transcript_snippet="working on a parser bug",
+    )
+    assert task.title == f"External session: {hint}"
+    assert proposal.event_type == "session.adoption"
+    assert proposal.task_id == task.id
+    assert proposal.source_key == hint
+    import json as _json
+
+    payload = _json.loads(proposal.payload)
+    assert payload["session_hint"] == hint
+    assert payload["external"] is True
+    assert payload["transcript_snippet"] == "working on a parser bug"
+
+
+def test_propose_external_session_adoption_uses_existing_task(db_uri: str) -> None:
+    """Proposing adoption with an existing task_id routes to that task."""
+    from omnigent.agent_tasks.adoption import propose_external_session_adoption
+
+    task_store = SqlAlchemyTaskStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name="mgr-propose", bundle_location="test:///b")
+    mgr_conv = conv_store.create_conversation(
+        title="Mgr", agent_id=agent_id, host_id=_uid("hm3"), workspace="/tmp"
+    )
+    task_id = _uid("task_existing")
+    task_store.create(task_id, "Existing task", manager_conversation_id=mgr_conv.id)
+
+    hint = "codex-propose-existing"
+    task, proposal = propose_external_session_adoption(
+        session_hint=hint,
+        task_id=task_id,
+        task_store=task_store,
+        task_event_store=event_store,
+        owner_user_id="__anonymous__",
+    )
+    assert task.id == task_id
+    assert proposal.task_id == task_id
+
+
+def test_propose_external_session_adoption_reconciles_discovered_event(
+    db_uri: str,
+) -> None:
+    """Proposing adoption marks the discovered event as reconciled."""
+    from omnigent.agent_tasks.adoption import propose_external_session_adoption
+
+    task_store = SqlAlchemyTaskStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+
+    hint = "codex-reconcile"
+    # Create a discovered event
+    event_store.create_event(
+        uuid.uuid4().hex,
+        EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+        "Discovered",
+        payload=json.dumps({"session_hint": hint}),
+        source="session_watcher",
+        source_key=hint,
+        state="awaiting_grouping",
+    )
+    propose_external_session_adoption(
+        session_hint=hint,
+        task_id=None,
+        task_store=task_store,
+        task_event_store=event_store,
+    )
+    # The discovered event should be reconciled now.
+    discovered = event_store.list_events(
+        state="awaiting_grouping",
+        event_type=EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+    )
+    assert not any(e.source_key == hint for e in discovered)
+
+
+@pytest.mark.asyncio
+async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> None:
+    """Adopting an external session creates a worker with external_session_hint."""
+    from types import SimpleNamespace
+
+    from omnigent.agent_tasks.adoption import (
+        adopt_external_session,
+        propose_external_session_adoption,
+    )
+    from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
+
+    task_store = SqlAlchemyTaskStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name="mgr-adopt", bundle_location="test:///b")
+    mgr_conv = conv_store.create_conversation(
+        title="Mgr", agent_id=agent_id, host_id=_uid("hm4"), workspace="/tmp"
+    )
+
+    hint = "codex-adopt-test"
+    task, proposal = propose_external_session_adoption(
+        session_hint=hint,
+        task_id=None,
+        task_store=task_store,
+        task_event_store=event_store,
+        owner_user_id="__anonymous__",
+    )
+    # Set up manager conversation for the task
+    task_store.update(task.id, manager_conversation_id=mgr_conv.id)
+
+    from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
+    from omnigent.entities.task_role_profile import TaskRoleProfile
+
+    role_profile = TaskRoleProfile(
+        role=TASK_BROKER_ROLE,
+        kind="broker",
+        agent_profile_id=agent_id,
+        harness="cursor",
+        model="composer-2.5",
+        host_id=_uid("hm4"),
+        workspace="/tmp",
+        created_at=1,
+    )
+    params = resolve_bootstrap_params(
+        host_id=_uid("hm4"),
+        workspace="/tmp",
+        harness="cursor",
+        model="composer-2.5",
+        role_profile=role_profile,
+    )
+    _, adopted = await adopt_external_session(
+        session_hint=hint,
+        task_id=task.id,
+        task_store=task_store,
+        task_event_store=event_store,
+        worker_store=worker_store,
+        conversation_store=conv_store,
+        params=params,
+        proposal_event=proposal,
+        session_creator=None,
+        app_state=SimpleNamespace(),
+    )
+    assert adopted.event_type == "session.adopted"
+    assert adopted.task_id == task.id
+
+    worker = worker_store.get_by_external_hint(hint)
+    assert worker is not None
+    assert worker.task_id == task.id
+    assert worker.kind == "external"
+
+    # Proposal should be reconciled
+    proposal_updated = event_store.get_event(proposal.id)
+    assert proposal_updated.state == "reconciled"
+
+
+def test_reject_external_session_adoption_dismisses_proposal(db_uri: str) -> None:
+    """Rejecting an external session adoption dismisses the proposal."""
+    from omnigent.agent_tasks.adoption import (
+        find_open_external_adoption_proposal,
+        propose_external_session_adoption,
+        reject_external_session_adoption,
+    )
+
+    task_store = SqlAlchemyTaskStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+
+    hint = "codex-reject-test"
+    _, proposal = propose_external_session_adoption(
+        session_hint=hint,
+        task_id=None,
+        task_store=task_store,
+        task_event_store=event_store,
+    )
+    dismissed = reject_external_session_adoption(
+        session_hint=hint,
+        task_event_store=event_store,
+        proposal_event=proposal,
+    )
+    assert dismissed is not None
+    assert dismissed.state == "dismissed"
