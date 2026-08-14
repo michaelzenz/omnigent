@@ -788,8 +788,6 @@ def _ensure_default_polly_agent(
     )
 
 
-<<<<<<< HEAD
-=======
 async def _placeholder_on_fire(scheduled_task_id: str) -> None:
     """Default scheduler fire callback (no-op placeholder that logs).
 
@@ -862,7 +860,6 @@ def _build_worker_runner_ensurer(
     return _ensure_runner
 
 
->>>>>>> michaelzenz/session-watcher
 def create_app(
     agent_store: AgentStore,
     file_store: FileStore,
@@ -874,9 +871,7 @@ def create_app(
     policy_store: PolicyStore | None = None,
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
-<<<<<<< HEAD
     project_store: ProjectStore | None = None,
-=======
     task_store: TaskStore | None = None,
     task_event_store: TaskEventStore | None = None,
     task_item_store: TaskItemStore | None = None,
@@ -885,7 +880,6 @@ def create_app(
     task_role_profile_store: TaskRoleProfileStore | None = None,
     user_role_session_store: UserRoleSessionStore | None = None,
     agent_queue_store: AgentQueueStore | None = None,
->>>>>>> michaelzenz/session-watcher
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     ssh_host_installation_store: SshHostInstallationStore | None = None,
@@ -935,11 +929,9 @@ def create_app(
         starts an :class:`ScheduledTaskScheduler` that arms a timer per
         active task and fires the injected ``on_fire`` callback on
         schedule. ``None`` disables the scheduler entirely.
-<<<<<<< HEAD
     :param project_store: Store for first-class projects (owner-private
         containers that group sessions). ``None`` disables the
         ``/v1/projects`` CRUD endpoints.
-=======
     :param task_store: Store for managed agent tasks. When provided with
         ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
     :param task_event_store: Store for task events and execution history.
@@ -950,7 +942,6 @@ def create_app(
         routes and resolve-time bootstrap defaults.
     :param user_role_session_store: Per-user live conversation bindings
         for singleton roles (broker, secretary).
->>>>>>> michaelzenz/session-watcher
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
