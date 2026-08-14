@@ -677,7 +677,6 @@ def _make_managed_mint_factory(
         refreshes).
     :returns: A sync callable returning a fresh owner JWT, or ``None`` only
         when the server *definitively* will not mint for this runner (HTTP
-<<<<<<< HEAD
         400 no-auth/header mode, 404 older server without the endpoint, or a
         Databricks Apps OAuth redirect before the request reaches the app) —
         the runner then uses the legacy credential path. A *transient* probe
@@ -689,17 +688,6 @@ def _make_managed_mint_factory(
         bare requests. A post-install 401/403 with no still-valid cache
         latches ``proxy_auth_failed`` instead, which
         :class:`_InitialAuthTokenFactory` answers by re-resolving SDK/OIDC.
-=======
-        400 no-auth/header mode, 401 unrecognized/non-managed runner, or 404
-        older server without the endpoint) —
-        the runner then sends unauthenticated requests, as it did before this
-        fallback existed. A *transient* probe failure still installs the
-        factory, which re-mints on the next callback (so a blip at boot does
-        not leave the runner unauthenticated until process restart). If such
-        a post-install mint then gets the definitive 400/404, the factory
-        latches ``declined`` and returns ``None`` thereafter, and
-        :class:`_RunnerDatabricksAuth` falls back to bare requests.
->>>>>>> michaelzenz/session-watcher
     """
     from omnigent.runner.identity import token_bound_runner_id
 
@@ -797,7 +785,6 @@ class _ManagedMintTokenFactory:
                 proxy_bearer=self._proxy_bearer,
             )
         except httpx.HTTPStatusError as exc:
-<<<<<<< HEAD
             response = exc.response
             if response.status_code in (400, 404) or (
                 response.is_redirect and _is_login_redirect_or_unauthorized(response)
@@ -820,14 +807,6 @@ class _ManagedMintTokenFactory:
                 if cached is None:
                     self.proxy_auth_failed = True
                 return cached
-=======
-            # 400/404: server will never mint (no-auth/header mode, old server).
-            # 401: binding token is valid but this runner is not a managed
-            # sandbox (typical host-launched runner) — bare requests are correct.
-            if exc.response.status_code in (400, 401, 404):
-                self.declined = True
-                return None
->>>>>>> michaelzenz/session-watcher
             return self._still_valid_cached_token(now)
         except (httpx.HTTPError, ValueError, KeyError, OSError):
             # Transient mint failure: keep serving the cached token while
@@ -887,14 +866,11 @@ def _mint_managed_owner_token(
         RUNNER_TUNNEL_TOKEN_HEADER: binding_token,
         **databricks_request_headers(server_url, bearer_token=proxy_bearer),
     }
-<<<<<<< HEAD
-    with httpx.Client(timeout=10.0, trust_env=not is_loopback_url(server_url)) as client:
-=======
     with httpx.Client(
         timeout=10.0,
+        trust_env=not is_loopback_url(server_url),
         **server_http_transport_kwargs(),
     ) as client:
->>>>>>> michaelzenz/session-watcher
         response = client.post(mint_url, headers=headers)
         response.raise_for_status()
         payload = response.json()

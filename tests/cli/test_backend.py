@@ -13,12 +13,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-<<<<<<< HEAD
+import os
 import re
 import sys
-=======
-import os
->>>>>>> michaelzenz/session-watcher
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any

@@ -898,7 +898,6 @@ def test_mint_managed_owner_token_posts_binding_token_and_parses_response(
     assert captured["url"].endswith("/v1/runners/runner_token_abc/token")
 
 
-<<<<<<< HEAD
 def test_mint_managed_owner_token_includes_proxy_bearer_when_provided(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -959,7 +958,8 @@ def test_managed_mint_factory_promotes_minted_jwt_to_proxy_bearer(
 
     assert mint_call_bearers[0] == "Bearer seed-bearer"
     assert mint_call_bearers[1] == "Bearer minted-jwt"
-=======
+
+
 def test_mint_managed_owner_token_uses_server_unix_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -986,7 +986,6 @@ def test_mint_managed_owner_token_uses_server_unix_socket(
     )
 
     assert isinstance(captured["transport"], httpx.HTTPTransport)
->>>>>>> michaelzenz/session-watcher
 
 
 def test_runner_databricks_auth_injects_fresh_token_per_request() -> None:
