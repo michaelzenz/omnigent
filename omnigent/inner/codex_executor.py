@@ -44,14 +44,10 @@ from omnigent.codex_model_vocabulary import (
 )
 from omnigent.inner.agent_env import clean_agent_env, declared_passthrough
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
-<<<<<<< HEAD
 from omnigent.model_fallbacks import CODEX_CATALOG_CLONE_SOURCE_SLUG, CODEX_DEFAULT_MODEL
 from omnigent.reasoning_effort import CODEX_EFFORTS, EFFORT_ALIASES, validate_effort
-=======
-from omnigent.reasoning_effort import CODEX_EFFORTS, validate_effort
 from omnigent.runner.identity import OMNIGENT_SESSION_ENV_VAR
 from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
->>>>>>> michaelzenz/session-watcher
 from omnigent.spec.types import RetryPolicy
 
 from . import _proc
@@ -436,44 +432,12 @@ def _clean_codex_env(extra_allow: Iterable[str] = ()) -> dict[str, str]:
             "DATABRICKS_BEARER",  # explicit CI/integration bearer used by auth.command
             "DATABRICKS_CODEX_TOKEN",  # env_key in ~/.codex/config.toml's DB provider
             *_CODEX_OMNIGENT_LAUNCH_ENV_VARS,
+            OMNIGENT_SESSION_ENV_VAR,
+            OMNIGENT_SERVER_UNIX_SOCKET,
         ),
         deny_exact=_CODEX_ENV_DENY_EXACT,
         extra_allowed=extra_allow,
     )
-<<<<<<< HEAD
-=======
-    allow_exact = {
-        "HOME",
-        "PATH",
-        "TERM",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "PYTHONUTF8",
-        "DATABRICKS_BEARER",  # explicit CI/integration bearer used by auth.command
-        "DATABRICKS_CODEX_TOKEN",  # env_key referenced by ~/.codex/config.toml's DB provider
-        OMNIGENT_SESSION_ENV_VAR,  # "inside Omnigent" marker (CLAUDE_CODE/CODEX analog)
-        OMNIGENT_SERVER_UNIX_SOCKET,
-    } | set(extra_allow)
-    for key, value in os.environ.items():
-        if key in _CODEX_ENV_DENY_EXACT:
-            continue
-        if key in allow_exact or key.startswith(allow_prefixes):
-            env[key] = value
-    return env
-
-
-def _declared_passthrough(os_env: OSEnvSpec | None) -> tuple[str, ...]:
-    """Env-var names an agent declared for tool passthrough.
-
-    Lives on ``os_env.sandbox.env_passthrough`` (an
-    :class:`OSEnvSandboxSpec` field), not on ``OSEnvSpec`` directly.
-    Returns an empty tuple when any link in that chain is absent.
-    """
-    if os_env is not None and os_env.sandbox is not None and os_env.sandbox.env_passthrough:
-        return tuple(os_env.sandbox.env_passthrough)
-    return ()
->>>>>>> michaelzenz/session-watcher
 
 
 def codex_skill_sources(bundle_dir: Path | None, home: Path) -> list[Path]:
