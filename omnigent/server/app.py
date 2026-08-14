@@ -2582,6 +2582,21 @@ def create_app(
             prefix="/v1",
             tags=["task_events"],
         )
+        from omnigent.server.routes.session_watcher import create_session_watcher_router
+
+        app.include_router(
+            create_session_watcher_router(
+                task_store,
+                task_event_store,
+                worker_store,
+                conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                auth_provider=auth_provider,
+                session_creator=_session_creator,
+            ),
+            prefix="/v1",
+            tags=["session_watcher"],
+        )
         if agent_queue_store is not None:
             from omnigent.server.routes.agent_queues import create_agent_queues_router
 

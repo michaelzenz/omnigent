@@ -23,6 +23,7 @@ def _worker_to_entity(row: SqlWorker) -> Worker:
         role_key=row.role_key,
         agent_profile_id=row.agent_profile_id,
         session_id=row.session_id,
+        external_session_hint=row.external_session_hint,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -76,6 +77,18 @@ class SqlAlchemyWorkerStore(WorkerStore):
                 select(SqlWorker)
                 .where(SqlWorker.workspace_id == current_workspace_id())
                 .where(SqlWorker.session_id == session_id)
+            )
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            return _worker_to_entity(row)
+
+    def get_by_external_hint(self, external_session_hint: str) -> Worker | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlWorker)
+                .where(SqlWorker.workspace_id == current_workspace_id())
+                .where(SqlWorker.external_session_hint == external_session_hint)
             )
             row = session.execute(stmt).scalars().first()
             if row is None:

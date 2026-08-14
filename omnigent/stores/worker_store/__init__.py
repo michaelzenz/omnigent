@@ -41,6 +41,10 @@ class WorkerStore(ABC):
         """Return the worker row for a live session, if any."""
 
     @abstractmethod
+    def get_by_external_hint(self, external_session_hint: str) -> Worker | None:
+        """Return the external worker matching a watcher-provided session hint."""
+
+    @abstractmethod
     def list_workers_for_task(self, task_id: str) -> list[Worker]:
         """List workers for a task ordered by created_at asc, id asc."""
 

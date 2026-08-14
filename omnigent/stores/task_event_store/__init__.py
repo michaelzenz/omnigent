@@ -160,8 +160,16 @@ class TaskEventStore(ABC):
     # ── GC ─────────────────────────────────────────────────────
 
     @abstractmethod
-    def purge_old_events(self, *, before_ts: int, states: list[str]) -> int:
+    def purge_old_events(
+        self,
+        *,
+        before_ts: int,
+        states: list[str],
+        event_type: str | None = None,
+    ) -> int:
         """Delete events in the given states older than ``before_ts``.
+
+        When ``event_type`` is set, only events of that type are purged.
 
         :returns: Number of rows deleted.
         """

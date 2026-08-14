@@ -150,6 +150,8 @@ class Worker:
     :param agent_profile_id: Agent behind an adopted session, which was never
         spawned from a role. Set on external lanes only.
     :param session_id: Live session id when spawned or adopted, or ``None`` before bind.
+    :param external_session_hint: Stable watcher-provided id for adopted external
+        sessions. Used by ingress to auto-route update events.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
@@ -161,6 +163,7 @@ class Worker:
     role_key: str | None = None
     agent_profile_id: str | None = None
     session_id: str | None = None
+    external_session_hint: str | None = None
     updated_at: int | None = None
 
 

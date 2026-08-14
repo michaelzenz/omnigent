@@ -1638,6 +1638,9 @@ class SqlWorker(OmnigentBase):
     agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="managed")
     session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    # Stable identifier from the watcher plugin for adopted external sessions.
+    # Used by ingress to auto-route ``external.session.updated`` events.
+    external_session_hint: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -1651,6 +1654,7 @@ class SqlWorker(OmnigentBase):
         Index("ix_workers_task", "workspace_id", "task_id", "id"),
         Index("ix_workers_role_key", "workspace_id", "role_key", "task_id"),
         Index("ix_workers_session", "workspace_id", "session_id"),
+        Index("ix_workers_external_hint", "workspace_id", "external_session_hint"),
     )
 
 

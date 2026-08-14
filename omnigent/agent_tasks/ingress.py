@@ -6,7 +6,10 @@ import logging
 from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
-from omnigent.agent_tasks.event_types import is_ingress_candidate
+from omnigent.agent_tasks.event_types import (
+    EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+    is_ingress_candidate,
+)
 from omnigent.agent_tasks.manager_role_profile import load_manager_role_profile
 from omnigent.agent_tasks.routing import ROUTED_EVENT_STATE, route_event_to_task
 from omnigent.agent_tasks.scoring import (
@@ -26,6 +29,32 @@ from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
+
+
+def _task_for_external_hint(
+    event: TaskEvent,
+    *,
+    worker_store: WorkerStore,
+    task_store: TaskStore,
+) -> Task | None:
+    """Look up the task bound to an external session by its watcher hint."""
+    import json
+
+    if not event.payload:
+        return None
+    try:
+        payload = json.loads(event.payload)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    hint = payload.get("session_hint")
+    if not hint:
+        return None
+    worker = worker_store.get_by_external_hint(hint)
+    if worker is None:
+        return None
+    return task_store.get(worker.task_id)
 
 
 def _bootstrap_params(
@@ -118,6 +147,28 @@ async def ingress_event(
                 params=params,
                 owner_user_id=owner_user_id,
                 routing_reason="session-binding",
+                session_creator=session_creator,
+                app_state=app_state,
+                user_id=user_id,
+            )
+
+    if event.event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
+        bound_task = _task_for_external_hint(event, worker_store=worker_store, task_store=task_store)
+        if bound_task is not None:
+            params = _bootstrap_params(
+                bound_task,
+                task_role_profile_store=task_role_profile_store,
+                role_profile=role_profile,
+            )
+            return await _finish_route(
+                event=event,
+                task=bound_task,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                params=params,
+                owner_user_id=owner_user_id,
+                routing_reason="external-session-hint",
                 session_creator=session_creator,
                 app_state=app_state,
                 user_id=user_id,
