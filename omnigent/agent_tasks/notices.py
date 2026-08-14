@@ -13,6 +13,7 @@ import logging
 
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+    EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     WORKER_EXECUTION_FINISHED_EVENT_TYPE,
 )
 
@@ -24,8 +25,9 @@ def _format_manager_notice(events: list) -> str:
 
     One notice per task per dispatch, listing every routed event the manager has
     not yet reconciled. A ``worker.execution.finished`` event carries its
-    outcome in the JSON ``payload``; any other routed event is shown by type and
-    title, matching the old per-event wake text.
+    outcome in the JSON ``payload``; an ``external.session.updated`` event carries
+    a transcript delta; any other routed event is shown by type and title,
+    matching the old per-event wake text.
     """
     lines = [
         f"[System: {len(events)} event(s) routed to this task — triage or act]",
@@ -34,9 +36,41 @@ def _format_manager_notice(events: list) -> str:
         if event.event_type == WORKER_EXECUTION_FINISHED_EVENT_TYPE:
             detail = _format_execution_detail(event)
             lines.append(f"- {event.event_type}: {detail}")
+        elif event.event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
+            lines.append(_format_external_update_notice(event))
         else:
             lines.append(f"- {event.event_type}: {event.title!r} (routed)")
     return "\n".join(lines)
+
+
+def _format_external_update_notice(event) -> str:
+    """Render an external.session.updated event as a structured manager prompt."""
+    payload: dict = {}
+    if event.payload:
+        try:
+            payload = json.loads(event.payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    session_hint = payload.get("session_hint", "?")
+    rewind_at = payload.get("rewind_at")
+    delta = payload.get("transcript_delta", "")
+
+    if rewind_at is not None:
+        header = (
+            f"- {event.event_type}: External session '{session_hint}' rewound "
+            f"(divergence after {rewind_at})"
+        )
+    else:
+        header = f"- {event.event_type}: External session '{session_hint}' updated"
+
+    parts = [header]
+    if delta:
+        parts.append(f"  Transcript delta:\n{delta}")
+    parts.append(
+    "  Review the delta. Update item states if the work is done. "
+    "If follow-up is needed, suggest a new taskItem (Copy button)."
+    )
+    return "\n".join(parts)
 
 
 def _format_execution_detail(event) -> str:

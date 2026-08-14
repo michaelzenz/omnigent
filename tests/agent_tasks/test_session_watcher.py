@@ -514,3 +514,47 @@ def test_reject_external_session_adoption_dismisses_proposal(db_uri: str) -> Non
     )
     assert dismissed is not None
     assert dismissed.state == "dismissed"
+
+
+# ── Phase 4: Manager notice format for transcript deltas ───────────
+
+
+def test_format_manager_notice_includes_external_update_delta() -> None:
+    """The manager notice renders external.session.updated with the delta."""
+    from omnigent.agent_tasks.notices import _format_manager_notice
+
+    event = type("E", (), {
+        "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+        "title": "External session update",
+        "payload": json.dumps({
+            "session_hint": "codex-delta",
+            "history_hash": "h5",
+            "transcript_delta": "user: can you fix the bug?\nassistant: I'll look at it",
+        }),
+    })()
+    notice = _format_manager_notice([event])
+    assert "external.session.updated" in notice
+    assert "codex-delta" in notice
+    assert "Transcript delta:" in notice
+    assert "fix the bug" in notice
+    assert "Copy button" in notice
+
+
+def test_format_manager_notice_includes_rewind() -> None:
+    """The manager notice indicates rewind for rewind events."""
+    from omnigent.agent_tasks.notices import _format_manager_notice
+
+    event = type("E", (), {
+        "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+        "title": "External session rewind",
+        "payload": json.dumps({
+            "session_hint": "codex-rewind",
+            "rewind_at": "h3",
+            "history_hash": "h7",
+            "transcript_delta": "rewritten messages",
+        }),
+    })()
+    notice = _format_manager_notice([event])
+    assert "rewound" in notice
+    assert "h3" in notice
+    assert "rewritten messages" in notice
