@@ -301,11 +301,8 @@ beforeEach(() => {
   fetchProjectSessionIdsMock.mockReset();
   fetchProjectSessionIdsMock.mockResolvedValue([]);
   projectSessionsMock.current = {};
-<<<<<<< HEAD
   pinnedIdsRef.current = [];
-=======
   secretaryProfileMock.current = null;
->>>>>>> michaelzenz/session-watcher
   // Default to a multi-user server so the tab-based tests see the tabs.
   isServerLocalMock.mockReturnValue(false);
   // The bound session's startup signal (send in flight / PTY pending) feeds
@@ -1112,7 +1109,6 @@ describe("Sidebar tabs", () => {
       conv("conv_done", "Claude Code", { archived: true }),
     ]);
     renderSidebar();
-<<<<<<< HEAD
 
     fireEvent.pointerDown(screen.getByTestId("session-filter"), {
       button: 0,
@@ -1129,62 +1125,18 @@ describe("Sidebar tabs", () => {
     expect(screen.queryByText("conv_mine")).toBeNull();
   });
 
+  it("renders the PuppyGarden nav button", () => {
+    mockConversations([conv("conv_mine", "Claude Code")]);
+    renderSidebar();
+    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
+    expect(puppyGarden).toHaveAttribute("href", "/puppy-garden");
+  });
+
   it("shows every pinned session in Pinned regardless of the My/Shared filter", () => {
     // Pins are ownership-agnostic, so the Pinned section always includes all
     // pinned sessions — an owned pin stays visible on the Shared tab and a
     // shared pin stays visible on My sessions. Only the unpinned rows re-scope
     // with the filter.
-=======
-    expect(screen.queryByTestId("sidebar-tab-mine")).toBeNull();
-    expect(screen.queryByTestId("sidebar-tab-shared")).toBeNull();
-    expect(screen.getByTestId("sidebar-tab-puppy-garden")).toBeInTheDocument();
-    // Falls back to the owned list; the shared row never appears.
-    expect(screen.getByText("conv_mine")).toBeInTheDocument();
-    expect(screen.queryByText("conv_shared")).toBeNull();
-  });
-
-  it("renders PuppyGarden between New session and Search", () => {
-    mockConversations([conv("conv_mine", "Claude Code")]);
-    renderSidebar();
-
-    const newSession = screen.getByTestId("new-chat-button");
-    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
-    const search = screen.getByTestId("sidebar-search-button");
-
-    expect(newSession.compareDocumentPosition(puppyGarden)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(puppyGarden.compareDocumentPosition(search)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(puppyGarden).toHaveAttribute("href", "/puppy-garden");
-  });
-
-  it("keeps PuppyGarden selected when My sessions tab is clicked", () => {
-    mockConversations([conv("conv_mine", "Claude Code")]);
-    renderSidebarWithRoutes("/");
-
-    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
-    showPuppyGardenTab();
-    expect(puppyGarden).toHaveAttribute("aria-selected", "true");
-
-    fireEvent.mouseDown(screen.getByTestId("sidebar-tab-mine"), { button: 0 });
-    expect(puppyGarden).toHaveAttribute("aria-selected", "true");
-  });
-
-  it("leaves PuppyGarden when a session row is clicked", () => {
-    mockConversations([conv("conv_mine", "Claude Code")]);
-    renderSidebarWithRoutes("/puppy-garden");
-
-    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
-    expect(puppyGarden).toHaveAttribute("aria-selected", "true");
-
-    fireEvent.click(screen.getByRole("link", { name: /conv_mine/ }));
-    expect(puppyGarden).toHaveAttribute("aria-selected", "false");
-  });
-
-  it("gives a pinned shared session a Pinned section on the Shared tab, not My sessions", () => {
-    // Pins are ownership-agnostic (localStorage), so both tabs reuse the same
-    // Pinned section — scoped to that tab's conversations. A pinned shared
-    // session floats to Pinned on the Shared tab and never leaks onto My
-    // sessions (which shows only owned sessions).
->>>>>>> michaelzenz/session-watcher
     mockConversations([
       conv("conv_mine", "Claude Code"),
       conv("conv_shared", "Claude Code", { owner: "other@example.com" }),

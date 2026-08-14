@@ -298,9 +298,10 @@ interface SidebarProps {
 function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
-<<<<<<< HEAD
   isTasksPage: boolean;
   isUsagePage: boolean;
+  isPuppyGardenPage: boolean;
+  isGlossariesPage: boolean;
   newSessionProjectName: string | null;
 } {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
@@ -309,30 +310,32 @@ function useActiveNavItem(): {
   const isInboxPage = leaf === "inbox";
   const isTasksPage = leaf === "tasks";
   const isUsagePage = leaf === "usage";
+  const isPuppyGardenPage = leaf === "puppy-garden";
+  const isGlossariesPage = leaf === "glossaries";
   const isNewSessionRoute =
-    activeConversationId == null && !isInboxPage && !isTasksPage && !isUsagePage;
+    activeConversationId == null &&
+    !isInboxPage &&
+    !isTasksPage &&
+    !isUsagePage &&
+    !isPuppyGardenPage &&
+    !isGlossariesPage;
   const requestedProject = isNewSessionRoute
     ? new URLSearchParams(location.search).get("project")
     : null;
   const newSessionProjectName = requestedProject || null;
-  // Exclude inbox/tasks/usage: they also have no `:conversationId`, so they
-  // would otherwise light up the "New session" button. A project-prefilled
-  // new session belongs to that project row instead of the global nav item.
+  // Exclude inbox/tasks/usage/puppy-garden/glossaries: they also have no
+  // `:conversationId`, so they would otherwise light up the "New session"
+  // button. A project-prefilled new session belongs to that project row.
   const isNewChatPage = isNewSessionRoute && newSessionProjectName == null;
-  return { isNewChatPage, isInboxPage, isTasksPage, isUsagePage, newSessionProjectName };
-=======
-  isPuppyGardenPage: boolean;
-  isGlossariesPage: boolean;
-} {
-  const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
-  const leaf = useLocation().pathname.split("/").filter(Boolean).at(-1);
-  const isInboxPage = leaf === "inbox";
-  const isPuppyGardenPage = leaf === "puppy-garden";
-  const isGlossariesPage = leaf === "glossaries";
-  const isNewChatPage =
-    activeConversationId == null && !isInboxPage && !isPuppyGardenPage && !isGlossariesPage;
-  return { isNewChatPage, isInboxPage, isPuppyGardenPage, isGlossariesPage };
->>>>>>> michaelzenz/session-watcher
+  return {
+    isNewChatPage,
+    isInboxPage,
+    isTasksPage,
+    isUsagePage,
+    isPuppyGardenPage,
+    isGlossariesPage,
+    newSessionProjectName,
+  };
 }
 
 /**
@@ -607,12 +610,15 @@ export function Sidebar({
   }
 
   // Which top-level nav button to highlight for the current route.
-<<<<<<< HEAD
-  const { isNewChatPage, isInboxPage, isTasksPage, isUsagePage, newSessionProjectName } =
-    useActiveNavItem();
-=======
-  const { isNewChatPage, isInboxPage, isPuppyGardenPage, isGlossariesPage } = useActiveNavItem();
->>>>>>> michaelzenz/session-watcher
+  const {
+    isNewChatPage,
+    isInboxPage,
+    isTasksPage,
+    isUsagePage,
+    isPuppyGardenPage,
+    isGlossariesPage,
+    newSessionProjectName,
+  } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -878,7 +884,6 @@ export function Sidebar({
                 New session
               </Link>
             </Button>
-<<<<<<< HEAD
             {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
             <Button
               asChild
@@ -947,6 +952,52 @@ export function Sidebar({
                 )}
               </Link>
             </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                SIDEBAR_ROW,
+                "w-full justify-start border-0 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isPuppyGardenPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="sidebar-tab-puppy-garden"
+            >
+              <Link to="/puppy-garden" onClick={onNavClick}>
+                <PawPrintIcon
+                  className={cn(
+                    "ui-icon",
+                    isPuppyGardenPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                PuppyGarden
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                SIDEBAR_ROW,
+                "w-full justify-start border-0 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isGlossariesPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="sidebar-tab-glossaries"
+            >
+              <Link to="/glossaries" onClick={onNavClick}>
+                <BookOpenIcon
+                  className={cn(
+                    "ui-icon",
+                    isGlossariesPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                Glossaries
+              </Link>
+            </Button>
             {usagePageEnabled && (
               <Button
                 asChild
@@ -971,88 +1022,6 @@ export function Sidebar({
                   Usage
                 </Link>
               </Button>
-=======
-            {!selectionMode && (
-              <Button
-                asChild
-                className={cn(
-                  "mt-1 w-full justify-start gap-1 px-2 text-sm",
-                  isPuppyGardenPage && "bg-muted font-semibold",
-                )}
-                variant="ghost"
-                data-testid="sidebar-tab-puppy-garden"
-              >
-                <Link to="/puppy-garden" aria-selected={isPuppyGardenPage} onClick={onNavClick}>
-                  <PawPrintIcon className="size-4 text-foreground" />
-                  PuppyGarden
-                </Link>
-              </Button>
-            )}
-            {!selectionMode && (
-              <Button
-                asChild
-                className={cn(
-                  "mt-1 w-full justify-start gap-1 px-2 text-sm",
-                  isGlossariesPage && "bg-muted font-semibold",
-                )}
-                variant="ghost"
-                data-testid="sidebar-tab-glossaries"
-              >
-                <Link to="/glossaries" aria-selected={isGlossariesPage} onClick={onNavClick}>
-                  <BookOpenIcon className="size-4 text-foreground" />
-                  Glossaries
-                </Link>
-              </Button>
-            )}
-            {selectionMode ? (
-              <BulkActionBar
-                selectedIds={selectedIds}
-                allConversations={loadedRows}
-                visibleCount={visibleConversationCount}
-                onSelectAll={() => selectAll(getVisibleConversationsRef.current())}
-                onDeselectAll={deselectAll}
-                onClear={deselectAll}
-                onExit={exitSelectionMode}
-              />
-            ) : (
-              <div className="relative mt-3 flex items-center gap-1.5">
-                {/* "Search" opens the command palette (⌘K), which searches both
-                    session titles and chat content. It replaces the old inline
-                    filter box — the palette is the single search surface now.
-                    The `group` scope reveals the ⌘K badge on hover/focus. */}
-                <button
-                  type="button"
-                  onClick={() => onOpenSearch?.()}
-                  aria-label="Search"
-                  data-testid="sidebar-search-button"
-                  className="group relative flex min-h-8 flex-1 items-center rounded-full border border-input pr-2 pl-7 text-left text-sm text-muted-foreground transition hover:bg-muted focus-visible:outline-1"
-                >
-                  <SearchIcon className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 size-3.5" />
-                  <span className="flex-1 truncate">Search</span>
-                  {/* ⌘K hint — hidden until the button is hovered / focused,
-                      mirroring the sidebar's other hover-revealed affordances. */}
-                  <kbd className="ml-2 hidden shrink-0 items-center rounded-md border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted-foreground transition-opacity group-hover:inline-flex group-focus-visible:inline-flex">
-                    {MOD_KEY}K
-                  </kbd>
-                </button>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Select sessions"
-                      data-testid="toggle-selection-mode"
-                      className="shrink-0 rounded-full"
-                      onClick={() => setSelectionMode(true)}
-                    >
-                      <ListChecksIcon className="size-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Select sessions</TooltipContent>
-                </Tooltip>
-              </div>
->>>>>>> michaelzenz/session-watcher
             )}
           </div>
 
