@@ -427,8 +427,6 @@ def _get_runner_llm_client() -> LLMClient:
     return _runner_llm_client
 
 
-<<<<<<< HEAD
-=======
 def _publish_tmux_target_for_bridge(
     *,
     resource_registry: SessionResourceRegistry,
@@ -6594,7 +6592,6 @@ async def _session_labels_for_runner_spawn(
     return {str(key): str(value) for key, value in labels.items()}
 
 
->>>>>>> michaelzenz/session-watcher
 # Marker the runner stamps on action_required SSE events it intends
 # to dispatch locally. See designs/RUNNER_MCP.md §Explicit dispatch
 # marker.
@@ -15643,21 +15640,15 @@ def create_runner_app_from_env() -> FastAPI:
     server_url = os.environ.get("RUNNER_SERVER_URL", "").strip()
     if not server_url:
         raise RuntimeError("RUNNER_SERVER_URL is required for the runner subprocess factory")
-<<<<<<< HEAD
     from omnigent_client._http import is_loopback_url
-=======
     from omnigent.server_transport import server_async_http_transport_kwargs
->>>>>>> michaelzenz/session-watcher
 
     server_client = httpx.AsyncClient(
         base_url=server_url,
         timeout=httpx.Timeout(5.0, read=None),
-<<<<<<< HEAD
         # A proxy cannot reach a loopback server, so local targets bypass it.
         trust_env=not is_loopback_url(server_url),
-=======
         **server_async_http_transport_kwargs(),
->>>>>>> michaelzenz/session-watcher
     )
     return create_runner_app(server_client=server_client)
 
