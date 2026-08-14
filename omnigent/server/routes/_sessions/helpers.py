@@ -4724,6 +4724,101 @@ async def _await_settled_managed_launch(launch: ManagedLaunch) -> None:
         )
 
 
+async def ensure_session_runner_client(
+    session_id: str,
+    conv: Conversation,
+    *,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+    infrastructure: "ServerRunnerInfrastructure | None" = None,
+) -> tuple[httpx.AsyncClient | None, bool]:
+    """Resolve a connected runner client, launching one when needed.
+
+    Idempotent: returns an existing connected client without spawning a
+    duplicate runner. For host-bound sessions, mirrors the relaunch path
+    used by ``POST /v1/sessions/{id}/events``.
+
+    :param session_id: Session/conversation identifier.
+    :param conv: Conversation row for *session_id*.
+    :param conversation_store: Store used to rotate ``runner_id``.
+    :param runner_router: Router for resolving a connected runner.
+    :param infrastructure: Host/tunnel registries. Defaults to the module
+        global set by :func:`set_server_runner_infrastructure`.
+    :returns: ``(client, needs_session_init)`` — ``needs_session_init`` is
+        ``True`` when a runner was launched during this call and the caller
+        should run :func:`_ensure_runner_session_initialized` before
+        forwarding an event.
+    """
+    from omnigent.server.routes._sessions.common import (
+        ServerRunnerInfrastructure,
+        get_server_runner_infrastructure,
+    )
+
+    infra = (
+        infrastructure
+        if infrastructure is not None
+        else get_server_runner_infrastructure()
+    )
+
+    runner_client = await _get_runner_client(session_id, runner_router)
+    if runner_client is not None:
+        return runner_client, False
+
+    if conv.host_id is None:
+        return None, False
+
+    tunnel_registry = infra.tunnel_registry if infra is not None else None
+    runner_exit_reports = infra.runner_exit_reports if infra is not None else None
+    host_registry = infra.host_registry if infra is not None else None
+
+    if conv.runner_id is not None:
+        runner_client = await _wait_for_runner_client(
+            session_id,
+            runner_router,
+            tunnel_registry,
+            runner_id=conv.runner_id,
+            timeout_s=10.0,
+            runner_exit_reports=runner_exit_reports,
+        )
+        if runner_client is not None:
+            return runner_client, False
+
+    launched_runner_id: str | None = None
+    if host_registry is not None:
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is not None:
+            from omnigent.host.frames import HARNESS_NOT_CONFIGURED_ERROR_CODE
+
+            launch_attempt = await _launch_runner_on_host(
+                conv,
+                conversation_store,
+                host_registry,
+                host_conn,
+            )
+            if launch_attempt.error_code == HARNESS_NOT_CONFIGURED_ERROR_CODE:
+                _logger.warning(
+                    "ensure_session_runner_client: harness not configured for session %s",
+                    session_id,
+                )
+                return None, False
+            launched_runner_id = launch_attempt.runner_id
+
+    if launched_runner_id is None:
+        return None, False
+
+    runner_client = await _wait_for_runner_client(
+        session_id,
+        runner_router,
+        tunnel_registry,
+        runner_id=launched_runner_id,
+        timeout_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+        runner_exit_reports=runner_exit_reports,
+    )
+    if runner_client is None:
+        return None, False
+    return runner_client, True
+
+
 async def _get_runner_client_for_resource_access(
     *args: Any, **kwargs: Any
 ) -> httpx.AsyncClient | None:

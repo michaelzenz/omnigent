@@ -35,7 +35,8 @@ from omnigent.harness_plugins import (
     harness_capabilities,
 )
 from omnigent.runner.routing import RunnerRouter
-from omnigent.server.host_registry import HostRegistry
+from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
+from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.schemas import (
     McpServerStartup,
     SandboxStatus,
@@ -767,6 +768,33 @@ def get_server_host_registry() -> HostRegistry | None:
     return _server_host_registry
 
 
+# Bundled host/tunnel/exit-report registries for background runner launch
+# paths (broker dispatch, worker ensure) that run outside request scope.
+@dataclass(frozen=True)
+class ServerRunnerInfrastructure:
+    """Host/tunnel registries used to launch runners outside request scope."""
+
+    host_registry: HostRegistry | None = None
+    tunnel_registry: TunnelRegistry | None = None
+    runner_exit_reports: RunnerExitReports | None = None
+
+
+_server_runner_infrastructure: ServerRunnerInfrastructure | None = None
+
+
+def set_server_runner_infrastructure(
+    infrastructure: ServerRunnerInfrastructure | None,
+) -> None:
+    """Stash host/tunnel registries for background runner launch paths."""
+    global _server_runner_infrastructure
+    _server_runner_infrastructure = infrastructure
+
+
+def get_server_runner_infrastructure() -> ServerRunnerInfrastructure | None:
+    """Return the registries stashed by :func:`set_server_runner_infrastructure`."""
+    return _server_runner_infrastructure
+
+
 __all__ = [
     "COST_CONTROL_OVERRIDE_VALUES",
     "SUBAGENT_ROUTING_OVERRIDE_VALUES",
@@ -925,6 +953,7 @@ __all__ = [
     "_runner_skills_cache",
     "_runner_skills_inflight",
     "_server_host_registry",
+    "_server_runner_infrastructure",
     "_server_runner_router",
     "_session_active_response_cache",
     "_session_background_task_count_cache",
@@ -933,9 +962,12 @@ __all__ = [
     "_session_status_cache",
     "_session_terminal_pending_cache",
     "_session_todos_cache",
+    "ServerRunnerInfrastructure",
     "get_server_host_registry",
+    "get_server_runner_infrastructure",
     "get_server_runner_router",
     "set_server_host_registry",
+    "set_server_runner_infrastructure",
     "set_server_runner_router",
 ]
 

@@ -326,9 +326,12 @@ from omnigent.server.routes._sessions.common import (
     _session_terminal_pending_cache as _session_terminal_pending_cache,
     _session_todos_cache as _session_todos_cache,
     get_server_host_registry as get_server_host_registry,
+    get_server_runner_infrastructure as get_server_runner_infrastructure,
     get_server_runner_router as get_server_runner_router,
     set_server_host_registry as set_server_host_registry,
+    set_server_runner_infrastructure as set_server_runner_infrastructure,
     set_server_runner_router as set_server_runner_router,
+    ServerRunnerInfrastructure as ServerRunnerInfrastructure,
 )
 
 # Lower-layer helpers (SSE builders, publishers, persistence, runner-forward
@@ -608,6 +611,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _ensure_native_terminal_ready as _ensure_native_terminal_ready,
     _ensure_runner_relay as _ensure_runner_relay,
     _ensure_runner_session_initialized as _ensure_runner_session_initialized,
+    ensure_session_runner_client as ensure_session_runner_client,
     _evaluate_input_policy as _evaluate_input_policy,
     _evaluate_tool_call_policy as _evaluate_tool_call_policy,
     _fetch_model_options as _fetch_model_options,
