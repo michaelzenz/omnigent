@@ -306,6 +306,20 @@ describe("SessionUpdatesProvider fingerprint pruning", () => {
 });
 
 describe("SessionUpdatesProvider list invalidation", () => {
+  it("invalidates conversation lists on session_added frames", () => {
+    const client = new QueryClient();
+    seedConversations(client, ["conv_a"]);
+    renderProvider(client, ["/"]);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const handler = frameHandler();
+
+    act(() => handler({ type: "session_added", session_id: "conv_new" }));
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversations"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-sessions"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["archived-project-names"] });
+  });
+
   it("invalidates the archived-project-names scan on a remote removal", () => {
     // Another client archiving/relabeling/deleting must refresh the Archived
     // view's project picker — only local mutations invalidate it otherwise.

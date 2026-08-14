@@ -659,7 +659,7 @@ def main(argv: list[str]) -> int:
         default=None,
         metavar="HOST",
         help="Convenience preset for an internal PyPI mirror host (e.g. "
-        "pypi-proxy.cloud.databricks.com): sets --index-url to https://HOST/simple, "
+        "pypi-proxy.internal.example.com): sets --index-url to https://HOST/simple, "
         "--pypi-api to https://HOST/pypi, and rewrites HOST -> files.pythonhosted.org "
         "in download URLs. Explicit --index-url/--pypi-api/--url-rewrite override.",
     )

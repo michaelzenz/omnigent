@@ -233,6 +233,17 @@ def test_register_replaces_stale_connection() -> None:
     assert poison is None
 
 
+def test_stale_connection_cannot_deregister_replacement() -> None:
+    registry = HostRegistry()
+    old_conn = registry.register("host_replace", FakeWebSocket(), _make_hello(), owner="dave")
+    new_conn = registry.register("host_replace", FakeWebSocket(), _make_hello(), owner="dave")
+
+    assert registry.deregister("host_replace", old_conn) is None
+    assert registry.get("host_replace") is new_conn
+    assert registry.deregister("host_replace", new_conn) is new_conn
+    assert registry.get("host_replace") is None
+
+
 def test_send_text_enqueues_frame() -> None:
     """
     Verify that send_text puts the frame on the connection's

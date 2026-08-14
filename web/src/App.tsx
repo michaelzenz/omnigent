@@ -56,6 +56,16 @@ const UsagePage = withPageView(
   "usage",
   lazy(() => import("@/pages/UsagePage").then((m) => ({ default: m.UsagePage }))),
 );
+<<<<<<< HEAD
+=======
+const InboxPage = lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage })));
+const PuppyGardenPage = lazy(() =>
+  import("@/pages/PuppyGardenPage").then((m) => ({ default: m.PuppyGardenPage })),
+);
+const GlossariesPage = lazy(() =>
+  import("@/pages/GlossariesPage").then((m) => ({ default: m.GlossariesPage })),
+);
+>>>>>>> michaelzenz/session-watcher
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
@@ -153,10 +163,15 @@ function App({ basename }: AppProps = {}) {
           <Route path={prefix || "/"} element={<ChatPage />} />
           <Route path={`${prefix}/c/:conversationId`} element={<ChatPage />} />
           <Route path={`${prefix}/inbox`} element={<InboxPage />} />
+<<<<<<< HEAD
           <Route path={`${prefix}/tasks`} element={<TasksPage />} />
           {isFeatureEnabled(info, "usage_page") && (
             <Route path={`${prefix}/usage`} element={<UsagePage />} />
           )}
+=======
+          <Route path={`${prefix}/puppy-garden`} element={<PuppyGardenPage />} />
+          <Route path={`${prefix}/glossaries`} element={<GlossariesPage />} />
+>>>>>>> michaelzenz/session-watcher
           {/* Settings renders into the chat outlet so the conversations
               sidebar stays put — entering settings only swaps the card's
               content (the section nav) and the main area. The active section

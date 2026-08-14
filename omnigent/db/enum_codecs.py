@@ -5,7 +5,9 @@ Several low-cardinality closed-set columns (``conversations.kind``,
 ``account_tokens.kind``, ``policies.type``, ``policies.scope``,
 ``hosts.status``, ``agents.kind``, ``scheduled_tasks.state``,
 ``scheduled_tasks.execution_target``,
-``scheduled_task_runs.status``) are stored as
+``scheduled_task_runs.status``, ``tasks.state``,
+``task_events.state``, ``task_event_executions.status``,
+``agent_queues.state``, ``agent_queue_items.state``) are stored as
 integer codes rather
 than their string names — smaller rows and a tighter ``CHECK`` than a
 free ``VARCHAR``. The string names remain the
@@ -125,6 +127,78 @@ SCHEDULED_TASK_RUN_STATUS: dict[str, int] = {
     "succeeded": 3,
     "failed": 4,
     "skipped": 5,
+}
+
+TASK_STATE: dict[str, int] = {
+    "active": 1,
+    "pending": 2,
+    "idle": 3,
+    "archived": 4,
+}
+
+TASK_EVENT_STATE: dict[str, int] = {
+    "received": 1,
+    "awaiting_grouping": 4,
+    "routed": 6,
+    "reconciled": 7,
+    "dismissed": 8,
+    "failed": 9,
+    # Classified as informational by the secretary; shown in the FYI bucket.
+    "classified_fyi": 12,
+}
+
+FYI_CLUSTER_STATE: dict[str, int] = {
+    "pending": 1,
+    "dismissed": 2,
+}
+
+TASK_ITEM_STATE: dict[str, int] = {
+    "draft": 1,
+    "pending": 2,
+    # 3 was "approved", removed: accepting an item goes straight to "queued".
+    "queued": 4,
+    "running": 5,
+    "done": 6,
+    "cancelled": 7,
+    # The dispatcher could not hand this item to an agent at all (no runner, the
+    # conversation could not be created, injection refused). Distinct from a
+    # worker that ran and failed, which returns to "queued" with an execution row
+    # carrying the reason.
+    "dispatch_failed": 8,
+    # Stopped by the user mid-run, or found abandoned after the host that was
+    # running it went away. Parked rather than terminal: the queue halts and the
+    # item waits to be retried or removed.
+    "interrupted": 9,
+}
+
+AGENT_QUEUE_ITEM_STATE: dict[str, int] = {
+    "queued": 1,
+    "dispatched": 2,
+    # The turn ended on its own — whether the agent succeeded or crashed. It
+    # means the slot is free, not that the work went well.
+    "done": 3,
+    "cancelled": 4,
+    "dispatch_failed": 5,
+    # Twin of "dispatch_failed": parked, halts the queue, keeps its source
+    # claims, and leaves only by retry or cancel.
+    "interrupted": 6,
+}
+
+AGENT_QUEUE_STATE: dict[str, int] = {
+    "active": 1,
+    # Stopped by a user, who is the only one that may resume it.
+    "paused": 2,
+    # Stopped by a failed dispatch. Also user-resumable only, but surfaced
+    # separately because it means something broke rather than someone chose.
+    "halted": 3,
+}
+
+TASK_EVENT_EXECUTION_STATUS: dict[str, int] = {
+    "queued": 1,
+    "running": 2,
+    "succeeded": 3,
+    "failed": 4,
+    "cancelled": 5,
 }
 
 
@@ -338,3 +412,81 @@ def encode_scheduled_task_run_status(name: str) -> int:
 def decode_scheduled_task_run_status(code: int) -> str:
     """Decode a ``scheduled_task_runs.status`` int code to its name."""
     return _decode(SCHEDULED_TASK_RUN_STATUS, code, field="scheduled_task_runs.status")
+
+
+def encode_task_state(name: str) -> int:
+    """Encode a ``tasks.state`` name to its int code."""
+    return _encode(TASK_STATE, name, field="tasks.state")
+
+
+def decode_task_state(code: int) -> str:
+    """Decode a ``tasks.state`` int code to its name."""
+    return _decode(TASK_STATE, code, field="tasks.state")
+
+
+def encode_task_event_state(name: str) -> int:
+    """Encode a ``task_events.state`` name to its int code."""
+    return _encode(TASK_EVENT_STATE, name, field="task_events.state")
+
+
+def decode_task_event_state(code: int) -> str:
+    """Decode a ``task_events.state`` int code to its name."""
+    return _decode(TASK_EVENT_STATE, code, field="task_events.state")
+
+
+def encode_task_event_execution_status(name: str) -> int:
+    """Encode a ``task_event_executions.status`` name to its int code."""
+    return _encode(
+        TASK_EVENT_EXECUTION_STATUS,
+        name,
+        field="task_event_executions.status",
+    )
+
+
+def decode_task_event_execution_status(code: int) -> str:
+    """Decode a ``task_event_executions.status`` int code to its name."""
+    return _decode(
+        TASK_EVENT_EXECUTION_STATUS,
+        code,
+        field="task_event_executions.status",
+    )
+
+
+def encode_task_item_state(name: str) -> int:
+    """Encode a ``task_items.state`` name to its int code."""
+    return _encode(TASK_ITEM_STATE, name, field="task_items.state")
+
+
+def decode_task_item_state(code: int) -> str:
+    """Decode a ``task_items.state`` int code to its name."""
+    return _decode(TASK_ITEM_STATE, code, field="task_items.state")
+
+
+def encode_fyi_cluster_state(name: str) -> int:
+    """Encode a ``fyi_clusters.state`` name to its int code."""
+    return _encode(FYI_CLUSTER_STATE, name, field="fyi_clusters.state")
+
+
+def decode_fyi_cluster_state(code: int) -> str:
+    """Decode a ``fyi_clusters.state`` int code to its name."""
+    return _decode(FYI_CLUSTER_STATE, code, field="fyi_clusters.state")
+
+
+def encode_agent_queue_item_state(name: str) -> int:
+    """Encode an ``agent_queue_items.state`` name to its int code."""
+    return _encode(AGENT_QUEUE_ITEM_STATE, name, field="agent_queue_items.state")
+
+
+def decode_agent_queue_item_state(code: int) -> str:
+    """Decode an ``agent_queue_items.state`` int code to its name."""
+    return _decode(AGENT_QUEUE_ITEM_STATE, code, field="agent_queue_items.state")
+
+
+def encode_agent_queue_state(name: str) -> int:
+    """Encode an ``agent_queues.state`` name to its int code."""
+    return _encode(AGENT_QUEUE_STATE, name, field="agent_queues.state")
+
+
+def decode_agent_queue_state(code: int) -> str:
+    """Decode an ``agent_queues.state`` int code to its name."""
+    return _decode(AGENT_QUEUE_STATE, code, field="agent_queues.state")

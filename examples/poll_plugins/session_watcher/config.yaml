@@ -1,0 +1,17 @@
+# How often the host runs this plugin's run.py (seconds).
+interval_s: 60
+
+# Directories to scan for external session files.
+scan_dirs:
+  - ~/.codex/sessions
+  - ~/.cursor/projects
+
+# Number of lines to include in the discovery transcript_snippet.
+snippet_lines: 50
+
+# Only consider sessions modified within this window (seconds).
+recency_window_s: 86400  # 1 day
+
+# Only emit events for sessions idle for at least this long (seconds).
+# Prevents triaging sessions that are mid-turn.
+sink_time_s: 180  # 3 minutes

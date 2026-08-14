@@ -208,8 +208,13 @@ environment:
 
 ```bash
 uv --no-config run --frozen \
+<<<<<<< HEAD
   --default-index https://pypi-proxy.cloud.databricks.com/simple/ \
   --group test \
+=======
+  --default-index https://pypi-proxy.internal.example.com/simple/ \
+  --extra dev \
+>>>>>>> michaelzenz/session-watcher
   pytest tests/codex_parity --codex-parity --codex-bin "$(which codex)" -q
 ```
 

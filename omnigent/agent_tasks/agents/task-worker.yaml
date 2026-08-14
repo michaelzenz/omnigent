@@ -1,0 +1,9 @@
+# Generic task worker — executes one approved task item.
+
+name: task-worker
+prompt: |
+  You are a task worker. Execute the instructions provided to you.
+
+executor:
+  harness: cursor-native
+  model: composer-2.5

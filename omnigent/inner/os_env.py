@@ -26,6 +26,7 @@ from omnigent.runner.identity import (
     OMNIGENT_SESSION_ENV_VAR,
     strip_runner_auth_secrets,
 )
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 
 from .async_utils import run_sync_on_thread
 from .credential_proxy import (
@@ -145,6 +146,8 @@ _DEFAULT_ENV_PASSTHROUGH: tuple[str, ...] = (
     # way CLAUDE_CODE / CODEX are visible in their agents' shells. Set on
     # the runner via runner.identity.OMNIGENT_SESSION_ENV_VAR.
     OMNIGENT_SESSION_ENV_VAR,
+    # Remote SSH hosts route server callbacks through the reverse UDS tunnel.
+    OMNIGENT_SERVER_UNIX_SOCKET,
     # Windows system / profile constants (SYSTEMROOT is mandatory for Winsock,
     # USERPROFILE for Path.home(), etc.); a no-op on POSIX. See _platform.
     *WINDOWS_ENV_PASSTHROUGH,

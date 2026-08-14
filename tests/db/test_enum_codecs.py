@@ -41,6 +41,13 @@ _CODECS = [
         ec.encode_scheduled_task_run_status,
         ec.decode_scheduled_task_run_status,
     ),
+    (ec.TASK_STATE, ec.encode_task_state, ec.decode_task_state),
+    (ec.TASK_EVENT_STATE, ec.encode_task_event_state, ec.decode_task_event_state),
+    (
+        ec.TASK_EVENT_EXECUTION_STATUS,
+        ec.encode_task_event_execution_status,
+        ec.decode_task_event_execution_status,
+    ),
 ]
 
 
@@ -127,4 +134,47 @@ def test_shipped_codes_are_stable() -> None:
         "succeeded": 3,
         "failed": 4,
         "skipped": 5,
+    }
+    assert ec.TASK_STATE == {
+        "active": 1,
+        "pending": 2,
+        "idle": 3,
+        "archived": 4,
+    }
+    assert ec.TASK_EVENT_STATE == {
+        "received": 1,
+        "awaiting_grouping": 4,
+        "routed": 6,
+        "reconciled": 7,
+        "dismissed": 8,
+        "failed": 9,
+        "classified_fyi": 12,
+    }
+    # 3 was "approved" and is retired, not reused — a freed code stays free so an
+    # old row can never be reinterpreted as a newer state.
+    assert ec.TASK_ITEM_STATE == {
+        "draft": 1,
+        "pending": 2,
+        "queued": 4,
+        "running": 5,
+        "done": 6,
+        "cancelled": 7,
+        "dispatch_failed": 8,
+        "interrupted": 9,
+    }
+    assert ec.AGENT_QUEUE_ITEM_STATE == {
+        "queued": 1,
+        "dispatched": 2,
+        "done": 3,
+        "cancelled": 4,
+        "dispatch_failed": 5,
+        "interrupted": 6,
+    }
+    assert ec.AGENT_QUEUE_STATE == {"active": 1, "paused": 2, "halted": 3}
+    assert ec.TASK_EVENT_EXECUTION_STATUS == {
+        "queued": 1,
+        "running": 2,
+        "succeeded": 3,
+        "failed": 4,
+        "cancelled": 5,
     }

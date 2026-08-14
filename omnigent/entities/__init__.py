@@ -2,6 +2,13 @@
 
 from omnigent.entities.account import Account, AccountToken
 from omnigent.entities.agent import Agent, LoadedAgent
+from omnigent.entities.agent_queue import (
+    AGENT_QUEUE_ITEM_KINDS,
+    AGENT_QUEUE_ROLES,
+    AgentQueue,
+    AgentQueueItem,
+    AgentQueueKey,
+)
 from omnigent.entities.comment import Comment, CommentsFingerprint
 from omnigent.entities.conversation import (
     NON_CONTENT_ITEM_TYPES,
@@ -37,13 +44,32 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
+from omnigent.entities.task import (
+    EventTag,
+    FyiCluster,
+    Task,
+    TaskAsset,
+    TaskEvent,
+    TaskEventExecution,
+    TaskEventRoutingAttempt,
+    TaskItem,
+    TaskItemEvent,
+    TaskTag,
+    Worker,
+)
+from omnigent.entities.task_role_profile import TaskRoleProfile, UserRoleSession
 
 __all__ = [
+    "AGENT_QUEUE_ITEM_KINDS",
+    "AGENT_QUEUE_ROLES",
     "DEFAULT_ENVIRONMENT_ID",
     "NON_CONTENT_ITEM_TYPES",
     "Account",
     "AccountToken",
     "Agent",
+    "AgentQueue",
+    "AgentQueueItem",
+    "AgentQueueKey",
     "Comment",
     "CommentsFingerprint",
     "CompactionData",
@@ -51,8 +77,10 @@ __all__ = [
     "ConversationItem",
     "DeviceGrant",
     "ErrorData",
+    "EventTag",
     "FunctionCallData",
     "FunctionCallOutputData",
+    "FyiCluster",
     "ItemData",
     "LoadedAgent",
     "MessageData",
@@ -71,7 +99,18 @@ __all__ = [
     "SessionResourceView",
     "SlashCommandData",
     "StoredFile",
+    "Task",
+    "TaskAsset",
+    "TaskEvent",
+    "TaskEventExecution",
+    "TaskEventRoutingAttempt",
+    "TaskItem",
+    "TaskItemEvent",
+    "TaskRoleProfile",
+    "TaskTag",
     "TerminalCommandData",
+    "UserRoleSession",
+    "Worker",
     "filter_resources_by_type",
     "get_resource_by_id",
     "parse_item_data",

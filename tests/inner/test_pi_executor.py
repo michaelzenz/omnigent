@@ -3535,6 +3535,16 @@ def test_clean_pi_env_includes_omnigent_session_marker(monkeypatch) -> None:
     assert env.get(OMNIGENT_SESSION_ENV_VAR) == OMNIGENT_SESSION_ENV_VALUE
 
 
+def test_clean_pi_env_includes_server_unix_socket(monkeypatch) -> None:
+    """The server UDS path survives the Pi subprocess env scrub."""
+    from omnigent.inner.pi_executor import _clean_pi_env
+    from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
+
+    monkeypatch.setenv(OMNIGENT_SERVER_UNIX_SOCKET, "/tmp/omnigent-server.sock")
+
+    assert _clean_pi_env()[OMNIGENT_SERVER_UNIX_SOCKET] == "/tmp/omnigent-server.sock"
+
+
 def test_rpc_start_spawns_with_exact_env(monkeypatch) -> None:
     """``_PiRpcSession.start`` passes the caller's env dict verbatim.
 

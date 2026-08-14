@@ -16,6 +16,7 @@ import { type RefObject, useLayoutEffect, useRef } from "react";
  * the transcript down a line. Pinning the wrapper's height keeps the collapse
  * inside the composer.
  */
+<<<<<<< HEAD
 function measureTextarea(
   ta: HTMLTextAreaElement,
   maxRows: number,
@@ -53,6 +54,28 @@ function measureTextarea(
     // from its old height to its new one.
     if (pinned) wrapper.style.height = restoreHeight;
   }
+=======
+function measureTextarea(ta: HTMLTextAreaElement, maxRows: number): void {
+  const cs = getComputedStyle(ta);
+  const lineHeight = parseFloat(cs.lineHeight);
+  if (!Number.isFinite(lineHeight)) return;
+  const paddingTop = parseFloat(cs.paddingTop);
+  const paddingBottom = parseFloat(cs.paddingBottom);
+  const maxHeight = lineHeight * maxRows + paddingTop + paddingBottom;
+
+  // Collapse before measuring so scrollHeight reflects wrapped content at the
+  // current width (not the previous inline height from a wider container).
+  ta.style.minHeight = "0";
+  ta.style.height = "0";
+  const contentHeight = ta.scrollHeight;
+  if (contentHeight === 0) {
+    ta.style.height = "auto";
+    ta.style.minHeight = "";
+    return;
+  }
+  ta.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+  ta.style.minHeight = "";
+>>>>>>> michaelzenz/session-watcher
 }
 
 /**
@@ -75,6 +98,7 @@ export function useAutoGrowTextarea(
   ref: RefObject<HTMLTextAreaElement | null>,
   value: string,
   maxRows = 10,
+<<<<<<< HEAD
   onGrowth?: (px: number) => void,
 ) {
   // Read through a ref so an inline callback doesn't re-subscribe the
@@ -89,6 +113,21 @@ export function useAutoGrowTextarea(
   useLayoutEffect(() => {
     if (ref.current) measureTextarea(ref.current, maxRows, onGrowthRef.current);
   }, [ref, value, maxRows]);
+=======
+  /** Re-measure when a container mounts or resizes (e.g. side-panel swap). */
+  layoutKey?: string | number | null,
+) {
+  // Re-measure on content / maxRows / layout change.
+  useLayoutEffect(() => {
+    const ta = ref.current;
+    if (!ta) return;
+    const measure = () => measureTextarea(ta, maxRows);
+    measure();
+    // One frame later so width-dependent wrapping has settled (narrow rails).
+    const frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [ref, value, maxRows, layoutKey]);
+>>>>>>> michaelzenz/session-watcher
 
   // Install one observer per element (not per keystroke — value isn't a
   // dep) so the box recovers once layout settles after a 0-height mount.

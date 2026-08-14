@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     )
     from omnigent.stores.comment_store import CommentStore
     from omnigent.stores.policy_store import PolicyStore
+    from omnigent.stores.task_event_store import TaskEventStore
+    from omnigent.stores.task_store import TaskStore
     from omnigent.terminals import TerminalRegistry
     from omnigent.tools import ToolManager
     from omnigent.tools.base import ToolContext
@@ -36,6 +38,8 @@ _file_store: FileStore | None = None
 _artifact_store: ArtifactStore | None = None
 _comment_store: CommentStore | None = None
 _policy_store: PolicyStore | None = None
+_task_store: TaskStore | None = None
+_task_event_store: TaskEventStore | None = None
 _caps: RuntimeCaps = RuntimeCaps()
 
 # Server-resident tmux terminal registry. Initialized in
@@ -176,6 +180,8 @@ def init(
     artifact_store: ArtifactStore | None = None,
     comment_store: CommentStore | None = None,
     policy_store: PolicyStore | None = None,
+    task_store: TaskStore | None = None,
+    task_event_store: TaskEventStore | None = None,
     caps: RuntimeCaps | None = None,
 ) -> None:
     """
@@ -205,6 +211,11 @@ def init(
         ``None`` when session policies are not configured;
         the policy engine will only use spec-declared
         policies.
+    :param task_store: The TaskStore instance for managed
+        tasks. ``None`` when agent tasks are not configured.
+    :param task_event_store: The TaskEventStore instance for
+        task events, routing, and executions. ``None`` when
+        agent tasks are not configured.
     :param caps: Operator-configured execution ceiling.
         ``None`` uses :class:`RuntimeCaps` defaults.
     """
@@ -213,6 +224,7 @@ def init(
     global _conversation_store, _agent_store
     global _agent_cache, _file_store, _artifact_store, _caps
     global _terminal_registry, _comment_store, _policy_store
+    global _task_store, _task_event_store
     _conversation_store = conversation_store
     _agent_store = agent_store
     _agent_cache = agent_cache
@@ -220,6 +232,8 @@ def init(
     _artifact_store = artifact_store
     _comment_store = comment_store
     _policy_store = policy_store
+    _task_store = task_store
+    _task_event_store = task_event_store
     _caps = caps if caps is not None else RuntimeCaps()
     # Tmux terminal registry: server-resident, conversation-scoped
     # ``inner.terminal.TerminalInstance`` map. See

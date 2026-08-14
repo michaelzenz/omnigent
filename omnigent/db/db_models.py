@@ -1311,6 +1311,56 @@ class SqlHost(OmnigentBase):
     )
 
 
+class SqlSshHostInstallation(OmnigentBase):
+    """Durable reconciliation state for one configured SSH connection."""
+
+    __tablename__ = "ssh_host_installations"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    connection_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ssh_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    host_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    owner: Mapped[str] = mapped_column(String(256), nullable=False)
+    desired_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    bundle_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_attempt_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "desired_state IN ('connected', 'detached')",
+            name="ck_ssh_host_installations_desired_state",
+        ),
+        UniqueConstraint(
+            "workspace_id",
+            "host_id",
+            name="uq_ssh_host_installations_host_id",
+        ),
+        # list_candidates filters workspace_id first, then due-ness.
+        Index(
+            "ix_ssh_host_installations_due",
+            "workspace_id",
+            "desired_state",
+            "next_attempt_at",
+            "lease_expires_at",
+        ),
+    )
+
+
 class SqlUserDailyCost(OmnigentBase):
     """
     SQLAlchemy model for the ``user_daily_cost`` table.
@@ -1582,5 +1632,551 @@ class SqlScheduledTaskRun(OmnigentBase):
             "ix_scheduled_task_runs_conversation_id",
             "workspace_id",
             "conversation_id",
+        ),
+    )
+
+
+class SqlTask(OmnigentBase):
+    """
+    SQLAlchemy model for the ``tasks`` table.
+
+    A task is a long-lived unit of work owned by one manager agent. Inbound
+    :class:`SqlTaskEvent` rows route to a task so the manager can update task
+    state and dispatch workers.
+    """
+
+    __tablename__ = "tasks"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    manager_role_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default="manager:default",
+    )
+    worker_role_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default="worker:default",
+    )
+    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4)", name="ck_tasks_state"),
+        Index("ix_tasks_state_updated", "workspace_id", "state", "updated_at", "id"),
+        Index("ix_tasks_manager_role_key", "workspace_id", "manager_role_key", "id"),
+        Index("ix_tasks_created_at", "workspace_id", "created_at", "id"),
+        Index(
+            "ix_tasks_manager_conversation",
+            "workspace_id",
+            "manager_conversation_id",
+        ),
+    )
+
+
+class SqlTaskTag(OmnigentBase):
+    """SQLAlchemy model for the ``task_tags`` table."""
+
+    __tablename__ = "task_tags"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    task_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    tag_type: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tag: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    __table_args__ = (Index("ix_task_tags_reverse", "workspace_id", "tag_type", "tag", "task_id"),)
+
+
+class SqlTaskEvent(OmnigentBase):
+    """SQLAlchemy model for the ``task_events`` table."""
+
+    __tablename__ = "task_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
+    source_internal_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tags: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    routed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN (1, 4, 6, 7, 8, 9, 12)",
+            name="ck_task_events_state",
+        ),
+        Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
+        Index("ix_task_events_state_created", "workspace_id", "state", "created_at", "id"),
+        Index("ix_task_events_event_type", "workspace_id", "event_type", "created_at", "id"),
+        Index(
+            "ix_task_events_awaiting_grouping",
+            "workspace_id",
+            "state",
+            "updated_at",
+            "id",
+        ),
+    )
+
+
+class SqlTaskItem(OmnigentBase):
+    """SQLAlchemy model for the ``task_items`` table."""
+
+    __tablename__ = "task_items"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    instructions: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    worker_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(32), nullable=False, server_default="manager")
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 4, 5, 6, 7, 8, 9)", name="ck_task_items_state"),
+        Index("ix_task_items_task_state", "workspace_id", "task_id", "state", "id"),
+        Index("ix_task_items_worker", "workspace_id", "worker_id", "id"),
+    )
+
+
+class SqlWorker(OmnigentBase):
+    """SQLAlchemy model for the ``workers`` table."""
+
+    __tablename__ = "workers"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    # Managed lanes resolve their agent through ``role_key``. Adopted sessions
+    # were never spawned from a role, so they carry the agent id directly.
+    role_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="managed")
+    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    # Stable identifier from the watcher plugin for adopted external sessions.
+    # Used by ingress to auto-route ``external.session.updated`` events.
+    external_session_hint: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('managed', 'external')", name="ck_workers_kind"),
+        CheckConstraint(
+            "(kind = 'managed' AND role_key IS NOT NULL AND agent_profile_id IS NULL) "
+            "OR (kind = 'external' AND role_key IS NULL)",
+            name="ck_workers_role_or_agent",
+        ),
+        Index("ix_workers_task", "workspace_id", "task_id", "id"),
+        Index("ix_workers_role_key", "workspace_id", "role_key", "task_id"),
+        Index("ix_workers_session", "workspace_id", "session_id"),
+        Index("ix_workers_external_hint", "workspace_id", "external_session_hint"),
+    )
+
+
+class SqlTaskAsset(OmnigentBase):
+    """SQLAlchemy model for the ``task_assets`` table."""
+
+    __tablename__ = "task_assets"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('url')", name="ck_task_assets_kind"),
+        Index("ix_task_assets_task", "workspace_id", "task_id", "id"),
+    )
+
+
+class SqlTaskItemEvent(OmnigentBase):
+    """SQLAlchemy model for the ``task_item_events`` table."""
+
+    __tablename__ = "task_item_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    task_item_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    relation: Mapped[str] = mapped_column(String(32), nullable=False, server_default="triggered")
+    created_at: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index(
+            "ix_task_item_events_event",
+            "workspace_id",
+            "event_id",
+            "task_item_id",
+        ),
+    )
+
+
+class SqlFyiCluster(OmnigentBase):
+    """SQLAlchemy model for secretary FYI signal clusters."""
+
+    __tablename__ = "fyi_clusters"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    headline: Mapped[str] = mapped_column(String(512), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer)
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2)", name="ck_fyi_clusters_state"),
+        Index(
+            "ix_fyi_clusters_owner_state",
+            "workspace_id",
+            "owner_user_id",
+            "state",
+            "id",
+        ),
+    )
+
+
+class SqlFyiClusterEvent(OmnigentBase):
+    """SQLAlchemy model for the ``fyi_cluster_events`` link table."""
+
+    __tablename__ = "fyi_cluster_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    cluster_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+
+
+class SqlTaskRoleProfile(OmnigentBase):
+    """
+    SQLAlchemy model for a task agent role definition.
+
+    A role names an agent profile together with where it runs (host,
+    workspace) and what drives it (harness, model). Everything but the key
+    and kind is optional so externally-defined roles, which carry their own
+    metadata, can omit the fields Omnigent would otherwise resolve.
+    """
+
+    __tablename__ = "task_role_profiles"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    harness: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # NULL when the harness resolves its own model (e.g. Codex, OpenCode).
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('manager', 'worker', 'broker', 'secretary', 'external')",
+            name="ck_task_role_profiles_kind",
+        ),
+        Index("ix_task_role_profiles_kind", "workspace_id", "kind", "role"),
+    )
+
+
+class SqlUserRoleSession(OmnigentBase):
+    """
+    SQLAlchemy model for a user's live session against a singleton role.
+
+    Roles that are instantiated per task or per worker lane keep their
+    conversation on that binding instead; this table covers the roles a user
+    talks to directly, such as the broker and secretary.
+    """
+
+    __tablename__ = "user_role_sessions"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_user_role_sessions_conversation",
+            "workspace_id",
+            "conversation_id",
+        ),
+    )
+
+
+class SqlTaskEventRoutingAttempt(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_routing_attempts`` table."""
+
+    __tablename__ = "task_event_routing_attempts"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    candidate_task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    proposed_at: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index(
+            "ix_task_event_routing_attempts_event",
+            "workspace_id",
+            "event_id",
+            "id",
+        ),
+        Index(
+            "ix_task_event_routing_attempts_candidate_task",
+            "workspace_id",
+            "candidate_task_id",
+            "event_id",
+        ),
+    )
+
+
+class SqlTaskEventExecution(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_executions`` table."""
+
+    __tablename__ = "task_event_executions"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_item_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    status: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    attempt_no: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    assigned_at: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    error: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN (1, 2, 3, 4, 5)",
+            name="ck_task_event_executions_status",
+        ),
+        Index(
+            "ix_task_event_executions_task_item",
+            "workspace_id",
+            "task_item_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_task_event_executions_task",
+            "workspace_id",
+            "task_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_task_event_executions_conversation_id",
+            "workspace_id",
+            "conversation_id",
+            "id",
+        ),
+    )
+
+
+# A queue is identified by (role, owner_user_id, scope_id), and all three are
+# key columns, so none may be NULL — SQL uniqueness does not constrain NULLs and
+# a NULL cannot sit in a primary key. Both nullable-in-spirit parts therefore
+# store an empty string for "not scoped" / "no owner", and the store translates
+# to and from ``None`` at the entity boundary. ``scope_id`` is VARCHAR(32) hex
+# rather than Uuid16 for the same reason: the sentinel needs a representable
+# empty value.
+class SqlAgentQueue(OmnigentBase):
+    """SQLAlchemy model for the ``agent_queues`` control table."""
+
+    __tablename__ = "agent_queues"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    scope_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_due_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inflight_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    inflight_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3)", name="ck_agent_queues_state"),
+        Index(
+            "ix_agent_queues_due",
+            "workspace_id",
+            "state",
+            "next_due_at",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_agent_queues_conversation_id",
+            "workspace_id",
+            "conversation_id",
+        ),
+    )
+
+
+class SqlAgentQueueItem(OmnigentBase):
+    """SQLAlchemy model for the ``agent_queue_items`` table."""
+
+    __tablename__ = "agent_queue_items"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    role: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_ids: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
+    payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    # Arrival order, and the only ordering there is — dispatch is strict insert
+    # order. created_at is second-granularity, so it cannot break ties between
+    # items enqueued in the same second, and a uuid tiebreak would reorder them
+    # arbitrarily. Assigned monotonically per workspace.
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    not_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dispatched_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6)", name="ck_agent_queue_items_state"),
+        Index(
+            "ix_agent_queue_items_drain",
+            "workspace_id",
+            "role",
+            "owner_user_id",
+            "scope_id",
+            "state",
+            "seq",
         ),
     )

@@ -2984,6 +2984,16 @@ def test_clean_codex_env_includes_omnigent_session_marker(monkeypatch) -> None:
     assert env.get(OMNIGENT_SESSION_ENV_VAR) == OMNIGENT_SESSION_ENV_VALUE
 
 
+def test_clean_codex_env_includes_server_unix_socket(monkeypatch) -> None:
+    """The server UDS path survives the Codex subprocess env scrub."""
+    from omnigent.inner.codex_executor import _clean_codex_env
+    from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
+
+    monkeypatch.setenv(OMNIGENT_SERVER_UNIX_SOCKET, "/tmp/omnigent-server.sock")
+
+    assert _clean_codex_env()[OMNIGENT_SERVER_UNIX_SOCKET] == "/tmp/omnigent-server.sock"
+
+
 # ---------------------------------------------------------------------------
 # Tests for _to_codex_input_items — input_file → inline text conversion
 # ---------------------------------------------------------------------------

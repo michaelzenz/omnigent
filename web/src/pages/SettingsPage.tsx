@@ -13,6 +13,8 @@
  *   Workspace panel default for new chats, and UI/code font controls.
  * - **Git** — Git behavior, e.g. the default base branch pre-filled when
  *   naming a new worktree branch in the composer.
+ * - **Connection** — SSH profiles for remote machines, with automatic
+ *   connectivity checks.
  * - **Keyboard shortcuts** — the full shortcuts reference, shown inline.
  * - **Account** — only when the accounts auth provider is active. Absorbs
  *   the old sidebar AccountMenu: signed-in identity, change password, and
@@ -94,6 +96,7 @@ import { conversationDisplayLabel } from "@/shell/sidebarNav";
 import { absoluteTime } from "@/lib/relativeTime";
 import { useNavigate } from "@/lib/routing";
 import { useSettingsRoute } from "@/shell/settingsNav";
+import { ConnectionSettingsBody } from "@/shell/ConnectionSettingsSection";
 import {
   normalizeResolvedTheme,
   normalizeThemeMode,
@@ -143,6 +146,10 @@ import {
   readHideUnconfiguredHarnesses,
   writeHideUnconfiguredHarnesses,
 } from "@/lib/harnessVisibilityPreferences";
+import {
+  readAdoptExternalSessions,
+  writeAdoptExternalSessions,
+} from "@/lib/puppyGardenPreferences";
 import {
   applyThemePalette,
   DEFAULT_PALETTE,
@@ -229,8 +236,10 @@ export function SettingsPage() {
   return (
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       {section === "appearance" && <AppearanceSection />}
+      {section === "connection" && <ConnectionSection />}
       {section === "git" && <GitSection />}
       {section === "shortcuts" && <ShortcutsSection />}
+      {section === "puppygarden" && <PuppyGardenSection />}
       {section === "account" && hasAuthSession && <AccountSection />}
       {section === "archived" && <ArchivedSection />}
       {section === "cli" && isElectronShell() && <LocalCliSection />}
@@ -963,6 +972,18 @@ function AppearanceSection() {
   );
 }
 
+/** SSH connection profiles and connectivity checks. */
+function ConnectionSection() {
+  return (
+    <Section
+      title="Connection"
+      description="Add SSH config aliases for remote machines. Connections are tested using your local ~/.ssh/config. When Codex import is enabled, rollouts on that host are mirrored into Omnigent."
+    >
+      <ConnectionSettingsBody />
+    </Section>
+  );
+}
+
 /** Git behavior settings. */
 function GitSection() {
   return (
@@ -1373,6 +1394,38 @@ function ShortcutsSection() {
   return (
     <Section title="Keyboard shortcuts" description="Speed up common actions with the keyboard.">
       <KeyboardShortcutsList />
+    </Section>
+  );
+}
+
+/** Puppy Garden task board settings. */
+function PuppyGardenSection() {
+  const [adopt, setAdopt] = useState(() => readAdoptExternalSessions());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setAdopt(next);
+    writeAdoptExternalSessions(next);
+  }, []);
+  return (
+    <Section title="Puppy Garden" description="Configure the Puppy Garden task board.">
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex flex-col">
+          <span id={labelId} className="text-sm font-medium">
+            Adopt external sessions
+          </span>
+          <span className="text-sm text-muted-foreground">
+            When on, sessions discovered by the session watcher are offered for adoption into tasks.
+            Off by default — turn it on to surface adoption cards in the board.
+          </span>
+        </div>
+        <Switch
+          aria-labelledby={labelId}
+          checked={adopt}
+          onCheckedChange={toggle}
+          data-testid="adopt-external-sessions-toggle"
+          className="mt-0.5 shrink-0"
+        />
+      </div>
     </Section>
   );
 }

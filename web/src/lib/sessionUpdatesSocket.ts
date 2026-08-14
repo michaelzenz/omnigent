@@ -25,6 +25,7 @@ export type SessionUpdatesFrame =
   | { type: "snapshot"; items: SessionListWireItem[] }
   | { type: "changed"; items: SessionListWireItem[] }
   | { type: "removed"; ids: string[] }
+  | { type: "session_added"; session_id: string }
   | { type: "hosts_changed" }
   | { type: "heartbeat" };
 

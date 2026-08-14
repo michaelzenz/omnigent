@@ -401,6 +401,7 @@ class HostRegistry:
     def deregister(
         self,
         host_id: str,
+<<<<<<< HEAD
         workspace_id: int | None = None,
         conn: HostConnection | None = None,
     ) -> bool:
@@ -444,6 +445,25 @@ class HostRegistry:
                 return False
             conn.last_frame_at = time.time()
             return True
+=======
+        connection: HostConnection | None = None,
+    ) -> HostConnection | None:
+        """Remove a host connection.
+
+        When *connection* is provided, remove only if it is still the current
+        connection. This prevents stale tunnel cleanup from removing a newer
+        replacement.
+
+        :param host_id: Host identifier to remove.
+        :param connection: Optional exact connection expected to be current.
+        :returns: The removed connection, or ``None`` when absent/replaced.
+        """
+        with self._lock:
+            current = self._hosts.get(host_id)
+            if current is None or (connection is not None and current is not connection):
+                return None
+            return self._hosts.pop(host_id)
+>>>>>>> michaelzenz/session-watcher
 
     def get(self, host_id: str, workspace_id: int | None = None) -> HostConnection | None:
         """Look up a live host connection.

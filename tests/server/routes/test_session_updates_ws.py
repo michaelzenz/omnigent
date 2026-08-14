@@ -35,6 +35,18 @@ ALICE = "alice@example.com"
 BOB = "bob@example.com"
 
 
+def test_discovery_key_maps_local_to_shared_channel() -> None:
+    """Single-user ``local`` and no-auth ``None`` share one discovery fan-out."""
+    from omnigent.server.auth import RESERVED_USER_LOCAL
+
+    assert sessions_routes._discovery_key(None) == sessions_routes._SHARED_DISCOVERY_KEY
+    assert (
+        sessions_routes._discovery_key(RESERVED_USER_LOCAL)
+        == sessions_routes._SHARED_DISCOVERY_KEY
+    )
+    assert sessions_routes._discovery_key(ALICE) == ALICE
+
+
 class _NoIdentityAuthProvider:
     """Auth provider whose handshake yields no identity.
 
@@ -548,6 +560,8 @@ def test_session_added_event_pushes_unwatched_session(
         # proving the server fetched the real row, not echoed the event.
         assert s2 in items
         assert items[s2]["title"] == "brand new"
+        added = _recv_until(ws, {"session_added"})
+        assert added["session_id"] == s2
 
 
 def test_session_added_for_inaccessible_session_is_not_pushed(

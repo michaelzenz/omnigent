@@ -2,9 +2,17 @@
 build/
 dist/
 node_modules/
+<<<<<<< HEAD
 .pnpm-store/
 .pnpm-debug.log*
+=======
+# Lockfiles are regenerated locally; keep on disk but do not track in git.
+uv.lock
+web/package-lock.json
+>>>>>>> michaelzenz/session-watcher
 reviews/
+# Scratch space for in-progress notes; shared designs belong in designs/.
+notes/
 
 # Generated artifact; never committed.
 .pytest_cache/

@@ -6144,6 +6144,7 @@
         "title": "SlashCommandData",
         "type": "object"
       },
+<<<<<<< HEAD
       "StoreHarnessCredentialRequest": {
         "description": "Request body for `POST /v1/hosts/{id}/harnesses/{harness}/credential`.\n\nCarries the credential in the body (never the URL). The secret field is\noptional so the `adopt` kind \u2014 which references an existing host env var\nby name rather than sending a value \u2014 can omit it.",
         "properties": {
@@ -6189,6 +6190,18 @@
             "type": "string"
           },
           "secret": {
+=======
+      "SshConnectionBody": {
+        "description": "One SSH connection profile in API requests.",
+        "properties": {
+          "alias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          },
+          "id": {
+>>>>>>> michaelzenz/session-watcher
             "anyOf": [
               {
                 "type": "string"
@@ -6197,6 +6210,7 @@
                 "type": "null"
               }
             ],
+<<<<<<< HEAD
             "description": "The API key / gateway token for `key` / `gateway`; `None` for `adopt`.",
             "title": "Secret"
           },
@@ -6217,6 +6231,96 @@
           "kind"
         ],
         "title": "StoreHarnessCredentialRequest",
+=======
+            "title": "Id"
+          },
+          "label": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "alias"
+        ],
+        "title": "SshConnectionBody",
+        "type": "object"
+      },
+      "SshConnectionsPutRequest": {
+        "description": "Body for `PUT /v1/ssh/connections`.",
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/SshConnectionBody"
+            },
+            "title": "Connections",
+            "type": "array"
+          },
+          "package_index_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Index Url"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "SshConnectionsPutRequest",
+        "type": "object"
+      },
+      "SshTestRequest": {
+        "description": "Body for `POST /v1/ssh/test`.",
+        "properties": {
+          "alias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias"
+        ],
+        "title": "SshTestRequest",
+        "type": "object"
+      },
+      "SshTestResponse": {
+        "description": "Result of an SSH connectivity probe.",
+        "properties": {
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "SshTestResponse",
+>>>>>>> michaelzenz/session-watcher
         "type": "object"
       },
       "TerminalCommandData": {
@@ -12579,25 +12683,175 @@
         ]
       }
     },
+<<<<<<< HEAD
     "/v1/usage": {
       "get": {
         "description": "Aggregate the calling user's LLM spend across their sessions.\n\nrequire_user, not get_user_id: the aggregation scopes to the caller,\nso a request slipping through as `None` in multi-user mode would\nread another scope. Fail closed with 401 instead (`user_id` is\n`None` only when auth is disabled \u2014 the single-user / local case).",
         "operationId": "get_usage_v1_usage_get",
+=======
+    "/v1/ssh/connections": {
+      "get": {
+        "description": "List SSH connection profiles stored on this host.",
+        "operationId": "list_ssh_connections_v1_ssh_connections_get",
+>>>>>>> michaelzenz/session-watcher
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
+<<<<<<< HEAD
                   "$ref": "#/components/schemas/UsageReport"
+=======
+                  "additionalProperties": true,
+                  "title": "Response List Ssh Connections V1 Ssh Connections Get",
+                  "type": "object"
+>>>>>>> michaelzenz/session-watcher
                 }
               }
             },
             "description": "Successful Response"
           }
         },
+<<<<<<< HEAD
         "summary": "Get Usage",
         "tags": [
           "usage"
+=======
+        "summary": "List Ssh Connections",
+        "tags": [
+          "ssh"
+        ]
+      },
+      "put": {
+        "description": "Replace SSH connection profiles stored on this host.",
+        "operationId": "put_ssh_connections_v1_ssh_connections_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshConnectionsPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Ssh Connections V1 Ssh Connections Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ssh Connections",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/ssh/connections/{connection_id}/retry": {
+      "post": {
+        "description": "Queue an immediate reconciliation attempt.",
+        "operationId": "retry_ssh_connection_v1_ssh_connections__connection_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Retry Ssh Connection V1 Ssh Connections  Connection Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Ssh Connection",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/ssh/test": {
+      "post": {
+        "description": "Probe SSH connectivity from this host using a config alias.",
+        "operationId": "test_ssh_connection_v1_ssh_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Ssh Connection",
+        "tags": [
+          "ssh"
+>>>>>>> michaelzenz/session-watcher
         ]
       }
     }

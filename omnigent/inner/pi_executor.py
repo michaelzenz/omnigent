@@ -70,6 +70,7 @@ from omnigent.pi_native_credentials import (
     _is_databricks_ai_gateway_url,
 )
 from omnigent.runner.identity import OMNIGENT_SESSION_ENV_VAR
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 from omnigent.spec.types import RetryPolicy
 
 from ._subprocess_lifecycle import close_subprocess_transport
@@ -625,6 +626,7 @@ _PI_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
         "SHELL",
         "TZ",
         OMNIGENT_SESSION_ENV_VAR,  # "inside Omnigent" marker (CLAUDE_CODE/CODEX analog)
+        OMNIGENT_SERVER_UNIX_SOCKET,
     }
 )
 _STREAM_READ_CHUNK_SIZE = 65536

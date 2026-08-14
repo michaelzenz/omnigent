@@ -1,6 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Outlet, useParams, useSearchParams } from "@/lib/routing";
+import { Outlet, useLocation, useParams, useSearchParams } from "@/lib/routing";
 import { useConversations } from "@/hooks/useConversations";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
@@ -152,6 +152,8 @@ export function AppShell() {
   // Read early: the conversationId scopes the per-session workspace state
   // (rail open/width/tab/open files) used throughout this component.
   const { conversationId } = useParams<{ conversationId: string }>();
+  const location = useLocation();
+  const isPuppyGardenPage = location.pathname.split("/").filter(Boolean).at(-1) === "puppy-garden";
   const [fileViewerCommentsOpen, setFileViewerCommentsOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>(() =>
     conversationId ? (readSessionWorkspaceState(conversationId).rightRailTab ?? "files") : "files",
@@ -1581,11 +1583,17 @@ export function AppShell() {
               onOpenSearch={() => setCommandPaletteOpen(true)}
             />
 
-            {/* Content region (everything right of the sidebar): a relative
-          flex row holding the chat+workspace group and the push panels
-          as siblings. */}
-            <div className="relative flex min-h-0 min-w-0 flex-1">
-              {/* Chat + workspace group. The full-width header overlay is
+            {/* Content region (everything right of the sidebar). PuppyGarden
+          uses a minimal main-only slot — it owns board + chat in
+          PuppyGardenShell and never mounts ChatHeader / WorkspacePanel. */}
+            {isPuppyGardenPage ? (
+              <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                {isElectronShell() && <UpdateBanner />}
+                <Outlet />
+              </main>
+            ) : (
+              <div className="relative flex min-h-0 min-w-0 flex-1">
+                {/* Chat + workspace group. The full-width header overlay is
             scoped to this group, so it spans the chat *and* the right
             workspace card but never reaches over the push panels (which
             render their own top chrome as siblings outside the group).
@@ -1593,6 +1601,7 @@ export function AppShell() {
             over — *except* in terminal-first sessions, where the terminal
             renders inline in main (via MainTerminalView) and the
             workspace card stays visible alongside. */}
+<<<<<<< HEAD
               <div
                 className={cn(
                   "relative flex min-h-0 min-w-0 flex-1",
@@ -1684,6 +1693,64 @@ export function AppShell() {
                 )}
 
                 {/* Right workspace card — gated on conversationId (panels have
+=======
+                <div
+                  className={cn(
+                    "relative flex min-h-0 min-w-0 flex-1",
+                    panelOpen && !terminalFirst && "md:hidden",
+                  )}
+                >
+                  <ChatHeader
+                    sidebarOpen={sidebarOpen}
+                    onOpenSidebar={() => setSidebarOpen(true)}
+                    isChildSession={isChildSession}
+                    parentSessionId={activeSession?.parentSessionId}
+                    conversationId={conversationId}
+                    boundAgent={boundAgent}
+                    canShare={canShare}
+                    shareDisabled={shareDisabled}
+                    shareDisabledReason={shareDisabledReason}
+                    onShare={() => setShareOpen(true)}
+                    hasAgentInfo={hasAgentInfo}
+                    onAgentInfo={() => setAgentInfoOpen(true)}
+                    hasHeaderMenu={hasHeaderMenu}
+                    showFilesPanel={showFilesPanel}
+                    hasRailContent={hasRailContent}
+                    rightPanelOpen={rightPanelOpen}
+                    onToggleRightPanel={toggleRightPanel}
+                    mobileMenu={{
+                      fileViewerOpen,
+                      panelOpen,
+                      terminalFirst,
+                      executionLogsOpen,
+                      filesPanelOpen,
+                      subagentsPanelOpen,
+                      shellsPanelOpen,
+                      todosPanelOpen,
+                      hideTerminalsTab,
+                      showShellsTab: railTabsAvailable.terminals,
+                      terminalsLength: railTerminals.length,
+                      todosSupported,
+                      todosCompleted,
+                      todosTotal: todos.length,
+                      debugMode,
+                      changedCount,
+                      subagentsWorking,
+                      agentCount,
+                      onOpenFiles: openFilesPanel,
+                      onOpenShells: openShellsPanel,
+                      onOpenSubagents: openSubagentsPanel,
+                      onOpenTodos: openTodosPanel,
+                      onOpenMainExecutionLog: openMainExecutionLog,
+                    }}
+                  />
+                  <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                    {isElectronShell() && <UpdateBanner />}
+                    <Outlet />
+                  </main>
+
+                  {/* Right workspace card — gated on conversationId (panels have
+>>>>>>> michaelzenz/session-watcher
               no workspace to read without a session), default-open,
               hidden when any push panel takes the right side, *except* in
               terminal-first sessions where the terminal renders inline
@@ -1693,6 +1760,7 @@ export function AppShell() {
               rectangle (e.g. a no-filesystem agent with no terminals).
               Sits inside the group so the header overlay spans it; the
               push panels below sit outside the group. */}
+<<<<<<< HEAD
                 {conversationId && workspacePanelVisible && (
                   <WorkspacePanel
                     conversationId={conversationId}
@@ -1733,10 +1801,54 @@ export function AppShell() {
                   />
                 )}
               </div>
+=======
+                  {conversationId &&
+                    hasRailContent &&
+                    rightPanelOpen &&
+                    (terminalFirst || !panelOpen) &&
+                    !executionLogsOpen &&
+                    !filesPanelOpen && (
+                      <WorkspacePanel
+                        conversationId={conversationId}
+                        width={inlinePanelWidth}
+                        inert={inlinePanelWidth === 0}
+                        handleProps={inlinePanelHandleProps}
+                        rightRailTab={rightRailTab}
+                        onRightRailTabChange={handleRightRailTabChange}
+                        showFilesPanel={showFilesPanel}
+                        showBrowserTab={railTabsAvailable.browser}
+                        changedCount={changedCount}
+                        showShellsTab={railTabsAvailable.terminals}
+                        terminalsLength={railTerminals.length}
+                        subagentsWorking={subagentsWorking}
+                        agentCount={agentCount}
+                        todosSupported={todosSupported}
+                        todosCompleted={todosCompleted}
+                        todosTotal={todos.length}
+                        rootSessionId={rootSessionId}
+                        selectedFilePath={selectedFilePath}
+                        openFiles={openFiles}
+                        openFileViewer={openFileViewer}
+                        onCloseFile={closeFile}
+                        onShowScopeView={showScopeView}
+                        onCommentsOpenChange={setFileViewerCommentsOpen}
+                        openTerminalsPanel={openTerminalsPanel}
+                        permissionLevel={permissionLevel}
+                        filesPanelSort={filesPanelSort}
+                        onSortChange={handleFilesSortChange}
+                        filesPanelFlatView={filesPanelFlatView}
+                        onFlatViewChange={handleFilesFlatViewChange}
+                        filesPanelShowHidden={filesPanelShowHidden}
+                        onShowHiddenChange={setFilesPanelShowHidden}
+                      />
+                    )}
+                </div>
+>>>>>>> michaelzenz/session-watcher
 
-              {/* Push panels — flex siblings to main, animate width. Only one is open at a time.
+                {/* Push panels — flex siblings to main, animate width. Only one is open at a time.
           Terminal-first sessions render the terminal inline inside main
           (via MainTerminalView in ChatPage) and never mount the drawer. */}
+<<<<<<< HEAD
               {conversationId && !terminalFirst && (
                 <TerminalsPanel
                   open={panelOpen}
@@ -1826,6 +1938,96 @@ export function AppShell() {
                 </div>
               )}
             </div>
+=======
+                {conversationId && !terminalFirst && (
+                  <TerminalsPanel
+                    open={panelOpen}
+                    conversationId={conversationId}
+                    initialTerminalKey={panelInitialKey}
+                    // No neighbor to resize against (chat is hidden, FilesPanel
+                    // owns its own width) — grow via flex-1.
+                    fluid={panelOpen}
+                    // Non-owners attach read-only: a shared PTY can't attribute
+                    // input per-user, so only the owner may type (server-enforced).
+                    readOnly={!isOwnerLevel(permissionLevel)}
+                    onClose={() => setPanelInitialKey(null)}
+                  />
+                )}
+                {conversationId && (
+                  <ExecutionLogsPanel
+                    open={executionLogsOpen}
+                    conversationId={conversationId}
+                    initialKey={executionLogsKey}
+                    onClose={() => setExecutionLogsKey(null)}
+                  />
+                )}
+                {conversationId && showFilesPanel && (
+                  <FilesPanelDrawer
+                    open={filesPanelOpen}
+                    onClose={() => setFilesPanelOpen(false)}
+                    onFileSelect={openFileViewer}
+                    flatView={filesPanelFlatView}
+                    onFlatViewChange={handleFilesFlatViewChange}
+                    showHidden={filesPanelShowHidden}
+                    onShowHiddenChange={setFilesPanelShowHidden}
+                    sort={filesPanelSort}
+                    onSortChange={handleFilesSortChange}
+                  />
+                )}
+                {/* Mobile-only full-screen drawers for the rail tabs that have no
+          desktop push panel of their own. `MobilePanelDrawer` is `md:hidden`,
+          so these never collide with the desktop rail; they're opened from
+          the session-menu FAB above. */}
+                {conversationId && rootSessionId && (
+                  <MobilePanelDrawer
+                    open={subagentsPanelOpen}
+                    title="Agents"
+                    onClose={() => setSubagentsPanelOpen(false)}
+                    testId="subagents-panel-drawer"
+                  >
+                    <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
+                  </MobilePanelDrawer>
+                )}
+                {conversationId && (
+                  <MobilePanelDrawer
+                    open={shellsPanelOpen}
+                    title="Shells"
+                    onClose={() => setShellsPanelOpen(false)}
+                    testId="shells-panel-drawer"
+                  >
+                    <InlineTerminalsSection
+                      conversationId={conversationId}
+                      onExpand={openTerminalsPanel}
+                    />
+                  </MobilePanelDrawer>
+                )}
+                {conversationId && (
+                  <MobilePanelDrawer
+                    open={todosPanelOpen}
+                    title="Tasks"
+                    onClose={() => setTodosPanelOpen(false)}
+                    testId="todos-panel-drawer"
+                  >
+                    <TodoPanel frameless />
+                  </MobilePanelDrawer>
+                )}
+                {/* Mobile-only push panel — on desktop the viewer lives inside the inline aside. */}
+                {conversationId && selectedFilePath !== null && (
+                  <div className="md:hidden">
+                    <FileViewer
+                      open
+                      conversationId={conversationId}
+                      path={selectedFilePath}
+                      onClose={closeFileViewer}
+                      onNavigateTo={openFileViewer}
+                      permissionLevel={permissionLevel}
+                      sort={filesPanelSort}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+>>>>>>> michaelzenz/session-watcher
           </div>
           {conversationId && (
             <PermissionsModal

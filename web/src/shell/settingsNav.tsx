@@ -12,10 +12,12 @@ import {
   ArrowLeftIcon,
   DownloadIcon,
   GitBranchIcon,
+  Link2Icon,
   KeyboardIcon,
   PaletteIcon,
   Share2Icon,
   ShieldCheckIcon,
+  SparklesIcon,
   TerminalIcon,
   UserCogIcon,
   UsersIcon,
@@ -31,8 +33,10 @@ import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =
   | "appearance"
+  | "connection"
   | "git"
   | "shortcuts"
+  | "puppygarden"
   | "account"
   | "members"
   | "policies"
@@ -43,8 +47,10 @@ export type SettingsSectionId =
 
 const SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
+  "connection",
   "git",
   "shortcuts",
+  "puppygarden",
   "account",
   "members",
   "policies",
@@ -84,8 +90,10 @@ export function settingsNavGroups(
 ): SettingsNavGroup[] {
   const general: SettingsNavItem[] = [
     { id: "appearance", label: "Appearance", icon: PaletteIcon },
+    { id: "connection", label: "Connection", icon: Link2Icon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
+    { id: "puppygarden", label: "Puppy Garden", icon: SparklesIcon },
   ];
   if (hasAuthSession) {
     // Account leads the group when present — it's the most-visited section

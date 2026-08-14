@@ -1,6 +1,7 @@
 """FastAPI application — main entry point for the omnigent server."""
 
 import asyncio
+import functools
 import logging
 import mimetypes
 import os
@@ -60,6 +61,7 @@ from omnigent.server.performance_metrics import (
     set_request_session_id_for_access_log,
     set_request_user_agent_for_access_log,
 )
+from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -73,13 +75,21 @@ from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
 from omnigent.server.routes.session_mcp_servers import create_session_mcp_servers_router
 from omnigent.server.routes.session_policies import create_session_policies_router
 from omnigent.server.routes.sessions import (
+    ServerRunnerInfrastructure,
     SessionLiveness,
     announce_hosts_changed,
+    create_session_internal,
     create_sessions_router,
+<<<<<<< HEAD
     set_server_host_registry,
+=======
+    set_server_runner_infrastructure,
+>>>>>>> michaelzenz/session-watcher
     set_server_runner_router,
 )
 from omnigent.server.routes.sharing import create_sharing_router
+from omnigent.server.routes.ssh_connections import create_ssh_connections_router
+from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
 from omnigent.server.routes.usage import create_usage_router
 from omnigent.server.runner_session_init import RunnerSessionInitializer
@@ -91,6 +101,7 @@ from omnigent.stores import (
     ConversationStore,
     FileStore,
 )
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
 from omnigent.stores.host_store import HostStore
@@ -98,6 +109,14 @@ from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
+from omnigent.stores.task_asset_store import TaskAssetStore
+from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.stores.task_store import TaskStore
+from omnigent.stores.user_role_session_store import UserRoleSessionStore
+from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
 
@@ -481,6 +500,7 @@ def _ensure_default_agents(
     _ensure_default_native_agents(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
+    _ensure_default_task_agents(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
 
 
@@ -608,6 +628,7 @@ def _ensure_default_native_agents(
     :param artifact_store: Store for agent bundles.
     :param agent_cache: Cache for loaded agent specs.
     """
+<<<<<<< HEAD
     from omnigent.native_coding_agents import NATIVE_CODING_AGENTS
 
     for agent in NATIVE_CODING_AGENTS:
@@ -616,13 +637,438 @@ def _ensure_default_native_agents(
             raise OmnigentError(
                 f"native coding agent {agent.key!r} has no provider row to seed from"
             )
+=======
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_CLAUDE_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_claude_native_bundle(),
+    )
+
+
+def _build_codex_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the codex-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.codex_native import _materialize_codex_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_codex_agent_spec(Path(tmpdir), model=None)
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_codex_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the codex-native-ui agent.
+
+    Called during server lifespan startup so the Web UI can offer
+    Codex as a built-in agent alongside Claude. Content-aware via
+    :func:`_ensure_builtin_agent`: a new wheel with a changed spec
+    refreshes the row in place rather than being ignored.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_CODEX_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_codex_native_bundle(),
+    )
+
+
+def _build_opencode_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the opencode-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.opencode_native import _materialize_opencode_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_opencode_agent_spec(Path(tmpdir), model=None)
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_opencode_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the opencode-native-ui agent.
+
+    Called during server lifespan startup so the Web UI can offer OpenCode
+    as a built-in agent alongside Claude / Codex / Pi. Content-aware via
+    :func:`_ensure_builtin_agent`: a new wheel with a changed spec refreshes
+    the row in place rather than being ignored.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_OPENCODE_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_opencode_native_bundle(),
+    )
+
+
+def _build_pi_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the pi-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.pi_native import _materialize_pi_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_pi_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_pi_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the pi-native-ui agent.
+
+    Called during server lifespan startup so the Web UI can offer Pi as a
+    built-in native-terminal agent. Content-aware via
+    :func:`_ensure_builtin_agent`: a new wheel with a changed spec refreshes
+    the row in place rather than being ignored.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_PI_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_pi_native_bundle(),
+    )
+
+
+def _build_cursor_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the cursor-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.cursor_native import _materialize_cursor_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_cursor_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_cursor_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the cursor-native-ui agent.
+
+    Called during server lifespan startup so the Web UI offers Cursor as a
+    built-in native-terminal agent on every deployment (not only after the
+    ``omnigent cursor`` CLI first registers it). Content-aware via
+    :func:`_ensure_builtin_agent`.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_CURSOR_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_cursor_native_bundle(),
+    )
+
+
+def _build_kiro_native_bundle() -> bytes:
+    """Build a gzipped tarball of the kiro-native-ui agent spec."""
+    import tempfile
+
+    from omnigent.kiro_native import _materialize_kiro_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_kiro_agent_spec(Path(tmpdir), model=None)
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_kiro_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh the kiro-native-ui agent."""
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_KIRO_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_kiro_native_bundle(),
+    )
+
+
+def _build_task_agent_bundle(agent_name: str) -> bytes:
+    """Build a gzipped tarball of a packaged task-role agent spec."""
+    import tempfile
+
+    from omnigent.agent_tasks.agent_builtins import task_agent_spec_path
+    from omnigent.spec import materialize_bundle
+
+    spec_path = task_agent_spec_path(agent_name)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_task_agents(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh all packaged managed-task role agents."""
+    from omnigent.agent_tasks.agent_builtins import TASK_BUILTIN_AGENT_NAMES
+
+    for agent_name in TASK_BUILTIN_AGENT_NAMES:
+>>>>>>> michaelzenz/session-watcher
         _ensure_builtin_agent(
             agent_store,
             artifact_store,
             agent_cache,
+<<<<<<< HEAD
             name=agent.agent_name,
             bundle_bytes=_build_native_bundle(provider),
         )
+=======
+            name=agent_name,
+            bundle_bytes=_build_task_agent_bundle(agent_name),
+        )
+
+
+def _build_goose_native_bundle() -> bytes:
+    """Build a gzipped tarball of the goose-native-ui agent spec."""
+    import tempfile
+
+    from omnigent.goose_native import _materialize_goose_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_goose_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_goose_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh the goose-native-ui agent."""
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_GOOSE_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_goose_native_bundle(),
+    )
+
+
+def _build_hermes_native_bundle() -> bytes:
+    """Build a gzipped tarball of the hermes-native-ui agent spec."""
+    import tempfile
+
+    from omnigent.hermes_native import _materialize_hermes_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_hermes_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_hermes_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh the hermes-native-ui agent."""
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_HERMES_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_hermes_native_bundle(),
+    )
+
+
+def _ensure_default_antigravity_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the antigravity-native-ui agent.
+
+    Called during server lifespan startup so the Web UI can offer Antigravity
+    as a built-in native-terminal agent (the ``agy`` TUI), alongside Claude
+    Code / Codex / Pi. Content-aware via :func:`_ensure_builtin_agent`: a new
+    wheel with a changed spec refreshes the row in place rather than being
+    ignored.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_ANTIGRAVITY_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_antigravity_native_bundle(),
+    )
+
+
+def _build_antigravity_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the antigravity-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.antigravity_native import _materialize_antigravity_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_antigravity_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _build_qwen_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the qwen-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.qwen_native import _materialize_qwen_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_qwen_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_qwen_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the qwen-native-ui agent.
+
+    Called during server lifespan startup so the Web UI offers Qwen Code as a
+    built-in native-terminal agent on every deployment (not only after the
+    ``omnigent qwen`` CLI first registers it). Content-aware via
+    :func:`_ensure_builtin_agent`.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_QWEN_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_qwen_native_bundle(),
+    )
+
+
+def _build_kimi_native_bundle() -> bytes:
+    """
+    Build a gzipped tarball of the kimi-native-ui agent spec.
+
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.kimi_native import _materialize_kimi_agent_spec
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_path = _materialize_kimi_agent_spec(Path(tmpdir))
+        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_kimi_native_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """
+    Register or refresh the kimi-native-ui agent.
+
+    Called during server lifespan startup so the Web UI offers Kimi as a
+    built-in native-terminal agent on every deployment (not only after the
+    ``omnigent kimi`` CLI first registers it). Content-aware via
+    :func:`_ensure_builtin_agent`.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    """
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_KIMI_NATIVE_AGENT_NAME,
+        bundle_bytes=_build_kimi_native_bundle(),
+    )
+>>>>>>> michaelzenz/session-watcher
 
 
 def _build_debby_bundle() -> bytes:
@@ -740,6 +1186,81 @@ def _ensure_default_polly_agent(
     )
 
 
+<<<<<<< HEAD
+=======
+async def _placeholder_on_fire(scheduled_task_id: str) -> None:
+    """Default scheduler fire callback (no-op placeholder that logs).
+
+    Exercises the ``on_fire`` seam without side effects: the real fire path
+    (creating an agent session for the task) supplies its own callback.
+    """
+    _logger.info(
+        "scheduler: task %s is due (no fire path wired yet — skipping)",
+        scheduled_task_id,
+    )
+
+
+def _build_worker_runner_ensurer(
+    conversation_store: ConversationStore,
+    host_registry: Any,
+    tunnel_registry: Any,
+    runner_exit_reports: Any,
+):
+    """Build the runner-ensure callback the worker dispatch handler uses.
+
+    The dispatcher runs outside request scope, so it cannot use the route helper
+    that reads ``request.app.state``. This closure captures the same registries
+    and replays the best-effort runner launch for a freshly created worker
+    conversation. Returns ``None`` (no-op) when the sessions helpers are not
+    importable in this deployment.
+    """
+    import asyncio
+
+    async def _ensure_runner(conversation_id: str) -> None:
+        from omnigent.server.routes.sessions import (
+            ServerRunnerInfrastructure,
+            _ensure_runner_session_initialized,
+            _server_runner_router,
+            ensure_session_runner_client,
+        )
+
+        conv = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            conversation_id,
+        )
+        if conv is None:
+            return
+        infrastructure = ServerRunnerInfrastructure(
+            host_registry=host_registry,
+            tunnel_registry=tunnel_registry,
+            runner_exit_reports=runner_exit_reports,
+        )
+        runner_client, needs_session_init = await ensure_session_runner_client(
+            conversation_id,
+            conv,
+            conversation_store=conversation_store,
+            runner_router=_server_runner_router,
+            infrastructure=infrastructure,
+        )
+        if runner_client is None:
+            return
+        if needs_session_init:
+            refreshed = await asyncio.to_thread(
+                conversation_store.get_conversation,
+                conversation_id,
+            )
+            if refreshed is not None:
+                await _ensure_runner_session_initialized(
+                    conversation_id,
+                    refreshed,
+                    runner_client,
+                    conversation_store,
+                )
+
+    return _ensure_runner
+
+
+>>>>>>> michaelzenz/session-watcher
 def create_app(
     agent_store: AgentStore,
     file_store: FileStore,
@@ -751,9 +1272,23 @@ def create_app(
     policy_store: PolicyStore | None = None,
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
+<<<<<<< HEAD
     project_store: ProjectStore | None = None,
+=======
+    task_store: TaskStore | None = None,
+    task_event_store: TaskEventStore | None = None,
+    task_item_store: TaskItemStore | None = None,
+    worker_store: WorkerStore | None = None,
+    task_asset_store: TaskAssetStore | None = None,
+    task_role_profile_store: TaskRoleProfileStore | None = None,
+    user_role_session_store: UserRoleSessionStore | None = None,
+    agent_queue_store: AgentQueueStore | None = None,
+>>>>>>> michaelzenz/session-watcher
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
+    ssh_host_installation_store: SshHostInstallationStore | None = None,
+    ssh_tunnel_host: str = "127.0.0.1",
+    ssh_tunnel_port: int | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
     extra_routers: list[tuple[Any, str, list[str]]] | None = None,
     policy_modules: list[str] | None = None,
@@ -798,9 +1333,22 @@ def create_app(
         starts an :class:`ScheduledTaskScheduler` that arms a timer per
         active task and fires the injected ``on_fire`` callback on
         schedule. ``None`` disables the scheduler entirely.
+<<<<<<< HEAD
     :param project_store: Store for first-class projects (owner-private
         containers that group sessions). ``None`` disables the
         ``/v1/projects`` CRUD endpoints.
+=======
+    :param task_store: Store for managed agent tasks. When provided with
+        ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
+    :param task_event_store: Store for task events and execution history.
+    :param task_item_store: Store for task items and routing proposals.
+    :param worker_store: Store for per-task worker slots.
+    :param task_role_profile_store: Global task role definitions.
+        When provided with task stores, enables role profile/session
+        routes and resolve-time bootstrap defaults.
+    :param user_role_session_store: Per-user live conversation bindings
+        for singleton roles (broker, secretary).
+>>>>>>> michaelzenz/session-watcher
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -1005,6 +1553,146 @@ def create_app(
 
         set_runner_router(runner_router)
 
+        from omnigent.agent_tasks.queue.dispatcher import (
+            AgentQueueDispatcher,
+            DispatcherContext,
+            StatusReader,
+        )
+        from omnigent.agent_tasks.queue.handlers import (
+            BrokerDispatchHandler,
+            ManagerDispatchHandler,
+            WorkerDispatchHandler,
+        )
+        from omnigent.agent_tasks.queue.packagers import (
+            BrokerPackager,
+            ManagerPackager,
+            configure_broker_packager,
+        )
+        from omnigent.agent_tasks.queue.packagers import (
+            _StatusReader as _PackagerStatusReader,
+        )
+        from omnigent.agent_tasks.queue.status_feed import QueueStatusFeed
+
+        # Agent-queue dispatcher + role packagers. Only wired when both the
+        # queue store and the role profile store are present; tests and
+        # single-process setups that pre-build the store pass it through.
+        _agent_queue_dispatcher: AgentQueueDispatcher | None = None
+        _broker_packager: BrokerPackager | None = None
+        _manager_packager: ManagerPackager | None = None
+        if (
+            agent_queue_store is not None
+            and task_role_profile_store is not None
+            and user_role_session_store is not None
+        ):
+            broker_handler = BrokerDispatchHandler(
+                store=agent_queue_store,
+                user_role_session_store=user_role_session_store,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
+            manager_handler: ManagerDispatchHandler | None = None
+            if task_store is not None:
+                manager_handler = ManagerDispatchHandler(
+                    store=agent_queue_store,
+                    task_store=task_store,
+                    conversation_store=conversation_store,
+                    runner_router=runner_router,
+                )
+            worker_handler: WorkerDispatchHandler | None = None
+            if task_store is not None and task_item_store is not None and worker_store is not None:
+                worker_handler = WorkerDispatchHandler(
+                    store=agent_queue_store,
+                    task_store=task_store,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    worker_store=worker_store,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    task_role_profile_store=task_role_profile_store,
+                    runner_router=runner_router,
+                    ensure_runner=_build_worker_runner_ensurer(
+                        conversation_store,
+                        host_registry,
+                        tunnel_registry,
+                        runner_exit_reports,
+                    ),
+                    session_creator=_session_creator,
+                    app_state=app_inst.state,
+                )
+
+            class _CacheStatusReader(StatusReader):
+                """Reads the in-process session status cache.
+
+                A *miss* returns ``None`` (not ``"idle"``) so the gate keeps its
+                last reading rather than falsely reading a never-seen session
+                as dispatchable. ``_session_status_from_cache`` collapses a miss
+                to ``"idle"``, which would make every queue dispatchable after a
+                restart, so this reads the raw cache instead.
+                """
+
+                async def status_for(self, session_id: str) -> str | None:
+                    from omnigent.server.routes.sessions import (
+                        _session_status_cache,
+                    )
+
+                    return _session_status_cache.get(session_id)
+
+            class _PackagerCacheReader(_PackagerStatusReader):
+                """Sync raw-cache reader for the packager's idle check."""
+
+                def status_for(self, session_id: str) -> str | None:
+                    from omnigent.server.routes.sessions import (
+                        _session_status_cache,
+                    )
+
+                    return _session_status_cache.get(session_id)
+
+            _agent_queue_dispatcher = AgentQueueDispatcher(
+                DispatcherContext(
+                    store=agent_queue_store,
+                    handlers={
+                        "broker": broker_handler,
+                        **({"manager": manager_handler} if manager_handler is not None else {}),
+                        **({"worker": worker_handler} if worker_handler is not None else {}),
+                    },
+                    read_status=_CacheStatusReader(),
+                )
+            )
+            _status_feed = QueueStatusFeed(
+                agent_queue_store,
+                on_status=_agent_queue_dispatcher.gate.observe_sync,
+            )
+            from omnigent.server.routes.sessions import configure_queue_status_feed
+
+            configure_queue_status_feed(_status_feed)
+            _broker_packager = BrokerPackager(
+                store=agent_queue_store,
+                task_event_store=task_event_store,
+                task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
+                task_store=task_store,
+                status_reader=_PackagerCacheReader(),
+                conversation_store=conversation_store,
+                agent_store=agent_store,
+                host_store=host_store,
+                session_creator=_session_creator,
+                app_state=app_inst.state,
+            )
+            if task_store is not None:
+                _manager_packager = ManagerPackager(
+                    store=agent_queue_store,
+                    task_event_store=task_event_store,
+                    task_store=task_store,
+                    status_reader=_PackagerCacheReader(),
+                )
+            await _broker_packager.start()
+            if _manager_packager is not None:
+                await _manager_packager.start()
+            await _agent_queue_dispatcher.start()
+            configure_broker_packager(_broker_packager)
+        else:
+            configure_broker_packager(None)
+
         # Wake a blocked sub-agent's immediate parent: hooks
         # ``pending_elicitations.record_publish`` to post a ``[System: …]``
         # notice to the parent's ``/events``. Uninstalled at teardown so a
@@ -1136,21 +1824,70 @@ def create_app(
                     exc,
                 )
 
+<<<<<<< HEAD
             # Run completion is event-driven (persist_scheduled_run_completion
             # fires from _publish_status the instant a fired conversation's turn
             # ends — no poll). The only orphan backstop is a lazy-on-read
             # force-fail of stale ``running`` runs on the scheduled-task read
             # endpoints (see routes/scheduled_tasks.py); there is no startup
             # sweep and no periodic reconcile.
+=======
+        # Background GC for old reconciled/dismissed events and completed
+        # queue items so large worker-output payloads do not accumulate.
+        event_gc_task: asyncio.Task | None = None
+        if agent_queue_store is not None:
+            from omnigent.agent_tasks.event_gc import run_event_gc
+
+            event_gc_task = asyncio.create_task(
+                run_event_gc(task_event_store, agent_queue_store),
+                name="event-gc",
+            )
+            app_inst.state.event_gc_task = event_gc_task
+
+        ssh_host_manager = None
+        # The reverse tunnel forwards to this server's own listener, so without a
+        # known port there is nothing valid to point remote hosts at.
+        if (
+            host_store is not None
+            and ssh_host_installation_store is not None
+            and ssh_tunnel_port is not None
+        ):
+            from omnigent.server.ssh_host_manager import SshHostInstallationManager
+
+            ssh_host_manager = SshHostInstallationManager(
+                store=ssh_host_installation_store,
+                host_store=host_store,
+                local_host=ssh_tunnel_host,
+                local_port=ssh_tunnel_port,
+            )
+            app_inst.state.ssh_host_manager = ssh_host_manager
+            try:
+                await ssh_host_manager.start()
+            except Exception:
+                _logger.exception(
+                    "SSH host installation manager failed to start; continuing without it"
+                )
+                app_inst.state.ssh_host_manager = None
+                ssh_host_manager = None
+>>>>>>> michaelzenz/session-watcher
 
         try:
             yield
         finally:
+<<<<<<< HEAD
             # Run completion is event-driven (the _publish_status hook) plus a
             # lazy-on-read stale backstop — there is no run-reconciler task to
             # cancel. Only the per-job scheduler holds timers that need stopping.
+=======
+            if ssh_host_manager is not None:
+                await ssh_host_manager.stop()
+>>>>>>> michaelzenz/session-watcher
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
+            if event_gc_task is not None:
+                event_gc_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await event_gc_task
             metrics_publish_task.cancel()
             with suppress(asyncio.CancelledError):
                 await metrics_publish_task
@@ -1161,7 +1898,20 @@ def create_app(
             from omnigent.server.routes.sessions import cancel_managed_launch_tasks
 
             await cancel_managed_launch_tasks()
+<<<<<<< HEAD
             await background_title_coordinator.shutdown()
+=======
+            if _agent_queue_dispatcher is not None:
+                await _agent_queue_dispatcher.stop()
+            if _manager_packager is not None:
+                await _manager_packager.stop()
+            if _broker_packager is not None:
+                await _broker_packager.stop()
+            configure_broker_packager(None)
+            from omnigent.server.routes.sessions import configure_queue_status_feed
+
+            configure_queue_status_feed(None)
+>>>>>>> michaelzenz/session-watcher
             _uninstall_subagent_block_notifier()
             set_resource_registry(None)
             set_runner_ws_factory(None)
@@ -1190,7 +1940,11 @@ def create_app(
     app.state.background_title_coordinator = background_title_coordinator
     app.state.host_registry = host_registry
     app.state.host_store = host_store
+<<<<<<< HEAD
     app.state.agent_store = agent_store
+=======
+    app.state.ssh_host_manager = None
+>>>>>>> michaelzenz/session-watcher
     app.state.sandbox_config = sandbox_config
     app.state.feature_flags = resolved_feature_flags
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
@@ -1281,6 +2035,7 @@ def create_app(
     # request/route closure) the runner router so it can reach the bound
     # runner.
     set_server_runner_router(runner_router)
+<<<<<<< HEAD
     # Same pattern for the host registry: asleep claude-native sessions
     # refill their model catalog from the session's host, from background
     # tasks with no request in scope.
@@ -1293,6 +2048,15 @@ def create_app(
     # _publish_status when a fired conversation's turn reaches terminal.
     session_live_state.configure(conversation_store, scheduled_task_store)
     pending_elicitations.set_count_persist_hook(session_live_state.persist_pending_count)
+=======
+    set_server_runner_infrastructure(
+        ServerRunnerInfrastructure(
+            host_registry=host_registry,
+            tunnel_registry=tunnel_registry,
+            runner_exit_reports=runner_exit_reports,
+        )
+    )
+>>>>>>> michaelzenz/session-watcher
 
     @app.middleware("http")
     async def _record_server_metrics(
@@ -1637,6 +2401,18 @@ def create_app(
                 host_version=host_version,
             )
         return result
+
+    _session_creator = functools.partial(
+        create_session_internal,
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        runner_router=runner_router,
+        agent_cache=agent_cache,
+        permission_store=permission_store,
+        liveness_lookup=_bulk_session_liveness,
+        file_store=file_store,
+        artifact_store=artifact_store,
+    )
 
     @app.get("/health")
     async def health(
@@ -2066,6 +2842,14 @@ def create_app(
         tags=["dictation"],
     )
     app.include_router(
+        create_ssh_connections_router(
+            auth_provider=auth_provider,
+            permission_store=permission_store,
+        ),
+        prefix="/v1",
+        tags=["ssh"],
+    )
+    app.include_router(
         create_terminal_attach_router(
             auth_provider=auth_provider,
             permission_store=permission_store,
@@ -2097,6 +2881,104 @@ def create_app(
             ),
             prefix="/v1",
             tags=["comments"],
+        )
+    if (
+        task_store is not None
+        and task_event_store is not None
+        and task_item_store is not None
+        and worker_store is not None
+        and task_asset_store is not None
+    ):
+        app.include_router(
+            create_agent_tasks_router(
+                task_store,
+                task_event_store,
+                task_item_store,
+                worker_store,
+                task_asset_store,
+                agent_store,
+                conversation_store=conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
+                host_store=host_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+                agent_queue_store=agent_queue_store,
+                session_creator=_session_creator,
+            ),
+            prefix="/v1",
+            tags=["agent_tasks"],
+        )
+        app.include_router(
+            create_task_events_router(
+                task_store,
+                task_event_store,
+                worker_store,
+                conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+                session_creator=_session_creator,
+            ),
+            prefix="/v1",
+            tags=["task_events"],
+        )
+        from omnigent.server.routes.session_watcher import create_session_watcher_router
+
+        app.include_router(
+            create_session_watcher_router(
+                task_store,
+                task_event_store,
+                worker_store,
+                conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                auth_provider=auth_provider,
+                session_creator=_session_creator,
+            ),
+            prefix="/v1",
+            tags=["session_watcher"],
+        )
+        if agent_queue_store is not None:
+            from omnigent.server.routes.agent_queues import create_agent_queues_router
+
+            app.include_router(
+                create_agent_queues_router(
+                    agent_queue_store,
+                    auth_provider=auth_provider,
+                ),
+                prefix="/v1",
+                tags=["agent_queues"],
+            )
+        from omnigent.agent_tasks.adoption import (
+            SessionAdoptionContext,
+            configure_session_adoption,
+        )
+        from omnigent.agent_tasks.completion import (
+            TaskCompletionContext,
+            configure_task_completion,
+        )
+
+        configure_task_completion(
+            TaskCompletionContext(
+                task_store=task_store,
+                task_event_store=task_event_store,
+                task_item_store=task_item_store,
+                conversation_store=conversation_store,
+                worker_store=worker_store,
+                agent_queue_store=agent_queue_store,
+                runner_router=runner_router,
+            )
+        )
+        configure_session_adoption(
+            SessionAdoptionContext(
+                task_store=task_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                host_store=host_store,
+                runner_router=runner_router,
+            )
         )
     if policy_store is not None:
         app.include_router(
