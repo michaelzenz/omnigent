@@ -137,6 +137,10 @@ import {
   writeHideUnconfiguredHarnesses,
 } from "@/lib/harnessVisibilityPreferences";
 import {
+  readAdoptExternalSessions,
+  writeAdoptExternalSessions,
+} from "@/lib/puppyGardenPreferences";
+import {
   applyThemePalette,
   isThemeSelection,
   PALETTES,
@@ -219,6 +223,7 @@ export function SettingsPage() {
       {section === "connection" && <ConnectionSection />}
       {section === "git" && <GitSection />}
       {section === "shortcuts" && <ShortcutsSection />}
+      {section === "puppygarden" && <PuppyGardenSection />}
       {section === "account" && hasAuthSession && <AccountSection />}
       {section === "archived" && <ArchivedSection />}
       {section === "cli" && isElectronShell() && <LocalCliSection />}
@@ -1272,6 +1277,38 @@ function ShortcutsSection() {
   return (
     <Section title="Keyboard shortcuts" description="Speed up common actions with the keyboard.">
       <KeyboardShortcutsList />
+    </Section>
+  );
+}
+
+/** Puppy Garden task board settings. */
+function PuppyGardenSection() {
+  const [adopt, setAdopt] = useState(() => readAdoptExternalSessions());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setAdopt(next);
+    writeAdoptExternalSessions(next);
+  }, []);
+  return (
+    <Section title="Puppy Garden" description="Configure the Puppy Garden task board.">
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex flex-col">
+          <span id={labelId} className="text-sm font-medium">
+            Adopt external sessions
+          </span>
+          <span className="text-sm text-muted-foreground">
+            When on, sessions discovered by the session watcher are offered for adoption into tasks.
+            Off by default — turn it on to surface adoption cards in the board.
+          </span>
+        </div>
+        <Switch
+          aria-labelledby={labelId}
+          checked={adopt}
+          onCheckedChange={toggle}
+          data-testid="adopt-external-sessions-toggle"
+          className="mt-0.5 shrink-0"
+        />
+      </div>
     </Section>
   );
 }

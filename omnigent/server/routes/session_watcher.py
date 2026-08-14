@@ -20,7 +20,7 @@ from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_UPDATED_EVENT_TYPE
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.entities import EventTag
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.server.auth import get_user_id
+from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.server.routes.task_events import HOST_ID_HEADER
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -80,8 +80,6 @@ def create_session_watcher_router(
         if poller_host_id is not None:
             poller_host_id = poller_host_id.strip() or None
         if user_id is None and poller_host_id is None:
-            from omnigent.server.auth import require_user
-
             user_id = require_user(request, auth_provider)
 
         owner = _effective_user_id(user_id)

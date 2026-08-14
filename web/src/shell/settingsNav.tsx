@@ -18,6 +18,7 @@ import {
   PanelRightOpenIcon,
   Share2Icon,
   ShieldCheckIcon,
+  SparklesIcon,
   TerminalIcon,
   UserCogIcon,
   UsersIcon,
@@ -36,6 +37,7 @@ export type SettingsSectionId =
   | "connection"
   | "git"
   | "shortcuts"
+  | "puppygarden"
   | "account"
   | "members"
   | "policies"
@@ -49,6 +51,7 @@ const SECTION_IDS: readonly SettingsSectionId[] = [
   "connection",
   "git",
   "shortcuts",
+  "puppygarden",
   "account",
   "members",
   "policies",
@@ -91,6 +94,7 @@ export function settingsNavGroups(
     { id: "connection", label: "Connection", icon: Link2Icon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
+    { id: "puppygarden", label: "Puppy Garden", icon: SparklesIcon },
   ];
   if (hasAuthSession) {
     // Account leads the group when present — it's the most-visited section
