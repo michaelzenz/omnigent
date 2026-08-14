@@ -741,9 +741,6 @@ class HostStore:
             session.add(row)
             return _row_to_host(row)
 
-<<<<<<< HEAD
-    def resolve_launch_token(self, host_id: str, token: str) -> Host | None:
-=======
     def register_ssh_host(
         self,
         *,
@@ -812,8 +809,7 @@ class HostStore:
             row.updated_at = now_epoch()
             return True
 
-    def resolve_launch_token(self, token: str) -> Host | None:
->>>>>>> michaelzenz/session-watcher
+    def resolve_launch_token(self, host_id: str, token: str) -> Host | None:
         """
         Resolve a launch token presented for *host_id* to its managed host.
 
