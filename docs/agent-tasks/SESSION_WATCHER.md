@@ -651,70 +651,70 @@ server:
 
 ### Phase 1: Event types, ingress & update endpoint
 
-- [ ] Add `EXTERNAL_SESSION_DISCOVERED` and `EXTERNAL_SESSION_UPDATED` to
+- [x] Add `EXTERNAL_SESSION_DISCOVERED` and `EXTERNAL_SESSION_UPDATED` to
   `event_types.py`.
-- [ ] Add `POST /v1/session-watcher/update` endpoint — accepts the update
+- [x] Add `POST /v1/session-watcher/update` endpoint — accepts the update
   payload, processes it (creates a task event + runs ingress), and
   returns `{track: true|false}` based on the session's current status
   (adopted → true, rejected/dismissed/expired → false).
-- [ ] Server-side: track rejected/dismissed `session_hint` values so the
+- [x] Server-side: track rejected/dismissed `session_hint` values so the
   endpoint and discovery dedupe can look them up.
-- [ ] Add `event_type` filter to `purge_old_events` in `TaskEventStore` ABC
+- [x] Add `event_type` filter to `purge_old_events` in `TaskEventStore` ABC
   - SQLAlchemy impl.
-- [ ] Add `external_session_hint` column to `workers` table (migration).
-- [ ] Add `worker_store.get_by_external_hint(hint)`.
-- [ ] In `ingress.py`, add a pre-stall check for
+- [x] Add `external_session_hint` column to `workers` table (migration).
+- [x] Add `worker_store.get_by_external_hint(hint)`.
+- [x] In `ingress.py`, add a pre-stall check for
   `external.session.updated`: look up worker by hint → route to task.
 
 ### Phase 2: Broker orphan handling
 
-- [ ] Extend `BrokerPackager` to treat `external.session.discovered` as
+- [x] Extend `BrokerPackager` to treat `external.session.discovered` as
   orphan-style (one-per-notice).
-- [ ] Extend `propose_session_adoption` to accept `session_hint` and store it
+- [x] Extend `propose_session_adoption` to accept `session_hint` and store it
   on the proposal event payload.
-- [ ] Allow broker to create a new pending task when no match is found, then
+- [x] Allow broker to create a new pending task when no match is found, then
   propose adoption against it.
-- [ ] Broker agent instructions: for `external.session.discovered`, decide
+- [x] Broker agent instructions: for `external.session.discovered`, decide
   among adopt-to-existing-task, adopt-to-new-task, or FYI cluster. Use
   existing `create_fyi_cluster` for the FYI path.
-- [ ] Broker prompt: include the FYI option in the orphan notice text so the
+- [x] Broker prompt: include the FYI option in the orphan notice text so the
   broker agent knows it can classify as FYI instead of forcing adoption.
 
 ### Phase 3: Adoption flow
 
-- [ ] Extend `adopt_session` to store `session_hint` on the worker row
+- [x] Extend `adopt_session` to store `session_hint` on the worker row
   (`external_session_hint` column).
-- [ ] Emit `session.adopted` event routed to manager (already exists).
+- [x] Emit `session.adopted` event routed to manager (already exists).
 - [ ] Frontend: render pending `session.adoption` events as rows in the
   adoption proposal section of the task card.
 - [ ] Frontend: per-row Accept/Reject buttons.
 
 ### Phase 4: Transcript update watching
 
-- [ ] ManagerPackager: handle `external.session.updated` events (they arrive
+- [x] ManagerPackager: handle `external.session.updated` events (they arrive
   routed to the task, so existing flow mostly works).
-- [ ] Manager notice format for transcript deltas (structured prompt with the
+- [x] Manager notice format for transcript deltas (structured prompt with the
   delta content).
 - [ ] Manager agent instructions: review delta, update task/items.
 
 ### Phase 5: Copy button
 
-- [ ] Frontend: detect `worker.kind == "external"`, show Copy instead of Go.
-- [ ] Copy handler: `navigator.clipboard.writeText(item.instructions)`.
+- [x] Frontend: detect `worker.kind == "external"`, show Copy instead of Go.
+- [x] Copy handler: `navigator.clipboard.writeText(item.instructions)`.
 
 ### Phase 6: Adoption timeout GC
 
-- [ ] Add `adoption_proposal_retention_s` to `EventGcConfig` (default 86400).
-- [ ] Add purge call for `session.adoption` events in `routed` state older
+- [x] Add `adoption_proposal_retention_s` to `EventGcConfig` (default 86400).
+- [x] Add purge call for `session.adoption` events in `routed` state older
   than the retention.
-- [ ] Wire in `run_event_gc`.
+- [x] Wire in `run_event_gc`.
 
 ### Phase 7: Example watcher plugin & docs
 
-- [ ] `examples/poll_plugins/session_watcher/run.py` — example discovery +
+- [x] `examples/poll_plugins/session_watcher/run.py` — example discovery +
   transcript delta detection.
-- [ ] `examples/poll_plugins/session_watcher/config.yaml`.
-- [ ] `docs/agent-tasks/SESSION_WATCHER.md` — this doc, finalized.
+- [x] `examples/poll_plugins/session_watcher/config.yaml`.
+- [x] `docs/agent-tasks/SESSION_WATCHER.md` — this doc, finalized.
 
 ## Open questions
 
