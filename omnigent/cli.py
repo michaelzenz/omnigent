@@ -3832,10 +3832,8 @@ def server(
     comment_store = SqlAlchemyCommentStore(db_uri)
     policy_store = SqlAlchemyPolicyStore(db_uri)
     permission_store = SqlAlchemyPermissionStore(db_uri)
-<<<<<<< HEAD
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
-=======
     task_store = SqlAlchemyTaskStore(db_uri)
     task_event_store = SqlAlchemyTaskEventStore(db_uri)
     task_item_store = SqlAlchemyTaskItemStore(db_uri)
@@ -3844,7 +3842,6 @@ def server(
     task_role_profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     user_role_session_store = SqlAlchemyUserRoleSessionStore(db_uri)
     agent_queue_store = SqlAlchemyAgentQueueStore(db_uri)
->>>>>>> michaelzenz/session-watcher
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -3991,10 +3988,8 @@ def server(
         agent_cache=agent_cache,
         runner_tunnel_tokens=_runner_tunnel_tokens,
         permission_store=permission_store,
-<<<<<<< HEAD
         scheduled_task_store=scheduled_task_store,
         project_store=project_store,
-=======
         task_store=task_store,
         task_event_store=task_event_store,
         task_item_store=task_item_store,
@@ -4003,7 +3998,6 @@ def server(
         task_role_profile_store=task_role_profile_store,
         user_role_session_store=user_role_session_store,
         agent_queue_store=agent_queue_store,
->>>>>>> michaelzenz/session-watcher
         auth_provider=auth_provider,
         host_store=host_store,
         ssh_host_installation_store=ssh_host_installation_store,
@@ -8006,7 +8000,6 @@ def _host_stop_command(explicit_server: str | None) -> str:
 @cli.group("host", cls=_HostGroup, invoke_without_command=True)
 @click.option("--server", default=None, help="Remote omnigent server URL.")
 @click.option(
-<<<<<<< HEAD
     "--background",
     "background",
     is_flag=True,
@@ -8017,12 +8010,13 @@ def _host_stop_command(explicit_server: str | None) -> str:
         "healthy daemon if one is already up. Sign-in still happens in the "
         "foreground, before the spawn."
     ),
-=======
+)
+@click.option(
     "--server-unix-socket",
+    "server_unix_socket",
     default=None,
     metavar="PATH",
     help="Connect to the logical server through this Unix socket.",
->>>>>>> michaelzenz/session-watcher
 )
 @click.option(
     "--non-interactive",
@@ -8039,11 +8033,8 @@ def _host_stop_command(explicit_server: str | None) -> str:
 def host(
     ctx: click.Context,
     server: str | None,
-<<<<<<< HEAD
     background: bool,
-=======
     server_unix_socket: str | None,
->>>>>>> michaelzenz/session-watcher
     non_interactive: bool,
 ) -> None:
     """
@@ -8072,13 +8063,10 @@ def host(
     :param server: Remote Omnigent server URL, e.g.
         ``"https://example.databricksapps.com"``. ``None`` falls back
         to config; empty string selects local mode.
-<<<<<<< HEAD
     :param background: When ``True``, spawn the daemon detached and return
         instead of running the daemon loop in the foreground.
-=======
     :param server_unix_socket: Optional Unix socket used to dial the
         logical server URL.
->>>>>>> michaelzenz/session-watcher
     :param non_interactive: When ``True``, never launch the browser login
         for an un-authed remote server — fail with the ``omnigent login``
         hint instead.
@@ -8087,14 +8075,11 @@ def host(
     ctx.obj["server"] = server
     if ctx.invoked_subcommand is not None:
         return
-<<<<<<< HEAD
     # Kept before the config fallback below: `--background` echoes a `host
     # stop` command that mirrors how this command was invoked.
     explicit_server = server
-=======
     if server_unix_socket is not None:
         os.environ[OMNIGENT_SERVER_UNIX_SOCKET] = str(Path(server_unix_socket).expanduser())
->>>>>>> michaelzenz/session-watcher
     cfg = _load_effective_config()
     if server is None:
         server = cfg.get("server")
