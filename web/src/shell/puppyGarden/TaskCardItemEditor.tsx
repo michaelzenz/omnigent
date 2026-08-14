@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -64,10 +64,11 @@ interface TaskCardItemEditorProps {
   taskId: string;
   item: TaskItemSummary;
   workerLanes: TaskWorkerLane[];
+  workerKind: string;
   mode: "ack" | "edit" | "parked";
 }
 
-export function TaskCardItemEditor({ taskId, item, workerLanes, mode }: TaskCardItemEditorProps) {
+export function TaskCardItemEditor({ taskId, item, workerLanes, workerKind, mode }: TaskCardItemEditorProps) {
   const resolveItem = useResolveTaskItem(taskId);
   const updateItem = useUpdateTaskItem(taskId);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
@@ -203,16 +204,38 @@ export function TaskCardItemEditor({ taskId, item, workerLanes, mode }: TaskCard
             <XIcon aria-hidden />
             Skip
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={pending}
-            onClick={() => void submitAck("accept_item")}
-            aria-label="Approve inbox item"
-          >
-            <CheckIcon aria-hidden />
-            Go
-          </Button>
+          {workerKind === "external" ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending}
+              onClick={async () => {
+                if (editor.instructions) {
+                  try {
+                    await navigator.clipboard.writeText(editor.instructions);
+                  } catch {
+                    // Clipboard API may be unavailable in non-secure contexts
+                  }
+                }
+                void submitAck("accept_item");
+              }}
+              aria-label="Accept item and copy instructions"
+            >
+              <CopyIcon aria-hidden />
+              Copy
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending}
+              onClick={() => void submitAck("accept_item")}
+              aria-label="Approve inbox item"
+            >
+              <CheckIcon aria-hidden />
+              Go
+            </Button>
+          )}
         </div>
       ) : mode === "parked" ? (
         <div className="flex justify-end pt-0.5">

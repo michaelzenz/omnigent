@@ -218,7 +218,7 @@ export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkers
                   )}
                   data-testid={`worker-lane-rows-scroll-${lane.worker_id}`}
                 >
-                  <TaskCardWorkerRows taskId={taskId} rows={lane.rows} workerLanes={workers} />
+                  <TaskCardWorkerRows taskId={taskId} rows={lane.rows} workerLanes={workers} workerKind={lane.kind} />
                 </div>
               ) : null}
             </article>
