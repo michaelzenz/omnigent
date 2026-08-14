@@ -46,7 +46,10 @@ from omnigent.agent_tasks.constants import (
     BROKER_TAG_SIMILARITY_THRESHOLD,
     MANAGER_BATCH_MAX_SIZE,
 )
-from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
+from omnigent.agent_tasks.event_types import (
+    EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+    SESSION_ORPHAN_EVENT_TYPE,
+)
 from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.db.utils import now_epoch
@@ -304,10 +307,21 @@ class BrokerPackager(Packager):
             if not unclaimed:
                 continue
             orphans = [e for e in unclaimed if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
-            routed = [e for e in unclaimed if e.event_type != SESSION_ORPHAN_EVENT_TYPE]
+            discovered = [
+                e for e in unclaimed if e.event_type == EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
+            ]
+            routed = [
+                e
+                for e in unclaimed
+                if e.event_type not in (SESSION_ORPHAN_EVENT_TYPE, EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE)
+            ]
             # Each orphan is its own batch — adoption is heavy and per-session.
             for orphan in orphans:
                 batches.append(_PendingBatch(key=key, events=[orphan], is_orphan=True))
+            # Each discovered external session is its own batch — the broker
+            # reads the transcript snippet and decides: adopt, create task, or FYI.
+            for disc in discovered:
+                batches.append(_PendingBatch(key=key, events=[disc], is_orphan=True))
             # Routed events: cluster by tag similarity, then fill ONE notice per
             # poll up to ``batch_size``. Clusters are taken oldest-first; a cluster
             # that would overflow the remaining capacity is capped to its oldest

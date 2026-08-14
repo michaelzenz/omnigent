@@ -676,3 +676,102 @@ async def test_small_clusters_fill_into_one_notice(broker_setup: dict) -> None:
         _uid("fill_a"),
         _uid("fill_b"),
     }
+
+
+# ── External session discovered ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_discovered_session_is_packaged_as_orphan_style(
+    broker_setup: dict,
+) -> None:
+    """An external.session.discovered event is packaged one-per-notice."""
+    from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
+
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    payload = json.dumps({
+        "session_hint": "codex-abc",
+        "path": "/home/user/.codex/sessions/abc",
+        "tool": "codex",
+        "history_hash": "h1",
+        "transcript_snippet": "user asked about fixing a bug in the parser",
+    })
+    event_store.create_event(
+        _uid("disc"),
+        EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+        "External session discovered",
+        payload=payload,
+        source="session_watcher",
+        source_key="codex-abc",
+        state="awaiting_grouping",
+        owner_user_id=broker_setup["user_id"],
+    )
+    await packager.scan_once()
+
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
+    assert len(items) == 1
+    notice = json.loads(items[0].payload)
+    # Discovered sessions use the orphan-style flat events list (no clusters).
+    assert "clusters" not in notice
+    assert "candidate_task_ids" not in notice
+    assert notice["events"][0]["event_type"] == "external.session.discovered"
+    # The prompt mentions the three triage outcomes.
+    assert "transcript_snippet" in notice["prompt"]
+    assert "propose-adoption" in notice["prompt"]
+    assert "fyi" in notice["prompt"].lower()
+
+
+@pytest.mark.asyncio
+async def test_discovered_session_is_isolated_from_routed_events(
+    broker_setup: dict,
+) -> None:
+    """Discovered sessions and routed events produce separate notices."""
+    from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
+
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    # A routed event
+    event_store.create_event(
+        _uid("routed_disc"),
+        "build.finished",
+        "Build failed",
+        state="awaiting_grouping",
+        owner_user_id=broker_setup["user_id"],
+        tags=[EventTag(tag_type="repo", tag="myrepo")],
+    )
+    task_store: SqlAlchemyTaskStore = broker_setup["task_store"]
+    task_store.create(
+        _uid("task_disc"),
+        "Disc task",
+        tags=[TaskTag(task_id=_uid("task_disc"), tag_type="repo", tag="myrepo")],
+    )
+    # A discovered session
+    event_store.create_event(
+        _uid("disc2"),
+        EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+        "External session discovered",
+        payload=json.dumps({"session_hint": "codex-xyz", "transcript_snippet": "..."}),
+        source="session_watcher",
+        source_key="codex-xyz",
+        state="awaiting_grouping",
+        owner_user_id=broker_setup["user_id"],
+    )
+    await packager.scan_once()
+
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
+    assert len(items) == 2
+    # One notice has clusters (routed), the other has flat events (discovered).
+    has_clusters = [it for it in items if "clusters" in json.loads(it.payload)]
+    has_events = [it for it in items if "events" in json.loads(it.payload) and "clusters" not in json.loads(it.payload)]
+    assert len(has_clusters) == 1
+    assert len(has_events) == 1
+    assert json.loads(has_events[0].payload)["events"][0]["event_type"] == "external.session.discovered"
