@@ -1417,14 +1417,12 @@ def create_app(
                     exc,
                 )
 
-<<<<<<< HEAD
             # Run completion is event-driven (persist_scheduled_run_completion
             # fires from _publish_status the instant a fired conversation's turn
             # ends — no poll). The only orphan backstop is a lazy-on-read
             # force-fail of stale ``running`` runs on the scheduled-task read
             # endpoints (see routes/scheduled_tasks.py); there is no startup
             # sweep and no periodic reconcile.
-=======
         # Background GC for old reconciled/dismissed events and completed
         # queue items so large worker-output payloads do not accumulate.
         event_gc_task: asyncio.Task | None = None
@@ -1462,19 +1460,15 @@ def create_app(
                 )
                 app_inst.state.ssh_host_manager = None
                 ssh_host_manager = None
->>>>>>> michaelzenz/session-watcher
 
         try:
             yield
         finally:
-<<<<<<< HEAD
             # Run completion is event-driven (the _publish_status hook) plus a
             # lazy-on-read stale backstop — there is no run-reconciler task to
             # cancel. Only the per-job scheduler holds timers that need stopping.
-=======
             if ssh_host_manager is not None:
                 await ssh_host_manager.stop()
->>>>>>> michaelzenz/session-watcher
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
             if event_gc_task is not None:
@@ -1491,9 +1485,7 @@ def create_app(
             from omnigent.server.routes.sessions import cancel_managed_launch_tasks
 
             await cancel_managed_launch_tasks()
-<<<<<<< HEAD
             await background_title_coordinator.shutdown()
-=======
             if _agent_queue_dispatcher is not None:
                 await _agent_queue_dispatcher.stop()
             if _manager_packager is not None:
@@ -1504,7 +1496,6 @@ def create_app(
             from omnigent.server.routes.sessions import configure_queue_status_feed
 
             configure_queue_status_feed(None)
->>>>>>> michaelzenz/session-watcher
             _uninstall_subagent_block_notifier()
             set_resource_registry(None)
             set_runner_ws_factory(None)
@@ -1533,11 +1524,8 @@ def create_app(
     app.state.background_title_coordinator = background_title_coordinator
     app.state.host_registry = host_registry
     app.state.host_store = host_store
-<<<<<<< HEAD
     app.state.agent_store = agent_store
-=======
     app.state.ssh_host_manager = None
->>>>>>> michaelzenz/session-watcher
     app.state.sandbox_config = sandbox_config
     app.state.feature_flags = resolved_feature_flags
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
@@ -1628,7 +1616,6 @@ def create_app(
     # request/route closure) the runner router so it can reach the bound
     # runner.
     set_server_runner_router(runner_router)
-<<<<<<< HEAD
     # Same pattern for the host registry: asleep claude-native sessions
     # refill their model catalog from the session's host, from background
     # tasks with no request in scope.
@@ -1641,7 +1628,6 @@ def create_app(
     # _publish_status when a fired conversation's turn reaches terminal.
     session_live_state.configure(conversation_store, scheduled_task_store)
     pending_elicitations.set_count_persist_hook(session_live_state.persist_pending_count)
-=======
     set_server_runner_infrastructure(
         ServerRunnerInfrastructure(
             host_registry=host_registry,
@@ -1649,7 +1635,6 @@ def create_app(
             runner_exit_reports=runner_exit_reports,
         )
     )
->>>>>>> michaelzenz/session-watcher
 
     @app.middleware("http")
     async def _record_server_metrics(
