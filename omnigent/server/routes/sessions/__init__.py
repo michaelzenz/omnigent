@@ -175,6 +175,7 @@ from omnigent.server.routes._origin import require_trusted_origin
 # isort: off
 from omnigent.server.routes._sessions.common import (
     COST_CONTROL_OVERRIDE_VALUES as COST_CONTROL_OVERRIDE_VALUES,
+    configure_queue_status_feed as configure_queue_status_feed,
     _ALLOWED_EVENT_TYPES as _ALLOWED_EVENT_TYPES,
     _ANTIGRAVITY_NATIVE_ELICITATION_HOOK_TIMEOUT_S as _ANTIGRAVITY_NATIVE_ELICITATION_HOOK_TIMEOUT_S,
     _APPROVAL_TYPE as _APPROVAL_TYPE,

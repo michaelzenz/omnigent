@@ -632,6 +632,19 @@ _SUBAGENT_FORWARD_RECONNECT_WAIT_S = 5.0
 _managed_launch_tasks: set[asyncio.Task[None]] = set()
 
 
+# Bridge from session status changes to the agent queue system. Set by
+# ``configure_queue_status_feed`` at app startup; the publish path calls
+# ``notify`` for every status change so non-worker roles (broker, manager)
+# get their in-flight item completed when the session returns to idle/failed.
+_queue_status_feed: Any = None
+
+
+def configure_queue_status_feed(feed: Any) -> None:
+    """Register or clear the global queue status feed."""
+    global _queue_status_feed
+    _queue_status_feed = feed
+
+
 _RUNNER_SESSION_INIT_TIMEOUT_S = 10.0
 
 

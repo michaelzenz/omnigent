@@ -111,6 +111,7 @@ from omnigent.server.routes._sessions.common import (
     _interrupt_fenced_sessions,
     _logger,
     _pushed_model_options_cache,
+    _queue_status_feed,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
     get_server_runner_router,
@@ -918,6 +919,17 @@ def register_events_routes(
                 background_task_count=bg_count,
                 blocked_on=blocked_on,
             )
+            from omnigent.agent_tasks.completion import notify_worker_session_status
+
+            output_text = output if isinstance(output, str) else None
+            if status in {"idle", "failed"}:
+                await notify_worker_session_status(
+                    session_id,
+                    status,
+                    output=output_text,
+                )
+            if _queue_status_feed is not None:
+                await _queue_status_feed.notify(session_id, status)
             forward_body = body.model_dump()
             forward_body["data"] = await _enrich_idle_status_with_subagent_output(
                 forward_body["data"], status, session_id, conversation_store

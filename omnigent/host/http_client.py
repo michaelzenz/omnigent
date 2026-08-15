@@ -12,7 +12,7 @@ _logger = logging.getLogger(__name__)
 
 def build_host_http_headers(server_url: str, *, host_id: str) -> dict[str, str]:
     """Build Omnigent HTTP headers for host-side pollers and bridges."""
-    headers = dict(_remote_headers(server_url=server_url))
+    headers = dict(_remote_headers(server_url=server_url, host_id=host_id))
     headers[HOST_ID_HEADER] = host_id
     if "Authorization" in headers:
         return headers
