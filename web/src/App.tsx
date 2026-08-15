@@ -56,7 +56,6 @@ const UsagePage = withPageView(
   "usage",
   lazy(() => import("@/pages/UsagePage").then((m) => ({ default: m.UsagePage }))),
 );
-const InboxPage = lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage })));
 const PuppyGardenPage = lazy(() =>
   import("@/pages/PuppyGardenPage").then((m) => ({ default: m.PuppyGardenPage })),
 );

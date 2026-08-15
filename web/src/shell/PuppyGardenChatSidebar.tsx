@@ -3,7 +3,7 @@ import { ChevronDownIcon, Loader2Icon, Maximize2Icon, RotateCcwIcon, XIcon } fro
 import { useNavigate } from "@/lib/routing";
 import { buildBubbles, createBubbleCache, type Bubble } from "@/lib/renderItems";
 import { getCurrentAuthorId } from "@/lib/identity";
-import { isCostRoutingSession, parseCostRoutingVerdict } from "@/components/CostRoutingControl";
+import { isCostRoutingSession } from "@/components/CostRoutingControl";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { type Agent, useAgents, useSessionAgent } from "@/hooks/useAgents";
 import {
@@ -29,9 +29,9 @@ import {
   readOnlyReasonForSessionLabels,
   reorderCommittedRequestElicitations,
   shouldQueueSend,
-  shouldShowCodexGoalControl,
   shouldShowCodexPlanModeControl,
   shouldShowEffortPicker,
+  shouldShowGoalControl,
   subAgentComposerLabel,
 } from "@/pages/ChatPage";
 import { useChatStore } from "@/store/chatStore";
@@ -191,10 +191,6 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
   const subAgentLabel = subAgentComposerLabel(activeSession);
 
   const serverInfo = useServerInfo();
-  const costRoutingVerdict = useMemo(
-    () => parseCostRoutingVerdict(activeSessionLabels),
-    [activeSessionLabels],
-  );
   const costRoutingEligible =
     serverInfo !== "loading" &&
     serverInfo.smart_routing_enabled &&
@@ -253,8 +249,7 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
           modelPickerKind={modelPickerKind}
           codexModelOptions={codexModelOptions}
           showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
-          showCodexGoal={shouldShowCodexGoalControl(capabilitySource)}
-          costRoutingVerdict={costRoutingVerdict}
+          showGoalControl={shouldShowGoalControl(capabilitySource)}
           costRoutingEligible={costRoutingEligible}
           subAgentLabel={subAgentLabel}
         />

@@ -241,9 +241,13 @@ function safariLookbehindWorkarounds(): Plugin {
 export default defineConfig({
   plugins: [emitServiceWorkerTombstone(), safariLookbehindWorkarounds(), react(), tailwindcss()],
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      // npm (unlike pnpm) can't resolve radix-ui per-component subpaths
+      // (e.g. "radix-ui/tooltip"); remap them to the installed
+      // @radix-ui/react-* packages.
+      { find: /^radix-ui\/([a-z-]+)$/, replacement: "@radix-ui/react-$1" },
+    ],
   },
   test: {
     globals: true,
