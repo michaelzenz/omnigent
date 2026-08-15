@@ -8,6 +8,26 @@ export interface HarnessOption {
   displayName: string;
 }
 
+// The in-process SDK harness is always available — no CLI binary, no host
+// config — so it's a first-class option in the role picker regardless of the
+// host's configured_harnesses map. Surfaced as "Omnigent" (the PuppyGarden
+// SDK executor path).
+export const SDK_HARNESS = "openai-agents";
+const SDK_HARNESS_DISPLAY_NAME = "Omnigent";
+
+// Models the in-process SDK executor can route to behind the Databricks
+// AI Gateway. Kept short on purpose — the gateway serves more, but these are
+// the two PuppyGarden roles are seeded with (see DATABRICKS-INSTALL.md).
+export interface SdkModelOption {
+  id: string;
+  displayName: string;
+}
+
+export const SDK_MODEL_OPTIONS: readonly SdkModelOption[] = [
+  { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
+  { id: "databricks-kimi-k3", displayName: "Kimi K3" },
+];
+
 /** Harnesses configured on the selected host (same filter as New Chat). */
 export function configuredHarnessesForHost(
   host: Host | null | undefined,
@@ -20,6 +40,11 @@ export function configuredHarnessesForHost(
   }
   const seen = new Set<string>();
   const options: HarnessOption[] = [];
+
+  // The SDK harness is always available (in-process, no host setup), so list
+  // it first regardless of the host's configured_harnesses map.
+  options.push({ harness: SDK_HARNESS, displayName: SDK_HARNESS_DISPLAY_NAME });
+  seen.add(SDK_HARNESS);
 
   for (const agent of agents) {
     if (!isNativeCodingAgent(agent) || !agent.harness) continue;

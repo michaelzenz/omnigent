@@ -29,7 +29,12 @@ describe("configuredHarnessesForHost", () => {
       },
     ];
     const harnesses = configuredHarnessesForHost(host, agents);
-    expect(harnesses.map((entry) => entry.harness)).toEqual(["cursor-native"]);
+    // The in-process SDK harness is always available (no host config), so it
+    // appears alongside the host-configured native CLIs.
+    expect(harnesses.map((entry) => entry.harness)).toEqual([
+      "cursor-native",
+      "openai-agents",
+    ]);
   });
 
   it("returns no harnesses when host is not selected", () => {

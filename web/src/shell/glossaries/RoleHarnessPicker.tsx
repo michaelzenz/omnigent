@@ -9,11 +9,13 @@ import {
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { Host } from "@/hooks/useHosts";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
-import { configuredHarnessesForHost } from "./roleProfileOptions";
+import { configuredHarnessesForHost, SDK_HARNESS } from "./roleProfileOptions";
 
 const CLAUDE_NATIVE_DEFAULT_PERMISSION_MODE = "default";
 const CODEX_NATIVE_DEFAULT_APPROVAL_MODE = "default";
 const CURSOR_NATIVE_DEFAULT_EXEC_MODE = "default";
+
+const SDK_HARNESS_DISPLAY_NAME = "Omnigent";
 
 export interface RoleHarnessPickerProps {
   host: Host | null;
@@ -30,6 +32,21 @@ function modelForHarness(agent: AvailableAgent | undefined, pickedModel: string)
     return pickedModel;
   }
   return "";
+}
+
+// A synthetic AvailableAgent row for the in-process SDK harness, which is not
+// a native CLI and so has no catalog agent that passes isNativeCodingAgent.
+// Gives the picker a row to select/label so it stops falling back to the
+// first native agent (Claude Code) when the stored harness is the SDK one.
+function sdkHarnessAgent(): AvailableAgent {
+  return {
+    id: SDK_HARNESS,
+    name: SDK_HARNESS,
+    display_name: SDK_HARNESS_DISPLAY_NAME,
+    description: null,
+    harness: SDK_HARNESS,
+    skills: [],
+  };
 }
 
 export function RoleHarnessPicker({
@@ -52,11 +69,18 @@ export function RoleHarnessPicker({
     const allowed = new Set(
       configuredHarnessesForHost(host, agents, harness).map((option) => option.harness),
     );
-    return sortAgentsForDisplay(
+    const native = sortAgentsForDisplay(
       agents.filter(
         (agent) => isNativeCodingAgent(agent) && agent.harness && allowed.has(agent.harness),
       ),
     );
+    // The SDK harness is a first-class option but not a native CLI; ensure it
+    // has a row even when no catalog agent carrying it survives the native
+    // filter (it usually does — task-broker etc. — but be resilient).
+    if (allowed.has(SDK_HARNESS) && !native.some((a) => a.harness === SDK_HARNESS)) {
+      native.unshift(sdkHarnessAgent());
+    }
+    return native;
   }, [host, agents, harness]);
 
   const effectiveAgentId = useMemo(() => {
@@ -82,12 +106,19 @@ export function RoleHarnessPicker({
     (agent: AvailableAgent) => {
       const nextHarness =
         nativeCodingAgentForAvailableAgent(agent)?.harness ?? agent.harness ?? harness;
+      // The SDK harness is not a native CLI and has no permissionMode
+      // capability, but it does take a model — preserve the current pick
+      // (or the stored model) instead of clearing it like the native CLIs.
+      const nextModel =
+        nextHarness === SDK_HARNESS
+          ? (pickedModel || model || "")
+          : modelForHarness(agent, pickedModel);
       onChange({
         harness: nextHarness,
-        model: modelForHarness(agent, pickedModel),
+        model: nextModel,
       });
     },
-    [harness, onChange, pickedModel],
+    [harness, onChange, pickedModel, model],
   );
 
   const handlePickedModel = useCallback(

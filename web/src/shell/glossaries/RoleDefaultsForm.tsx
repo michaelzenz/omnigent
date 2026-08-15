@@ -21,6 +21,7 @@ import type { SecretaryProfile } from "@/lib/agentTasksApi";
 import { resetAgentRoleSession } from "@/lib/agentTasksApi";
 import { WorkspacePathField } from "@/shell/WorkspacePathField";
 import { RoleHarnessPicker } from "./RoleHarnessPicker";
+import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "./roleProfileOptions";
 
 export const ROLE_PROFILE_SAVE_DEBOUNCE_MS = 2000;
 
@@ -246,6 +247,33 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
             onChange={({ harness, model }) => patchDraft({ harness, model })}
           />
         </div>
+
+        {draft.harness === SDK_HARNESS ? (
+          <div className="space-y-1.5 sm:col-span-2" data-testid={`glossary-role-model-${roleId}`}>
+            <span className="text-xs text-muted-foreground">Model</span>
+            <Select
+              value={draft.model || undefined}
+              onValueChange={(model) => patchDraft({ model })}
+            >
+              <SelectTrigger className="w-full" data-testid={`glossary-role-model-select-${roleId}`}>
+                <SelectValue placeholder="Select model" />
+              </SelectTrigger>
+              <SelectContent>
+                {SDK_MODEL_OPTIONS.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.displayName}
+                  </SelectItem>
+                ))}
+                {/* Keep a stored model that isn't in the curated list visible
+                    so switching harness never silently drops a valid pick. */}
+                {draft.model &&
+                !SDK_MODEL_OPTIONS.some((option) => option.id === draft.model) ? (
+                  <SelectItem value={draft.model}>{draft.model}</SelectItem>
+                ) : null}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
       </div>
 
       {showSessionWarning ? (
