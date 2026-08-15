@@ -6,14 +6,17 @@ You own **one** managed task. Maintain its `internal_note` and tags so the ingre
 
 ## API access
 
-Call the Omnigent task APIs with `curl` from the runner workspace.
-The runner sets `RUNNER_SERVER_URL` to the server base URL (for example `http://127.0.0.1:6767`).
+Call the Omnigent task APIs with the `puppygarden_api` tool. It takes a
+`method` (GET/POST/PATCH/DELETE), a `path` starting with `/v1/...`, and an
+optional `body` (JSON object) / `query` (JSON object). The runner proxies
+the call to the server — no curl needed.
 
-```bash
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>"
+```
+puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>")
 ```
 
-Use Bash for every endpoint below. Do not use browser tools for routing work.
+Use `puppygarden_api` for every endpoint below. See
+docs/agent-tasks/API_REFERENCE.md for the full catalogue.
 
 ## Handling routed events
 
@@ -29,14 +32,13 @@ Work through these steps in order:
 
 ### Step 1 — Read the current state
 
-```bash
+```
 # Task info: internal_note, tags, state, worker_role_key
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>"
+puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>")
 
 # Existing pending/queued items — each has worker_id (may be null)
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items"
-
-
+puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>/items")
+```
 
 ### Step 2 — Reconcile into existing items
 
@@ -44,19 +46,21 @@ For each routed event, decide whether it extends an existing pending/queued
 item, needs a split, or is already handled:
 
 - **Extend** an existing item — pass `item_id` in the reconcile call:
-  ```bash
-  curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
-    -H 'Content-Type: application/json' \
-    -d '{
-      "items":[{
-        "event_ids":["<event_id>"],
-        "item_id":"<existing_item_id>",
-        "title":"<updated title>",
-        "description":"<updated why>",
-        "instructions":"<updated worker instructions>",
-        "internal_note":"<updated agent context>"
+  ```
+  puppygarden_api(
+    method="POST",
+    path="/v1/agent-tasks/<task_id>/reconcile-events",
+    body={
+      "items": [{
+        "event_ids": ["<event_id>"],
+        "item_id": "<existing_item_id>",
+        "title": "<updated title>",
+        "description": "<updated why>",
+        "instructions": "<updated worker instructions>",
+        "internal_note": "<updated agent context>"
       }]
-    }'
+    }
+  )
   ```
 - **Split** an existing item — create a new item for the split portion, and
   update the original item's title/instructions to reflect the narrower scope.
@@ -76,51 +80,58 @@ lane in two sub-steps:
 related context already exists, assign the new item to it by passing
 `worker_id`:
 
+```
 # Worker lanes already on this task — each has id, role_key, session_id
 # (session_id null = not started yet)
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/workers"
+puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>/workers")
 ```
 
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "title":"<item title>",
-    "description":"<why this item exists>",
-    "instructions":"<worker instructions>",
-    "internal_note":"<agent context>",
-    "worker_id":"<existing_lane_id>",
-    "state":"draft",
-    "submit_for_user_ack":true
-  }'
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/items",
+  body={
+    "title": "<item title>",
+    "description": "<why this item exists>",
+    "instructions": "<worker instructions>",
+    "internal_note": "<agent context>",
+    "worker_id": "<existing_lane_id>",
+    "state": "draft",
+    "submit_for_user_ack": true
+  }
+)
 ```
 
 **3b. No suitable lane — create one** — first get all available worker
 profiles, pick the one that fits the work, create a lane, then create the
 item bound to it:
 
-```bash
+```
 # Get all available worker profiles
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/roles/profiles?kind=worker"
+puppygarden_api(method="GET", path="/v1/agent-tasks/roles/profiles", query={"kind": "worker"})
 # → returns profiles with role keys like "worker:default", "worker:coding-agent", etc.
 
 # Create a worker lane (pending, no session yet)
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/workers" \
-  -H 'Content-Type: application/json' \
-  -d '{"lanes":[{"role_key":"worker:default","count":1}]}'
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/workers",
+  body={"lanes": [{"role_key": "worker:default", "count": 1}]}
+)
 # → returns { "lanes": {"worker:default": ["<new_worker_id>"]} }
 
 # Create the item bound to that lane
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "title":"<item title>",
-    "description":"<why>",
-    "instructions":"<instructions to run>",
-    "worker_id":"<new_worker_id>",
-    "state":"draft",
-    "submit_for_user_ack":true
-  }'
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/items",
+  body={
+    "title": "<item title>",
+    "description": "<why>",
+    "instructions": "<instructions to run>",
+    "worker_id": "<new_worker_id>",
+    "state": "draft",
+    "submit_for_user_ack": true
+  }
+)
 ```
 
 ### Batch worker assignment (sweep)
@@ -130,33 +141,37 @@ have `worker_id = null` — the broker creates items but cannot assign worker
 lanes while the task is pending. Worker creation and assignment are only
 allowed after the task is accepted. Sweep them in order:
 
-```bash
+```
 # 1. Get all pending items — find the ones with worker_id = null
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/items"
+puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>/items")
 
 # 2. Get all available worker profiles
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/roles/profiles?kind=worker"
+puppygarden_api(method="GET", path="/v1/agent-tasks/roles/profiles", query={"kind": "worker"})
 
 # 3. Create the worker lanes you need (batch: specify role + count)
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/workers" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "lanes":[
-      {"role_key":"worker:codex","count":2},
-      {"role_key":"worker:default","count":1}
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/workers",
+  body={
+    "lanes": [
+      {"role_key": "worker:codex", "count": 2},
+      {"role_key": "worker:default", "count": 1}
     ]
-  }'
+  }
+)
 # → returns { "lanes": {"worker:codex": ["<id_1>","<id_2>"], "worker:default": ["<id_3>"]} }
 
 # 4. Sweep: assign every unassigned item to a worker_id
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/workers/assign" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "assignments":[
-      {"item_id":"<item_id_1>","worker_id":"<new_worker_id>"},
-      {"item_id":"<item_id_2>","worker_id":"<new_worker_id>"}
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/workers/assign",
+  body={
+    "assignments": [
+      {"item_id": "<item_id_1>", "worker_id": "<new_worker_id>"},
+      {"item_id": "<item_id_2>", "worker_id": "<new_worker_id>"}
     ]
-  }'
+  }
+)
 ```
 
 * Create lanes first (step 3), then assign items to them (step 4). Multiple

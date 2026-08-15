@@ -31,7 +31,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from omnigent.json_types import JsonObject as _JsonObject
 
@@ -82,6 +82,7 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
+from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool, is_task_api_path
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
 from omnigent.tools.builtins.spawn import (
     # Shared contract values with the in-process sys_session_* tools. Imported
@@ -418,6 +419,16 @@ _BROWSER_TOOLS = frozenset(
     }
 )
 
+# Priority 5n: PuppyGarden task-API proxy — ``puppygarden_api``.
+# Auto-registered by ToolManager. The runner proxies the Omnigent server's
+# task REST endpoints (``/v1/agent-tasks`` / ``/v1/task-events`` /
+# ``/v1/task-items``) over ``server_client`` so agents call the API with a
+# typed function call instead of curl. Execution lives HERE (not in
+# Tool.invoke) because it needs the runner's ``server_client`` that
+# ``ToolContext`` does not carry — same posture as _COMMENT_TOOLS /
+# _SCHEDULED_TASK_TOOLS.
+_PUPPYGARDEN_API_TOOLS = frozenset({PuppyGardenApiTool.name()})
+
 # Runner-side outer HTTP read timeout for a browser action POST. The read
 # budget (60s) MUST exceed the server-side browser-action await (30s) so the
 # runner never severs the still-open POST before the server returns either the
@@ -471,6 +482,10 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     # Memory builtins are relayed to native harnesses too — unlike web_search,
     # native harnesses have no built-in long-term memory of their own.
     | _HINDSIGHT_TOOLS
+    # PuppyGarden task-API proxy rides the native relay so native-harness role
+    # agents (claude/codex/pi) can call the task REST API the same way as SDK
+    # agents — without the relay they'd never see the tool.
+    | _PUPPYGARDEN_API_TOOLS
 )
 
 
@@ -633,6 +648,7 @@ _ALL_LOCAL_TOOLS = (
     | _AGENT_TOOLS
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
+    | _PUPPYGARDEN_API_TOOLS
 )
 _PLACEHOLDER_CWDS = (None, "", ".", "./")
 
@@ -3568,6 +3584,75 @@ async def _execute_scheduled_task_tool(
     return json.dumps(resp.json())
 
 
+async def _execute_puppygarden_api_tool(
+    tool_name: str,
+    arguments: str,
+    *,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """
+    Runner-local handler for ``puppygarden_api``.
+
+    Proxies any PuppyGarden task REST endpoint (``/v1/agent-tasks`` /
+    ``/v1/task-events`` / ``/v1/task-items``) over ``server_client`` so an
+    agent calls the API with a typed function call instead of curling. The
+    path is validated against the task-API prefixes so a misbehaving model
+    can't use this tool as an arbitrary server proxy. Same posture as
+    :func:`_execute_scheduled_task_tool` / :func:`_execute_comment_tool`.
+
+    :param tool_name: ``"puppygarden_api"``.
+    :param arguments: JSON-encoded arguments string from the LLM, with
+        ``method`` (GET/POST/PATCH/DELETE), ``path`` (``/v1/...``), and
+        optional ``body`` / ``query`` objects.
+    :param server_client: HTTP client pointed at the Omnigent server; ``None``
+        returns an error string.
+    :returns: Tool output JSON string — the server's JSON response, or an
+        ``{"error": ...}`` object on failure.
+    """
+    if server_client is None:
+        return json.dumps({"error": f"{tool_name} requires server access"})
+    try:
+        args: _JsonObject = json.loads(arguments) if arguments.strip() else {}
+    except json.JSONDecodeError:
+        return json.dumps({"error": f"{tool_name}: malformed JSON arguments"})
+
+    method = args.get("method")
+    path = args.get("path")
+    if not isinstance(method, str) or method not in ("GET", "POST", "PATCH", "DELETE"):
+        return json.dumps({"error": f"{tool_name} requires 'method' (GET/POST/PATCH/DELETE)"})
+    if not isinstance(path, str) or not path:
+        return json.dumps({"error": f"{tool_name} requires 'path' (e.g. /v1/agent-tasks/<id>)"})
+    if not is_task_api_path(path):
+        return json.dumps(
+            {"error": f"{tool_name} only proxies task API paths (/v1/agent-tasks, /v1/task-events, /v1/task-items)"}
+        )
+
+    body = args.get("body")
+    query = args.get("query")
+    kwargs: dict[str, Any] = {"timeout": 30.0}
+    if isinstance(query, dict) and query:
+        kwargs["params"] = query
+    if isinstance(body, dict) and method in ("POST", "PATCH"):
+        kwargs["json"] = body
+
+    try:
+        resp = await server_client.request(method, path, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"{tool_name} failed: {exc}"})
+
+    if resp.status_code >= 400:
+        return json.dumps(
+            {"error": f"server returned {resp.status_code}", "details": resp.text[:500]}
+        )
+    # Some DELETE endpoints return 204 No Content; emit a stable empty object.
+    if resp.status_code == 204 or not resp.content:
+        return json.dumps({"status": "ok"})
+    try:
+        return json.dumps(resp.json())
+    except ValueError:
+        return json.dumps({"status": "ok", "body": resp.text[:500]})
+
+
 @dataclass
 class _ParsedTitle:
     """
@@ -5302,6 +5387,12 @@ async def execute_tool(
                 args,
                 server_client=server_client,
                 conversation_id=conversation_id,
+            )
+        elif tool_name in _PUPPYGARDEN_API_TOOLS:
+            output = await _execute_puppygarden_api_tool(
+                tool_name,
+                arguments,
+                server_client=server_client,
             )
         elif _is_spec_local_python_tool(tool_name, agent_spec):
             output = await _execute_local_python_tool(

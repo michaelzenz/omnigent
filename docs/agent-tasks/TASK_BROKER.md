@@ -4,14 +4,17 @@ The system will send you event batch with prompt, wait for the instruction
 
 ## API access
 
-Call the Omnigent task APIs with `curl` from the runner workspace. 
-The runner sets `RUNNER_SERVER_URL` to the server base URL (for example `http://127.0.0.1:6767`).
+Call the Omnigent task APIs with the `puppygarden_api` tool. It takes a
+`method` (GET/POST/PATCH/DELETE), a `path` starting with `/v1/...`, and an
+optional `body` (JSON object) / `query` (JSON object). The runner proxies
+the call to the server — no curl needed.
 
-```bash
-curl -sS "$RUNNER_SERVER_URL/v1/task-events/ambiguous-inbox"
+```
+puppygarden_api(method="GET", path="/v1/task-events/ambiguous-inbox")
 ```
 
-Use Bash for every endpoint below. Do not use browser tools for routing work.
+Use `puppygarden_api` for every endpoint below. See
+docs/agent-tasks/API_REFERENCE.md for the full catalogue.
 
 ## Triggers
 
@@ -24,10 +27,12 @@ The notice already carries `candidate_task_ids` — ranked suggestions by
 tag similarity against all active/idle/pending tasks. You do not need to
 pull all tasks; fetch the candidates in one batch call:
 
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/batch" \
-  -H 'Content-Type: application/json' \
-  -d '{"task_ids":["<candidate_id_1>","<candidate_id_2>"]}'
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/batch",
+  body={"task_ids": ["<candidate_id_1>", "<candidate_id_2>"]}
+)
 ```
 
 Each task returns `internal_note` (agent-facing context from prior
@@ -40,10 +45,12 @@ When a candidate task is a confident match for an event, route it there.
 
 **Active task match** → route to that task's manager:
 
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/batch-resolve" \
-  -H 'Content-Type: application/json' \
-  -d '{"event_ids":["<id1>","<id2>"],"task_id":"<id>"}'
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/task-events/batch-resolve",
+  body={"event_ids": ["<id1>", "<id2>"], "task_id": "<id>"}
+)
 ```
 
 **Pending package match** → no manager yet, still broker managed:
@@ -65,22 +72,24 @@ intended taskItems for this call — each entry is one of:
   fields. This lets the broker decompose an over-broad item into focused ones
   in a single call.
 
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "task_internal_note":"<agent context — routing rationale for the task, update if needed>",
-    "items":[
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/reconcile-events",
+  body={
+    "task_internal_note": "<agent context — routing rationale for the task, update if needed>",
+    "items": [
       {
-        "event_ids":["<id>"],
-        "title":"<title>",
-        "description":"<why this item exists for the user>",
-        "instructions":"<worker instructions>",
-        "internal_note":"<agent context — prior conclusions for taskItem>",
-        "item_id":"<optional-existing-item-id>"
+        "event_ids": ["<id>"],
+        "title": "<title>",
+        "description": "<why this item exists for the user>",
+        "instructions": "<worker instructions>",
+        "internal_note": "<agent context — prior conclusions for taskItem>",
+        "item_id": "<optional-existing-item-id>"
       }
     ]
-  }'
+  }
+)
 ```
 
 - `task_internal_note` updates the task-level routing context so the broker
@@ -99,22 +108,24 @@ itself; that stays with the user/manager.
 When no candidate task is a confident match, create a pending task package
 and reconcile the event into a taskItem:
 
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/packages" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "title":"<task title>",
-    "internal_note":"<agent context — routing rationale for the task>",
-    "items":[
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/packages",
+  body={
+    "title": "<task title>",
+    "internal_note": "<agent context — routing rationale for the task>",
+    "items": [
       {
-        "title":"<item title>",
-        "event_ids":["<id>"],
-        "description":"<why this item exists>",
-        "instructions":"<worker instructions>",
-        "internal_note":"<agent context — leave for your future judgement>"
+        "title": "<item title>",
+        "event_ids": ["<id>"],
+        "description": "<why this item exists>",
+        "instructions": "<worker instructions>",
+        "internal_note": "<agent context — leave for your future judgement>"
       }
     ]
-  }'
+  }
+)
 ```
 
 - Creates a **pending** task with `pending` items. Tags are inferred
@@ -127,16 +138,18 @@ FYI cluster.
 
 List open FYI clusters (each `fyi[].id` is the `cluster_id`):
 
-```bash
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/board/pending"
+```
+puppygarden_api(method="GET", path="/v1/agent-tasks/board/pending")
 ```
 
 Create or extend a cluster:
 
-```bash
-curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/fyi-clusters" \
-  -H 'Content-Type: application/json' \
-  -d '{"event_ids":["<id>"],"headline":"<headline>","cluster_id":"<optional-existing-cluster-id>"}'
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/task-events/fyi-clusters",
+  body={"event_ids": ["<id>"], "headline": "<headline>", "cluster_id": "<optional-existing-cluster-id>"}
+)
 ```
 
 - Omit `cluster_id` to create a new card; the response `id` is the cluster id
