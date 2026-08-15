@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,7 +40,7 @@ def resolve_bootstrap_params(
 ) -> BootstrapParams:
     """Merge explicit bootstrap inputs over the role's defaults."""
     resolved_host_id = host_id or (role_profile.host_id if role_profile else None)
-    resolved_workspace = (
+    resolved_workspace = os.path.expanduser(
         workspace or (role_profile.workspace if role_profile else None) or DEFAULT_TASK_WORKSPACE
     )
     resolved_harness = resolve_task_harness(

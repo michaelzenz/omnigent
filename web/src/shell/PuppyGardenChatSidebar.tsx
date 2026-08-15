@@ -479,7 +479,7 @@ export function PuppyGardenChatSidebar() {
           ) : null}
         </div>
       ) : (
-        <PuppyGardenSessionView sessionId={conversationId} />
+        <PuppyGardenSessionView key={conversationId} sessionId={conversationId} />
       )}
 
       {showRoleControls ? (
