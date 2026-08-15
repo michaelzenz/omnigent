@@ -1,6 +1,5 @@
 # Task broker manual
 
-See docs/agent-tasks/README.md for general duty. 
 The system will send you event batch with prompt, wait for the instruction
 
 ## API access
@@ -21,24 +20,23 @@ Use Bash for every endpoint below. Do not use browser tools for routing work.
   `candidate_task_ids` are ranked suggestions by tag similarity search in
   (active + pending tasks) for the whole batch — only for reference.
 
-  For each event, decide individually which of the following paths below applies.
+The notice already carries `candidate_task_ids` — ranked suggestions by
+tag similarity against all active/idle/pending tasks. You do not need to
+pull all tasks; fetch the candidates in one batch call:
+
+```bash
+curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/batch" \
+  -H 'Content-Type: application/json' \
+  -d '{"task_ids":["<candidate_id_1>","<candidate_id_2>"]}'
+```
+
+Each task returns `internal_note` (agent-facing context from prior
+routing), `tags`, and `state`. Read these to decide whether an event is a
+confident match for an existing task or needs a new one.
 
 ### 1. Route to an existing task
 
 When a candidate task is a confident match for an event, route it there.
-
-Check the candidate task's `internal_note` before deciding whether to route
-events to it:
-
-```bash
-curl -sS "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>"
-```
-
-The task returns `internal_note` (agent-facing context you or a prior
-reconcile left behind). Read `internal_note` before routing — it records
-why the task exists, what was already concluded, and a summary of previous
-events, so you can judge whether new ambiguous events belong on it or need
-a new task.
 
 **Active task match** → route to that task's manager:
 
@@ -48,14 +46,30 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/batch-resolve" \
   -d '{"event_ids":["<id1>","<id2>"],"task_id":"<id>"}'
 ```
 
-**Pending package match** → no manager, still broker managed:
+**Pending package match** → no manager yet, still broker managed:
 
-To resolve the events onto a task broker manages
+`POST /v1/agent-tasks/<task_id>/reconcile-events` reconciles events onto a
+pending task the broker owns. The `items` array is the broker's full set of
+intended taskItems for this call — each entry is one of:
+
+- **Create** a new taskItem — omit `item_id`. A new item is created from the
+  given `title`/`description`/`instructions`/`internal_note`, linked to the
+  listed `event_ids`.
+- **Update** an existing taskItem — pass its `item_id`. The fields
+  (`title`/`description`/`instructions`/`internal_note`) overwrite the item,
+  and the listed `event_ids` are appended to it. Use this when new evidence
+  refines an item the broker already drafted.
+- **Split** an existing taskItem — pass its `item_id` on one entry (to narrow
+  it to the remaining scope) and add further entries without `item_id` for the
+  split-off pieces. Each split-off entry carries its own `event_ids` and
+  fields. This lets the broker decompose an over-broad item into focused ones
+  in a single call.
+
 ```bash
 curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" \
   -H 'Content-Type: application/json' \
   -d '{
-    "task_internal_note":"<agent context — routing rationale for the task>",
+    "task_internal_note":"<agent context — routing rationale for the task, update if needed>",
     "items":[
       {
         "event_ids":["<id>"],
@@ -72,7 +86,13 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/<task_id>/reconcile-events" 
 - `task_internal_note` updates the task-level routing context so the broker
   can judge future events without re-reading sources.
 - Use `description` for the user-facing why; update `internal_note` for routing
-  rationale so broker have context to reconcile events into taskItem
+  rationale so broker have context to reconcile events into taskItem.
+
+The broker may also **resolve** a taskItem when an event indicates it is no
+longer needed (e.g. a monitored PR was merged, making the follow-up item
+moot). Use `POST /v1/task-items/<id>/resolve` with `action: "reject"` to
+cancel it. The broker resolves taskItems only — it does not resolve the task
+itself; that stays with the user/manager.
 
 ### 2. Create a new task and reconcile
 
@@ -91,7 +111,7 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/agent-tasks/packages" \
         "event_ids":["<id>"],
         "description":"<why this item exists>",
         "instructions":"<worker instructions>",
-        "internal_note":"<agent context — prior conclusions for taskItem>"
+        "internal_note":"<agent context — leave for your future judgement>"
       }
     ]
   }'
@@ -125,7 +145,7 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/fyi-clusters" \
 - Linked events move to `classified_fyi`; user dismisses on the board.
 
 # Managing the Task
-For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, split/merge taskItems if necessary, resolve the taskItems when you know that it's already done(like a taskItem is to monitor the status of the pr, if the pr is merged, then it should be resolved). You just dont assign workers for an item
+For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, split/merge taskItems if necessary, resolve the taskItems when you know that it's already done. You just dont assign workers for an item
 
 # Hint
 There are two infra in this system that you can use, you dont need to know the details, just generate corresponding instruction

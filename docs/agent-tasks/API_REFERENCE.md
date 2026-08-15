@@ -30,6 +30,7 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/agent-tasks` |
 | POST | `/v1/agent-tasks/packages` |
 | GET | `/v1/agent-tasks` |
+| POST | `/v1/agent-tasks/batch` |
 | GET | `/v1/agent-tasks/{id}` |
 | PATCH | `/v1/agent-tasks/{id}` |
 | DELETE | `/v1/agent-tasks/{id}` |

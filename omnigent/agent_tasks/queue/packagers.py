@@ -143,12 +143,20 @@ class Packager(ABC):
         """Format the payload and enqueue one item. ``None`` if unpackageable."""
 
     async def _should_send(self, batch: _PendingBatch) -> bool:
-        """Evaluate the batching matrix for one key."""
+        """Evaluate the batching matrix for one key.
+
+        Full batches flush immediately — never hold completed work. Partial
+        batches flush early when the agent is idle so it doesn't sit waiting
+        for the packager; but when the agent is already busy, we hold the
+        partial batch to accumulate more events, since the agent can't
+        process them yet anyway. The dispatcher's gate is the final
+        authority on delivery timing.
+        """
         if not batch.events:
             return False
         if len(batch.events) >= self._batch_size:
             return True
-        # Partial batch: wait unless the agent is idle and the floor is reached.
+        # Partial batch: flush early only when the agent is idle and ready.
         if not await self._is_idle(batch.key):
             return False
         return batch.oldest_age_s > self._age_threshold_s

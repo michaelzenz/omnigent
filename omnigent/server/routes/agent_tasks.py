@@ -172,6 +172,12 @@ class CreateAgentTaskRequest(BaseModel):
         return value
 
 
+class BatchGetTasksRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/batch``."""
+
+    task_ids: list[str] = Field(min_length=1, max_length=100)
+
+
 class UpdateAgentTaskRequest(BaseModel):
     """Request body for ``PATCH /v1/agent-tasks/{task_id}``."""
 
@@ -904,6 +910,29 @@ def create_agent_tasks_router(
             "object": "list",
             "data": [_task_to_response(task) for task in tasks],
         }
+
+        @router.post("/agent-tasks/batch")
+        async def batch_get_tasks(
+            request: Request,
+            body: BatchGetTasksRequest,
+        ) -> dict[str, Any]:
+            """Fetch multiple tasks by ID in one call."""
+            user_id = get_user_id(request, auth_provider)
+
+            def _fetch() -> list[Task]:
+                tasks: list[Task] = []
+                for task_id in body.task_ids:
+                    task = task_store.get(task_id.strip())
+                    if task is None:
+                        continue
+                    tasks.append(task)
+                return _filter_tasks_for_user(tasks, user_id)
+
+            tasks = await asyncio.to_thread(_fetch)
+            return {
+                "object": "list",
+                "data": [_task_to_response(task) for task in tasks],
+            }
 
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
