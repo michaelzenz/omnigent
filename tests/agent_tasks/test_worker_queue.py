@@ -293,6 +293,13 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
         state="pending",
         instructions="Do the work",
     )
+    worker = worker_store.create_worker(
+        uuid.uuid4().hex,
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+        kind="managed",
+    )
+    item_store.update_item(item.id, worker_id=worker.id)
 
     updated, execution = await resolve_task_item(
         item=item,
@@ -305,7 +312,6 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
         conversation_store=conversation_store,
         role_profile=_worker_role_profile(worker_agent_id, workspace="/tmp/omnigent-accept"),
         edited_payload={
-            "worker_role_key": WORKER_DEFAULT_ROLE_KEY,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-accept",
         },
@@ -361,6 +367,13 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
         state="pending",
         instructions="Do the work",
     )
+    worker = worker_store.create_worker(
+        uuid.uuid4().hex,
+        task_id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+        kind="managed",
+    )
+    item_store.update_item(item.id, worker_id=worker.id)
 
     async def _mock_session_creator(*, body, request, user_id, **kwargs):
         return conversation_store.create_conversation(
@@ -383,7 +396,6 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
         conversation_store=conversation_store,
         role_profile=_worker_role_profile(worker_agent_id, workspace="/tmp/omnigent-legacy"),
         edited_payload={
-            "worker_role_key": WORKER_DEFAULT_ROLE_KEY,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-legacy",
         },

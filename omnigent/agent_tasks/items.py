@@ -13,7 +13,7 @@ from omnigent.agent_tasks.bootstrap import (
 )
 from omnigent.agent_tasks.dispatch import dispatch_worker_for_item, resolve_dispatch_params
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
-from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
+from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
 from omnigent.entities.agent_queue import AgentQueueKey
@@ -52,13 +52,6 @@ def _item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
     }
 
 
-def _role_key_from_payload(payload: dict[str, Any]) -> str | None:
-    value = payload.get("worker_role_key")
-    if value is not None and str(value).strip():
-        return str(value).strip()
-    return None
-
-
 def create_task_item(
     *,
     task: Task,
@@ -69,7 +62,7 @@ def create_task_item(
     description: str | None = None,
     instructions: str | None = None,
     internal_note: str | None = None,
-    worker_role_key: str | None = None,
+    worker_id: str | None = None,
     created_by: str = "manager",
     event_ids: list[str] | None = None,
     task_event_store: TaskEventStore | None = None,
@@ -85,14 +78,11 @@ def create_task_item(
         internal_note=internal_note,
         created_by=created_by,
     )
-    role_key = worker_role_key.strip() if worker_role_key else None
-    if role_key:
-        item, _worker = assign_worker_profile(
-            item=item,
-            role_key=role_key,
-            worker_store=worker_store,
-            task_item_store=task_item_store,
-        )
+    if worker_id is not None:
+        worker = worker_store.get_worker(worker_id)
+        if worker is None or worker.task_id != task.id:
+            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+        item = task_item_store.update_item(item.id, worker_id=worker_id)
     if event_ids and task_event_store is not None:
         for event_id in event_ids:
             task_item_store.link_event(item.id, event_id)
@@ -233,24 +223,12 @@ async def resolve_task_item(
         item = refreshed
         payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
 
-    role_key = _role_key_from_payload(payload)
-    if role_key is not None:
-        item, assigned = await asyncio.to_thread(
-            assign_worker_profile,
-            item=item,
-            role_key=role_key,
-            worker_store=worker_store,
-            task_item_store=task_item_store,
+    worker = worker_for_item(item, worker_store=worker_store)
+    if worker is None:
+        raise OmnigentError(
+            "Item has no worker lane; assign one before resolving",
+            code=ErrorCode.CONFLICT,
         )
-        worker = assigned
-    else:
-        existing = worker_for_item(item, worker_store=worker_store)
-        if existing is None:
-            raise OmnigentError(
-                "worker_role_key is required for unassigned inbox items",
-                code=ErrorCode.INVALID_INPUT,
-            )
-        worker = existing
 
     params = resolve_dispatch_params(
         payload={**payload, "worker_role_key": worker.role_key},
@@ -348,7 +326,7 @@ def patch_task_item(
     description: str | None = None,
     instructions: str | None = None,
     internal_note: str | None = None,
-    worker_role_key: str | None = None,
+    worker_id: str | None = None,
 ) -> TaskItem:
     """Update a queued work item before it is dispatched."""
     if item.state not in _EDITABLE_WORK_ITEM_STATES:
@@ -367,11 +345,9 @@ def patch_task_item(
     )
     if updated is None:
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
-    if worker_role_key is not None and worker_role_key.strip():
-        updated, _worker = assign_worker_profile(
-            item=updated,
-            role_key=worker_role_key,
-            worker_store=worker_store,
-            task_item_store=task_item_store,
-        )
+    if worker_id is not None:
+        worker = worker_store.get_worker(worker_id)
+        if worker is None or worker.task_id != item.task_id:
+            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+        updated = task_item_store.update_item(item.id, worker_id=worker_id)
     return updated

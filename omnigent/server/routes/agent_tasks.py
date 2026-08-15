@@ -260,7 +260,7 @@ class CreateTaskItemRequest(BaseModel):
     description: str | None = None
     instructions: str | None = None
     internal_note: str | None = None
-    worker_role_key: str | None = None
+    worker_id: str | None = None
     state: str = "draft"
     event_ids: list[str] = Field(default_factory=list)
     submit_for_user_ack: bool = False
@@ -307,7 +307,6 @@ class AckEventsRequest(BaseModel):
 class DispatchTaskItemRequest(BaseModel):
     """Request body for ``POST /v1/task-items/{item_id}/dispatch``."""
 
-    worker_role_key: str | None = None
     instructions: str | None = None
     host_id: str | None = None
     workspace: str | None = None
@@ -328,6 +327,39 @@ class UpdateWorkerLaneRequest(BaseModel):
     role_key: str
 
 
+class WorkerLaneSpecInput(BaseModel):
+    """One role + count pair for batch worker lane creation."""
+
+    role_key: str
+    count: int = Field(default=1, ge=1)
+
+
+class CreateWorkerLaneRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/workers``."""
+
+    lanes: list[WorkerLaneSpecInput] = Field(min_length=1)
+
+
+class WorkerAssignmentInput(BaseModel):
+    """One item→lane assignment for batch worker assignment."""
+
+    item_id: str
+    role_key: str | None = None
+    worker_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> WorkerAssignmentInput:
+        if self.role_key is None and self.worker_id is None:
+            raise ValueError("provide either role_key or worker_id")
+        return self
+
+
+class BatchAssignWorkersRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/workers/assign``."""
+
+    assignments: list[WorkerAssignmentInput] = Field(min_length=1)
+
+
 class UpdateTaskItemRequest(BaseModel):
     """Request body for ``PATCH /v1/task-items/{item_id}``."""
 
@@ -335,7 +367,7 @@ class UpdateTaskItemRequest(BaseModel):
     description: str | None = None
     instructions: str | None = None
     internal_note: str | None = None
-    worker_role_key: str | None = None
+    worker_id: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -371,6 +403,7 @@ class PackageItemInput(BaseModel):
     instructions: str | None = None
     internal_note: str | None = None
     item_id: str | None = None
+    worker_id: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -1403,6 +1436,108 @@ def create_agent_tasks_router(
                 task_asset_store,
             )
 
+        @router.get("/agent-tasks/{task_id}/workers")
+        async def list_task_workers(
+            request: Request,
+            task_id: str,
+        ) -> dict[str, Any]:
+            """List the worker lanes on a task."""
+            user_id = get_user_id(request, auth_provider)
+            await _get_task_or_404(task_id, user_id)
+            workers = await asyncio.to_thread(worker_store.list_workers_for_task, task_id)
+            return {
+                "object": "list",
+                "data": [_worker_to_response(w) for w in workers],
+            }
+
+        @router.post("/agent-tasks/{task_id}/workers")
+        async def create_worker_lane(
+            request: Request,
+            task_id: str,
+            body: CreateWorkerLaneRequest,
+        ) -> dict[str, Any]:
+            """Create worker lanes (pending, no session yet). Batch by role+count."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            if task.state == "pending":
+                raise OmnigentError(
+                    "Cannot create worker lanes on a pending task; accept the package first",
+                    code=ErrorCode.CONFLICT,
+                )
+
+            def _create() -> dict[str, list[str]]:
+                result: dict[str, list[str]] = {}
+                for spec in body.lanes:
+                    role = _require_task_agent_role(spec.role_key)
+                    if not is_worker_role_key(role):
+                        raise OmnigentError(
+                            f"Not a worker role: {role}",
+                            code=ErrorCode.INVALID_INPUT,
+                        )
+                    ids: list[str] = []
+                    for _ in range(spec.count):
+                        worker = worker_store.create_worker(
+                            uuid.uuid4().hex,
+                            task_id,
+                            role_key=role,
+                            kind="managed",
+                        )
+                        ids.append(worker.id)
+                    result[role] = ids
+                return result
+
+            lanes = await asyncio.to_thread(_create)
+            return {"object": "agent.task.worker_lanes", "lanes": lanes}
+
+        @router.post("/agent-tasks/{task_id}/workers/assign")
+        async def batch_assign_workers(
+            request: Request,
+            task_id: str,
+            body: BatchAssignWorkersRequest,
+        ) -> dict[str, Any]:
+            """Batch-create worker lanes and/or assign items to existing lanes."""
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(task_id, user_id)
+            if task.state == "pending":
+                raise OmnigentError(
+                    "Cannot assign worker lanes on a pending task; accept the package first",
+                    code=ErrorCode.CONFLICT,
+                )
+
+            def _assign() -> list[dict[str, Any]]:
+                results: list[dict[str, Any]] = []
+                for a in body.assignments:
+                    item = task_item_store.get_item(a.item_id)
+                    if item is None or item.task_id != task_id:
+                        raise OmnigentError(
+                            "Task item not found", code=ErrorCode.NOT_FOUND
+                        )
+                    if a.worker_id is not None:
+                        worker = worker_store.get_worker(a.worker_id)
+                        if worker is None or worker.task_id != task_id:
+                            raise OmnigentError(
+                                "Worker not found", code=ErrorCode.NOT_FOUND
+                            )
+                    else:
+                        role = _require_task_agent_role(a.role_key or "")
+                        if not is_worker_role_key(role):
+                            raise OmnigentError(
+                                f"Not a worker role: {role}",
+                                code=ErrorCode.INVALID_INPUT,
+                            )
+                        worker = worker_store.create_worker(
+                            uuid.uuid4().hex,
+                            task_id,
+                            role_key=role,
+                            kind="managed",
+                        )
+                    task_item_store.update_item(a.item_id, worker_id=worker.id)
+                    results.append({"item_id": a.item_id, "worker_id": worker.id})
+                return results
+
+            results = await asyncio.to_thread(_assign)
+            return {"object": "list", "data": results}
+
         @router.patch("/task-workers/{worker_id}")
         async def update_worker_lane_role(
             request: Request,
@@ -1515,6 +1650,11 @@ def create_agent_tasks_router(
             """Create a task item and optionally link routed events."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
+            if task.state == "pending" and body.worker_id is not None:
+                raise OmnigentError(
+                    "Cannot assign a worker to an item on a pending task; accept the package first",
+                    code=ErrorCode.CONFLICT,
+                )
 
             def _create() -> TaskItem:
                 item = create_task_item(
@@ -1527,7 +1667,7 @@ def create_agent_tasks_router(
                     description=body.description,
                     instructions=body.instructions,
                     internal_note=body.internal_note,
-                    worker_role_key=body.worker_role_key,
+                    worker_id=body.worker_id,
                     event_ids=body.event_ids or None,
                 )
                 if body.submit_for_user_ack and item.state == "draft":
@@ -1646,7 +1786,7 @@ def create_agent_tasks_router(
                     description=body.description,
                     instructions=body.instructions,
                     internal_note=body.internal_note,
-                    worker_role_key=body.worker_role_key,
+                    worker_id=body.worker_id,
                 )
 
             updated = await asyncio.to_thread(_patch)
@@ -1664,11 +1804,15 @@ def create_agent_tasks_router(
             task = await _get_task_or_404(item.task_id, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
+            if worker is None:
+                raise OmnigentError(
+                    "Item has no worker lane; assign one before dispatching",
+                    code=ErrorCode.CONFLICT,
+                )
             worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
             payload = {
-                "worker_role_key": body.worker_role_key
-                or (worker.role_key if worker is not None else None),
-                "instructions": item.instructions or "",
+                "worker_role_key": worker.role_key,
+                "instructions": body.instructions or item.instructions or "",
                 "internal_note": item.internal_note,
             }
             params = resolve_dispatch_params(
@@ -1764,6 +1908,7 @@ def create_agent_tasks_router(
                             instructions=item.instructions,
                             internal_note=item.internal_note,
                             item_id=item.item_id,
+                            worker_id=item.worker_id,
                         )
                         for item in body.items
                     ],
@@ -1794,6 +1939,7 @@ def create_agent_tasks_router(
                     instructions=item.instructions,
                     internal_note=item.internal_note,
                     item_id=item.item_id,
+                    worker_id=item.worker_id,
                 )
                 for item in body.items or []
             ]

@@ -42,6 +42,7 @@ class PackageItemSpec:
     instructions: str | None = None
     internal_note: str | None = None
     item_id: str | None = None
+    worker_id: str | None = None
 
 
 def _bulk_claimable_events(
@@ -167,6 +168,7 @@ def reconcile_events_to_task_batch(
                 internal_note=spec.internal_note,
                 state="pending",
                 created_by="broker",
+                worker_id=spec.worker_id,
                 event_ids=[event.id for event in events],
             )
             results.append(item)

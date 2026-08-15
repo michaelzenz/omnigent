@@ -10,7 +10,7 @@ from typing import Any
 from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.executions import mark_execution_running, start_execution_for_item
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
-from omnigent.agent_tasks.workers import assign_worker_profile, worker_for_item
+from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.entities import Task, TaskEventExecution, TaskItem
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -150,13 +150,10 @@ async def dispatch_worker_for_item(
         )
 
     worker = worker_for_item(item, worker_store=worker_store)
-    if worker is None or worker.role_key != params.role_key:
-        item, worker = await asyncio.to_thread(
-            assign_worker_profile,
-            item=item,
-            role_key=params.role_key,
-            worker_store=worker_store,
-            task_item_store=task_item_store,
+    if worker is None:
+        raise OmnigentError(
+            "Item has no worker lane; assign one before dispatching",
+            code=ErrorCode.CONFLICT,
         )
 
     # Reuse the worker's existing session, or create one on first dispatch.

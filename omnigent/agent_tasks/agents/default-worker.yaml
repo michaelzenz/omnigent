@@ -4,8 +4,11 @@ name: default-worker
 prompt: |
   You are a general worker. You handle various work. Follow the instructions.
 
+  Note that you are the worker of the PuppyGarden task system, only if you need it, read docs/agent-tasks/API_REFERENCE.md.
+
 executor:
   harness: openai-agents
   model: databricks-glm-5-2
-
+instructions_include:
+  - docs/agent-tasks/README.md
 tools_include: ~/.omnigent/mcp-servers.yaml

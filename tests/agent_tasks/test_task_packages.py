@@ -248,6 +248,15 @@ async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str
     worker_store = stores["worker"]
     item = item_store.list_items_for_task(task.id, state="pending")[0]
 
+    # Assign a worker lane before resolving (manager sweep).
+    worker = worker_store.create_worker(
+        uuid.uuid4().hex,
+        task.id,
+        role_key=WORKER_DEFAULT_ROLE_KEY,
+        kind="managed",
+    )
+    item_store.update_item(item.id, worker_id=worker.id)
+
     async def _mock_session_creator(*, body, request, user_id, **kwargs):
         return conversation_store.create_conversation(
             title=body.title or "Task manager",
@@ -276,7 +285,6 @@ async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str
             created_at=1,
         ),
         edited_payload={
-            "worker_role_key": WORKER_DEFAULT_ROLE_KEY,
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-task-test",
             "harness": "cursor",

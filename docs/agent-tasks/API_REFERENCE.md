@@ -58,10 +58,14 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 
 Worker lanes are per-task sub-agent slots. A lane that has not run yet can be
 re-pointed at a different worker role or activated into a live session; once a
-session exists the role is fixed.
+session exists the role is fixed. Items reference lanes by `worker_id`; lanes
+are created explicitly (POST) or via batch assignment (POST assign).
 
 | Method | Path |
 |--------|------|
+| GET | `/v1/agent-tasks/{task_id}/workers` |
+| POST | `/v1/agent-tasks/{task_id}/workers` |
+| POST | `/v1/agent-tasks/{task_id}/workers/assign` |
 | PATCH | `/v1/task-workers/{worker_id}` |
 | POST | `/v1/task-workers/{worker_id}/activate` |
 
