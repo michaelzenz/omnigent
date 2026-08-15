@@ -125,7 +125,7 @@ curl -sS -X POST "$RUNNER_SERVER_URL/v1/task-events/fyi-clusters" \
 - Linked events move to `classified_fyi`; user dismisses on the board.
 
 # Managing the Task
-For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, resolve the taskItems when you know that it's already done(like a taskItem is to monitor the status of the pr, if the pr is merged, then it should be resolved). You just dont assign workers for an item
+For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, split/merge taskItems if necessary, resolve the taskItems when you know that it's already done(like a taskItem is to monitor the status of the pr, if the pr is merged, then it should be resolved). You just dont assign workers for an item
 
 # Hint
 There are two infra in this system that you can use, you dont need to know the details, just generate corresponding instruction

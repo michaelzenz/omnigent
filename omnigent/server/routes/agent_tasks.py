@@ -631,40 +631,6 @@ def _role_session_labels(role: str, harness: str) -> dict[str, str]:
     return labels
 
 
-def _role_seed_prompt(role: str) -> str | None:
-    """Return the seed prompt text for a role, or None if no seed."""
-    if role == TASK_SECRETARY_ROLE:
-        from omnigent.agent_tasks.secretary_session import SECRETARY_SEED_PROMPT
-
-        return SECRETARY_SEED_PROMPT
-    if role == TASK_BROKER_ROLE:
-        from omnigent.agent_tasks.broker_session import BROKER_SEED_PROMPT
-
-        return BROKER_SEED_PROMPT
-    return None
-
-
-def _append_seed_prompt(
-    conversation_store: ConversationStore,
-    conversation_id: str,
-    prompt_text: str,
-) -> None:
-    """Append a hidden meta user message as agent context (not shown in UI)."""
-    from omnigent.db.utils import generate_task_id
-    from omnigent.entities import MessageData, NewConversationItem
-
-    item = NewConversationItem(
-        type="message",
-        response_id=generate_task_id(),
-        data=MessageData(
-            role="user",
-            content=[{"type": "input_text", "text": prompt_text}],
-            is_meta=True,
-        ),
-    )
-    conversation_store.append(conversation_id, [item])
-
-
 async def _create_role_session_via_create_path(
     role: str,
     *,
@@ -682,8 +648,8 @@ async def _create_role_session_via_create_path(
 
     Builds a ``SessionCreateRequest`` from the glossary profile, calls
     ``session_creator`` (which wraps ``create_session_internal``), then
-    layers on role-specific extras: seed prompt and labels are passed in
-    the request body so the create path applies them atomically.
+    layers on role-specific labels passed in the request body so the
+    create path applies them atomically.
     """
     from omnigent.agent_tasks.bootstrap import build_role_session_request
 
@@ -701,10 +667,6 @@ async def _create_role_session_via_create_path(
         request=request,
         user_id=user_id,
     )
-    if seed_prompt:
-        prompt_text = _role_seed_prompt(role)
-        if prompt_text is not None:
-            _append_seed_prompt(conversation_store, resp.id, prompt_text)
     return resp.id
 
 

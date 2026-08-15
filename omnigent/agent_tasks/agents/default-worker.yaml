@@ -1,0 +1,11 @@
+# Default worker — a general worker that handles various work.
+
+name: default-worker
+prompt: |
+  You are a general worker. You handle various work. Follow the instructions.
+
+executor:
+  harness: openai-agents
+  model: databricks-glm-5-2
+
+tools_include: ~/.omnigent/mcp-servers.yaml

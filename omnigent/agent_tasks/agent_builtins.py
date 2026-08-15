@@ -20,7 +20,8 @@ TASK_SECRETARY_AGENT_NAME = "task-secretary"
 TASK_SECRETARY_ROLE = "secretary"
 TASK_MANAGER_AGENT_NAME = "task-manager"
 TASK_MANAGER_ROLE = "manager"
-TASK_WORKER_AGENT_NAME = "task-worker"
+TASK_WORKER_AGENT_NAME = "coding-agent"
+DEFAULT_WORKER_AGENT_NAME = "default-worker"
 
 PER_USER_TASK_ROLES: frozenset[str] = frozenset({TASK_BROKER_ROLE, TASK_SECRETARY_ROLE})
 
@@ -29,6 +30,7 @@ TASK_BUILTIN_AGENT_NAMES: tuple[str, ...] = (
     TASK_SECRETARY_AGENT_NAME,
     TASK_MANAGER_AGENT_NAME,
     TASK_WORKER_AGENT_NAME,
+    DEFAULT_WORKER_AGENT_NAME,
 )
 
 
@@ -44,23 +46,23 @@ class TaskRoleDefaults:
 TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
     TASK_BROKER_ROLE: TaskRoleDefaults(
         agent_name=TASK_BROKER_AGENT_NAME,
-        harness="cursor-native",
-        model="composer-2.5",
+        harness="openai-agents",
+        model="databricks-glm-5-2",
     ),
     TASK_SECRETARY_ROLE: TaskRoleDefaults(
         agent_name=TASK_SECRETARY_AGENT_NAME,
-        harness="cursor-native",
-        model="composer-2.5",
+        harness="openai-agents",
+        model="databricks-glm-5-2",
     ),
     MANAGER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
         agent_name=TASK_MANAGER_AGENT_NAME,
-        harness="cursor-native",
-        model="composer-2.5",
+        harness="openai-agents",
+        model="databricks-glm-5-2",
     ),
     WORKER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
-        agent_name=TASK_WORKER_AGENT_NAME,
-        harness="cursor-native",
-        model="composer-2.5",
+        agent_name=DEFAULT_WORKER_AGENT_NAME,
+        harness="openai-agents",
+        model="databricks-glm-5-2",
     ),
 }
 
@@ -116,7 +118,7 @@ def resolve_role_agent_profile_id(
     if defaults is None and is_worker_role_key(role):
         return resolve_task_agent_id(
             agent_store,
-            TASK_WORKER_AGENT_NAME,
+            DEFAULT_WORKER_AGENT_NAME,
             fallback_agent_id=fallback_agent_id,
         )
     if defaults is None:

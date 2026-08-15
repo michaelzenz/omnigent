@@ -17,6 +17,8 @@ Use Bash for every endpoint below. Do not use browser tools for routing work.
 
 ## Reconcile routed events
 
+Instead of showing raw events, manager reconcile events into taskItems that is the actual execution work for worker. Manager should handle this in a flexible way, it can split/merge taskItem as needed, resolve the taskItems when you know that it's already done(like a taskItem is to monitor the status of the pr, if the pr is merged, then it should be resolved)
+
 The manager packager wraps routed events into a dispatch notice and sends
 it to your session. Each notice lists every routed event the task has not
 yet reconciled — you don't need to poll for them yourself.
@@ -93,12 +95,14 @@ As a manager of the task, again you need to steer the task towards the goal, und
 * Investigate: investigate the issue
 * Code: do the coding
 * Verify: verify the result is correct/code change takes effect
-* Human Verify: write a script/notebook, and a one line command so that user can run to manualy verify the result is correct
+* Human Verify: after agent finished work, write a script/notebook, and a one line command to run it so that user can run to manually verify the result is correct
 
 # Follow up
 While most of the cases you can ONLY suggest taskItems, to provide an immersive experience, you are allowed to follow up, for ex:
 * user sent a message, set a command runs 2d later, check if there is reply or reaction, if not create a taskItem saying: "follow up with XXX with message "Gentle bump <message composed based on context>"
 * user told a worker to set automerge label on the pr, then use poller to monitor the pr status every 2min. In poller script, issue an event for either pr merged or CI failure, this will later be routed to you, so that you can suggest "CI failed, investigate the issue" or "pr merged, verify the code works in staging"
+
+To reduce token cost, use the special infra below, for EX add the code that directly call the slack mcp to get the new messages.
 
 # Special Infra
 There are two infra you can use in this system
@@ -106,3 +110,6 @@ There are two infra you can use in this system
 See docs/agent-tasks/POLL_PLUGINS.md, you can create arbitrary poller, program it such that when it sees status change, send an event with taskId so that the event will fast route to you. Look at the folder to find out what you can use, if nothing useful, create new one.
 ## Timer
 See docs/agent-tasks/TIMER_PLUGINS.md, you can create arbitrary timer, similarly you can program is such that when the condition meets, send an event that can fast route to yourself
+
+# Appendix
+In case you need it, docs/agent-tasks/API_REFERENCE.md contains all the apis

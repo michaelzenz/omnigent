@@ -39,9 +39,11 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | GET | `/v1/agent-tasks/{id}/dashboard` |
 | GET | `/v1/agent-tasks/{id}/items` |
 | POST | `/v1/agent-tasks/{id}/items` |
+| POST | `/v1/agent-tasks/{id}/assets` |
 | GET | `/v1/agent-tasks/{id}/reconcile-queue` |
 | POST | `/v1/agent-tasks/{id}/ack` |
 | POST | `/v1/agent-tasks/{id}/reconcile-events` |
+| POST | `/v1/agent-tasks/{id}/accept-package` |
 | POST | `/v1/agent-tasks/{id}/reject-package` |
 
 ## Task items
@@ -52,6 +54,17 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | PATCH | `/v1/task-items/{id}` |
 | POST | `/v1/task-items/{id}/dispatch` |
 
+## Task workers
+
+Worker lanes are per-task sub-agent slots. A lane that has not run yet can be
+re-pointed at a different worker role or activated into a live session; once a
+session exists the role is fixed.
+
+| Method | Path |
+|--------|------|
+| PATCH | `/v1/task-workers/{worker_id}` |
+| POST | `/v1/task-workers/{worker_id}/activate` |
+
 ## Board triage
 
 | Method | Path |
@@ -61,21 +74,36 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 
 ## Task agent roles
 
-`{role}` is a managed task agent role slug. Profile endpoints accept any
-supported role (`broker`, `secretary`); session bootstrap is supported for
-both roles.
+`{role}` is a managed task agent role slug. Profile GET/PUT endpoints accept any
+supported role (`broker`, `secretary`, `manager`, `worker`). Session bootstrap
+(`session` / `session/reset`) is supported for `broker` and `secretary` only.
+Custom manager and worker roles are created via the dedicated `roles/manager`
+and `roles/worker` endpoints and deleted via `DELETE roles/{role}` (system roles
+cannot be deleted).
 
 | Method | Path |
 |--------|------|
+| GET | `/v1/agent-tasks/roles/profiles` |
 | GET | `/v1/agent-tasks/roles/{role}/profile` |
 | PUT | `/v1/agent-tasks/roles/{role}/profile` |
+| POST | `/v1/agent-tasks/roles/manager` |
+| POST | `/v1/agent-tasks/roles/worker` |
+| DELETE | `/v1/agent-tasks/roles/{role}` |
 | POST | `/v1/agent-tasks/roles/{role}/session` |
 | POST | `/v1/agent-tasks/roles/{role}/session/reset` |
 
 ## Session adoption
+
+Internal sessions (`sessions/{session_id}`) are adopted by conversation id.
+External, watcher-discovered sessions (`external-sessions/{session_hint}`) are
+adopted by the session hint the watcher reported; the broker proposes adoption
+and the user accepts or rejects each hint.
 
 | Method | Path |
 |--------|------|
 | POST | `/v1/agent-tasks/sessions/{session_id}/propose-adoption` |
 | POST | `/v1/agent-tasks/sessions/{session_id}/adopt` |
 | POST | `/v1/agent-tasks/sessions/{session_id}/reject-adoption` |
+| POST | `/v1/agent-tasks/external-sessions/propose-adoption` |
+| POST | `/v1/agent-tasks/external-sessions/{session_hint}/adopt` |
+| POST | `/v1/agent-tasks/external-sessions/{session_hint}/reject-adoption` |

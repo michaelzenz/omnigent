@@ -33,7 +33,7 @@ async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
     manager_agent_id = generate_agent_id()
     worker_agent_id = generate_agent_id()
     agent_store.create(manager_agent_id, name="task-manager", bundle_location="test:///bundle")
-    agent_store.create(worker_agent_id, name="task-worker", bundle_location="test:///bundle")
+    agent_store.create(worker_agent_id, name="coding-agent", bundle_location="test:///bundle")
 
     manager_profile = TaskRoleProfile(
         role=MANAGER_DEFAULT_ROLE_KEY,

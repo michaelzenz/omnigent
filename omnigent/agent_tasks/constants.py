@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-# Broker: triages and routes stalled events. Cursor native TUI.
-DEFAULT_BROKER_HARNESS = "cursor-native"
-DEFAULT_BROKER_MODEL = "composer-2.5"
+# Broker: triages and routes stalled events.
+DEFAULT_BROKER_HARNESS = "openai-agents"
+DEFAULT_BROKER_MODEL = "databricks-glm-5-2"
 
-# Task manager/worker/reviewer agents: Cursor native TUI.
-DEFAULT_TASK_HARNESS = "cursor-native"
-DEFAULT_TASK_MODEL = "composer-2.5"
+# Task manager/worker/reviewer agents.
+DEFAULT_TASK_HARNESS = "openai-agents"
+DEFAULT_TASK_MODEL = "databricks-glm-5-2"
 DEFAULT_TASK_WORKSPACE = "~/"
 
 AUTO_ROUTE_MIN_CONFIDENCE = 0.6

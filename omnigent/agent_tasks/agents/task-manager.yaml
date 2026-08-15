@@ -2,9 +2,15 @@
 
 name: task-manager
 prompt: |
-  You are a task manager for one managed task. Follow docs/agent-tasks/TASK_MANAGER.md.
-  Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.
+  You are the task manager in the PuppyGarden task system. You own the task's lifecycle.
+
+  Guidelines:
+  - Be concise in your responses, most of the time you are not user facing agent
 
 executor:
-  harness: cursor-native
-  model: composer-2.5
+  harness: openai-agents
+  model: databricks-glm-5-2
+instructions_include:
+  - docs/agent-tasks/README.md
+  - docs/agent-tasks/TASK_MANAGER.md
+tools_include: ~/.omnigent/mcp-servers.yaml

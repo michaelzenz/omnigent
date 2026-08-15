@@ -279,10 +279,23 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     if raw_instructions is None:
         raw_instructions = raw.get("prompt")
     instructions = _resolve_instructions(root, raw_instructions)
+    included_instructions = _parse_included_instructions(
+        raw.get("instructions_include")
+    )
+    if included_instructions:
+        instructions = (
+            included_instructions
+            if not instructions
+            else f"{instructions}\n\n{included_instructions}"
+        )
     skills = _discover_skills(root / "skills")
     skills_filter = _parse_skills_filter(raw.get("skills"))
-    mcp_servers = _discover_mcp_servers(root / "tools" / "mcp", expand_env=expand_env)
-    mcp_servers = mcp_servers + _parse_inline_mcp_servers(raw_tools, expand_env=expand_env)
+    included_mcp = _parse_included_mcp_servers(
+        raw.get("tools_include"), expand_env=expand_env
+    )
+    discovered_mcp = _discover_mcp_servers(root / "tools" / "mcp", expand_env=expand_env)
+    inline_mcp = _parse_inline_mcp_servers(raw_tools, expand_env=expand_env)
+    mcp_servers = _merge_mcp_servers_by_name(included_mcp, discovered_mcp, inline_mcp)
     local_tools = _discover_local_tools(root / "tools")
     sub_agents = _discover_sub_agents(root / "agents", expand_env=expand_env)
 
@@ -2057,6 +2070,43 @@ def _read_contained_file(root: Path, value: str) -> str | None:
     return None
 
 
+def _parse_included_instructions(include_paths: object) -> str | None:
+    """Read external instructions files referenced by ``instructions_include``.
+
+    Accepts either a single path string or a list of paths. Each file is
+    read and concatenated in order (with a blank line separator). ``~`` is
+    expanded. Missing files are warned about and skipped.
+
+    Unlike ``instructions:`` (which is bundle-relative for security), this
+    key reads from arbitrary paths — intended for built-in agents whose
+    manuals live outside the bundle.
+
+    :param include_paths: The raw ``instructions_include`` value — a
+        string path or a list of string paths.
+    :returns: The concatenated file contents, or ``None`` if no files
+        resolved.
+    """
+    if isinstance(include_paths, str):
+        paths = [include_paths]
+    elif isinstance(include_paths, list):
+        paths = [str(p) for p in include_paths if isinstance(p, str) and p.strip()]
+    else:
+        return None
+    if not paths:
+        return None
+    parts: list[str] = []
+    for raw_path in paths:
+        resolved = Path(os.path.expanduser(raw_path.strip()))
+        if not resolved.is_file():
+            _logger.warning(
+                "instructions_include file not found: %s — skipping",
+                resolved,
+            )
+            continue
+        parts.append(resolved.read_text())
+    return "\n\n".join(parts) if parts else None
+
+
 def _resolve_instructions(root: Path, raw_value: object) -> str | None:
     """
     Resolve the instructions for an agent image.
@@ -2615,6 +2665,56 @@ def _parse_inline_mcp_servers(
             )
         )
     return servers
+
+
+def _parse_included_mcp_servers(
+    include_path: object,
+    *,
+    expand_env: bool = True,
+) -> list[MCPServerConfig]:
+    """Parse MCP servers from an external file referenced by ``tools_include``.
+
+    The included file uses the same inline format as the ``tools:`` block —
+    a top-level YAML mapping whose keys are server names and values are
+    ``type: mcp`` entries. This lets multiple agent specs share one MCP
+    config file without duplicating declarations.
+
+    ``~`` is expanded so paths like ``~/.omnigent/mcp-servers.yaml`` work.
+
+    :param include_path: The raw ``tools_include`` value from config.yaml.
+        A string path to a YAML file. ``None`` or non-string returns empty.
+    :param expand_env: Whether to expand ``${VAR}`` references.
+    :returns: A list of :class:`MCPServerConfig` objects from the file,
+        or an empty list if the path is missing/invalid.
+    :raises OmnigentError: If the path is set but the file doesn't exist.
+    """
+    if not isinstance(include_path, str) or not include_path.strip():
+        return []
+    resolved = Path(os.path.expanduser(include_path.strip()))
+    if not resolved.is_file():
+        _logger.warning(
+            "tools_include file not found: %s — skipping MCP server include",
+            resolved,
+        )
+        return []
+    raw = yaml.load(resolved.read_text(), Loader=_ConfigYamlLoader)
+    return _parse_inline_mcp_servers(raw, expand_env=expand_env)
+
+
+def _merge_mcp_servers_by_name(
+    *layers: list[MCPServerConfig],
+) -> list[MCPServerConfig]:
+    """Merge MCP server lists by name, later layers overriding earlier.
+
+    :param layers: Ordered lists of MCP servers (earliest = lowest priority).
+    :returns: A deduplicated list where the last definition of each
+        server name wins.
+    """
+    by_name: dict[str, MCPServerConfig] = {}
+    for layer in layers:
+        for server in layer:
+            by_name[server.name] = server
+    return list(by_name.values())
 
 
 def _discover_mcp_servers(

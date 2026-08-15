@@ -14,8 +14,7 @@ from omnigent.agent_tasks.constants import (
     resolve_task_harness,
 )
 from omnigent.agent_tasks.session_labels import BROKER_ROLE_VALUE, ROLE_LABEL
-from omnigent.db.utils import generate_task_id, now_epoch
-from omnigent.entities import MessageData, NewConversationItem
+from omnigent.db.utils import now_epoch
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.native_coding_agents import native_coding_agent_for_harness
@@ -31,28 +30,6 @@ _logger = logging.getLogger(__name__)
 NO_HOST_AVAILABLE_MESSAGE = (
     "No host is available. Start a host with `omnigent host --server <url>` and try again."
 )
-
-PG_README_PATH = "docs/agent-tasks/README.md"
-BROKER_MANUAL_PATH = "docs/agent-tasks/TASK_BROKER.md"
-
-BROKER_SEED_PROMPT = (
-    "You are the broker of the PuppyGarden task system. Read and follow "
-    f"{PG_README_PATH} and {BROKER_MANUAL_PATH}."
-)
-
-
-def seed_broker_prompt(conversation_store: ConversationStore, conversation_id: str) -> None:
-    """Append a short manual pointer as hidden agent context (not shown in the UI)."""
-    item = NewConversationItem(
-        type="message",
-        response_id=generate_task_id(),
-        data=MessageData(
-            role="user",
-            content=[{"type": "input_text", "text": BROKER_SEED_PROMPT}],
-            is_meta=True,
-        ),
-    )
-    conversation_store.append(conversation_id, [item])
 
 
 def resolve_host_owner_user_id(auth_user_id: str | None) -> str:
@@ -192,7 +169,6 @@ async def ensure_broker_session(
         user_id=auth_user_id,
     )
     conversation_id = resp.id
-    seed_broker_prompt(conversation_store, conversation_id)
     user_role_session_store.set_conversation(owner_user_id, TASK_BROKER_ROLE, conversation_id)
     return conversation_id
 
