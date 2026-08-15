@@ -592,6 +592,13 @@ from omnigent.server.routes._sessions.helpers import (
 from omnigent.server.routes._sessions.helpers import (
     _wait_for_runner_client_impl as _wait_for_runner_client,
 )
+from omnigent.server.routes._sessions.helpers import (
+    ensure_session_runner_client as ensure_session_runner_client,
+)
+from omnigent.server.routes._sessions.internal import (
+    _make_internal_request as _make_internal_request,
+    create_session_internal as create_session_internal,
+)
 
 # Higher-layer orchestration flows (runner relay, session-event dispatch,
 # native-terminal launch, MCP tool calls) live in _sessions.orchestration.
@@ -611,7 +618,6 @@ from omnigent.server.routes._sessions.orchestration import (
     _ensure_native_terminal_ready as _ensure_native_terminal_ready,
     _ensure_runner_relay as _ensure_runner_relay,
     _ensure_runner_session_initialized as _ensure_runner_session_initialized,
-    ensure_session_runner_client as ensure_session_runner_client,
     _evaluate_input_policy as _evaluate_input_policy,
     _evaluate_tool_call_policy as _evaluate_tool_call_policy,
     _fetch_model_options as _fetch_model_options,
