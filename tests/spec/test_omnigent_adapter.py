@@ -1398,9 +1398,9 @@ def test_terminals_thread_through_translator() -> None:
     assert spec.terminals["claude"] is claude_terminal
 
 
-def test_terminals_none_when_parent_has_no_terminals() -> None:
+def test_terminals_none_when_parent_explicitly_disables_terminals() -> None:
     """
-    A parent without a ``terminals`` block produces
+    A parent with an explicit empty ``terminals`` block produces
     ``AgentSpec.terminals=None`` (not ``{}``). The
     :class:`SysTerminalLaunchTool` checks
     ``self._spec.terminals is None`` to short-circuit — an empty
@@ -1422,7 +1422,7 @@ def test_terminals_none_when_parent_has_no_terminals() -> None:
             model="databricks-gpt-5-mini",
             harness="openai-agents",
         ),
-        # No terminals.
+        terminals={},
     )
     spec = agent_def_to_agent_spec(parent)
     assert spec.terminals is None
@@ -2183,9 +2183,7 @@ def test_tools_include_records_path_not_servers(tmp_path: Path) -> None:
     a restart. Mirrors the parser.parse path.
     """
     include_file = tmp_path / "mcp-servers.yaml"
-    include_file.write_text(
-        "slack:\n  type: mcp\n  command: dbexec\n"
-    )
+    include_file.write_text("slack:\n  type: mcp\n  command: dbexec\n")
     agent_def, raw_yaml = _build_agent_def_with_raw_yaml()
     raw_yaml["tools_include"] = str(include_file)
 

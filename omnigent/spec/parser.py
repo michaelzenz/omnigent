@@ -24,6 +24,8 @@ from omnigent.inner.datamodel import (
     OSEnvSandboxSpec,
     OSEnvSpec,
     TerminalEnvSpec,
+    default_os_env_spec,
+    default_terminal_env_specs,
 )
 from omnigent.spec.types import (
     DEFAULT_ASK_TIMEOUT,
@@ -239,8 +241,12 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         )
     compaction = _parse_compaction(raw.get("compaction"))
     guardrails = _parse_guardrails(raw.get("guardrails"), expand_env=expand_env)
-    os_env = _parse_os_env(raw.get("os_env"))
-    terminals = _parse_terminals(raw.get("terminals"))
+    os_env = _parse_os_env(raw.get("os_env")) if "os_env" in raw else default_os_env_spec()
+    terminals = (
+        _parse_terminals(raw.get("terminals"))
+        if "terminals" in raw
+        else default_terminal_env_specs()
+    )
     params = raw.get("params", {})
     # Top-level ``async:`` flag gates the LLM-callable async-dispatch
     # builtins (``sys_call_async``, ``sys_read_inbox``,
@@ -254,25 +260,21 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     async_enabled = bool(raw.get("async", True))
     # Top-level ``timers:`` flag gates the LLM-callable timer
     # builtins (``sys_timer_set``, ``sys_timer_cancel``).
-    # Defaults to False to match
-    # ``omnigent/inner/datamodel.py::AgentDef.timers`` — agents
-    # opt into the timer surface explicitly. See step 10 of the
-    # harness contract migration.
-    timers = bool(raw.get("timers", False))
+    # Enabled by default; ``timers: false`` remains an explicit kill switch.
+    timers = bool(raw.get("timers", True))
     # Top-level ``spawn:`` flag grants spawning OUTSIDE any declared
     # sub-agent list: ``sys_session_create`` (existing agents by id,
     # or custom bundles via config_path) plus send/close to drive the
     # children. Distinct from ``tools.agents``, which permits only
-    # the specified sub-agent types. Defaults to False — session
-    # reads stay always-on, but every write grant is explicit.
-    spawn = bool(raw.get("spawn", False))
+    # the specified sub-agent types. Enabled by default; ``spawn: false``
+    # suppresses arbitrary child creation.
+    spawn = bool(raw.get("spawn", True))
     # Top-level ``agent_session_sharing:`` flag is the SOLE enabler of
     # the ``sys_session_share`` tool, independent of ``spawn`` /
     # ``tools.agents`` (and unrelated to server-API / CLI sharing).
-    # ``none`` (default) leaves it unregistered; ``non-public`` allows
-    # granting named users; ``public`` also allows ``__public__``
-    # anonymous read.
-    agent_session_sharing = _parse_share_policy(raw.get("agent_session_sharing"))
+    # Named-user sharing is enabled by default. ``none`` disables the tool;
+    # ``public`` additionally allows ``__public__`` anonymous read.
+    agent_session_sharing = _parse_share_policy(raw.get("agent_session_sharing", "non-public"))
 
     # Honor ``prompt:`` as the legacy alias for ``instructions:`` (per
     # ``_OMNIGENT_SYSTEM_PROMPT_KEYS``); ``instructions:`` wins if both set.
@@ -280,9 +282,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     if raw_instructions is None:
         raw_instructions = raw.get("prompt")
     instructions = _resolve_instructions(root, raw_instructions)
-    included_instructions = _parse_included_instructions(
-        raw.get("instructions_include")
-    )
+    included_instructions = _parse_included_instructions(raw.get("instructions_include"))
     if included_instructions:
         instructions = (
             included_instructions

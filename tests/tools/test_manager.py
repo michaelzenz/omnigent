@@ -16,6 +16,7 @@ from omnigent.errors import OmnigentError
 from omnigent.spec.types import (
     AgentSpec,
     BuiltinToolConfig,
+    ExecutorSpec,
     LLMConfig,
     LocalToolInfo,
     MCPServerConfig,
@@ -24,6 +25,7 @@ from omnigent.spec.types import (
     ToolRuntime,
     ToolsConfig,
 )
+from omnigent.terminals.registry import TerminalRegistry
 from omnigent.tools import ToolManager
 from omnigent.tools.base import ToolContext
 from omnigent.tools.client_specified import ClientSideTool, ClientSideToolSpec
@@ -64,6 +66,29 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset(
         "sys_session_list",
         "sys_session_get_info",
         "sys_session_rename",
+        "sys_session_send",
+        "sys_session_close",
+        "sys_session_create",
+        "sys_session_share",
+        "sys_list_models",
+        "sys_advise_models",
+        "sys_timer_set",
+        "sys_timer_cancel",
+        "sys_os_read",
+        "sys_os_write",
+        "sys_os_edit",
+        "sys_os_shell",
+        "sys_terminal_launch",
+        "sys_terminal_send",
+        "sys_terminal_read",
+        "sys_terminal_list",
+        "sys_terminal_close",
+        "web_fetch",
+        "upload_file",
+        "list_files",
+        "download_file",
+        "search_conversations",
+        "export_agent",
         # Read-only agent discovery tools are likewise always available
         # (global, permission-bounded reads of any accessible session's
         # agent / bundle).
@@ -90,6 +115,7 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset(
         "browser_click",
         "browser_type",
         "browser_screenshot",
+        "puppygarden_api",
     }
 )
 
@@ -124,6 +150,47 @@ def test_session_rename_is_registered_for_every_agent() -> None:
     names = {schema["function"]["name"] for schema in ToolManager(_make_spec()).get_tool_schemas()}
 
     assert "sys_session_rename" in names
+
+
+def test_requested_capabilities_are_registered_by_default() -> None:
+    """Portable orchestration, OS, terminal, timer, and file tools are implicit."""
+    spec = AgentSpec(
+        spec_version=1,
+        executor=ExecutorSpec(
+            type="omnigent",
+            config={"harness": "openai-agents"},
+        ),
+    )
+    with patch(
+        "omnigent.runtime._globals._terminal_registry",
+        new=TerminalRegistry(),
+    ):
+        names = {schema["function"]["name"] for schema in ToolManager(spec).get_tool_schemas()}
+
+    assert {
+        "sys_session_create",
+        "sys_session_send",
+        "sys_session_close",
+        "sys_session_share",
+        "sys_list_models",
+        "sys_timer_set",
+        "sys_timer_cancel",
+        "sys_os_read",
+        "sys_os_write",
+        "sys_os_edit",
+        "sys_os_shell",
+        "sys_terminal_launch",
+        "sys_terminal_send",
+        "sys_terminal_read",
+        "sys_terminal_list",
+        "sys_terminal_close",
+        "web_fetch",
+        "upload_file",
+        "list_files",
+        "download_file",
+        "search_conversations",
+        "export_agent",
+    } <= names
 
 
 @pytest.fixture()
@@ -190,6 +257,7 @@ def _make_spec(
     return AgentSpec(
         spec_version=1,
         skills=skills or [],
+        skills_filter="none",
         mcp_servers=mcp_servers or [],
         local_tools=local_tools or [],
     )
@@ -394,20 +462,8 @@ def test_client_schemas_isolate_a_failing_tool(
     assert any("boom" in record.getMessage() for record in caplog.records)
 
 
-def test_session_reads_registered_but_writes_gated_without_opt_in() -> None:
-    """
-    Read-only session discovery (``sys_session_get_history`` /
-    ``sys_session_list`` / ``sys_session_get_info``) is registered for
-    **every** agent, even one that declares no sub-agents — so a
-    user-added agent can read its session-mates for context. The
-    opt-in session-spawn tools (``sys_session_send`` /
-    ``sys_session_close`` / ``sys_session_create`` /
-    ``sys_session_share``) are NOT registered without an opt-in
-    (``tools.agents`` or top-level ``spawn: true``). A regression that
-    registered the writes by default would expose the child-session
-    spawn surface — and, for share, the ability to expose the session
-    to a third party or ``__public__`` — to every custom agent.
-    """
+def test_session_orchestration_tools_registered_by_default() -> None:
+    """Session lifecycle and named-user sharing tools require no declaration."""
     mgr = ToolManager(_make_spec([]))
     names = {s["function"]["name"] for s in mgr.get_tool_schemas()}
     assert "sys_session_get_history" in names
@@ -417,17 +473,11 @@ def test_session_reads_registered_but_writes_gated_without_opt_in() -> None:
     # in _register_sub_agent_tools regressed and the orchestrator can't
     # check session status.
     assert "sys_session_get_info" in names
-    assert "sys_session_send" not in names
-    assert "sys_session_close" not in names
-    assert "sys_session_create" not in names
-    # Sharing has its OWN dedicated `share:` flag (default `none`), so it
-    # is absent here even though this spec also lacks spawn/agents. A
-    # regression registering it by default would let any prompt-injected
-    # agent expose its session (incl. via __public__).
-    assert "sys_session_share" not in names
-    # Model awareness pairs with the dispatch grant — without send there
-    # is no args.model to pick, so the listing tool must stay gated too.
-    assert "sys_list_models" not in names
+    assert "sys_session_send" in names
+    assert "sys_session_close" in names
+    assert "sys_session_create" in names
+    assert "sys_session_share" in names
+    assert "sys_list_models" in names
     # The read-only sys_agent_get/list/download stay always-on.
     assert "sys_agent_get" in names
     assert "sys_agent_list" in names
@@ -451,11 +501,7 @@ def test_spawn_flag_registers_write_tools_without_sub_agents() -> None:
     assert "sys_list_models" in names
     # Intelligent routing advisor stays hidden when routing is disabled.
     assert "sys_advise_models" not in names
-    # Sharing is DECOUPLED from spawn — its own `share:` flag governs it,
-    # so `spawn: true` alone (share defaulting to `none`) does NOT
-    # register it. A regression coupling them would re-expose sharing to
-    # every spawn-capable agent.
-    assert "sys_session_share" not in names
+    assert "sys_session_share" in names
 
 
 def test_session_send_schema_drops_named_mode_without_sub_agents() -> None:
@@ -478,6 +524,8 @@ def test_session_send_schema_drops_named_mode_without_sub_agents() -> None:
 
     spec = AgentSpec(
         spec_version=1,
+        spawn=False,
+        agent_session_sharing=SharePolicy.NONE,
         tools=ToolsConfig(agents=["researcher"]),
         sub_agents=[AgentSpec(spec_version=1, name="researcher")],
     )
@@ -503,6 +551,8 @@ def test_declared_agents_grant_send_close_but_not_create() -> None:
     """
     spec = AgentSpec(
         spec_version=1,
+        spawn=False,
+        agent_session_sharing=SharePolicy.NONE,
         tools=ToolsConfig(agents=["researcher"]),
         sub_agents=[AgentSpec(spec_version=1, name="researcher")],
     )
@@ -577,10 +627,9 @@ def test_share_non_public_registers_share_tool_without_public() -> None:
     mgr = ToolManager(AgentSpec(spec_version=1, agent_session_sharing=SharePolicy.NON_PUBLIC))
     schemas = {s["function"]["name"]: s for s in mgr.get_tool_schemas()}
     assert "sys_session_share" in schemas
-    # Sharing is decoupled from spawn — none of the spawn writes ride along.
-    assert "sys_session_send" not in schemas
-    assert "sys_session_close" not in schemas
-    assert "sys_session_create" not in schemas
+    assert "sys_session_send" in schemas
+    assert "sys_session_close" in schemas
+    assert "sys_session_create" in schemas
     # non-public must not advertise the public sentinel.
     user_id_desc = schemas["sys_session_share"]["function"]["parameters"]["properties"]["user_id"][
         "description"

@@ -47,6 +47,8 @@ def _make_parent_spec(
         name="test-parent",
         llm=LLMConfig(model=model),
         executor=executor,
+        os_env=None,
+        terminals=None,
     )
 
 

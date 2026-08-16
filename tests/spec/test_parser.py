@@ -1635,18 +1635,14 @@ def test_parse_interaction_partial_modalities(tmp_path: Path) -> None:
     assert spec.interaction.modalities.output == ["text"]
 
 
-def test_parse_os_env_absent_yields_none(agent_dir: Path) -> None:
-    """A native YAML without an ``os_env:`` block leaves
-    ``spec.os_env`` as ``None`` — no sys_os_* tools registered.
-
-    What breaks if this fails: the runtime would build a default
-    :class:`OSEnvironment` for every agent and silently expose
-    ``sys_os_read/write/edit/shell`` on agents that never opted
-    into them, regressing the "no os_env declared = no FS access"
-    contract from the omnigent-compat path.
-    """
+def test_parse_os_env_absent_uses_caller_process(agent_dir: Path) -> None:
+    """Agents receive an unrestricted caller-process environment by default."""
     spec = parse(agent_dir)
-    assert spec.os_env is None
+    assert spec.os_env is not None
+    assert spec.os_env.type == "caller_process"
+    assert spec.os_env.cwd == "."
+    assert spec.os_env.sandbox is not None
+    assert spec.os_env.sandbox.type == "none"
 
 
 def test_parse_os_env_caller_process(tmp_path: Path) -> None:
@@ -2873,21 +2869,10 @@ def test_parse_mcp_unknown_transport_raises(agent_dir: Path) -> None:
 # ─── Top-level ``timers:`` flag (step 10 of harness contract) ─
 
 
-def test_parse_timers_defaults_to_false_when_omitted(agent_dir: Path) -> None:
-    """
-    Without a top-level ``timers:`` key the parsed ``AgentSpec.timers``
-    is ``False``.
-
-    Default-off matches the inner stack (``AgentDef.timers`` is also
-    ``False`` by default) — agents authored before step 10 must keep
-    their pre-step-10 tool surface unchanged. A regression that
-    flipped the default to ``True`` would silently expose the timer
-    builtins to every agent.
-
-    :param agent_dir: Temporary agent directory fixture.
-    """
+def test_parse_timers_defaults_to_true_when_omitted(agent_dir: Path) -> None:
+    """Timer tools are enabled without an explicit YAML declaration."""
     spec = parse(agent_dir)
-    assert spec.timers is False
+    assert spec.timers is True
 
 
 def test_parse_timers_true_sets_flag(tmp_path: Path) -> None:
@@ -2910,21 +2895,10 @@ def test_parse_timers_true_sets_flag(tmp_path: Path) -> None:
 # ─── Top-level ``spawn:`` flag (spawn-write opt-in) ───────────
 
 
-def test_parse_spawn_defaults_to_false_when_omitted(agent_dir: Path) -> None:
-    """
-    Without a top-level ``spawn:`` key the parsed ``AgentSpec.spawn``
-    is ``False``.
-
-    Default-off is the design: session *reads* are always available,
-    but the child-session spawn writes (``sys_session_create`` /
-    ``sys_session_send`` / ``sys_session_close``) are opt-in. A
-    regression that flipped the default to ``True`` would silently
-    expose the spawn-write surface to every agent.
-
-    :param agent_dir: Temporary agent directory fixture.
-    """
+def test_parse_spawn_defaults_to_true_when_omitted(agent_dir: Path) -> None:
+    """Session creation and lifecycle tools are enabled by default."""
     spec = parse(agent_dir)
-    assert spec.spawn is False
+    assert spec.spawn is True
 
 
 def test_parse_spawn_true_sets_flag(tmp_path: Path) -> None:
@@ -2947,18 +2921,10 @@ def test_parse_spawn_true_sets_flag(tmp_path: Path) -> None:
     assert spec.spawn is True
 
 
-def test_parse_share_defaults_to_none_when_omitted(agent_dir: Path) -> None:
-    """
-    Without a top-level ``agent_session_sharing:`` key the parsed
-    ``AgentSpec.agent_session_sharing`` is :attr:`SharePolicy.NONE` —
-    sharing is off by default, so ``sys_session_share`` is not
-    registered. A regression flipping the default would expose the
-    access-control mutation (incl. ``__public__``) to every agent.
-
-    :param agent_dir: Temporary agent directory fixture.
-    """
+def test_parse_share_defaults_to_non_public_when_omitted(agent_dir: Path) -> None:
+    """Named-user sharing is enabled while public sharing remains opt-in."""
     spec = parse(agent_dir)
-    assert spec.agent_session_sharing is SharePolicy.NONE
+    assert spec.agent_session_sharing is SharePolicy.NON_PUBLIC
 
 
 @pytest.mark.parametrize(
@@ -4053,9 +4019,7 @@ def test_parse_tools_include_records_path_not_servers(tmp_path: Path) -> None:
     include, a synced file change could never take effect without a restart.
     """
     include_file = tmp_path / "mcp-servers.yaml"
-    include_file.write_text(
-        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
-    )
+    include_file.write_text(yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}}))
     agent_dir = _write_include_agent(tmp_path / "agent", str(include_file))
 
     spec = parse(agent_dir)
@@ -4069,9 +4033,7 @@ def test_resolve_session_mcp_servers_merges_include(tmp_path: Path) -> None:
     from omnigent.spec.parser import resolve_session_mcp_servers
 
     include_file = tmp_path / "mcp-servers.yaml"
-    include_file.write_text(
-        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
-    )
+    include_file.write_text(yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}}))
     agent_dir = _write_include_agent(tmp_path / "agent", str(include_file))
     spec = parse(agent_dir)
 
@@ -4088,9 +4050,7 @@ def test_resolve_session_mcp_servers_rereads_on_change(tmp_path: Path) -> None:
     from omnigent.spec.parser import resolve_session_mcp_servers
 
     include_file = tmp_path / "mcp-servers.yaml"
-    include_file.write_text(
-        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
-    )
+    include_file.write_text(yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}}))
     agent_dir = _write_include_agent(tmp_path / "agent", str(include_file))
     spec = parse(agent_dir)
 
@@ -4098,9 +4058,7 @@ def test_resolve_session_mcp_servers_rereads_on_change(tmp_path: Path) -> None:
     assert {s.name for s in first.mcp_servers} == {"slack"}
 
     # Cron sync rewrites the file with a different server set.
-    include_file.write_text(
-        yaml.dump({"github": {"type": "mcp", "command": "dbexec"}})
-    )
+    include_file.write_text(yaml.dump({"github": {"type": "mcp", "command": "dbexec"}}))
     second = resolve_session_mcp_servers(spec, expand_env=False)
     assert {s.name for s in second.mcp_servers} == {"github"}
 
@@ -4126,4 +4084,3 @@ def test_resolve_session_mcp_servers_no_include_is_identity(tmp_path: Path) -> N
     spec = parse(tmp_path)
 
     assert resolve_session_mcp_servers(spec) is spec
-

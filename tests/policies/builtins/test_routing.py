@@ -28,9 +28,12 @@ import pytest
 from omnigent.policies.builtins.routing import (
     _CACHE_KEY_PREFIX,
     _CLASSIFICATION_SCHEMA,
+    _DANGEROUS_ACTION_CHECK_PREFIX,
+    _DANGEROUS_ACTION_SCHEMA,
     _INTENT_CHECK_PREFIX,
     _INTENT_KEY,
     POLICY_REGISTRY,
+    dangerous_actions_intent_classifier,
     deny_trivial_to_expensive_model,
     intent_based_authorization,
 )
@@ -496,6 +499,7 @@ def test_registry_entry_well_formed() -> None:
     handlers = {e["handler"] for e in POLICY_REGISTRY}
     assert "omnigent.policies.builtins.routing.deny_trivial_to_expensive_model" in handlers
     assert "omnigent.policies.builtins.routing.intent_based_authorization" in handlers
+    assert "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier" in handlers
 
     trivial_entry = next(
         e
@@ -726,3 +730,83 @@ async def test_intent_based_authorization_classifier_failure_abstains() -> None:
         )
     )
     assert result is None
+
+
+# ── dangerous_actions_intent_classifier ─────────────────────────────────────
+
+
+def _danger_response(verdict: str, reason: str) -> _FakeResponse:
+    return _FakeResponse(json.dumps({"verdict": verdict, "reason": reason}))
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_allows_safe_call() -> None:
+    """SAFE calls proceed and cache their exact classification."""
+    client = _FakePolicyLLMClient(_danger_response("SAFE", "Read-only operation."))
+    policy = dangerous_actions_intent_classifier()
+
+    result = await policy(_tool_call_event("read_file", {"path": "/tmp/a"}, llm_client=client))
+
+    assert result is not None
+    assert result["result"] == "ALLOW"
+    update = result["state_updates"][0]
+    assert update["key"].startswith(_DANGEROUS_ACTION_CHECK_PREFIX)
+    assert update["value"]["verdict"] == "SAFE"
+    assert client._mock_create.call_args.kwargs["text"] is _DANGEROUS_ACTION_SCHEMA
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_asks_for_dangerous_call() -> None:
+    """DANGEROUS calls require approval and surface the classifier reason."""
+    client = _FakePolicyLLMClient(
+        _danger_response("DANGEROUS", "Deletes production customer records.")
+    )
+    policy = dangerous_actions_intent_classifier()
+
+    result = await policy(
+        _tool_call_event(
+            "execute_sql",
+            {"query": "DELETE FROM prod.customers"},
+            llm_client=client,
+        )
+    )
+
+    assert result is not None
+    assert result["result"] == "ASK"
+    assert result["reason"] == "Deletes production customer records."
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_fails_closed() -> None:
+    """Missing classifiers require approval instead of silently allowing."""
+    policy = dangerous_actions_intent_classifier()
+
+    result = await policy(_tool_call_event("unknown_tool", llm_client=None))
+
+    assert result is not None
+    assert result["result"] == "ASK"
+    assert "Could not assess" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_uses_cached_safe_verdict() -> None:
+    """An identical cached SAFE call does not invoke the classifier again."""
+    client = _FakePolicyLLMClient(_danger_response("DANGEROUS", "Unexpected call."))
+    policy = dangerous_actions_intent_classifier()
+    tool = "read_file"
+    args = {"path": "/tmp/a"}
+    args_repr = json.dumps(args, sort_keys=True, default=str)
+    check_hash = hashlib.sha256(f"{tool}\x00{args_repr}".encode()).hexdigest()[:16]
+    cache_key = f"{_DANGEROUS_ACTION_CHECK_PREFIX}{check_hash}"
+
+    result = await policy(
+        _tool_call_event(
+            tool,
+            args,
+            state={cache_key: {"verdict": "SAFE", "reason": "Read-only."}},
+            llm_client=client,
+        )
+    )
+
+    assert result is None
+    client._mock_create.assert_not_awaited()

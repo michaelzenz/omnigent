@@ -467,6 +467,166 @@ def intent_based_authorization() -> PolicyCallable:
     return evaluate
 
 
+# ── dangerous_actions_intent_classifier ─────────────────────────────────────
+
+_DANGEROUS_ACTION_CHECK_PREFIX = "_dangerous_action_check:"
+
+_DEFAULT_DANGEROUS_ACTION_PROMPT = """\
+You are a security approval policy for an AI agent.
+
+Inspect the proposed tool call and its complete arguments. Determine whether
+executing it could cause a dangerous, high-impact, or practically irreversible
+external side effect.
+
+Classify as DANGEROUS when the action may:
+
+- Write, update, migrate, or change schema/data in a production database.
+- Delete, purge, truncate, drop, overwrite, or permanently destroy data.
+- Deploy, release, roll back, restart, terminate, or reconfigure production.
+- Change credentials, permissions, access controls, security policies, or secrets.
+- Force-push, delete a remote branch, publish a package, merge a change, or
+  otherwise alter a shared source-of-truth in a difficult-to-reverse way.
+- Send external communications, execute financial transactions, approve actions,
+  or trigger workflows with real-world consequences.
+- Invoke a shell command, script, API, or nested tool that performs any such action.
+
+Classify as SAFE when the action is limited to:
+
+- Reading, searching, inspecting, listing, querying, or downloading information.
+- Generating a preview, plan, diff, draft, dry run, or validation result.
+- Editing local source files or other changes normally recoverable through version control.
+- Creating drafts without sending or publishing them.
+- Reversible development or test-environment operations without production impact.
+
+When impact is unclear, classify it as DANGEROUS.
+"""
+
+_DANGEROUS_ACTION_SCHEMA: dict[str, object] = {
+    "format": {
+        "type": "json_schema",
+        "name": "dangerous_action_verdict",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["SAFE", "DANGEROUS"],
+                },
+                "reason": {"type": "string"},
+            },
+            "required": ["verdict", "reason"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def dangerous_actions_intent_classifier() -> PolicyCallable:
+    """Require approval for dangerous or practically irreversible tool calls.
+
+    Every tool call is classified by the server-level policy LLM. Safe calls
+    proceed, while dangerous and ambiguous calls return ``ASK``. Missing or
+    failed classification also returns ``ASK`` so the safety control fails
+    closed.
+
+    :returns: An async policy callable that evaluates ``tool_call`` events.
+    """
+
+    async def evaluate(event: PolicyEvent) -> PolicyResponse | None:
+        if event.get("type") != "tool_call":
+            return None
+
+        tool_name: str = event.get("target") or ""
+        data = event.get("data") or {}
+        tool_args = data.get("arguments", {}) if isinstance(data, dict) else {}
+        args_repr = json.dumps(tool_args, sort_keys=True, default=str)
+        check_hash = hashlib.sha256(f"{tool_name}\x00{args_repr}".encode()).hexdigest()[:16]
+        cache_key = f"{_DANGEROUS_ACTION_CHECK_PREFIX}{check_hash}"
+
+        state = event.get("session_state") or {}
+        cached = state.get(cache_key)
+        if isinstance(cached, dict):
+            verdict = cached.get("verdict")
+            reason = cached.get("reason")
+            if verdict == "SAFE":
+                return None
+            if verdict == "DANGEROUS":
+                return {
+                    "result": "ASK",
+                    "reason": (
+                        reason
+                        if isinstance(reason, str) and reason
+                        else f"Tool call '{tool_name}' may have irreversible effects."
+                    ),
+                }
+
+        llm_client = event.get("llm_client")
+        if llm_client is None:
+            _log.warning("dangerous_actions_intent_classifier: no llm_client; asking for approval")
+            return {
+                "result": "ASK",
+                "reason": (
+                    f"Could not assess whether tool call '{tool_name}' is safe; "
+                    "human approval is required."
+                ),
+            }
+
+        user_prompt = f"Proposed tool call: {tool_name}\nArguments: {args_repr}"
+        try:
+            response = await llm_client.create(
+                input=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": user_prompt}],
+                    }
+                ],
+                instructions=_DEFAULT_DANGEROUS_ACTION_PROMPT,
+                text=_DANGEROUS_ACTION_SCHEMA,
+            )
+            raw_text = _extract_response_text(response)
+            classification = json.loads(raw_text) if raw_text else {}
+        except Exception:  # noqa: BLE001 — safety policy fails closed
+            _log.exception("dangerous_actions_intent_classifier: classification failed")
+            return {
+                "result": "ASK",
+                "reason": (
+                    f"Could not assess whether tool call '{tool_name}' is safe; "
+                    "human approval is required."
+                ),
+            }
+
+        verdict = classification.get("verdict", "") if isinstance(classification, dict) else ""
+        reason_value = classification.get("reason", "") if isinstance(classification, dict) else ""
+        reason = reason_value if isinstance(reason_value, str) else ""
+        cache_value = {"verdict": verdict, "reason": reason}
+
+        if verdict == "SAFE":
+            return {
+                "result": "ALLOW",
+                "state_updates": [
+                    {"key": cache_key, "action": "set", "value": cache_value},
+                ],
+            }
+        if verdict == "DANGEROUS":
+            return {
+                "result": "ASK",
+                "reason": reason or f"Tool call '{tool_name}' may have irreversible effects.",
+                "state_updates": [
+                    {"key": cache_key, "action": "set", "value": cache_value},
+                ],
+            }
+        return {
+            "result": "ASK",
+            "reason": (
+                f"Could not assess whether tool call '{tool_name}' is safe; "
+                "human approval is required."
+            ),
+        }
+
+    return evaluate
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 POLICY_REGISTRY: list[dict[str, object]] = [
@@ -517,6 +677,22 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "LLM calls for identical tool invocations. "
             "Requires an llm: config block on the server; abstains (fail-open) when "
             "no LLM client is available. Zero required parameters."
+        ),
+        "params_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "handler": ("omnigent.policies.builtins.routing.dangerous_actions_intent_classifier"),
+        "kind": "factory",
+        "name": "Dangerous Actions Intent Classifier",
+        "description": (
+            "Uses the server-level LLM to classify tool calls as SAFE or DANGEROUS. "
+            "Dangerous, ambiguous, and unclassifiable actions require human approval "
+            "before execution. Classification results are cached per exact tool call. "
+            "Requires an llm: config block on the server."
         ),
         "params_schema": {
             "type": "object",

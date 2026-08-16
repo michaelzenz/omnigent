@@ -317,6 +317,10 @@ _SHARE_PUBLIC_POLICY = "public"
 # ``_execute_subagent_tool``.
 _WEB_FETCH_TOOLS = frozenset({"web_fetch"})
 
+# Default portable builtins that need explicit runner dispatch.
+_CONVERSATION_SEARCH_TOOLS = frozenset({"search_conversations"})
+_EXPORT_AGENT_TOOLS = frozenset({"export_agent"})
+
 # Priority 5f.1b: web_search — the first-party search builtin. Runner-local
 # so a non-OpenAI model's web_search function call resolves to the spec's
 # configured backend (google / perplexity / nimble) via WebSearchTool.invoke.
@@ -472,6 +476,11 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
     | _TERMINAL_TOOLS
+    | _TIMER_TOOLS
+    | _FILE_TOOLS
+    | _WEB_FETCH_TOOLS
+    | _CONVERSATION_SEARCH_TOOLS
+    | _EXPORT_AGENT_TOOLS
     # ``browser_*`` must ride the native relay: the Omnigent desktop app
     # runs native (claude/codex/pi) sessions, which ignore ``request.tools``
     # and see ONLY this relay surface — without this union member the
@@ -637,6 +646,8 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
     | _WEB_FETCH_TOOLS
+    | _CONVERSATION_SEARCH_TOOLS
+    | _EXPORT_AGENT_TOOLS
     | _WEB_SEARCH_TOOLS
     | _NIMBLE_RESEARCH_TOOLS
     | _NIMBLE_EXTRACT_TOOLS
@@ -2738,6 +2749,39 @@ async def _session_create_from_config_path(
     )
 
 
+async def _execute_search_conversations_tool(
+    args: _JsonObject,
+    *,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Search accessible sessions through the server's indexed search."""
+    if server_client is None:
+        return json.dumps({"error": "search_conversations requires a server connection"})
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return json.dumps({"error": "missing required 'query' argument"})
+    limit = args.get("limit", 10)
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return json.dumps({"error": "limit must be a positive integer"})
+    try:
+        response = await server_client.get(
+            "/v1/sessions",
+            params={
+                "search_query": query.strip(),
+                "limit": min(limit, 100),
+                "kind": "any",
+                "include_archived": "true",
+            },
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"search_conversations failed: {exc}"})
+    if response.status_code != 200:
+        return json.dumps({"error": f"search_conversations returned {response.status_code}"})
+    payload = _string_object_dict(response.json()) or {}
+    return json.dumps({"results": _json_object_list(payload.get("data"))})
+
+
 async def _execute_web_fetch_tool(
     args: _JsonObject,
     *,
@@ -3624,7 +3668,12 @@ async def _execute_puppygarden_api_tool(
         return json.dumps({"error": f"{tool_name} requires 'path' (e.g. /v1/agent-tasks/<id>)"})
     if not is_task_api_path(path):
         return json.dumps(
-            {"error": f"{tool_name} only proxies task API paths (/v1/agent-tasks, /v1/task-events, /v1/task-items)"}
+            {
+                "error": (
+                    f"{tool_name} only proxies task API paths "
+                    "(/v1/agent-tasks, /v1/task-events, /v1/task-items)"
+                )
+            }
         )
 
     body = args.get("body")
@@ -5292,6 +5341,21 @@ async def execute_tool(
                 task_id=task_id,
                 publish_event=publish_event,
                 session_inbox=session_inbox,
+            )
+        elif tool_name in _CONVERSATION_SEARCH_TOOLS:
+            output = await _execute_search_conversations_tool(
+                args,
+                server_client=server_client,
+            )
+        elif tool_name in _EXPORT_AGENT_TOOLS:
+            output = await _execute_local_python_tool(
+                tool_name,
+                arguments,
+                agent_spec=agent_spec,
+                conversation_id=conversation_id,
+                task_id=task_id,
+                agent_id=agent_id,
+                runner_workspace=runner_workspace,
             )
         elif tool_name in _WEB_SEARCH_TOOLS:
             output = await _execute_web_search_tool(

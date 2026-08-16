@@ -250,10 +250,14 @@ def _parse_agent_def(
     if "cancellable" in data:
         agent.cancellable = bool(data["cancellable"])
     agent.runtime = data.get("runtime", False)
-    agent.timers = data.get("timers", False)
-    agent.spawn = data.get("spawn", False)
-    agent.agent_session_sharing = data.get("agent_session_sharing", "none")
-    agent.os_env = _parse_os_env_spec(data.get("os_env"))
+    if "timers" in data:
+        agent.timers = bool(data["timers"])
+    if "spawn" in data:
+        agent.spawn = bool(data["spawn"])
+    if "agent_session_sharing" in data:
+        agent.agent_session_sharing = str(data["agent_session_sharing"])
+    if "os_env" in data:
+        agent.os_env = _parse_os_env_spec(data.get("os_env"))
 
     # Executor
     executor_data = data.get("executor")
@@ -308,9 +312,12 @@ def _parse_agent_def(
     if "policy_transparency" in data:
         agent.policy_transparency = bool(data["policy_transparency"])
 
-    # Terminals
-    for term_name, term_data in data.get("terminals", {}).items():
-        agent.terminals[str(term_name)] = _parse_terminal_env_spec(term_data)
+    # An explicit block replaces the default shell terminals; an empty block
+    # is the kill switch.
+    if "terminals" in data:
+        agent.terminals = {}
+        for term_name, term_data in (data.get("terminals") or {}).items():
+            agent.terminals[str(term_name)] = _parse_terminal_env_spec(term_data)
     # Cross-field validation: a terminal with ``allow_sandbox_override``
     # lets the LLM pass an arbitrary ``sandbox`` arg to
     # ``sys_terminal_launch``. The override only mutates ``sandbox.type``

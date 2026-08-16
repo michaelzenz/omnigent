@@ -5631,11 +5631,15 @@ async def test_agent_tools_map_404_to_agent_not_found(
 @pytest.mark.parametrize(
     "opt_in, expected_writes",
     [
-        pytest.param("none", set(), id="no-opt-in"),
+        pytest.param(
+            "default",
+            {"sys_session_send", "sys_session_close", "sys_session_create"},
+            id="default-spawn",
+        ),
         pytest.param(
             "agents",
             {"sys_session_send", "sys_session_close"},
-            id="declared-agents",
+            id="declared-agents-with-spawn-disabled",
         ),
         pytest.param(
             "spawn",
@@ -5660,18 +5664,12 @@ def test_native_relay_builtin_set_matches_toolmanager_gating(
     - **Parity**: the always-on orchestrator/discovery surface (agent
       reads, session reads, async inbox reads/cancels, comment tools)
       reaches native harnesses.
-    - **Gating fidelity**: the spawn writes are relayed per the two
-      distinct grants, matching what non-native harnesses get via
-      ``request.tools``. ``tools.agents`` permits only the declared
-      sub-agent list (send + close, NO create); ``spawn: true`` (set
-      by the native wrapper specs) additionally grants create —
-      launching arbitrary agents or custom bundles. A regressed gate
-      either strands an opted-in native agent or hands an un-opted
-      agent the spawn surface.
+    - **Gating fidelity**: spawning defaults on, while an explicit
+      ``spawn: false`` still limits an agent to its declared sub-agent list
+      (send + close, no arbitrary create).
 
-    :param opt_in: Which opt-in arm the spec uses — ``"none"``,
-        ``"agents"`` (declared ``tools.agents``), or ``"spawn"``
-        (top-level ``spawn: true``).
+    :param opt_in: Which grant shape the spec uses — default spawning,
+        declared agents with spawning disabled, or explicit spawning.
     :param expected_writes: Exact spawn-write tool names expected in
         the relayed set for this opt-in arm.
     """
@@ -5682,6 +5680,7 @@ def test_native_relay_builtin_set_matches_toolmanager_gating(
     if opt_in == "agents":
         spec = AgentSpec(
             spec_version=1,
+            spawn=False,
             tools=ToolsConfig(agents=["researcher"]),
             sub_agents=[AgentSpec(spec_version=1, name="researcher")],
         )
