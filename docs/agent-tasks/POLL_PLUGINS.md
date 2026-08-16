@@ -16,32 +16,7 @@ Each plugin is one folder; the host only executes **`run.py`**.
 
 ### Where the host scans for plugins
 
-By default the host scans `<data_dir>/poll_plugins` (`~/.omnigent/poll_plugins`
-or `$OMNIGENT_DATA_DIR/poll_plugins`). A from-source checkout can point the host
-at a version-controlled plugins directory instead, so edits take effect on the
-next tick with no copy/sync — set `host.polling.poll_plugins.root` in
-`~/.omnigent/config.yaml`:
-
-```yaml
-host:
-  polling:
-    poll_plugins:
-      root: /path/to/omnigent/puppygarden/poll_plugins
-```
-
-The bundled, usable plugins live in the repo at `puppygarden/poll_plugins/`. To run
-them from a cloned checkout (temporary approach — until the host supports a
-proper plugin install/sync), point the host at that directory by setting
-`host.polling.poll_plugins.root` in `~/.omnigent/config.yaml`:
-
-```yaml
-host:
-  polling:
-    poll_plugins:
-      root: /path/to/your/omnigent/clone/puppygarden/poll_plugins
-```
-
-The host scans that directory directly, so edits to repo plugins take effect
+The host scans the plugin directory directly, so edits to repo plugins take effect
 on the next tick with no copy/sync.
 
 Each plugin folder must include **`config.yaml`** with at least:
@@ -73,10 +48,6 @@ bound_role: secretary
 - `singleton` is **required** (true or false). `singleton: true` requires
   `bound_role` (a role key, e.g. `secretary`); without it the plugin is
   rejected at load. `singleton: false` runs on every host.
-- The host reads the bound role's pinned `host_id` from the server
-  (`GET /v1/agent-tasks/roles/{bound_role}/profile`) and runs the plugin only
-  when that `host_id` equals its own `OMNIGENT_HOST_ID`. The read is cached
-  ~60s.
 - On any fetch failure (server unreachable, HTTP error), the host skips the
   plugin that tick (safe — no duplicate runs across hosts).
 
@@ -116,8 +87,7 @@ Rules:
 - **`README.md` is required** — the host skips any plugin folder missing it.
   **An agent updating a poll plugin
   MUST read that plugin's `README.md` first** — it is the source of truth for
-  the plugin's state shape and contracts, and editing without it risks
-  duplicate or missed events.
+  the plugin's state shape and contracts.
 - **All other files are plugin-private** — watches, cursors, snapshots; agents design the plugin schema or other metadata file as they want.
 - Do not edit Omnigent host code to add behavior — add or update a plugin folder.
 
@@ -182,18 +152,41 @@ Example body:
 ```
 
 When a watch is tied to a specific managed task, include `task_id` on the
-ingress body (or `context.task_id` in `watches.json` for the `github_pr`
-plugin). The ingress scorer routes directly to that task and skips scoring.
+ingress body. The ingress scorer routes directly to that task and skips scoring.
 
 Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server returns existing event.
 
-### Suggested `event_type` prefixes
+### Event field reference
 
-- `github.pr.merged`
-- `github.pr.checks_passed`
-- `github.pr.checks_failed`
+- **`source`** — who emitted this event. For a poll plugin, always
+  `poll_plugin:<plugin_name>` (e.g. `poll_plugin:github_pr`). 
+- **`source_key`** — a stable, unique-per-watched-thing identifier within this
+  `source`. It scopes dedup so the same logical thing (one PR, one Slack
+  channel, one DM) is one key. Two different plugins may reuse the same
+  key string safely because dedup also includes `source`.
+- **`source_offset`** — a monotonically increasing per-`source_key` sequence
+  number the plugin maintains (typically a counter it persists in its own
+  `state.json`). It disambiguates successive state changes of the *same* thing:
+  For ex monitor the doc update status, offset can be version number, agent creating the plugin can invent.
+  Dedup is `source` + `source_key` + `source_offset` + `event_type`, so
+  re-posting the same offset for the same event_type is a no-op (idempotent
+  retries), while a new offset for a new event_type lands as a fresh event.
+- **`tags`** — structured facets the server indexes for routing/filtering. Each
+  entry is `{"tag_type": "...", "tag": "..."}`. Use stable, low-cardinality
+  type names (`repo`, `pr`, `channel`, `author`) so the secretary/manager can
+  group by them. Tags are how a watch is matched back to a managed task and
+  how the board groups events; pick them to answer "what is this about?".
+- **`payload`** — the free-form event body: whatever structured detail the
+  downstream agent/manager needs to act on it. There is no fixed schema; keep it
+  flat and JSON-serializable. The server stores it verbatim and surfaces it to
+  the task dashboard, so include the fields your consumer reads (e.g.
+  `repo`, `pr_number`, `blocked_pr`) but avoid giant blobs — link out instead.
+- **`task_id`** *(optional)* — when a watch is bound to a specific managed task,
+  set this to route straight to that task and skip the ingress scorer.
 
-Plugins may define other prefixes; document them in a comment at the top of `run.py`.
+### `event_type` prefixes
+
+Plugins may define other prefixes.
 
 ## State files (plugin-owned)
 
@@ -203,33 +196,6 @@ The server does **not** store poll cursors or watch lists. Plugins keep their ow
 |------|-------------|
 | `watches.json` | What to poll (agent/manager edits) |
 | `state.json` | Last-seen snapshot per key (script maintains) |
-
-Example `watches.json`:
-
-```json
-{
-  "auto_discover": ["authored", "review_requested"],
-  "explicit": [
-    {
-      "repo": "org/repo",
-      "pr": 456,
-      "context": {"blocked_pr": 123, "task_id": "<managed-task-id>"}
-    }
-  ]
-}
-```
-
-Example `state.json`:
-
-```json
-{
-  "org/repo#456": {
-    "state": "OPEN",
-    "checks": "FAILURE",
-    "head_sha": "abc123"
-  }
-}
-```
 
 Agents may invent other filenames; only `run.py` is invoked by the host.
 

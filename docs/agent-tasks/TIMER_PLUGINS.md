@@ -22,31 +22,7 @@ poll plugins fire on a fixed interval; timer plugins fire when their
 
 ### Where the host scans for plugins
 
-By default the host scans `<data_dir>/timer_plugins` (`~/.omnigent/timer_plugins`
-or `$OMNIGENT_DATA_DIR/timer_plugins`). A from-source checkout can point the host
-at a version-controlled plugins directory instead — set
-`host.polling.timer_plugins.root` in `~/.omnigent/config.yaml`:
-
-```yaml
-host:
-  polling:
-    timer_plugins:
-      root: /path/to/omnigent/puppygarden/timer_plugins
-```
-
-The bundled, usable plugins live in the repo at `puppygarden/timer_plugins/`. To
-run them from a cloned checkout (temporary approach — until the host supports a
-proper plugin install/sync), point the host at that directory by setting
-`host.polling.timer_plugins.root` in `~/.omnigent/config.yaml`:
-
-```yaml
-host:
-  polling:
-    timer_plugins:
-      root: /path/to/your/omnigent/clone/puppygarden/timer_plugins
-```
-
-The host scans that directory directly, so edits to repo plugins take effect
+The host scans the plugin directory directly, so edits to repo plugins take effect
 on the next tick with no copy/sync.
 
 Each plugin folder must include **`config.yaml`** with at least:
@@ -81,13 +57,7 @@ bound_role: secretary
 
 - `singleton` is **required** (true or false). `singleton: true` requires
   `bound_role` (a role key, e.g. `secretary`); without it the timer is rejected
-  at load. `singleton: false` fires on every host (`bound_role` is inert and
-  optional).
-- The host reads the bound role's pinned `host_id` and fires the timer only
-  when that equals its own `OMNIGENT_HOST_ID` (cached ~60s).
-- The pin is **sticky/user-controlled** — never auto-reassigned. If the
-  pinned host is down, the timer does not fire until the user reassigns the
-  role.
+  at load. `singleton: false` fires on every host.
 - A skipped singleton timer is **not** marked fired, so the winning host
   (once the role is reassigned to it) can still fire the due `fire_at`.
 
@@ -118,8 +88,6 @@ Rules:
   emitted event types, and the re-arm contract. **An agent updating a timer
   plugin MUST read that plugin's `README.md` first** — it is the source of
   truth for the fire/re-arm contract and the `state.yaml` ownership rule.
-- **`config.yaml` is required** and must contain `fire_at` — a unix timestamp
-  (seconds) at which the timer fires.
 - **`state.yaml` is host-managed** — the host writes `fired_at` after each
   invocation so the same `fire_at` is never re-fired, even across restarts.
 - Do not edit Omnigent host code to add behavior — add or update a plugin folder.
@@ -200,25 +168,37 @@ Example body:
 }
 ```
 
-When tied to a specific managed task, include `task_id` on the ingress body —
-the ingress scorer routes directly to that task and skips scoring.
+### Event field reference
 
-Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server
-returns existing event.
+- **`source`** — who emitted this event. For a poll plugin, always
+  `poll_plugin:<plugin_name>` (e.g. `poll_plugin:github_pr`). 
+- **`source_key`** — a stable, unique-per-watched-thing identifier within this
+  `source`. It scopes dedup so the same logical thing (one PR, one Slack
+  channel, one DM) is one key. Two different plugins may reuse the same
+  key string safely because dedup also includes `source`.
+- **`source_offset`** — a monotonically increasing per-`source_key` sequence
+  number the plugin maintains (typically a counter it persists in its own
+  `state.json`). It disambiguates successive state changes of the *same* thing:
+  For ex monitor the doc update status, offset can be version number, agent creating the plugin can invent.
+  Dedup is `source` + `source_key` + `source_offset` + `event_type`, so
+  re-posting the same offset for the same event_type is a no-op (idempotent
+  retries), while a new offset for a new event_type lands as a fresh event.
+- **`payload`** — the free-form event body: whatever structured detail the
+  downstream agent/manager needs to act on it. There is no fixed schema; keep it
+  flat and JSON-serializable. The server stores it verbatim and surfaces it to
+  the task dashboard, so include the fields your consumer reads (e.g.
+  `repo`, `pr_number`, `blocked_pr`) but avoid giant blobs — link out instead.
+- **`task_id`** *(optional)* — when a watch is bound to a specific managed task,
+  set this to route straight to that task and skip the ingress scorer.
 
 ### Suggested `event_type` prefixes
-
-- `timer.reminder`
-- `timer.deadline`
-- `timer.heartbeat`
 
 The host itself emits `timer.fire_failed` when a plugin's `run.py` exits
 non-zero, times out, or fails to start. The event body includes `reason`
 (`exit_nonzero`, `timeout`, or `start_failed`), `exit_code` (when available),
 and a truncated `detail` (stderr snippet).
 
-Plugins may define other prefixes; document them in a comment at the top of
-`run.py`.
+Plugins may define other prefixes.
 
 ## State files (plugin-owned)
 
