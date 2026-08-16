@@ -504,8 +504,12 @@ def _get_openai_async_client(
     # provider's default", which run_turn resolves from the model catalog.
     # Treating it as Databricks-hosted sent credential-less OpenAI agents into
     # ambient Databricks auth, surfacing an "install databricks-sdk" error at
-    # users who never configured Databricks.
-    allow_ambient_databricks = model is not None and model.startswith("databricks-")
+    # users who never configured Databricks. ``system.ai.*`` ids are Unity
+    # Catalog model-services served by the Databricks AI Gateway, so they opt
+    # in to ambient Databricks auth just like legacy ``databricks-`` names.
+    allow_ambient_databricks = model is not None and (
+        model.startswith("databricks-") or model.startswith("system.ai.")
+    )
 
     # An explicit Databricks profile is authoritative; model-service names
     # are opaque Unity Catalog identifiers such as catalog.schema.service.
@@ -1473,6 +1477,13 @@ class OpenAIAgentsSDKExecutor(Executor):
         # leaks here) wins over the spec default
         # (HARNESS_OPENAI_AGENTS_MODEL → self._model_override).
         model = cfg.model or self._model_override
+        if model is not None:
+            # cfg.model carries the raw spec model and bypasses the spawn-env
+            # alias, so map catalog aliases (databricks-glm-5-2) to the
+            # system.ai.* spelling the AI Gateway serves here too.
+            from omnigent.server.smart_routing import apply_servable_alias
+
+            model = apply_servable_alias(model)
         if model is None:
             provider_name = "databricks" if self._databricks else "openai"
             resolution = await run_sync_on_thread(

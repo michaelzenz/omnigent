@@ -110,6 +110,7 @@ class SqlAlchemyAgentStore(AgentStore):
         name: str,
         bundle_location: str,
         description: str | None = None,
+        is_role: bool = False,
     ) -> Agent:
         """
         Register a new template agent in the database.
@@ -121,6 +122,8 @@ class SqlAlchemyAgentStore(AgentStore):
         :param bundle_location: Artifact store key for the bundle,
             e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
         :param description: Optional free-text description.
+        :param is_role: True for a role-bound profile hidden from the
+            public catalog (backs a glossary role).
         :returns: The newly created :class:`Agent`.
         """
         row = SqlAgent(
@@ -131,6 +134,7 @@ class SqlAlchemyAgentStore(AgentStore):
             version=1,
             kind=encode_agent_kind("template"),
             description=description,
+            is_role=is_role,
         )
         with self._session("create_agent") as session:
             # Template names are unique within a workspace. This can't be a
@@ -219,11 +223,15 @@ class SqlAlchemyAgentStore(AgentStore):
             sort_fn = desc if is_desc else asc
             is_template = SqlAgent.kind == encode_agent_kind("template")
             in_workspace = SqlAgent.workspace_id == current_workspace_id()
-            stmt = select(SqlAgent).where(in_workspace, is_template)
+            # Role-bound agent profiles back glossary roles; hide them from the
+            # public catalog (the New Chat picker) so they don't clutter it.
+            # Lookups by id/name are unaffected, so role bootstrap still resolves.
+            not_role = SqlAgent.is_role.is_(False)
+            stmt = select(SqlAgent).where(in_workspace, is_template, not_role)
             if after:
                 sub = (
                     select(SqlAgent.created_at)
-                    .where(in_workspace, SqlAgent.id == after, is_template)
+                    .where(in_workspace, SqlAgent.id == after, is_template, not_role)
                     .scalar_subquery()
                 )
                 ts_cmp = SqlAgent.created_at < sub if is_desc else SqlAgent.created_at > sub
@@ -232,7 +240,7 @@ class SqlAlchemyAgentStore(AgentStore):
             if before:
                 sub = (
                     select(SqlAgent.created_at)
-                    .where(in_workspace, SqlAgent.id == before, is_template)
+                    .where(in_workspace, SqlAgent.id == before, is_template, not_role)
                     .scalar_subquery()
                 )
                 ts_cmp = SqlAgent.created_at > sub if is_desc else SqlAgent.created_at < sub
@@ -320,3 +328,15 @@ class SqlAlchemyAgentStore(AgentStore):
                 return False
             session.delete(row)
             return True
+
+    def set_is_role(self, agent_id: str, is_role: bool) -> None:
+        """
+        Toggle the ``is_role`` flag on an agent row.
+
+        :param agent_id: Unique agent identifier.
+        :param is_role: True to hide from the catalog, False to restore.
+        """
+        with self._session("set_agent_is_role") as session:
+            row = session.get(SqlAgent, (current_workspace_id(), agent_id))
+            if row is not None and row.is_role != is_role:
+                row.is_role = is_role

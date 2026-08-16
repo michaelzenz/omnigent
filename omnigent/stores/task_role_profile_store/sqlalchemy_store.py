@@ -22,6 +22,7 @@ def _to_entity(row: SqlTaskRoleProfile) -> TaskRoleProfile:
         model=row.model,
         host_id=row.host_id,
         workspace=row.workspace,
+        description=row.description,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -72,6 +73,7 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
         model: str | None = None,
         host_id: str | None = None,
         workspace: str | None = None,
+        description: str | None = None,
         clear_model: bool = False,
     ) -> TaskRoleProfile:
         with self._session() as session:
@@ -89,6 +91,11 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     ),
                     host_id=host_id,
                     workspace=workspace or DEFAULT_TASK_WORKSPACE,
+                    description=(
+                        (description if description != "" else None)
+                        if description is not None
+                        else (defaults.description if defaults else None)
+                    ),
                     created_at=now,
                     updated_at=now,
                 )
@@ -108,6 +115,8 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     row.host_id = host_id
                 if workspace is not None:
                     row.workspace = workspace
+                if description is not None:
+                    row.description = description if description != "" else None
                 row.updated_at = now
             session.flush()
             return _to_entity(row)

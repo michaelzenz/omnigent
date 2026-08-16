@@ -36,6 +36,7 @@ class TaskRoleProfileStore(ABC):
         model: str | None = None,
         host_id: str | None = None,
         workspace: str | None = None,
+        description: str | None = None,
         clear_model: bool = False,
     ) -> TaskRoleProfile:
         """
@@ -43,5 +44,6 @@ class TaskRoleProfileStore(ABC):
 
         ``None`` leaves a field unchanged. To clear ``model`` back to ``None``
         (the harness picks its own model), pass ``clear_model=True``. ``kind``
-        defaults to the family implied by the role key.
+        defaults to the family implied by the role key. Pass an empty string
+        for ``description`` to clear it back to ``None``.
         """

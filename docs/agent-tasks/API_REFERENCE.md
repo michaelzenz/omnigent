@@ -91,6 +91,8 @@ cannot be deleted).
 | GET | `/v1/agent-tasks/roles/profiles` |
 | GET | `/v1/agent-tasks/roles/{role}/profile` |
 | PUT | `/v1/agent-tasks/roles/{role}/profile` |
+| POST | `/v1/agent-tasks/roles/{role}/import-agent` |
+| PUT | `/v1/agent-tasks/roles/{role}/prompt` |
 | POST | `/v1/agent-tasks/roles/manager` |
 | POST | `/v1/agent-tasks/roles/worker` |
 | DELETE | `/v1/agent-tasks/roles/{role}` |

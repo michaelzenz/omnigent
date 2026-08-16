@@ -46,6 +46,48 @@ def test_get_by_name(agent_store: SqlAlchemyAgentStore) -> None:
     assert agent_store.get_by_name("missing") is None
 
 
+def test_is_role_agent_hidden_from_list_but_resolvable(agent_store: SqlAlchemyAgentStore) -> None:
+    """Role-bound profiles are excluded from the catalog but found by id/name."""
+    public = agent_store.create(
+        agent_id="a1" * 16,
+        name="public-agent",
+        bundle_location="ag_public/hash",
+    )
+    role_agent = agent_store.create(
+        agent_id="b2" * 16,
+        name="role-agent",
+        bundle_location="ag_role/hash",
+        is_role=True,
+    )
+
+    listed = {a.name for a in agent_store.list(limit=100).data}
+    assert public.name in listed
+    assert role_agent.name not in listed  # hidden from the catalog
+
+    # Lookups are unaffected — role bootstrap resolves by name.
+    assert agent_store.get(role_agent.id) is not None
+    assert agent_store.get_by_name("role-agent") is not None
+    assert agent_store.get_by_name("role-agent").is_role is True
+    assert agent_store.get_by_name("public-agent").is_role is False
+
+
+def test_set_is_role_toggles_flag(agent_store: SqlAlchemyAgentStore) -> None:
+    """set_is_role flips the flag on an existing row (reseed path)."""
+    agent = agent_store.create(
+        agent_id="c3" * 16,
+        name="flip-agent",
+        bundle_location="ag_flip/hash",
+    )
+    assert agent.is_role is False
+    agent_store.set_is_role(agent.id, True)
+    assert agent_store.get_by_name("flip-agent").is_role is True
+    # idempotent: setting the same value is a no-op
+    agent_store.set_is_role(agent.id, True)
+    assert agent_store.get_by_name("flip-agent").is_role is True
+    agent_store.set_is_role(agent.id, False)
+    assert agent_store.get_by_name("flip-agent").is_role is False
+
+
 def test_create_rejects_duplicate_template_name(agent_store: SqlAlchemyAgentStore) -> None:
     """Template names are unique within a workspace, enforced by the store.
 

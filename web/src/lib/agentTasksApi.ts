@@ -128,6 +128,13 @@ function agentRolePath(role: string, suffix: string): string {
   return `/v1/agent-tasks/roles/${encodeURIComponent(role)}/${suffix}`;
 }
 
+export interface RoleCandidateAgent {
+  id: string;
+  name: string;
+  /** True for packaged built-ins (importable as a private fork). */
+  packaged: boolean;
+}
+
 export interface SecretaryProfile {
   role?: string;
   title?: string;
@@ -136,12 +143,20 @@ export interface SecretaryProfile {
   deletable?: boolean;
   /** Null for external roles, which name no Omnigent agent. */
   agent_profile_id: string | null;
+  /** Display name of the bound agent profile (resolved server-side). */
+  agent_name?: string | null;
+  /** Packaged agents backing this role's kind, for the role-form dropdown. */
+  candidate_agents?: RoleCandidateAgent[];
+  /** The bound backing profile's system prompt (single profile GET only). */
+  prompt?: string | null;
   conversation_id: string | null;
   /** Null when the harness resolves its own model (e.g. Codex, OpenCode). */
   model: string | null;
   harness: string | null;
   host_id: string | null;
   workspace: string | null;
+  /** What the role specializes in; surfaced to the manager when picking a worker lane. */
+  description: string | null;
 }
 
 export type RoleProfileSummary = SecretaryProfile & { role: string };
@@ -257,11 +272,12 @@ export async function activateWorkerLane(workerId: string): Promise<WorkerLaneSu
 }
 
 export interface UpdateAgentRoleProfileRequest {
-  agent_profile_id: string;
+  agent_profile_id?: string;
   harness?: string | null;
   model?: string | null;
   host_id?: string | null;
   workspace?: string | null;
+  description?: string | null;
 }
 
 export async function fetchRoleProfiles(prefix?: string): Promise<RoleProfileSummary[]> {
@@ -343,6 +359,24 @@ export async function updateAgentRoleProfile(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  return readJsonOrApiError<SecretaryProfile>(res);
+}
+
+export async function importRoleAgent(role: string, agentId: string): Promise<SecretaryProfile> {
+  const res = await authenticatedFetch(agentRolePath(role, "import-agent"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent_id: agentId }),
+  });
+  return readJsonOrApiError<SecretaryProfile>(res);
+}
+
+export async function updateRolePrompt(role: string, prompt: string): Promise<SecretaryProfile> {
+  const res = await authenticatedFetch(agentRolePath(role, "prompt"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
   });
   return readJsonOrApiError<SecretaryProfile>(res);
 }

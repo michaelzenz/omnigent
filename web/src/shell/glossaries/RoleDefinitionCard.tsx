@@ -6,6 +6,8 @@ interface RoleDefinitionCardProps {
   selected: boolean;
   onSelect: () => void;
   headerActions?: ReactNode;
+  /** Rendered under the title in place of the static definition. */
+  descriptionSlot?: ReactNode;
   children?: ReactNode;
 }
 
@@ -15,6 +17,7 @@ export function RoleDefinitionCard({
   selected,
   onSelect,
   headerActions,
+  descriptionSlot,
   children,
 }: RoleDefinitionCardProps) {
   return (
@@ -31,10 +34,14 @@ export function RoleDefinitionCard({
           aria-pressed={selected}
         >
           <h3 className="text-sm font-semibold">{entry.title}</h3>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{entry.definition}</p>
         </button>
         {headerActions ? <div className="shrink-0">{headerActions}</div> : null}
       </div>
+      {descriptionSlot ? (
+        descriptionSlot
+      ) : (
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{entry.definition}</p>
+      )}
       {children ? <div className="mt-4 border-t border-border pt-4">{children}</div> : null}
     </article>
   );

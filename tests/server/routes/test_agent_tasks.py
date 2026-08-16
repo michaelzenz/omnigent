@@ -168,7 +168,10 @@ async def test_create_defaults_manager_role_to_task_manager_agent(
 
     profile_resp = await client.get(agent_role_profile_url("manager:default"))
     assert profile_resp.status_code == 200
-    assert profile_resp.json()["agent_profile_id"] == task_manager_agent_id
+    # manager:default auto-forks from the packaged task-manager on first
+    # load, so the role owns its profile (decoupled from the reseeded built-in).
+    assert profile_resp.json()["agent_profile_id"] != task_manager_agent_id
+    assert profile_resp.json()["agent_name"].startswith("task-manager-fork-")
 
 
 async def test_role_profile_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
@@ -335,6 +338,222 @@ async def test_list_role_profiles_includes_system_roles(
     assert "secretary" in roles
     assert "manager:default" in roles
     assert "worker:default" in roles
+
+
+async def test_list_role_profiles_kind_filter(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """kind filters by role family (broker/secretary/manager/worker)."""
+    _seed_live_host(db_uri, "kind-filter-host")
+    workers = await client.get("/v1/agent-tasks/roles/profiles?kind=worker")
+    assert workers.status_code == 200
+    worker_roles = {row["role"] for row in workers.json()["data"]}
+    assert "worker:default" in worker_roles
+    assert "broker" not in worker_roles
+    assert "secretary" not in worker_roles
+    assert "manager:default" not in worker_roles
+
+    managers = await client.get("/v1/agent-tasks/roles/profiles?kind=manager")
+    manager_roles = {row["role"] for row in managers.json()["data"]}
+    assert "manager:default" in manager_roles
+    assert "worker:default" not in manager_roles
+
+
+async def test_role_profile_description_round_trip(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Description seeds from packaged defaults and round-trips via PUT."""
+    _seed_live_host(db_uri, "desc-host")
+    # Packaged worker:default seeds a default description on first read.
+    get_resp = await client.get("/v1/agent-tasks/roles/worker:default/profile")
+    assert get_resp.status_code == 200
+    seeded = get_resp.json()
+    assert seeded["description"] is not None
+    assert "general-purpose" in seeded["description"].lower()
+
+    # PUT updates the description and persists.
+    put_resp = await client.put(
+        "/v1/agent-tasks/roles/worker:default/profile",
+        json={
+            "agent_profile_id": seeded["agent_profile_id"],
+            "description": "Reviews pull requests for API correctness.",
+        },
+    )
+    assert put_resp.status_code == 200
+    assert put_resp.json()["description"] == "Reviews pull requests for API correctness."
+
+    # An empty string clears the description back to null.
+    clear_resp = await client.put(
+        "/v1/agent-tasks/roles/worker:default/profile",
+        json={"agent_profile_id": seeded["agent_profile_id"], "description": ""},
+    )
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["description"] is None
+
+    # The listing surfaces the description so the manager can pick a lane.
+    list_resp = await client.get("/v1/agent-tasks/roles/profiles?kind=worker")
+    assert list_resp.status_code == 200
+    row = next(r for r in list_resp.json()["data"] if r["role"] == "worker:default")
+    assert row["description"] is None
+
+
+async def test_create_custom_worker_role_seeds_description(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    """A custom worker role inherits the default worker description, overridable on creation."""
+    _seed_live_host(db_uri, "custom-desc-host")
+    create_resp = await client.post(
+        "/v1/agent-tasks/roles/worker",
+        json={"slug": "reviewer", "agent_profile_id": task_manager_agent_id},
+    )
+    assert create_resp.status_code == 200
+    assert create_resp.json()["role"] == "worker:reviewer"
+    # Inherits the packaged worker:default description via the fallback.
+    assert create_resp.json()["description"] is not None
+
+    # Setting a description on creation overrides the inherited default.
+    create_with_desc = await client.post(
+        "/v1/agent-tasks/roles/worker",
+        json={
+            "slug": "coder",
+            "agent_profile_id": task_manager_agent_id,
+            "description": "Implements coding task items.",
+        },
+    )
+    assert create_with_desc.status_code == 200
+    assert (
+        create_with_desc.json()["description"] == "Implements coding task items."
+    )
+
+
+async def test_role_profile_returns_candidate_agents(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Profile response lists the packaged agents backing the role's kind."""
+    _seed_live_host(db_uri, "candidate-host")
+    resp = await client.get("/v1/agent-tasks/roles/worker:default/profile")
+    assert resp.status_code == 200
+    body = resp.json()
+    names = {c["name"] for c in body["candidate_agents"]}
+    assert {"default-worker", "coding-agent"}.issubset(names)
+    # every candidate is flagged packaged for the import-button gating
+    assert all(c["packaged"] for c in body["candidate_agents"])
+
+
+async def test_import_role_agent_forks_and_rebinds(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Import forks a packaged worker agent into a private is_role copy."""
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    _seed_live_host(db_uri, "import-host")
+    store = SqlAlchemyAgentStore(db_uri)
+    default_worker = store.get_by_name("default-worker")
+    assert default_worker is not None
+
+    resp = await client.post(
+        "/v1/agent-tasks/roles/worker:default/import-agent",
+        json={"agent_id": default_worker.id},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    new_id = body["agent_profile_id"]
+    assert new_id != default_worker.id
+    assert body["agent_name"].startswith("default-worker-fork-")
+
+    fork = store.get(new_id)
+    assert fork is not None
+    assert fork.is_role is True
+    # the fork is hidden from the public catalog but resolvable by id
+    listed_ids = {a.id for a in store.list().data}
+    assert new_id not in listed_ids
+
+    # the bound fork is NOT offered as a candidate (you can't re-import what's
+    # already bound); only the packaged sources remain in the dropdown
+    candidate_ids = {c["id"] for c in body["candidate_agents"]}
+    assert new_id not in candidate_ids
+    assert default_worker.id in candidate_ids
+
+
+async def test_update_role_prompt_auto_forks_then_edits_in_place(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Setting a prompt on a packaged-bound role auto-forks; a second set edits in place."""
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    _seed_live_host(db_uri, "prompt-host")
+    store = SqlAlchemyAgentStore(db_uri)
+    default_worker = store.get_by_name("default-worker")
+    assert default_worker is not None
+
+    # worker:default is auto-forked from the packaged default-worker on
+    # first load (via _load_role_profile), so the prompt endpoint edits the
+    # bound fork in place.
+    first = await client.put(
+        "/v1/agent-tasks/roles/worker:default/prompt",
+        json={"prompt": "You are a careful reviewer."},
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    fork_id = first_body["agent_profile_id"]
+    assert fork_id != default_worker.id
+    assert first_body["prompt"] == "You are a careful reviewer."
+    fork = store.get(fork_id)
+    assert fork is not None and fork.is_role is True
+
+    # second edit stays on the same fork (in place, no rebind)
+    second = await client.put(
+        "/v1/agent-tasks/roles/worker:default/prompt",
+        json={"prompt": "You are a careful reviewer. Be concise."},
+    )
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["agent_profile_id"] == fork_id
+    assert second_body["prompt"] == "You are a careful reviewer. Be concise."
+
+
+async def test_create_custom_worker_role_seeds_empty_backing_fork(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A new custom role gets an empty-prompt backing fork bound up front."""
+    _seed_live_host(db_uri, "empty-fork-host")
+    resp = await client.post(
+        "/v1/agent-tasks/roles/worker",
+        json={"slug": "scribe"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role"] == "worker:scribe"
+    assert body["agent_name"].startswith("default-worker-fork-")
+    # empty prompt by default
+    assert body["prompt"] == "" or body["prompt"] is None
+
+
+async def test_import_role_agent_rejects_non_packaged_source(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Import rejects an agent that isn't a packaged role agent for the kind."""
+    _seed_live_host(db_uri, "import-reject-host")
+    # task-manager is packaged for the manager kind, not worker
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    store = SqlAlchemyAgentStore(db_uri)
+    manager = store.get_by_name("task-manager")
+    assert manager is not None
+    resp = await client.post(
+        "/v1/agent-tasks/roles/worker:default/import-agent",
+        json={"agent_id": manager.id},
+    )
+    assert resp.status_code == 400
 
 
 async def test_create_and_delete_custom_manager_role(

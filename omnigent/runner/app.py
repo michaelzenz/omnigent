@@ -11984,6 +11984,13 @@ def create_runner_app(
         # terminal learns to switch models for this turn.
         _model_override = msg_body.get("model_override")
         if isinstance(_model_override, str) and _model_override:
+            # The harness subprocess (zygote-forked) has no routing config, so
+            # apply_servable_alias is a no-op there; alias here in the runner
+            # so the forwarded override is already the system.ai.* spelling.
+            if harness_name == "openai-agents":
+                from omnigent.server.smart_routing import apply_servable_alias
+
+                _model_override = apply_servable_alias(_model_override)
             harness_body["model_override"] = _model_override
             _logger.info(
                 "_run_turn_bg: conv=%s received model_override=%s (forwarding to harness)",
@@ -15943,6 +15950,15 @@ def _build_spawn_env_from_spec(
     if model_override and env is not None:
         model_key = _HARNESS_MODEL_ENV_KEY.get(harness)
         if model_key is not None:
+            # openai-agents sends the model id straight to the AI Gateway,
+            # which serves GLM only as system.ai.glm-5-2 (not the
+            # databricks-glm-5-2 alias). Native harnesses alias at launch;
+            # the SDK path doesn't, and this override would revert the
+            # spawn-env alias — translate here. No-op for claude/gpt.
+            if harness == "openai-agents":
+                from omnigent.server.smart_routing import apply_servable_alias
+
+                model_override = apply_servable_alias(model_override)
             env[model_key] = model_override
 
     # Routing visibility: log the resolved gateway target so operators can

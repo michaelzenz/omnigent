@@ -9,6 +9,7 @@ import {
 } from "@/hooks/useRoleProfiles";
 import { RoleDefinitionCard } from "./RoleDefinitionCard";
 import { RoleDefaultsForm } from "./RoleDefaultsForm";
+import { RoleAgentPicker, RoleDescriptionField } from "./RoleHeaderControls";
 
 interface TemplateRolesSectionProps {
   rolePrefix: string;
@@ -104,24 +105,28 @@ export function TemplateRolesSection({
             selected={activeRole === profile.role}
             onSelect={() => setSelectedRole(profile.role)}
             headerActions={
-              profile.deletable ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-muted-foreground hover:text-destructive"
-                  disabled={deleteRole.isPending}
-                  aria-label={`Delete ${profile.title ?? profile.role}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void deleteRole.mutateAsync(profile.role);
-                  }}
-                  data-testid={`${testId}-delete-${profile.role}`}
-                >
-                  <Trash2Icon className="size-4" />
-                </Button>
-              ) : null
+              <div className="flex items-center gap-1.5">
+                <RoleAgentPicker roleId={profile.role} />
+                {profile.deletable ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-destructive"
+                    disabled={deleteRole.isPending}
+                    aria-label={`Delete ${profile.title ?? profile.role}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void deleteRole.mutateAsync(profile.role);
+                    }}
+                    data-testid={`${testId}-delete-${profile.role}`}
+                  >
+                    <Trash2Icon className="size-4" />
+                  </Button>
+                ) : null}
+              </div>
             }
+            descriptionSlot={<RoleDescriptionField roleId={profile.role} />}
           >
             <RoleDefaultsForm roleId={profile.role} />
           </RoleDefinitionCard>

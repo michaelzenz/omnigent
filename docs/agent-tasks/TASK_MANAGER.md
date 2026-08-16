@@ -107,9 +107,13 @@ profiles, pick the one that fits the work, create a lane, then create the
 item bound to it:
 
 ```
-# Get all available worker profiles
+# Get all available worker role profiles (kind=worker filters to the
+# worker family)
 puppygarden_api(method="GET", path="/v1/agent-tasks/roles/profiles", query={"kind": "worker"})
-# → returns profiles with role keys like "worker:default", "worker:coding-agent", etc.
+# → returns profiles with role keys like "worker:default", "worker:<slug>", etc.
+# Each profile carries a `description` of what that role specializes in —
+# read it to pick the lane that best fits the work. Falling back to `worker:default`
+# when no custom role is a clear fit.
 
 # Create a worker lane (pending, no session yet)
 puppygarden_api(

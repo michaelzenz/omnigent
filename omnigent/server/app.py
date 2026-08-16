@@ -405,6 +405,7 @@ def _ensure_builtin_agent(
     *,
     name: str,
     bundle_bytes: bytes,
+    is_role: bool = False,
 ) -> None:
     """
     Register or refresh a built-in template agent from its bundle.
@@ -438,6 +439,9 @@ def _ensure_builtin_agent(
         ``replace`` and ``evict``.
     :param name: Built-in agent's unique name, e.g. ``"polly"``.
     :param bundle_bytes: Freshly built gzipped tarball of the spec.
+    :param is_role: True for a role-bound profile hidden from the public
+        catalog; applied to both new and existing rows so a reseed flips
+        the flag on rows that predate the column.
     """
     import hashlib
 
@@ -446,6 +450,10 @@ def _ensure_builtin_agent(
     bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
     existing = agent_store.get_by_name(name)
     if existing is not None:
+        # Keep the visibility flag in sync with the seed's intent: existing
+        # rows that predate the is_role column default to false, so a reseed
+        # flips role-bound profiles to hidden on the next boot.
+        agent_store.set_is_role(existing.id, is_role)
         new_loc = f"{existing.id}/{bundle_hash}"
         # Sha-segment compare: legacy rows keep an ``ag_``-prefixed left
         # segment (physical artifact key); only the sha encodes content.
@@ -471,7 +479,7 @@ def _ensure_builtin_agent(
     agent_id = builtin_agent_id(name)
     bundle_key = f"{agent_id}/{bundle_hash}"
     artifact_store.put(bundle_key, bundle_bytes)
-    agent_store.create(agent_id, name, bundle_key)
+    agent_store.create(agent_id, name, bundle_key, is_role=is_role)
     agent_cache.evict(agent_id)
     _logger.info("Registered built-in %s agent as %s", name, agent_id)
 
@@ -660,7 +668,12 @@ def _ensure_default_task_agents(
     artifact_store: ArtifactStore,
     agent_cache: Any,
 ) -> None:
-    """Register or refresh all packaged managed-task role agents."""
+    """Register or refresh all packaged managed-task role agents.
+
+    These agents back glossary roles (broker / secretary / manager / worker),
+    so they're marked ``is_role`` and hidden from the public New Chat picker —
+    they're reached through the role profile, not the agent catalog.
+    """
     from omnigent.agent_tasks.agent_builtins import TASK_BUILTIN_AGENT_NAMES
 
     for agent_name in TASK_BUILTIN_AGENT_NAMES:
@@ -670,6 +683,7 @@ def _ensure_default_task_agents(
             agent_cache,
             name=agent_name,
             bundle_bytes=_build_task_agent_bundle(agent_name),
+            is_role=True,
         )
 
 
@@ -2483,6 +2497,7 @@ def create_app(
                 permission_store=permission_store,
                 agent_queue_store=agent_queue_store,
                 session_creator=_session_creator,
+                artifact_store=artifact_store,
             ),
             prefix="/v1",
             tags=["agent_tasks"],

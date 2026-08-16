@@ -9,10 +9,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   agentRoleProfileQueryKey,
   useAgentRoleProfile,
   useUpdateAgentRoleProfile,
+  useUpdateRolePrompt,
 } from "@/hooks/useAgentRoleProfile";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useHosts, type Host } from "@/hooks/useHosts";
@@ -24,11 +26,11 @@ import { RoleHarnessPicker } from "./RoleHarnessPicker";
 import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "./roleProfileOptions";
 
 export const ROLE_PROFILE_SAVE_DEBOUNCE_MS = 2000;
+const PROMPT_SAVE_DEBOUNCE_MS = 1500;
 
 type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 
 interface DraftProfile {
-  agent_profile_id: string;
   host_id: string;
   workspace: string;
   harness: string;
@@ -38,7 +40,6 @@ interface DraftProfile {
 
 function profileToDraft(profile: SecretaryProfile): DraftProfile {
   return {
-    agent_profile_id: profile.agent_profile_id ?? "",
     host_id: profile.host_id ?? "",
     workspace: profile.workspace ?? "",
     harness: profile.harness ?? "",
@@ -49,7 +50,6 @@ function profileToDraft(profile: SecretaryProfile): DraftProfile {
 
 function draftsEqual(a: DraftProfile, b: DraftProfile): boolean {
   return (
-    a.agent_profile_id === b.agent_profile_id &&
     a.host_id === b.host_id &&
     a.workspace === b.workspace &&
     a.harness === b.harness &&
@@ -77,12 +77,17 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
   const { data: hosts = [] } = useHosts();
   const { data: agents = [] } = useAvailableAgents();
   const updateProfile = useUpdateAgentRoleProfile(roleId);
+  const updatePrompt = useUpdateRolePrompt(roleId);
   const [draft, setDraft] = useState<DraftProfile | null>(null);
+  const [promptDraft, setPromptDraft] = useState<string>("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [promptStatus, setPromptStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const serverDraftRef = useRef<DraftProfile | null>(null);
+  const promptBaselineRef = useRef<string>("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const promptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionBaselineRef = useRef<{ host_id: string; workspace: string } | null>(null);
   const queryClient = useQueryClient();
 
@@ -93,6 +98,10 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
     setDraft(next);
     setSaveStatus("idle");
     setSaveError(null);
+    const prompt = profile.prompt ?? "";
+    promptBaselineRef.current = prompt;
+    setPromptDraft(prompt);
+    setPromptStatus("idle");
     if (profile.conversation_id) {
       sessionBaselineRef.current = {
         host_id: profile.host_id ?? "",
@@ -123,7 +132,6 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
         setSaveStatus("saving");
         updateProfile.mutate(
           {
-            agent_profile_id: nextDraft.agent_profile_id,
             host_id: nextDraft.host_id || null,
             workspace: nextDraft.workspace || null,
             harness: nextDraft.harness || null,
@@ -148,9 +156,33 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
     [updateProfile],
   );
 
+  const schedulePromptSave = useCallback(
+    (nextPrompt: string) => {
+      if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current);
+      if (nextPrompt === promptBaselineRef.current) {
+        setPromptStatus("idle");
+        return;
+      }
+      setPromptStatus("pending");
+      promptDebounceRef.current = setTimeout(() => {
+        setPromptStatus("saving");
+        updatePrompt.mutate(nextPrompt, {
+          onSuccess: (saved) => {
+            promptBaselineRef.current = saved.prompt ?? "";
+            setPromptDraft(saved.prompt ?? "");
+            setPromptStatus("saved");
+          },
+          onError: () => setPromptStatus("error"),
+        });
+      }, PROMPT_SAVE_DEBOUNCE_MS);
+    },
+    [updatePrompt],
+  );
+
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current);
     };
   }, []);
 
@@ -255,7 +287,10 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
               value={draft.model || undefined}
               onValueChange={(model) => patchDraft({ model })}
             >
-              <SelectTrigger className="w-full" data-testid={`glossary-role-model-select-${roleId}`}>
+              <SelectTrigger
+                className="w-full"
+                data-testid={`glossary-role-model-select-${roleId}`}
+              >
                 <SelectValue placeholder="Select model" />
               </SelectTrigger>
               <SelectContent>
@@ -264,16 +299,34 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
                     {option.displayName}
                   </SelectItem>
                 ))}
-                {/* Keep a stored model that isn't in the curated list visible
-                    so switching harness never silently drops a valid pick. */}
-                {draft.model &&
-                !SDK_MODEL_OPTIONS.some((option) => option.id === draft.model) ? (
+                {draft.model && !SDK_MODEL_OPTIONS.some((option) => option.id === draft.model) ? (
                   <SelectItem value={draft.model}>{draft.model}</SelectItem>
                 ) : null}
               </SelectContent>
             </Select>
           </div>
         ) : null}
+      </div>
+
+      <div className="space-y-1.5" data-testid={`glossary-role-prompt-${roleId}`}>
+        <span className="text-xs text-muted-foreground">Prompt</span>
+        <Textarea
+          value={promptDraft}
+          onChange={(e) => {
+            setPromptDraft(e.target.value);
+            schedulePromptSave(e.target.value);
+          }}
+          placeholder="System prompt for this role's agent"
+          rows={8}
+          className="w-full resize-y font-mono text-xs"
+          data-testid={`glossary-role-prompt-input-${roleId}`}
+        />
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          {promptStatus === "pending" && "Unsaved changes…"}
+          {promptStatus === "saving" && "Saving…"}
+          {promptStatus === "saved" && "Saved"}
+          {promptStatus === "error" && "Save failed"}
+        </p>
       </div>
 
       {showSessionWarning ? (

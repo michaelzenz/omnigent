@@ -24,6 +24,9 @@ class TaskRoleProfile:
     :param model: Model override, e.g. ``"composer-2.5"``.
     :param host_id: Default host for bootstrap.
     :param workspace: Default workspace path on ``host_id``.
+    :param description: What the role specializes in; surfaced to the manager
+        when it lists worker roles to pick one for a new lane. ``None`` for
+        externally-defined roles that carry their own metadata.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
@@ -36,6 +39,7 @@ class TaskRoleProfile:
     model: str | None = None
     host_id: str | None = None
     workspace: str | None = None
+    description: str | None = None
     updated_at: int | None = None
 
 

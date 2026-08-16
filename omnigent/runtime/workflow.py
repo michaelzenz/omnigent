@@ -1769,6 +1769,14 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     env: dict[str, str] = {}
     model = _resolve_spec_model(spec)
     if model is not None:
+        # Map catalog aliases (databricks-glm-5-2) to the system.ai.* spelling
+        # the AI Gateway serves. Native harnesses do this at launch; the
+        # in-process SDK path doesn't, so apply it here. A resolved system.ai.*
+        # id also flips use_responses on (it's no longer a databricks- non-GPT
+        # model), matching the Responses-only wire system.ai.glm-5-2 speaks.
+        from omnigent.server.smart_routing import apply_servable_alias
+
+        model = apply_servable_alias(model)
         env["HARNESS_OPENAI_AGENTS_MODEL"] = model
 
     # ── Auth resolution ────────────────────────────────────────────────

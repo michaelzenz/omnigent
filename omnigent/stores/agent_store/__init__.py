@@ -34,6 +34,7 @@ class AgentStore(ABC):
         name: str,
         bundle_location: str,
         description: str | None = None,
+        is_role: bool = False,
     ) -> Agent:
         """
         Register a new template agent. Name must be unique among
@@ -49,6 +50,8 @@ class AgentStore(ABC):
             e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
         :param description: Optional free-text description of the
             agent's purpose.
+        :param is_role: True for a role-bound profile hidden from the
+            public catalog (backs a glossary role).
         :returns: The newly created :class:`Agent`.
         """
         ...
@@ -146,5 +149,19 @@ class AgentStore(ABC):
             e.g. ``"agent_abc123"``.
         :returns: ``True`` if the agent was deleted, ``False`` if
             it did not exist.
+        """
+        ...
+
+    @abstractmethod
+    def set_is_role(self, agent_id: str, is_role: bool) -> None:
+        """
+        Toggle the ``is_role`` visibility flag on an agent row.
+
+        Role-bound profiles are hidden from the public catalog. The seed
+        calls this to mark the packaged task-role agents on existing rows
+        that predate the column; new rows take the flag at ``create`` time.
+
+        :param agent_id: Unique agent identifier.
+        :param is_role: True to hide from the catalog, False to restore.
         """
         ...

@@ -7,6 +7,10 @@ from pathlib import Path
 
 from omnigent.agent_tasks.role_keys import (
     MANAGER_DEFAULT_ROLE_KEY,
+    ROLE_KIND_BROKER,
+    ROLE_KIND_MANAGER,
+    ROLE_KIND_SECRETARY,
+    ROLE_KIND_WORKER,
     WORKER_DEFAULT_ROLE_KEY,
     is_manager_role_key,
     is_worker_role_key,
@@ -41,6 +45,7 @@ class TaskRoleDefaults:
     agent_name: str
     harness: str
     model: str
+    description: str | None = None
 
 
 TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
@@ -48,21 +53,25 @@ TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
         agent_name=TASK_BROKER_AGENT_NAME,
         harness="openai-agents",
         model="databricks-glm-5-2",
+        description="Triages incoming events and routes work to tasks and worker lanes.",
     ),
     TASK_SECRETARY_ROLE: TaskRoleDefaults(
         agent_name=TASK_SECRETARY_AGENT_NAME,
         harness="openai-agents",
         model="databricks-glm-5-2",
+        description="User assistant to steer the PuppyGarden task system.",
     ),
     MANAGER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
         agent_name=TASK_MANAGER_AGENT_NAME,
         harness="openai-agents",
         model="databricks-glm-5-2",
+        description="Owns a task end-to-end: plans, spawns worker lanes, and reconciles progress.",
     ),
     WORKER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
         agent_name=DEFAULT_WORKER_AGENT_NAME,
         harness="openai-agents",
         model="databricks-glm-5-2",
+        description="General-purpose worker for assorted task items.",
     ),
 }
 
@@ -76,6 +85,22 @@ def task_role_defaults_for_key(role: str) -> TaskRoleDefaults | None:
     if fallback_key is None:
         return None
     return TASK_ROLE_DEFAULTS.get(fallback_key)
+
+
+# Packaged agent names that back each role kind. Drives the role-form agent
+# dropdown: a role binds to one of its kind's packaged agents (or a fork of
+# one). Workers list both the general default and the coding specialist.
+ROLE_KIND_AGENT_NAMES: dict[str, tuple[str, ...]] = {
+    ROLE_KIND_BROKER: (TASK_BROKER_AGENT_NAME,),
+    ROLE_KIND_SECRETARY: (TASK_SECRETARY_AGENT_NAME,),
+    ROLE_KIND_MANAGER: (TASK_MANAGER_AGENT_NAME,),
+    ROLE_KIND_WORKER: (DEFAULT_WORKER_AGENT_NAME, TASK_WORKER_AGENT_NAME),
+}
+
+
+def packaged_role_agent_names_for_kind(kind: str) -> tuple[str, ...]:
+    """Return the packaged agent names backing a role kind, or ``()``."""
+    return ROLE_KIND_AGENT_NAMES.get(kind, ())
 
 
 _AGENTS_DIR = Path(__file__).parent / "agents"
