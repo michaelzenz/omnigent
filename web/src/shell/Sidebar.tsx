@@ -144,6 +144,7 @@ import { getCurrentUserId, resolveIdentity } from "@/lib/identity";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { getSessionState, type SessionState } from "@/hooks/useSessionState";
 import { useChatStore } from "@/store/chatStore";
+import { isBrokerSession } from "@/lib/agentTasksApi";
 import {
   isConversationUnseen,
   isExplicitlyUnread,
@@ -3241,6 +3242,7 @@ function ConversationRow({
   // row). The explicit override only lifts the active-row suppression, so
   // flagging the thread you're currently viewing surfaces the dot at once.
   const hasUnseenMessages =
+    !isBrokerSession(conversation.labels) &&
     isConversationUnseen(conversation.id, conversation.updated_at, conversation.status) &&
     (!isActive || isExplicitlyUnread(conversation.id));
   // "Mark as unread" is offered on any row not already showing the dot.

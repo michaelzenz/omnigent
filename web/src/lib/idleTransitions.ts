@@ -7,6 +7,7 @@
 // diffs two snapshots.
 
 import type { Conversation } from "@/hooks/useConversations";
+import { isBrokerSession } from "@/lib/agentTasksApi";
 
 // Statuses that mean "the agent stopped working and is waiting on the
 // user" — the moment worth surfacing. "running" is excluded (still
@@ -108,6 +109,10 @@ export function computeUnreadBadgeIds(
 ): Set<string> {
   const unread = new Set<string>();
   for (const conversation of conversations) {
+    // The broker is a background agent — its chat is not a reading surface,
+    // so it never counts toward the unread badge (its output lands on the
+    // PuppyGarden board, not in the sidebar).
+    if (isBrokerSession(conversation.labels)) continue;
     if (windowFocused && conversation.id === activeId) continue;
     const awaiting = (conversation.pending_elicitations_count ?? 0) > 0;
     if (awaiting || isUnseen(conversation.id, conversation.updated_at, conversation.status)) {

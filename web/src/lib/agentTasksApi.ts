@@ -124,6 +124,18 @@ export const MANAGER_ROLE_PREFIX = "manager:";
 export const WORKER_DEFAULT_ROLE_KEY = "worker:default";
 export const WORKER_ROLE_PREFIX = "worker:";
 
+// Conversation label marking a PuppyGarden role session. Mirrors the backend
+// ``omnigent.agent_tasks.session_labels`` constants. ``task_broker`` is a
+// background agent whose chat is not a reading surface, so the sidebar never
+// shows its unread dot and excludes it from the unread badge count.
+export const ROLE_LABEL_KEY = "omnigent.role";
+export const BROKER_ROLE_VALUE = "task_broker";
+export const SECRETARY_ROLE_VALUE = "task_secretary";
+
+export function isBrokerSession(labels: Record<string, string> | undefined): boolean {
+  return labels?.[ROLE_LABEL_KEY] === BROKER_ROLE_VALUE;
+}
+
 function agentRolePath(role: string, suffix: string): string {
   return `/v1/agent-tasks/roles/${encodeURIComponent(role)}/${suffix}`;
 }

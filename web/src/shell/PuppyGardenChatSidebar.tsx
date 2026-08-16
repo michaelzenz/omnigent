@@ -18,6 +18,8 @@ import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRe
 import { useSessionRunnerOnline, useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { livenessRowFromSession, useSessionLiveness } from "@/hooks/useSessionLiveness";
 import { useSession } from "@/hooks/useSession";
+import { useConversations } from "@/hooks/useConversations";
+import { useMarkConversationSeen } from "@/hooks/useUnseenConversations";
 import {
   buildPendingBubbles,
   computeIsWorking,
@@ -341,6 +343,22 @@ export function PuppyGardenChatSidebar() {
     }
     return target.conversationId;
   }, [target, brokerBootstrap.sessionId, secretaryBootstrap.sessionId]);
+
+  // The dock IS the reading surface for role/manager/worker chats — they're
+  // not viewed via /c/<id>, so the sidebar's active-row suppression doesn't
+  // fire. Mark the dock's active conversation seen (mirroring ChatPage's
+  // useMarkConversationSeen) so the sidebar unread dot clears while you're
+  // looking at it here. The broker is exempt from the dot entirely (Part A),
+  // but marking it seen here is harmless.
+  const { data: conversationsData } = useConversations("", true);
+  const dockUpdatedAt = useMemo(
+    () =>
+      conversationsData?.pages
+        .flatMap((p) => p.data)
+        .find((c) => c.id === conversationId)?.updated_at,
+    [conversationsData, conversationId],
+  );
+  useMarkConversationSeen(conversationId ?? undefined, dockUpdatedAt);
 
   const title = dockTitle(target);
   const showRoleControls = target.kind === "role";
