@@ -50,13 +50,17 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     assert "selected_routing_attempt_id" not in columns
     assert "search_text" not in columns
     assert "task_event_tags" not in tables
-    task_columns = {column["name"] for column in sa.inspect(db_engine).get_columns("tasks")}
+    task_column_defs = {
+        column["name"]: column for column in sa.inspect(db_engine).get_columns("tasks")
+    }
+    task_columns = set(task_column_defs)
     assert "search_text" not in task_columns
     assert "manager_agent_id" not in task_columns
     # A task names the roles that run it; the agent behind each role lives on
     # the role definition.
     assert "agent_profile_id" not in task_columns
     assert {"manager_role_key", "worker_role_key"} <= task_columns
+    assert task_column_defs["goal"]["nullable"] is False
     task_indexes = {index["name"] for index in sa.inspect(db_engine).get_indexes("tasks")}
     assert "ix_tasks_manager_role_key" in task_indexes
     assert "ix_tasks_agent_profile_id" not in task_indexes
@@ -145,9 +149,9 @@ def test_tasks_state_check_enforced(db_engine: Engine) -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO tasks "
-                    "(workspace_id, id, manager_role_key, worker_role_key, title, state, "
-                    "created_at) "
-                    "VALUES (0, :id, 'manager:default', 'worker:default', 't', 99, 1)"
+                    "(workspace_id, id, manager_role_key, worker_role_key, title, goal, "
+                    "state, created_at) "
+                    "VALUES (0, :id, 'manager:default', 'worker:default', 't', 'g', 99, 1)"
                 ),
                 {"id": bytes.fromhex("0ecf75a6ff1ff86bcc1902eb0951ef45")},
             )

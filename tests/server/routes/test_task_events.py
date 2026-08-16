@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import pytest
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
@@ -18,7 +19,7 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
-from tests.server.routes.agent_task_api import put_agent_role_profile
+from tests.server.routes.agent_task_api import patch_host_session_launch, put_agent_role_profile
 
 
 def _uid(seed: str) -> str:
@@ -31,9 +32,15 @@ def _seed_live_host(db_uri: str, seed: str) -> str:
     return host_id
 
 
+@pytest.fixture(autouse=True)
+def _patch_host_session_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_host_session_launch(monkeypatch)
+
+
 @pytest_asyncio.fixture()
 async def manager_agent_profile_id(client: httpx.AsyncClient, db_uri: str) -> str:
     del client
+    _seed_live_host(db_uri, "host_test")
     return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
@@ -82,7 +89,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
             "task_id": task_id,
         },
     )
-    assert resolve_resp.status_code == 200
+    assert resolve_resp.status_code == 200, resolve_resp.text
     resolved = resolve_resp.json()["data"][0]
     assert resolved["state"] == "routed"
     assert resolved["task_id"] == task_id
@@ -119,10 +126,15 @@ async def test_bootstrap_rejects_dead_manager_session(
         "/v1/agent-tasks",
         json={
             "title": "Dead session task",
-            "manager_conversation_id": dead_conversation_id,
+            "goal": "Reject stale manager sessions",
         },
     )
+    assert create_resp.status_code == 200, create_resp.text
     task_id = create_resp.json()["id"]
+    SqlAlchemyTaskStore(db_uri).update(
+        task_id,
+        manager_conversation_id=dead_conversation_id,
+    )
     bootstrap_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/bootstrap",
         json={},

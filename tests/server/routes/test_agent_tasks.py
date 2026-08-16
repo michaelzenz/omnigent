@@ -24,6 +24,7 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 from tests.server.routes.agent_task_api import (
     agent_role_profile_url,
@@ -53,6 +54,10 @@ def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         "omnigent.server.routes.sessions._validate_session_workspace",
+        _skip_validation,
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.orchestration._validate_session_workspace",
         _skip_validation,
     )
 
@@ -151,6 +156,32 @@ async def test_create_and_get_task(client: httpx.AsyncClient) -> None:
     assert loaded["tags"] == created["tags"]
 
 
+async def test_create_task_requires_goal_and_supported_state(
+    client: httpx.AsyncClient,
+) -> None:
+    missing_goal = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "Missing goal"},
+    )
+    assert missing_goal.status_code == 422
+
+    invalid_state = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "Invalid state", "goal": "Never created", "state": "idle"},
+    )
+    assert invalid_state.status_code == 422
+
+    manager_session = await client.post(
+        "/v1/agent-tasks",
+        json={
+            "title": "Invalid manager session",
+            "goal": "Never created",
+            "manager_conversation_id": _uid("manager"),
+        },
+    )
+    assert manager_session.status_code == 422
+
+
 async def test_create_defaults_manager_role_to_task_manager_agent(
     client: httpx.AsyncClient,
     db_uri: str,
@@ -175,6 +206,26 @@ async def test_create_defaults_manager_role_to_task_manager_agent(
     # load, so the role owns its profile (decoupled from the reseeded built-in).
     assert profile_resp.json()["agent_profile_id"] != task_manager_agent_id
     assert profile_resp.json()["agent_name"].startswith("task-manager-fork-")
+
+
+async def test_create_active_task_bootstraps_manager(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_workspace_validation(monkeypatch)
+    _seed_live_host(db_uri, "active-task-host")
+    created = await client.post(
+        "/v1/agent-tasks",
+        json={
+            "title": "Active task",
+            "goal": "Manager session is running",
+            "state": "active",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["state"] == "active"
+    assert created.json()["manager_conversation_id"] is not None
 
 
 async def test_role_profile_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
@@ -428,9 +479,7 @@ async def test_create_custom_worker_role_seeds_description(
         },
     )
     assert create_with_desc.status_code == 200
-    assert (
-        create_with_desc.json()["description"] == "Implements coding task items."
-    )
+    assert create_with_desc.json()["description"] == "Implements coding task items."
 
 
 async def test_role_profile_returns_candidate_agents(
@@ -625,15 +674,13 @@ async def _worker_lane_id(
     task_id: str,
     role_key: str = "worker:default",
 ) -> str:
-    """Create an item bound to a worker lane and return the lane id."""
-    item_resp = await client.post(
-        f"/v1/agent-tasks/{task_id}/items",
-        json={"title": "Investigate failure", "worker_role_key": role_key},
+    """Create and return a worker lane id."""
+    worker_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/workers",
+        json={"lanes": [{"role_key": role_key}]},
     )
-    assert item_resp.status_code == 200
-    worker_id = item_resp.json()["worker_id"]
-    assert worker_id is not None
-    return worker_id
+    assert worker_resp.status_code == 200, worker_resp.text
+    return worker_resp.json()["lanes"][role_key][0]
 
 
 async def test_patch_worker_lane_role(
@@ -648,6 +695,7 @@ async def test_patch_worker_lane_role(
         json={"slug": "reviewer", "agent_profile_id": task_manager_agent_id},
     )
     task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+    SqlAlchemyTaskStore(db_uri).update(task_id, state="idle")
     worker_id = await _worker_lane_id(client, task_id=task_id)
 
     patch_resp = await client.patch(
@@ -671,9 +719,13 @@ async def test_patch_worker_lane_rejects_unknown_worker(client: httpx.AsyncClien
     assert resp.status_code == 404
 
 
-async def test_patch_worker_lane_rejects_non_worker_role(client: httpx.AsyncClient) -> None:
+async def test_patch_worker_lane_rejects_non_worker_role(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
     """Only worker roles may run a worker lane."""
     task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+    SqlAlchemyTaskStore(db_uri).update(task_id, state="idle")
     worker_id = await _worker_lane_id(client, task_id=task_id)
 
     resp = await client.patch(
@@ -690,6 +742,7 @@ async def test_patch_worker_lane_conflicts_once_it_has_a_session(
 ) -> None:
     """A lane that already ran keeps its history under the old role."""
     task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+    SqlAlchemyTaskStore(db_uri).update(task_id, state="idle")
     worker_id = await _worker_lane_id(client, task_id=task_id)
     SqlAlchemyWorkerStore(db_uri).update_worker(worker_id, session_id=_uid("lane_session"))
 
@@ -755,7 +808,7 @@ async def _put_secretary_profile(
     return host_id
 
 
-async def test_ensure_secretary_session_seeds_prompt(
+async def test_ensure_secretary_session_starts_without_synthetic_items(
     client: httpx.AsyncClient,
     secretary_agent_id: str,
     db_uri: str,
@@ -772,13 +825,7 @@ async def test_ensure_secretary_session_seeds_prompt(
 
     items_resp = await client.get(f"/v1/sessions/{conversation_id}/items")
     assert items_resp.status_code == 200
-    items = items_resp.json()["data"]
-    assert len(items) == 1
-    assert items[0]["role"] == "user"
-    assert items[0].get("is_meta") is True
-    assert "docs/agent-tasks/API_REFERENCE.md" in items_resp.text
-    assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
-    assert "secretary" in items_resp.text.lower()
+    assert items_resp.json()["data"] == []
 
     profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
     assert profile_resp.json()["conversation_id"] == conversation_id
@@ -789,7 +836,7 @@ async def test_ensure_secretary_session_seeds_prompt(
     assert ensure_again.json()["conversation_id"] == conversation_id
 
 
-async def test_reset_secretary_session_reseeds_prompt(
+async def test_reset_secretary_session_starts_without_synthetic_items(
     client: httpx.AsyncClient,
     secretary_agent_id: str,
     db_uri: str,
@@ -810,11 +857,7 @@ async def test_reset_secretary_session_reseeds_prompt(
     assert deleted.status_code == 404
 
     items_resp = await client.get(f"/v1/sessions/{reset_body['conversation_id']}/items")
-    items = items_resp.json()["data"]
-    assert len(items) == 1
-    assert items[0].get("is_meta") is True
-    assert "docs/agent-tasks/API_REFERENCE.md" in items_resp.text
-    assert "docs/agent-tasks/TASK_SECRETARY.md" in items_resp.text
+    assert items_resp.json()["data"] == []
 
     profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
     profile = profile_resp.json()

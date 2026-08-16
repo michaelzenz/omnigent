@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 
 def agent_role_profile_url(role: str) -> str:
@@ -43,3 +44,53 @@ async def put_agent_role_profile(
             "model": model,
         },
     )
+
+
+def patch_host_session_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub host validation and launch for in-process task route tests."""
+
+    async def _skip_validation(*args: object, **kwargs: object) -> str | None:
+        return kwargs.get("workspace")
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._validate_session_workspace",
+        _skip_validation,
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.orchestration._validate_session_workspace",
+        _skip_validation,
+    )
+
+    from omnigent.server.routes._host_launch import HostLaunchTarget
+
+    class _AutoResolveDict(dict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if hasattr(value, "set_result") and not value.done():
+                value.set_result({"status": "ok"})
+
+    def _skip_launch(*args: object, **kwargs: object) -> HostLaunchTarget:
+        host_id = kwargs.get("host_id", "")
+        fake_conn = type(
+            "FakeConn",
+            (),
+            {
+                "host_id": host_id,
+                "pending_launches": _AutoResolveDict(),
+                "pending_stats": {},
+            },
+        )()
+        return HostLaunchTarget(
+            host=type("FakeHost", (), {"name": "test-host", "host_id": host_id})(),
+            conn=fake_conn,
+            conv=type("FakeConv", (), {"id": kwargs.get("session_id", "")})(),
+        )
+
+    monkeypatch.setattr(
+        "omnigent.server.routes._host_launch.resolve_host_launch",
+        _skip_launch,
+    )
+
+    from omnigent.server.host_registry import HostRegistry
+
+    monkeypatch.setattr(HostRegistry, "send_text", staticmethod(lambda conn, data: None))

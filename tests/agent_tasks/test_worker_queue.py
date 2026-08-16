@@ -301,7 +301,8 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
         role_key=WORKER_DEFAULT_ROLE_KEY,
         kind="managed",
     )
-    item_store.update_item(item.id, worker_id=worker.id)
+    item = item_store.update_item(item.id, worker_id=worker.id)
+    assert item is not None
 
     updated, execution = await resolve_task_item(
         item=item,
@@ -376,7 +377,8 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
         role_key=WORKER_DEFAULT_ROLE_KEY,
         kind="managed",
     )
-    item_store.update_item(item.id, worker_id=worker.id)
+    item = item_store.update_item(item.id, worker_id=worker.id)
+    assert item is not None
 
     async def _mock_session_creator(*, body, request, user_id, **kwargs):
         return conversation_store.create_conversation(

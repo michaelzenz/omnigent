@@ -47,6 +47,10 @@ def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
         "omnigent.server.routes.sessions._validate_session_workspace",
         _skip_validation,
     )
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.orchestration._validate_session_workspace",
+        _skip_validation,
+    )
 
     from omnigent.server.routes._host_launch import HostLaunchTarget
 
@@ -134,11 +138,29 @@ def _item_payload(worker_role_key: str) -> dict[str, str]:
     }
 
 
+async def _assign_worker_lane(
+    client: httpx.AsyncClient,
+    *,
+    task_id: str,
+    item_id: str,
+    worker_role_key: str,
+) -> None:
+    assigned = await client.post(
+        f"/v1/agent-tasks/{task_id}/workers/assign",
+        json={"assignments": [{"item_id": item_id, "role_key": worker_role_key}]},
+    )
+    assert assigned.status_code == 200, assigned.text
+
+
 async def _bootstrapped_task(client: httpx.AsyncClient, db_uri: str) -> str:
     _seed_live_host(db_uri, "phase4-host")
     created = await client.post(
         "/v1/agent-tasks",
-        json={"title": "Phase 4 task", "goal": "complete phase 4"},
+        json={
+            "title": "Phase 4 task",
+            "goal": "complete phase 4",
+            "state": "active",
+        },
     )
     task_id = created.json()["id"]
     bootstrap = await client.post(
@@ -176,12 +198,18 @@ async def test_dispatch_and_dashboard(
     )
     assert item_resp.status_code == 200
     item_id = item_resp.json()["id"]
+    await _assign_worker_lane(
+        client,
+        task_id=task_id,
+        item_id=item_id,
+        worker_role_key=worker_role_key,
+    )
 
     dispatch_resp = await client.post(
         f"/v1/task-items/{item_id}/dispatch",
         json=_bootstrap_body(),
     )
-    assert dispatch_resp.status_code == 200
+    assert dispatch_resp.status_code == 200, dispatch_resp.text
     body = dispatch_resp.json()
     assert body["status"] == "running"
     assert body["conversation_id"] is not None
@@ -219,6 +247,12 @@ async def test_item_accept_enqueues_worker(
     assert item_resp.status_code == 200
     item_id = item_resp.json()["id"]
     assert item_resp.json()["state"] == "pending"
+    await _assign_worker_lane(
+        client,
+        task_id=task_id,
+        item_id=item_id,
+        worker_role_key=worker_role_key,
+    )
 
     resolve_resp = await client.post(
         f"/v1/task-items/{item_id}/resolve",
@@ -262,6 +296,12 @@ async def test_item_edit_and_dispatch_enqueues(
         },
     )
     item_id = item_resp.json()["id"]
+    await _assign_worker_lane(
+        client,
+        task_id=task_id,
+        item_id=item_id,
+        worker_role_key=worker_role_key,
+    )
     resolve_resp = await client.post(
         f"/v1/task-items/{item_id}/resolve",
         json={

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import pytest
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
@@ -16,6 +17,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+from tests.server.routes.agent_task_api import patch_host_session_launch
 
 
 def _uid(seed: str) -> str:
@@ -26,6 +28,11 @@ def _seed_live_host(db_uri: str, seed: str) -> str:
     host_id = _uid(seed)
     HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
     return host_id
+
+
+@pytest.fixture(autouse=True)
+def _patch_host_session_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_host_session_launch(monkeypatch)
 
 
 @pytest_asyncio.fixture()
@@ -66,7 +73,7 @@ async def test_session_adoption_flow(
     db_uri: str,
 ) -> None:
     """Propose, adopt, and bind an orphan session to a task."""
-    _seed_live_host(db_uri, "adoption-host")
+    _seed_live_host(db_uri, "host_test")
     conv = conversation_store.create_conversation(
         title="Upload retries",
         agent_id=task_manager_agent_id,
@@ -99,7 +106,7 @@ async def test_session_adoption_flow(
         f"/v1/agent-tasks/sessions/{conv.id}/adopt",
         json={"task_id": task_id, **_bootstrap_body()},
     )
-    assert adopt_resp.status_code == 200
+    assert adopt_resp.status_code == 200, adopt_resp.text
     body = adopt_resp.json()
     assert body["worker_kind"] == WORKER_KIND_EXTERNAL
     assert body["task_id"] == task_id

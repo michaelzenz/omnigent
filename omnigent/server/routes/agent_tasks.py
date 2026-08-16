@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 import yaml
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from omnigent.agent_tasks.adoption import (
     SESSION_ADOPTION_PROPOSAL,
@@ -157,6 +157,8 @@ class TaskTagInput(BaseModel):
 
 class CreateAgentTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks``."""
+
+    model_config = ConfigDict(extra="forbid")
 
     title: str
     goal: str
@@ -736,11 +738,9 @@ async def _create_role_session_via_create_path(
     request: Request,
     user_id: str | None,
     session_creator: Any,
-    conversation_store: ConversationStore,
     parent_session_id: str | None = None,
     sub_agent_name: str | None = None,
     title: str | None = None,
-    seed_prompt: bool = True,
 ) -> str:
     """Create a role session through the same ``POST /v1/sessions`` path.
 
@@ -1059,28 +1059,28 @@ def create_agent_tasks_router(
             "data": [_task_to_response(task) for task in tasks],
         }
 
-        @router.post("/agent-tasks/batch")
-        async def batch_get_tasks(
-            request: Request,
-            body: BatchGetTasksRequest,
-        ) -> dict[str, Any]:
-            """Fetch multiple tasks by ID in one call."""
-            user_id = get_user_id(request, auth_provider)
+    @router.post("/agent-tasks/batch")
+    async def batch_get_tasks(
+        request: Request,
+        body: BatchGetTasksRequest,
+    ) -> dict[str, Any]:
+        """Fetch multiple tasks by ID in one call."""
+        user_id = get_user_id(request, auth_provider)
 
-            def _fetch() -> list[Task]:
-                tasks: list[Task] = []
-                for task_id in body.task_ids:
-                    task = task_store.get(task_id.strip())
-                    if task is None:
-                        continue
-                    tasks.append(task)
-                return _filter_tasks_for_user(tasks, user_id)
+        def _fetch() -> list[Task]:
+            tasks: list[Task] = []
+            for task_id in body.task_ids:
+                task = task_store.get(task_id.strip())
+                if task is None:
+                    continue
+                tasks.append(task)
+            return _filter_tasks_for_user(tasks, user_id)
 
-            tasks = await asyncio.to_thread(_fetch)
-            return {
-                "object": "list",
-                "data": [_task_to_response(task) for task in tasks],
-            }
+        tasks = await asyncio.to_thread(_fetch)
+        return {
+            "object": "list",
+            "data": [_task_to_response(task) for task in tasks],
+        }
 
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
@@ -1638,7 +1638,6 @@ def create_agent_tasks_router(
                     request=request,
                     user_id=user_id,
                     session_creator=session_creator,
-                    conversation_store=conversation_store,
                 )
                 await _bind_role_session(effective_user_id, role, conversation_id)
                 return _agent_role_session_to_response(
@@ -1668,7 +1667,6 @@ def create_agent_tasks_router(
                     request=request,
                     user_id=user_id,
                     session_creator=session_creator,
-                    conversation_store=conversation_store,
                 )
                 await _bind_role_session(effective_user_id, role, conversation_id)
                 # Orphan sessions are now durable ``session.orphan`` events the
@@ -2060,7 +2058,8 @@ def create_agent_tasks_router(
             task = await _get_task_or_404(task_id, user_id)
             if task.state == "pending" and body.worker_id is not None:
                 raise OmnigentError(
-                    "Cannot assign a worker to an item on a pending task; accept the package first",
+                    "Cannot assign a worker to an item on a pending task; "
+                    "accept the package first",
                     code=ErrorCode.CONFLICT,
                 )
 
@@ -2712,7 +2711,7 @@ def create_agent_tasks_router(
             session_hint: str,
         ) -> dict[str, Any]:
             """Dismiss an external session adoption proposal."""
-            user_id = require_user(request, auth_provider)
+            require_user(request, auth_provider)
             proposal = await asyncio.to_thread(
                 find_open_external_adoption_proposal,
                 task_event_store,

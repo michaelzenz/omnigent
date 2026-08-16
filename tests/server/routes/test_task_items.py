@@ -41,6 +41,7 @@ async def test_list_task_items_filters_by_state(
         "/v1/agent-tasks/packages",
         json={
             "title": "CI failure",
+            "goal": "CI passes",
             "items": [
                 {
                     "title": "Investigate CI",

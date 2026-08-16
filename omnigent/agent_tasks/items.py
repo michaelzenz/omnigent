@@ -114,6 +114,17 @@ async def ensure_task_manager_for_dispatch(
             "Accept the task package before dispatching work",
             code=ErrorCode.CONFLICT,
         )
+    if task.manager_conversation_id is not None:
+        existing = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            task.manager_conversation_id,
+        )
+        if existing is None:
+            raise OmnigentError(
+                "Manager session is missing; clear manager_conversation_id before re-bootstrap",
+                code=ErrorCode.CONFLICT,
+            )
+        return task
 
     params = resolve_bootstrap_params(
         host_id=host_id,

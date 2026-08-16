@@ -531,6 +531,7 @@ def reject_external_session_adoption(
     The dismissal is recorded so the session-watcher update endpoint can
     return ``track: false`` for this hint.
     """
+    del session_hint
     if proposal_event is None:
         return None
     return task_event_store.update_event(proposal_event.id, state="dismissed")

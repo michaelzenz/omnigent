@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import pytest
 import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import (
@@ -12,17 +13,29 @@ from omnigent.agent_tasks.agent_builtins import (
     TASK_MANAGER_AGENT_NAME,
     resolve_task_agent_id,
 )
+from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
-from tests.server.routes.agent_task_api import put_agent_role_profile
+from omnigent.stores.host_store import HostStore
+from tests.server.routes.agent_task_api import patch_host_session_launch, put_agent_role_profile
 
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
 
 
+@pytest.fixture(autouse=True)
+def _patch_host_session_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_host_session_launch(monkeypatch)
+
+
 @pytest_asyncio.fixture()
 async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
     del client
+    HostStore(db_uri).upsert_on_connect(
+        _uid("host_ingress"),
+        "host_ingress",
+        RESERVED_USER_LOCAL,
+    )
     return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
 
 
@@ -46,6 +59,7 @@ async def test_ingress_auto_routes_matching_task(
         json={
             "title": "Upload retries",
             "goal": "all uploads retry to success",
+            "state": "active",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
@@ -62,7 +76,7 @@ async def test_ingress_auto_routes_matching_task(
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
-    assert ingress.status_code == 200
+    assert ingress.status_code == 200, ingress.text
     body = ingress.json()
     assert body["state"] == "routed"
     assert ingress.json()["state"] == "routed"
@@ -79,6 +93,7 @@ async def test_ingress_fast_paths_explicit_task_id(
         json={
             "title": "Land PR #123",
             "goal": "PR #123 lands on main",
+            "state": "active",
             "internal_note": "land pr 123 after blocker merges",
         },
     )
@@ -96,7 +111,7 @@ async def test_ingress_fast_paths_explicit_task_id(
             "source_offset": 1,
         },
     )
-    assert ingress.status_code == 200
+    assert ingress.status_code == 200, ingress.text
     body = ingress.json()
     assert body["state"] == "routed"
     assert body["task_id"] == task_id
@@ -156,6 +171,7 @@ async def test_complete_requires_routed_state(
         json={
             "title": "Upload retries",
             "goal": "all uploads retry to success",
+            "state": "active",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )

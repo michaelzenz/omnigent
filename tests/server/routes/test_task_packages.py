@@ -34,6 +34,10 @@ def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
         "omnigent.server.routes.sessions._validate_session_workspace",
         _skip_validation,
     )
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.orchestration._validate_session_workspace",
+        _skip_validation,
+    )
 
     from omnigent.server.routes._host_launch import HostLaunchTarget
 
@@ -122,6 +126,7 @@ def _seed_live_host(db_uri: str, seed: str) -> str:
 
 def _bootstrap_body() -> dict[str, str]:
     return {
+        "host_id": _uid("package-resolve-host"),
         "workspace": "/tmp/omnigent-task-test",
         "harness": "cursor",
         "model": "composer-2.5",
@@ -147,6 +152,7 @@ async def test_create_task_package_lists_as_paused_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "CI failure on PR #123",
+            "goal": "PR #123 CI passes",
             "items": [
                 {
                     "title": "Investigate CI failure",
@@ -191,6 +197,7 @@ async def test_accept_package_promotes_pending_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to accept",
+            "goal": "Package work is completed",
             "items": [{"title": "Do work", "event_ids": [event_id]}],
         },
     )
@@ -200,6 +207,7 @@ async def test_accept_package_promotes_pending_task(
     accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["state"] == "idle"
+    assert accepted.json()["manager_conversation_id"] is not None
 
     locked = await client.patch(
         f"/v1/agent-tasks/{task_id}",
@@ -230,6 +238,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to activate",
+            "goal": "Package work is completed",
             "items": [
                 {"title": "Do work", "event_ids": [event_id], "instructions": "Do the work"},
             ],
@@ -238,10 +247,16 @@ async def test_resolve_inbox_item_activates_accepted_package(
     assert created.status_code == 200
     task_id = created.json()["id"]
     accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
-    assert accepted.status_code == 200
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["manager_conversation_id"] is not None
 
     item_store = SqlAlchemyTaskItemStore(db_uri)
     item = item_store.list_items_for_task(task_id, state="pending")[0]
+    assigned = await client.post(
+        f"/v1/agent-tasks/{task_id}/workers/assign",
+        json={"assignments": [{"item_id": item.id, "role_key": worker_role_key}]},
+    )
+    assert assigned.status_code == 200, assigned.text
 
     resolved = await client.post(
         f"/v1/task-items/{item.id}/resolve",
@@ -286,6 +301,7 @@ async def test_resolve_inbox_item_requires_accepted_package(
         "/v1/agent-tasks/packages",
         json={
             "title": "Still pending",
+            "goal": "Package work is completed",
             "items": [{"title": "Do work", "event_ids": [event_id]}],
         },
     )
@@ -329,6 +345,7 @@ async def test_skip_inbox_items_keeps_paused_task(
         "/v1/agent-tasks/packages",
         json={
             "title": "Package to skip",
+            "goal": "Package work is completed",
             "items": [
                 {"title": "Skip me", "event_ids": [event_ids[0]]},
                 {"title": "Skip me too", "event_ids": [event_ids[1]]},
@@ -373,6 +390,7 @@ async def test_reconcile_events_extends_package_item(
         "/v1/agent-tasks/packages",
         json={
             "title": "Upload retries",
+            "goal": "Uploads retry reliably",
             "items": [
                 {
                     "title": "First failure",
@@ -427,6 +445,7 @@ async def test_reconcile_events_batch_creates_multiple_items(
         "/v1/agent-tasks/packages",
         json={
             "title": "Upload retries",
+            "goal": "Uploads retry reliably",
             "items": [
                 {"title": "Seed item", "event_ids": [events[0]]},
             ],
