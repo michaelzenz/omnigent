@@ -3129,6 +3129,31 @@ class SqlAlchemyConversationStore(ConversationStore):
             for r in ap_rows
         ]
 
+    def runner_bindings_for_host(
+        self,
+        host_id: str,
+    ) -> dict[str, str | None]:
+        """
+        Return ``{conversation_id: runner_id}`` for sessions bound to *host_id*.
+
+        Metadata-only (no label hydration); see
+        :meth:`ConversationStore.runner_bindings_for_host`.
+        """
+        with self._session("runner_bindings_for_host") as session:
+            rows = (
+                session.execute(
+                    select(
+                        SqlConversationMetadata.id,
+                        SqlConversationMetadata.runner_id,
+                    ).where(
+                        SqlConversationMetadata.workspace_id == current_workspace_id(),
+                        SqlConversationMetadata.host_id == host_id,
+                    )
+                )
+                .all()
+            )
+        return {row.id: row.runner_id for row in rows}
+
     def set_host_id(
         self,
         conversation_id: str,

@@ -59,6 +59,7 @@ from omnigent.server.host_registry import (
     HostRegistry,
     RunnerExitReports,
 )
+from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 
 _logger = logging.getLogger(__name__)
@@ -66,6 +67,49 @@ _logger = logging.getLogger(__name__)
 SUPPORTED_FRAME_PROTOCOL_MAJOR = 1
 PING_INTERVAL_S = 30.0
 PING_MISS_THRESHOLD = 3
+
+
+async def _invalidate_stale_runner_bindings(
+    conversation_store: ConversationStore,
+    host_id: str,
+    live_runner_ids: set[str],
+) -> None:
+    """Null ``runner_id`` for host-bound sessions whose runner is no longer alive.
+
+    On host (re)connect the host reports its live runner tokens. Any session
+    still pinned to a token not in that set is stale (the runner died with the
+    old host process). Clearing ``runner_id`` lets the next message relaunch
+    immediately instead of waiting out the connect grace for a dead token.
+
+    :param conversation_store: Store to query and mutate.
+    :param host_id: Host whose sessions to reconcile.
+    :param live_runner_ids: Runner tokens the host reports as alive now.
+    """
+    try:
+        bindings = await asyncio.to_thread(
+            conversation_store.runner_bindings_for_host, host_id
+        )
+    except Exception:
+        _logger.exception("runner_bindings_for_host(%s) failed", host_id)
+        return
+    stale = [
+        conv_id
+        for conv_id, runner_id in bindings.items()
+        if runner_id is not None and runner_id not in live_runner_ids
+    ]
+    for conv_id in stale:
+        try:
+            await asyncio.to_thread(conversation_store.clear_runner_id, conv_id)
+        except Exception:
+            _logger.exception("clear_runner_id(%s) failed", conv_id)
+            continue
+    if stale:
+        _logger.info(
+            "Invalidated %d stale runner binding(s) for host=%s (live_runners=%d)",
+            len(stale),
+            host_id,
+            len(live_runner_ids),
+        )
 
 
 def create_host_tunnel_router(
@@ -79,6 +123,7 @@ def create_host_tunnel_router(
     on_runner_exited: Callable[[str, str], Awaitable[None]] | None = None,
     local_single_user: bool | None = None,
     runner_exit_reports: RunnerExitReports | None = None,
+    conversation_store: ConversationStore | None = None,
 ) -> APIRouter:
     """Build the router hosting the ``/hosts/{id}/tunnel`` WS endpoint.
 
@@ -273,6 +318,18 @@ def create_host_tunnel_router(
                 frame.name,
                 frame.runners,
             )
+            # Proactively null runner bindings for sessions on this host whose
+            # pinned runner token is no longer alive (the host reports its live
+            # runners in the hello frame). After a host/server restart every
+            # session is stale; without this the next message per session waits
+            # out the connect grace for a token that can never register. Nulling
+            # runner_id skips that grace and relaunches immediately on next touch.
+            if conversation_store is not None:
+                await _invalidate_stale_runner_bindings(
+                    conversation_store,
+                    host_id,
+                    set(frame.runners),
+                )
 
             sender_task = asyncio.create_task(
                 _sender_loop(ws, conn),

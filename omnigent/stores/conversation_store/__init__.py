@@ -1349,6 +1349,27 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def runner_bindings_for_host(
+        self,
+        host_id: str,
+    ) -> dict[str, str | None]:
+        """
+        Return ``{conversation_id: runner_id}`` for sessions bound to *host_id*.
+
+        A lightweight metadata-only query (no label hydration) used by the
+        host-connect path to proactively invalidate stale runner bindings:
+        after a host restart the host reports ``runners=[]``, so every
+        session still pinned to a now-dead runner token is stale. Nulling
+        those bindings lets the next message relaunch immediately instead
+        of waiting out the connect grace for a token that can never register.
+
+        :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
+        :returns: Mapping of conversation id → runner id (``None`` when the
+            session is host-bound but not yet pinned to a runner).
+        """
+        ...
+
+    @abstractmethod
     def set_host_id(
         self,
         conversation_id: str,
