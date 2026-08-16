@@ -23,6 +23,7 @@ def test_create_and_get_round_trip(store: SqlAlchemyTaskStore) -> None:
     task = store.create(
         task_id=_uid("task_1"),
         title="S3 reliability",
+        goal="S3 uploads are reliable",
         owner_user_id="alice@example.com",
         internal_note="upload retries and backoff",
         manager_conversation_id=_uid("conv_mgr"),
@@ -43,6 +44,7 @@ def test_create_accepts_custom_role_keys(store: SqlAlchemyTaskStore) -> None:
     store.create(
         task_id=task_id,
         title="Research spike",
+        goal="Research spike complete",
         manager_role_key="manager:research",
         worker_role_key="worker:reviewer",
     )
@@ -59,6 +61,7 @@ def test_set_tags_replaces_task_tags(store: SqlAlchemyTaskStore) -> None:
     store.create(
         task_id=task_id,
         title="Title",
+        goal="goal",
         internal_note="routing context",
     )
     store.set_tags(
@@ -78,8 +81,8 @@ def test_set_tags_replaces_task_tags(store: SqlAlchemyTaskStore) -> None:
 def test_list_task_ids_by_tag(store: SqlAlchemyTaskStore) -> None:
     task_a = _uid("task_a")
     task_b = _uid("task_b")
-    store.create(task_id=task_a, title="A")
-    store.create(task_id=task_b, title="B")
+    store.create(task_id=task_a, title="A", goal="a goal")
+    store.create(task_id=task_b, title="B", goal="b goal")
     store.set_tags(task_a, [TaskTag(task_id=task_a, tag_type="domain", tag="s3")])
     store.set_tags(task_b, [TaskTag(task_id=task_b, tag_type="domain", tag="s3")])
     assert sorted(store.list_task_ids_by_tag("domain", "s3")) == sorted([task_a, task_b])
@@ -90,7 +93,7 @@ def test_delete_removes_tags_and_workers(store: SqlAlchemyTaskStore) -> None:
 
     task_id = _uid("task_delete")
     session_id = _uid("sess_delete")
-    store.create(task_id=task_id, title="Delete me")
+    store.create(task_id=task_id, title="Delete me", goal="deleted")
     store.set_tags(task_id, [TaskTag(task_id=task_id, tag_type="domain", tag="x")])
     worker_store = SqlAlchemyWorkerStore(store.storage_location)
     worker_store.create_worker(

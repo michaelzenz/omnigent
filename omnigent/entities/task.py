@@ -25,6 +25,7 @@ class Task:
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
     :param internal_note: Agent-facing routing context maintained by the manager.
+    :param goal: The endstate this task should land on. Required for every task.
     :param state: One of ``"active"``, ``"pending"``, ``"idle"``, ``"archived"``.
     :param manager_conversation_id: Manager session for this task, or ``None``
         before bootstrap.
@@ -41,6 +42,7 @@ class Task:
     internal_note: str | None
     state: str
     created_at: int
+    goal: str
     manager_conversation_id: str | None = None
     updated_at: int | None = None
 

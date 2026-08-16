@@ -198,6 +198,7 @@ def create_task_package(
     *,
     owner_user_id: str,
     title: str,
+    goal: str,
     items: list[PackageItemSpec],
     task_store: TaskStore,
     task_item_store: TaskItemStore,
@@ -224,6 +225,7 @@ def create_task_package(
     task = task_store.create(
         resolved_task_id,
         title,
+        goal,
         owner_user_id=owner_user_id,
         description=description,
         internal_note=resolved_internal_note,

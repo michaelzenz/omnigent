@@ -80,6 +80,7 @@ async def test_session_adoption_flow(
         "/v1/agent-tasks",
         json={
             "title": "Upload retries",
+            "goal": "all uploads retry to success",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )

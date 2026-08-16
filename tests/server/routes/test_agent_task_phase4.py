@@ -136,7 +136,10 @@ def _item_payload(worker_role_key: str) -> dict[str, str]:
 
 async def _bootstrapped_task(client: httpx.AsyncClient, db_uri: str) -> str:
     _seed_live_host(db_uri, "phase4-host")
-    created = await client.post("/v1/agent-tasks", json={"title": "Phase 4 task"})
+    created = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "Phase 4 task", "goal": "complete phase 4"},
+    )
     task_id = created.json()["id"]
     bootstrap = await client.post(
         f"/v1/agent-tasks/{task_id}/bootstrap",
@@ -328,7 +331,7 @@ async def test_worker_completion_hook(
     task_id = _uid("task_complete")
     event_id = _uid("event_complete")
     task_item_id = _uid("item_complete")
-    task_store.create(task_id, "Completion task")
+    task_store.create(task_id, "Completion task", "complete the task")
     manager_conv = conversation_store.create_conversation(
         title="Manager",
         agent_id=task_manager_agent_id,

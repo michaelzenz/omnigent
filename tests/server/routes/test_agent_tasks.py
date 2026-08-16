@@ -121,6 +121,7 @@ async def custom_agent_id(db_uri: str) -> str:
 def _create_payload(**overrides: object) -> dict:
     base: dict = {
         "title": "S3 upload reliability",
+        "goal": "All S3 uploads eventually succeed without manual retry",
         "internal_note": "retry flaky uploads",
         "tags": [{"tag_type": "domain", "tag": "s3"}],
     }
@@ -134,7 +135,8 @@ async def test_create_and_get_task(client: httpx.AsyncClient) -> None:
     assert create_resp.status_code == 200
     created = create_resp.json()
     assert created["object"] == "agent.task"
-    assert created["state"] == "idle"
+    assert created["state"] == "pending"
+    assert created["goal"] == "All S3 uploads eventually succeed without manual retry"
     assert created["manager_role_key"] == "manager:default"
     assert created["worker_role_key"] == "worker:default"
     # The agent behind each lane is named by the role, not by the task.
@@ -160,6 +162,7 @@ async def test_create_defaults_manager_role_to_task_manager_agent(
         "/v1/agent-tasks",
         json={
             "title": "Default manager task",
+            "goal": "default manager task done",
             "tags": [{"tag_type": "domain", "tag": "s3"}],
         },
     )
@@ -188,9 +191,9 @@ async def test_role_profile_rejects_missing_agent_profile(client: httpx.AsyncCli
 
 async def test_list_tasks_filters_by_state(client: httpx.AsyncClient) -> None:
     """List endpoint filters by state query param."""
-    idle_task = await client.post(
+    pending_task = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(title="Idle task"),
+        json=_create_payload(title="Pending task"),
     )
     archived = await client.post(
         "/v1/agent-tasks",
@@ -198,10 +201,10 @@ async def test_list_tasks_filters_by_state(client: httpx.AsyncClient) -> None:
     )
     await client.delete(f"/v1/agent-tasks/{archived.json()['id']}")
 
-    list_resp = await client.get("/v1/agent-tasks?state=idle")
+    list_resp = await client.get("/v1/agent-tasks?state=pending")
     assert list_resp.status_code == 200
     ids = {row["id"] for row in list_resp.json()["data"]}
-    assert idle_task.json()["id"] in ids
+    assert pending_task.json()["id"] in ids
     assert archived.json()["id"] not in ids
 
 
@@ -719,7 +722,10 @@ async def test_secretary_profile_and_bootstrap(
     )
     assert profile_resp.status_code == 200
 
-    created = await client.post("/v1/agent-tasks", json={"title": "Bootstrap me"})
+    created = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "Bootstrap me", "goal": "ship the feature"},
+    )
     task_id = created.json()["id"]
     bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
     assert bootstrap_resp.status_code == 200

@@ -63,6 +63,7 @@ def handler_setup(db_uri: str) -> dict:
     task_store.create(
         task_id,
         "Handler task",
+        "handler goal",
         owner_user_id="user-1",
         manager_conversation_id=manager_conv.id,
     )
@@ -135,6 +136,7 @@ async def test_resolve_target_fails_when_no_manager_conversation(
     task_store.create(
         task_id,
         "No manager task",
+        "no manager goal",
         owner_user_id=handler_setup["owner"],
     )
     key = AgentQueueKey(
@@ -154,6 +156,7 @@ async def test_resolve_target_fails_when_conversation_gone(handler_setup: dict) 
     task_store.create(
         task_id,
         "Stale task",
+        "stale goal",
         owner_user_id=handler_setup["owner"],
         manager_conversation_id=_uid("conv_missing"),
     )

@@ -411,7 +411,11 @@ def propose_external_session_adoption(
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
     else:
         task_id = uuid.uuid4().hex
-        task_store.create(task_id, f"External session: {session_hint}")
+        task_store.create(
+            task_id,
+            f"External session: {session_hint}",
+            f"Adopt external session {session_hint} into a managed task",
+        )
         task = task_store.get(task_id)
         assert task is not None
 

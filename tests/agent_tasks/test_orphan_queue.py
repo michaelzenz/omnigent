@@ -148,6 +148,7 @@ async def test_propose_adoption_reconciles_orphan_event(orphan_setup: dict) -> N
     task_store.create(
         task_id,
         "Adopt target",
+        "adopt the target",
         owner_user_id=orphan_setup["owner"],
     )
     proposal = propose_session_adoption(

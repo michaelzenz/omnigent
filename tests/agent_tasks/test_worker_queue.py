@@ -110,6 +110,7 @@ def worker_setup(db_uri: str) -> dict:
     task_store.create(
         task_id,
         "Worker task",
+        "worker goal",
         owner_user_id="user-w",
         manager_conversation_id=manager_conv.id,
     )
@@ -283,6 +284,7 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
     task = task_store.create(
         task_id,
         "Accept task",
+        "accept goal",
         owner_user_id="user-accept",
         manager_conversation_id=manager_conv.id,
     )
@@ -357,6 +359,7 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
     task = task_store.create(
         task_id,
         "Legacy task",
+        "legacy goal",
         owner_user_id="user-legacy",
         manager_conversation_id=manager_conv.id,
     )

@@ -61,7 +61,7 @@ def test_get_by_external_hint_finds_external_worker(db_uri: str) -> None:
         title="Ext", agent_id=agent_id, host_id=_uid("h"), workspace="/tmp"
     )
     task_id = _uid("task_hint")
-    task_store.create(task_id, "Hint task", manager_conversation_id=conv.id)
+    task_store.create(task_id, "Hint task", "hint goal", manager_conversation_id=conv.id)
 
     hint = "codex-session-abc123"
     worker = worker_store.create_worker(
@@ -223,7 +223,7 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
         title="Mgr", agent_id=agent_id, host_id=_uid("hm"), workspace="/tmp"
     )
     task_id = _uid("task_route")
-    task_store.create(task_id, "Route task", manager_conversation_id=mgr_conv.id)
+    task_store.create(task_id, "Route task", "route goal", manager_conversation_id=mgr_conv.id)
 
     worker_conv = conv_store.create_conversation(
         kind="sub_agent",
@@ -360,7 +360,7 @@ def test_propose_external_session_adoption_uses_existing_task(db_uri: str) -> No
         title="Mgr", agent_id=agent_id, host_id=_uid("hm3"), workspace="/tmp"
     )
     task_id = _uid("task_existing")
-    task_store.create(task_id, "Existing task", manager_conversation_id=mgr_conv.id)
+    task_store.create(task_id, "Existing task", "existing goal", manager_conversation_id=mgr_conv.id)
 
     hint = "codex-propose-existing"
     task, proposal = propose_external_session_adoption(

@@ -37,6 +37,7 @@ def _to_entity(row: SqlTask) -> Task:
         internal_note=row.internal_note,
         state=decode_task_state(row.state),
         created_at=row.created_at,
+        goal=row.goal,
         updated_at=row.updated_at,
     )
 
@@ -53,6 +54,7 @@ class SqlAlchemyTaskStore(TaskStore):
         self,
         task_id: str,
         title: str,
+        goal: str,
         *,
         owner_user_id: str | None = None,
         manager_role_key: str | None = None,
@@ -73,6 +75,7 @@ class SqlAlchemyTaskStore(TaskStore):
             title=title,
             description=description,
             internal_note=internal_note,
+            goal=goal,
             state=encode_task_state(state),
             created_at=now_epoch(),
             updated_at=None,
@@ -134,6 +137,7 @@ class SqlAlchemyTaskStore(TaskStore):
         manager_role_key: str | None = None,
         worker_role_key: str | None = None,
         state: str | None = None,
+        goal: str | None = None,
     ) -> Task | None:
         with self._session() as session:
             row = session.get(SqlTask, (current_workspace_id(), task_id))
@@ -148,6 +152,9 @@ class SqlAlchemyTaskStore(TaskStore):
                 changed = True
             if internal_note is not None and row.internal_note != internal_note:
                 row.internal_note = internal_note
+                changed = True
+            if goal is not None and row.goal != goal:
+                row.goal = goal
                 changed = True
             if manager_conversation_id is not _UNSET and (
                 row.manager_conversation_id != manager_conversation_id

@@ -21,6 +21,7 @@ class TaskStore(ABC):
         self,
         task_id: str,
         title: str,
+        goal: str,
         *,
         owner_user_id: str | None = None,
         manager_role_key: str | None = None,
@@ -62,6 +63,7 @@ class TaskStore(ABC):
         manager_role_key: str | None = None,
         worker_role_key: str | None = None,
         state: str | None = None,
+        goal: str | None = None,
     ) -> Task | None:
         """Update mutable task fields."""
 

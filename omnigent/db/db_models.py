@@ -1674,6 +1674,7 @@ class SqlTask(OmnigentBase):
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)

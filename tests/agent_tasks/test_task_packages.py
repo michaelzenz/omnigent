@@ -51,8 +51,8 @@ def test_routable_tasks_include_paused(stores) -> None:
     task_store = stores["task"]
     active_id = _uid("active-task")
     paused_id = _uid("paused-task")
-    task_store.create(active_id, "Active task", state="active")
-    task_store.create(paused_id, "Paused task", state="pending")
+    task_store.create(active_id, "Active task", "active goal", state="active")
+    task_store.create(paused_id, "Paused task", "paused goal", state="pending")
     routable = routable_tasks(task_store)
     assert {task.id for task in routable} == {active_id, paused_id}
 
@@ -64,6 +64,7 @@ def test_rank_tasks_for_events_includes_paused_match(stores) -> None:
     task_store.create(
         paused_id,
         "Paused match",
+        "paused goal",
         state="pending",
         internal_note="repo:omnigent-fork",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
@@ -104,6 +105,7 @@ def test_create_task_package_reconciles_events(stores) -> None:
     task = create_task_package(
         owner_user_id=_uid("owner"),
         title="CI failure on PR #123",
+        goal="PR #123 CI is green",
         items=[
             PackageItemSpec(
                 title="Investigate CI failure",
@@ -149,6 +151,7 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
     task = create_task_package(
         owner_user_id=_uid("owner"),
         title="PR 891",
+        goal="PR 891 lands",
         items=[PackageItemSpec(title="Fix PR 891", event_ids=[e1])],
         task_store=task_store,
         task_item_store=item_store,
@@ -185,6 +188,7 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
     task = task_store.create(
         _uid("dedup-task"),
         "Dedup package",
+        "dedup goal",
         owner_user_id=_uid("owner"),
         state="pending",
     )
@@ -234,6 +238,7 @@ async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str
     pending_task = create_task_package(
         owner_user_id=_uid("owner"),
         title="Package to activate",
+        goal="Package activated and work done",
         items=[PackageItemSpec(title="Do work", event_ids=[event_id], instructions="Do the work")],
         task_store=task_store,
         task_item_store=item_store,
@@ -318,6 +323,7 @@ async def test_skip_inbox_items_keeps_paused_task(stores) -> None:
     task = create_task_package(
         owner_user_id=_uid("owner"),
         title="Package to skip",
+        goal="Package skipped",
         items=[
             PackageItemSpec(title="Skip me", event_ids=[event_ids[0]]),
             PackageItemSpec(title="Skip me too", event_ids=[event_ids[1]]),
@@ -370,6 +376,7 @@ def test_accept_task_package(stores, db_uri: str) -> None:
     pending_task = create_task_package(
         owner_user_id=_uid("owner"),
         title="Package to accept",
+        goal="Package accepted",
         items=[PackageItemSpec(title="Do work", event_ids=[event_id])],
         task_store=task_store,
         task_item_store=item_store,
@@ -398,6 +405,7 @@ def test_reject_task_package(stores) -> None:
     reject_task = create_task_package(
         owner_user_id=_uid("owner"),
         title="Package to reject",
+        goal="Package rejected",
         items=[PackageItemSpec(title="Do work", event_ids=[reject_event_id])],
         task_store=task_store,
         task_item_store=item_store,
@@ -424,6 +432,7 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
     task_store.create(
         paused_id,
         "Paused match",
+        "paused goal",
         state="pending",
         internal_note="repo:omnigent-fork",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],

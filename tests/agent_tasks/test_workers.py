@@ -60,6 +60,7 @@ async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
         _uid("task"),
         owner_user_id=_uid("owner"),
         title="Worker activate task",
+        goal="worker task activated",
         manager_role_key=MANAGER_DEFAULT_ROLE_KEY,
         worker_role_key=WORKER_DEFAULT_ROLE_KEY,
     )

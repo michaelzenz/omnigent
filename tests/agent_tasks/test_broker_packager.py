@@ -524,6 +524,7 @@ async def test_similar_events_packaged_into_one_notice_with_candidates(
     task_store.create(
         task_id,
         "Widget CI",
+        "widget ci green",
         state="pending",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="acme/widgets")],
     )
@@ -752,6 +753,7 @@ async def test_discovered_session_is_isolated_from_routed_events(
     task_store.create(
         _uid("task_disc"),
         "Disc task",
+        "disc goal",
         tags=[TaskTag(task_id=_uid("task_disc"), tag_type="repo", tag="myrepo")],
     )
     # A discovered session

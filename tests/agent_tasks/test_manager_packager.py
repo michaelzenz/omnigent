@@ -62,6 +62,7 @@ def manager_setup(db_uri: str) -> dict:
     task_store.create(
         task_id,
         "Manager task",
+        "manager goal",
         owner_user_id=owner,
         manager_conversation_id=manager_conv.id,
     )
@@ -220,6 +221,7 @@ async def test_no_manager_conversation_holds_events(manager_setup: dict) -> None
     task_store.create(
         orphan_task_id,
         "Orphan task",
+        "orphan goal",
         owner_user_id=manager_setup["owner"],
     )
     _routed_event(manager_setup, seed="orphan_evt", task_id=orphan_task_id)
@@ -280,6 +282,7 @@ async def test_events_grouped_by_task_id(manager_setup: dict) -> None:
     task_store.create(
         second_task_id,
         "Second task",
+        "second goal",
         owner_user_id=manager_setup["owner"],
         manager_conversation_id=second_conv.id,
     )

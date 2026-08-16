@@ -78,12 +78,13 @@ def _request(
         raise RuntimeError(f"{method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def _create_task(title: str, description: str, internal_note: str) -> str:
+def _create_task(title: str, goal: str, description: str, internal_note: str) -> str:
     task = _request(
         "POST",
         "/v1/agent-tasks",
         body={
             "title": title,
+            "goal": goal,
             "description": description,
             "internal_note": internal_note,
         },
@@ -131,6 +132,7 @@ def _create_events(
 def _create_task_package(
     *,
     title: str,
+    goal: str,
     description: str,
     instructions: str,
     internal_note: str | None = None,
@@ -142,6 +144,7 @@ def _create_task_package(
         "/v1/agent-tasks/packages",
         body={
             "title": title,
+            "goal": goal,
             "items": [
                 {
                     "title": title,
@@ -451,6 +454,7 @@ def _seed_twenty_worker_task() -> str:
     print("Seeding 20-worker load test task…")
     task_id = _create_task(
         "20-worker load test",
+        "Keep the UI responsive under a 20-lane worker load",
         "Scroll and accordion stress test with twenty worker lanes",
         "load-test\nworkers\nui",
     )
@@ -537,16 +541,19 @@ def main() -> int:
     print("Creating managed tasks…")
     ci_task = _create_task(
         "omnigent-fork CI",
+        "omnigent-fork CI stays green and PRs get timely reviews",
         "CI failures and PR reviews for omnigent-fork",
         "repo:omnigent-fork\nci\npull requests",
     )
     docs_task = _create_task(
         "docs refresh",
+        "docs stay accurate and the changelog is kept up to date",
         "Documentation updates and changelog hygiene",
         "repo:omnigent-fork\ndocs\nmarkdown",
     )
     poll_task = _create_task(
         "poll plugins",
+        "poll plugins remain healthy and useful",
         "Host poll plugin maintenance",
         "poll_plugins\ngithub_pr\nwatchers",
     )
@@ -561,6 +568,7 @@ def main() -> int:
     print("Creating pending task packages…")
     _create_task_package(
         title="Fix CI on PR #891",
+        goal="PR #891 CI is green and review feedback addressed",
         description="CI failed on your open PR and reviewers asked for lint fixes.",
         instructions="Investigate lint failure and address review feedback on PR #891.",
         internal_note="PR #891, repo omnigent-fork. Lint job failed on main merge base.",
@@ -574,6 +582,7 @@ def main() -> int:
     )
     _create_task_package(
         title="Update API docs for task routing",
+        goal="Routing docs reflect the shipped card-based flow",
         description="Routing UI shipped; docs still describe the old inbox flow.",
         instructions="Refresh TASK_BROKER.md and API_REFERENCE after routing cards shipped.",
         internal_note="See PR #902 and docs/agent-tasks/ for current API shapes.",
@@ -590,6 +599,7 @@ def main() -> int:
     )
     _create_task_package(
         title="Fix github_pr poll plugin flake",
+        goal="github_pr poll plugin reports accurate PR state",
         description="Poll plugin reported a stale PR state that blocked routing.",
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
         internal_note="Repro linked from PR #915 comments; watcher host poll_plugins.",
@@ -606,6 +616,7 @@ def main() -> int:
     )
     _create_task_package(
         title="Investigate unrelated repo alert",
+        goal="Decide ownership of the other-repo alert and act if needed",
         description="Alert fired from another repo; confirm whether we own the fix.",
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
         internal_note="other-repo PR #12; no omnigent-fork code touched yet.",

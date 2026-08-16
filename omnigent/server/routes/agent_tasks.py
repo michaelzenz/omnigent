@@ -159,10 +159,10 @@ class CreateAgentTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks``."""
 
     title: str
+    goal: str
     description: str | None = None
     internal_note: str | None = None
-    manager_conversation_id: str | None = None
-    state: str = "idle"
+    state: str = "pending"
     tags: list[TaskTagInput] = Field(default_factory=list)
 
     @field_validator("title")
@@ -173,12 +173,20 @@ class CreateAgentTaskRequest(BaseModel):
             raise ValueError("title must be a non-empty string")
         return stripped
 
+    @field_validator("goal")
+    @classmethod
+    def _goal_non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("goal must be a non-empty string")
+        return stripped
+
     @field_validator("state")
     @classmethod
     def _validate_state(cls, value: str) -> str:
-        if value not in _VALID_TASK_STATES:
-            allowed = ", ".join(sorted(_VALID_TASK_STATES))
-            raise ValueError(f"state must be one of: {allowed}")
+        allowed = {"active", "pending"}
+        if value not in allowed:
+            raise ValueError(f"state must be one of: {', '.join(sorted(allowed))}")
         return value
 
 
@@ -194,6 +202,7 @@ class UpdateAgentTaskRequest(BaseModel):
     title: str | None = None
     description: str | None = None
     internal_note: str | None = None
+    goal: str | None = None
     manager_role_key: str | None = None
     worker_role_key: str | None = None
     manager_conversation_id: str | None = None
@@ -207,6 +216,16 @@ class UpdateAgentTaskRequest(BaseModel):
         stripped = value.strip()
         if not stripped:
             raise ValueError("title must be a non-empty string")
+        return stripped
+
+    @field_validator("goal")
+    @classmethod
+    def _goal_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("goal must be a non-empty string")
         return stripped
 
     @field_validator("state")
@@ -469,12 +488,13 @@ class CreateTaskPackageRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/packages``."""
 
     title: str
+    goal: str
     description: str | None = None
     internal_note: str | None = None
     tags: list[TaskTagInput] = Field(default_factory=list)
     items: list[PackageItemInput] = Field(min_length=1)
 
-    @field_validator("title")
+    @field_validator("title", "goal")
     @classmethod
     def _non_empty(cls, value: str) -> str:
         stripped = value.strip()
@@ -570,6 +590,7 @@ class ResolveFyiClusterRequest(BaseModel):
     routing_instructions: str | None = None
     suggested_task_id: str | None = None
     proposed_task_title: str | None = None
+    proposed_task_goal: str | None = None
     proposed_task_internal_note: str | None = None
     model: str | None = None
     host_id: str | None = None
@@ -658,6 +679,7 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
         "title": task.title,
         "description": task.description,
         "internal_note": task.internal_note,
+        "goal": task.goal,
         "state": task.state,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
@@ -989,7 +1011,12 @@ def create_agent_tasks_router(
 
     @router.post("/agent-tasks")
     async def create_task(request: Request, body: CreateAgentTaskRequest) -> dict[str, Any]:
-        """Create a managed task."""
+        """Create a managed task.
+
+        ``state="active"`` bootstraps the manager session inline (spins up the
+        manager); ``state="pending"`` leaves the task as a broker-managed
+        suggestion.
+        """
         user_id = require_user(request, auth_provider)
         task_id = _generate_task_id()
         tags = _tags_from_input(task_id, body.tags)
@@ -1000,10 +1027,12 @@ def create_agent_tasks_router(
             owner_user_id=user_id,
             description=body.description,
             internal_note=body.internal_note,
-            manager_conversation_id=body.manager_conversation_id,
+            goal=body.goal,
             state=body.state,
             tags=tags,
         )
+        if body.state == "active":
+            task = await _bootstrap_manager_for_task(request, task, user_id)
         return _task_to_response(task, tags=tags)
 
     @router.get("/agent-tasks")
@@ -1069,6 +1098,35 @@ def create_agent_tasks_router(
             agent_store=agent_store,
             auth_user_id=user_id,
             task=task,
+        )
+
+    async def _bootstrap_manager_for_task(
+        request: Request,
+        task: Task,
+        user_id: str | None,
+    ) -> Task:
+        """Spin up the manager session for ``task`` (used by create-on-active)."""
+        if conversation_store is None or session_creator is None:
+            raise OmnigentError(
+                "manager bootstrap is not configured on this server",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        profile = await _manager_role_profile_for_task(task, user_id)
+        params = resolve_bootstrap_params(
+            host_id=None,
+            workspace=None,
+            harness=None,
+            model=None,
+            role_profile=profile,
+        )
+        return await bootstrap_task_manager(
+            task=task,
+            task_store=task_store,
+            conversation_store=conversation_store,
+            params=params,
+            session_creator=session_creator,
+            app_state=request.app.state,
+            user_id=user_id,
         )
 
     async def _worker_role_profile_for_task(
@@ -1643,6 +1701,7 @@ def create_agent_tasks_router(
             "title",
             "description",
             "internal_note",
+            "goal",
             "manager_conversation_id",
             "state",
         ):
@@ -2245,6 +2304,7 @@ def create_agent_tasks_router(
                     task_id=task_id,
                     owner_user_id=_effective_user_id(user_id),
                     title=body.title,
+                    goal=body.goal,
                     description=body.description,
                     internal_note=body.internal_note,
                     tags=tags or task_tags_from_event_tags(task_id, event_tags),
@@ -2353,6 +2413,7 @@ def create_agent_tasks_router(
                 )
 
             accepted = await asyncio.to_thread(_accept)
+            accepted = await _bootstrap_manager_for_task(request, accepted, user_id)
             tags = await asyncio.to_thread(task_store.get_tags, task_id)
             return _task_to_response(accepted, tags=tags)
 
@@ -2435,6 +2496,7 @@ def create_agent_tasks_router(
                 routing_instructions=body.routing_instructions,
                 suggested_task_id=body.suggested_task_id,
                 proposed_task_title=body.proposed_task_title,
+                proposed_task_goal=body.proposed_task_goal,
                 proposed_task_internal_note=body.proposed_task_internal_note,
             )
             response: dict[str, Any] = {

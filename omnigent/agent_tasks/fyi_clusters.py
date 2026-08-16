@@ -153,6 +153,7 @@ def resolve_fyi_cluster(
     routing_instructions: str | None = None,
     suggested_task_id: str | None = None,
     proposed_task_title: str | None = None,
+    proposed_task_goal: str | None = None,
     proposed_task_internal_note: str | None = None,
 ) -> tuple[FyiCluster, TaskItem | None]:
     """Dismiss or promote an FYI cluster."""
@@ -215,6 +216,7 @@ def resolve_fyi_cluster(
     task = create_task_package(
         owner_user_id=owner_user_id,
         title=proposed_task_title or title,
+        goal=proposed_task_goal or title,
         items=[
             PackageItemSpec(
                 title=title,

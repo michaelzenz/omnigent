@@ -84,7 +84,7 @@ def test_is_orphan_candidate_filters_bound_and_dismissed(stores: _Stores) -> Non
         is True
     )
 
-    task = task_store.create(_uid("task-bound"), "Bound task")
+    task = task_store.create(_uid("task-bound"), "Bound task", "bound goal")
     worker_store.create_worker(
         _uid("worker-bound"),
         task.id,
@@ -149,6 +149,7 @@ async def test_propose_and_adopt_session(stores: _Stores) -> None:
     task = task_store.create(
         task_id,
         "Upload retries",
+        "uploads retry to success",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
     proposal = propose_session_adoption(

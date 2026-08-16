@@ -45,6 +45,7 @@ async def test_ingress_auto_routes_matching_task(
         "/v1/agent-tasks",
         json={
             "title": "Upload retries",
+            "goal": "all uploads retry to success",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
@@ -77,6 +78,7 @@ async def test_ingress_fast_paths_explicit_task_id(
         "/v1/agent-tasks",
         json={
             "title": "Land PR #123",
+            "goal": "PR #123 lands on main",
             "internal_note": "land pr 123 after blocker merges",
         },
     )
@@ -153,6 +155,7 @@ async def test_complete_requires_routed_state(
         "/v1/agent-tasks",
         json={
             "title": "Upload retries",
+            "goal": "all uploads retry to success",
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )

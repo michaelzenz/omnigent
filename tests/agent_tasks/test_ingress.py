@@ -76,6 +76,7 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
     task_store.create(
         task_id,
         "Upload retries",
+        "uploads retry to success",
         internal_note="flaky upload retries repo:omnigent-fork",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )

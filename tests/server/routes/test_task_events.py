@@ -69,7 +69,10 @@ async def test_resolve_routes_event_and_bootstraps_manager(
         title="Build finished",
         state="awaiting_grouping",
     )
-    create_resp = await client.post("/v1/agent-tasks", json={"title": "Upload retries"})
+    create_resp = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "Upload retries", "goal": "all uploads retry to success"},
+    )
     task_id = create_resp.json()["id"]
 
     resolve_resp = await client.post(
@@ -138,6 +141,7 @@ async def test_ambiguous_inbox_clusters_stalled_events(
     task_store.create(
         paused_id,
         "Upload retries",
+        "uploads retry to success",
         state="pending",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
     )
@@ -170,6 +174,7 @@ async def test_match_tasks_ranks_pending_tasks(
     task_store.create(
         paused_id,
         "omnigent-fork",
+        "uploads retry to success",
         state="pending",
         tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
     )

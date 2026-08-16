@@ -21,6 +21,7 @@ def _task(task_id: str) -> Task:
         internal_note=None,
         state="active",
         created_at=1,
+        goal="goal",
     )
 
 

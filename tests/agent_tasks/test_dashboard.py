@@ -28,6 +28,7 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
     task_store.create(
         task_id,
         "Demo task",
+        "demo goal",
         state="active",
         manager_conversation_id=_uid("mgr_conv"),
     )
@@ -70,6 +71,7 @@ def test_dashboard_includes_task_assets(db_uri: str) -> None:
     task_store.create(
         task_id,
         "Asset task",
+        "asset goal",
         state="active",
         manager_conversation_id=_uid("mgr_conv_assets"),
     )
@@ -104,6 +106,7 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     task_store.create(
         task_id,
         "Lane task",
+        "lane goal",
         state="active",
         manager_conversation_id=_uid("mgr_conv2"),
     )

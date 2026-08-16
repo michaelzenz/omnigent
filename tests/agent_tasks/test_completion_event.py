@@ -74,6 +74,7 @@ def _seed_task(stores: dict, *, task_seed: str, owner: str | None) -> dict:
     task_store.create(
         task_id,
         "Completion task",
+        "complete the task",
         owner_user_id=owner,
         manager_conversation_id=manager_conv.id,
     )
