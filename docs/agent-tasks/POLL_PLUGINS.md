@@ -9,6 +9,7 @@ Each plugin is one folder; the host only executes **`run.py`**.
 ~/.omnigent/poll_plugins/          # or $OMNIGENT_DATA_DIR/poll_plugins/
   <plugin_name>/
     run.py                         # required — sole entry point
+    README.md                      # required — plugin docs (see below)
     config.yaml                    # required — poll interval for this plugin
     *.json / *.yaml                # optional — plugin-owned state (agent-generated)
 ```
@@ -45,6 +46,12 @@ Rules:
 
 - **One folder per plugin** — stable name (`github_pr`, `slack_watch`, …).
 - **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
+- **`README.md` is required** — the host skips any plugin folder missing it.
+  Every plugin MUST ship a `README.md` describing its purpose, state shape,
+  emitted event types, and any edit notes. **An agent updating a poll plugin
+  MUST read that plugin's `README.md` first** — it is the source of truth for
+  the plugin's state shape and contracts, and editing without it risks
+  duplicate or missed events.
 - **All other files are plugin-private** — watches, cursors, snapshots; agents design the plugin schema or other metadata file as they want.
 - Do not edit Omnigent host code to add behavior — add or update a plugin folder.
 

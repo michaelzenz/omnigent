@@ -11,7 +11,7 @@ from pathlib import Path
 
 from omnigent.host.identity import CONFIG_PATH
 from omnigent.host.polling.context import PollContext
-from omnigent.host.polling.poll_plugins_paths import RUN_SCRIPT_NAME, iter_plugin_dirs
+from omnigent.host.polling.poll_plugins_paths import README_NAME, RUN_SCRIPT_NAME, iter_plugin_dirs
 from omnigent.host.polling.pollers.script_plugins_config import (
     load_plugin_poll_config,
     load_script_poll_plugins_defaults,
@@ -34,13 +34,13 @@ class ScriptPollPluginsPoller:
     def name(self) -> str:
         return "poll_plugins"
 
-    def enabled(self, ctx: PollContext) -> bool:
+    def enabled(self, ctx: PollContext) -> bool:  # noqa: ARG002 -- PollSource interface; always enabled
         return True
 
-    def interval_s(self, ctx: PollContext) -> float:
+    def interval_s(self, ctx: PollContext) -> float:  # noqa: ARG002 -- PollSource interface; interval from config
         return load_script_poll_plugins_defaults(self._config_path).tick_s
 
-    async def on_start(self, ctx: PollContext) -> None:
+    async def on_start(self, ctx: PollContext) -> None:  # noqa: ARG002 -- PollSource interface; resets in-memory state
         self._last_run = {}
 
     async def on_stop(self) -> None:
@@ -53,6 +53,15 @@ class ScriptPollPluginsPoller:
             return
         now = time.monotonic()
         for plugin_dir in plugin_dirs:
+            if not (plugin_dir / README_NAME).is_file():
+                _logger.warning(
+                    "Poll plugin %s missing %s — skipping. Every plugin MUST ship a "
+                    "README.md describing its purpose, state shape, and edit notes; "
+                    "agents editing this plugin must read it first.",
+                    plugin_dir.name,
+                    README_NAME,
+                )
+                continue
             plugin_config = load_plugin_poll_config(plugin_dir, defaults)
             last_run = self._last_run.get(plugin_dir.name, 0.0)
             if now - last_run < plugin_config.interval_s:

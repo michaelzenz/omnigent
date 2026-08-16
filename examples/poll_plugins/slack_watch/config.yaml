@@ -1,0 +1,41 @@
+# How often the host runs this plugin's run.py (seconds).
+interval_s: 60
+
+# Slack OAuth token (xoxp- user token or xoxb- bot token). Override via the
+# OMNIGENT_SLACK_TOKEN env var; this file is read only as a fallback.
+# A user token sees your personal DMs/MPIMs/channels; a bot token sees only
+# conversations the bot is a member of.
+# token: xoxp-...
+
+# Conversation types to watch (Slack conversations.list `types` filter).
+types: "public_channel,private_channel,im,mpim"
+
+# Page size for discovery + history fetches.
+limit: 200
+
+# On first discovery of a conversation, ingest messages from the last
+# `backfill_s` seconds. Must be >= interval_s so a brand-new DM's initiating
+# message (created between ticks) is not missed. Set 0 to start strictly "now".
+backfill_s: 60
+
+# Skip messages from bots (those carrying a `bot_id`). Set false to ingest
+# bot/app notifications too.
+ignore_bots: true
+
+# Skip messages whose Slack `subtype` is in this list (noisy non-human events).
+ignore_subtypes:
+  - channel_join
+  - channel_leave
+  - channel_name
+  - channel_purpose
+  - channel_topic
+  - group_join
+  - group_leave
+  - file_share
+  - message_replied
+  - pinned_item
+  - unpinned_item
+
+# Bound for the in-memory dedup set (per-process). Keeps recent {channel}:{ts}
+# keys so boundary messages re-fetched across ticks are not double-emitted.
+seen_bound: 2000

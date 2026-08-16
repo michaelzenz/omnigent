@@ -7,6 +7,7 @@ from pathlib import Path
 
 from omnigent.host.polling.poll_plugins_paths import (
     PLUGIN_CONFIG_NAME,
+    README_NAME,
     RUN_SCRIPT_NAME,
     iter_plugin_dirs,
 )
@@ -111,6 +112,7 @@ async def test_poll_once_skips_plugin_until_interval_elapsed(
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 60\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented poll plugin.\n")
 
     import omnigent.host.polling.pollers.script_plugins as script_plugins_module
 
@@ -130,5 +132,64 @@ async def test_poll_once_skips_plugin_until_interval_elapsed(
     assert not (plugin_dir / "ran.txt").exists()
 
     poller._last_run["demo"] = time.monotonic() - 120.0
+    await poller.poll_once(_Ctx())  # type: ignore[arg-type]
+    assert (plugin_dir / "ran.txt").read_text() == "1"
+
+
+async def test_poll_once_skips_plugin_missing_readme(tmp_path: Path, monkeypatch) -> None:
+    plugins_root = tmp_path / "poll_plugins"
+    plugin_dir = plugins_root / "nodoc"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / RUN_SCRIPT_NAME).write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
+    )
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 1\n")
+
+    import omnigent.host.polling.pollers.script_plugins as script_plugins_module
+
+    monkeypatch.setattr(
+        script_plugins_module,
+        "iter_plugin_dirs",
+        lambda root=None: [plugin_dir],
+    )
+
+    class _Ctx:
+        server_url = "http://127.0.0.1:8123"
+        host_id = "host_test"
+
+    poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
+    poller._last_run["nodoc"] = 0.0
+    await poller.poll_once(_Ctx())  # type: ignore[arg-type]
+    assert not (plugin_dir / "ran.txt").exists()
+
+
+async def test_poll_once_runs_plugin_that_has_readme(tmp_path: Path, monkeypatch) -> None:
+    plugins_root = tmp_path / "poll_plugins"
+    plugin_dir = plugins_root / "withdoc"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / RUN_SCRIPT_NAME).write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
+    )
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 1\n")
+    (plugin_dir / README_NAME).write_text("# withdoc\nDocumented plugin.\n")
+
+    import omnigent.host.polling.pollers.script_plugins as script_plugins_module
+
+    monkeypatch.setattr(
+        script_plugins_module,
+        "iter_plugin_dirs",
+        lambda root=None: [plugin_dir],
+    )
+
+    class _Ctx:
+        server_url = "http://127.0.0.1:8123"
+        host_id = "host_test"
+
+    poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
+    poller._last_run["withdoc"] = 0.0
     await poller.poll_once(_Ctx())  # type: ignore[arg-type]
     assert (plugin_dir / "ran.txt").read_text() == "1"

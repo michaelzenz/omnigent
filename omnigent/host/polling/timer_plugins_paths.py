@@ -10,6 +10,7 @@ TIMER_PLUGINS_DIRNAME = "timer_plugins"
 RUN_SCRIPT_NAME = "run.py"
 PLUGIN_CONFIG_NAME = "config.yaml"
 PLUGIN_STATE_NAME = "state.yaml"
+README_NAME = "README.md"
 
 
 def timer_plugins_root() -> Path:

@@ -25,6 +25,7 @@ from omnigent.host.polling.pollers.script_timer_plugins_config import (
     write_timer_plugin_state,
 )
 from omnigent.host.polling.timer_plugins_paths import (
+    README_NAME,
     RUN_SCRIPT_NAME,
     iter_timer_plugin_dirs,
 )
@@ -45,10 +46,10 @@ class ScriptTimerPluginsPoller:
     def name(self) -> str:
         return "timer_plugins"
 
-    def enabled(self, ctx: PollContext) -> bool:
+    def enabled(self, ctx: PollContext) -> bool:  # noqa: ARG002 -- PollSource interface; always enabled
         return True
 
-    def interval_s(self, ctx: PollContext) -> float:
+    def interval_s(self, ctx: PollContext) -> float:  # noqa: ARG002 -- PollSource interface; interval from config
         return load_script_timer_plugins_defaults(self._config_path).tick_s
 
     async def on_start(self, ctx: PollContext) -> None:
@@ -64,6 +65,15 @@ class ScriptTimerPluginsPoller:
             return
         now = time.time()
         for plugin_dir in plugin_dirs:
+            if not (plugin_dir / README_NAME).is_file():
+                _logger.warning(
+                    "Timer plugin %s missing %s — skipping. Every plugin MUST ship a "
+                    "README.md describing its purpose, state shape, and edit notes; "
+                    "agents editing this plugin must read it first.",
+                    plugin_dir.name,
+                    README_NAME,
+                )
+                continue
             cfg = load_timer_plugin_config(plugin_dir, defaults)
             if cfg.fire_at is None:
                 continue
@@ -189,7 +199,7 @@ class ScriptTimerPluginsPoller:
         try:
             response = await ctx.client.post("/v1/task-events", json=body)
             response.raise_for_status()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort fire_failed post; never crash the poller
             _logger.warning(
                 "Failed to post timer.fire_failed for plugin %s",
                 plugin_name,

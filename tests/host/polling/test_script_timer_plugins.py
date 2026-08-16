@@ -19,6 +19,7 @@ from omnigent.host.polling.pollers.script_timer_plugins_config import (
 from omnigent.host.polling.timer_plugins_paths import (
     PLUGIN_CONFIG_NAME,
     PLUGIN_STATE_NAME,
+    README_NAME,
     RUN_SCRIPT_NAME,
     iter_timer_plugin_dirs,
 )
@@ -155,6 +156,7 @@ async def test_poll_once_skips_plugin_not_due_yet(tmp_path: Path, monkeypatch) -
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {int(time.time()) + 3600}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
 
     import omnigent.host.polling.pollers.script_timer_plugins as timer_module
 
@@ -180,6 +182,7 @@ async def test_poll_once_fires_due_plugin_and_writes_state(tmp_path: Path, monke
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {int(time.time()) - 60}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
 
     import omnigent.host.polling.pollers.script_timer_plugins as timer_module
 
@@ -207,6 +210,7 @@ async def test_poll_once_does_not_refire_after_state_written(tmp_path: Path, mon
     )
     fire_at = int(time.time()) - 60
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {fire_at}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
     write_timer_plugin_state(plugin_dir, fired_at=float(fire_at))
 
     import omnigent.host.polling.pollers.script_timer_plugins as timer_module
@@ -230,6 +234,7 @@ async def test_poll_once_refires_after_run_py_advances_fire_at(
     plugin_dir.mkdir()
     fire_at = int(time.time()) - 60
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {fire_at}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
     # run.py re-arms fire_at to 1 hour in the future (recurring).
     (plugin_dir / RUN_SCRIPT_NAME).write_text(
         "from pathlib import Path\n"
@@ -277,6 +282,7 @@ async def test_poll_once_skips_plugin_with_null_fire_at(tmp_path: Path, monkeypa
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text("fire_at: null\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
 
     import omnigent.host.polling.pollers.script_timer_plugins as timer_module
 
@@ -297,6 +303,7 @@ async def test_poll_once_marks_fired_even_when_run_py_fails(tmp_path: Path, monk
     plugin_dir.mkdir()
     (plugin_dir / RUN_SCRIPT_NAME).write_text("import sys; sys.exit(1)\n")
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {int(time.time()) - 60}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
 
     import omnigent.host.polling.pollers.script_timer_plugins as timer_module
 
@@ -323,6 +330,7 @@ async def test_poll_once_posts_fire_failed_event_on_nonzero_exit(
         "import sys; sys.stderr.write('boom'); sys.exit(2)\n"
     )
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {fire_at}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
 
     import omnigent.host.polling.pollers.script_timer_plugins as timer_module
 
@@ -347,3 +355,55 @@ async def test_poll_once_posts_fire_failed_event_on_nonzero_exit(
     assert body["payload"]["plugin"] == "demo"
     assert body["payload"]["fire_at"] == fire_at
     assert "boom" in body["payload"]["detail"]
+
+
+async def test_poll_once_skips_plugin_missing_readme(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "demo"
+    plugin_dir.mkdir()
+    (plugin_dir / RUN_SCRIPT_NAME).write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
+    )
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {int(time.time()) - 60}\n")
+
+    import omnigent.host.polling.pollers.script_timer_plugins as timer_module
+
+    monkeypatch.setattr(
+        timer_module,
+        "iter_timer_plugin_dirs",
+        lambda root=None: [plugin_dir],
+    )
+
+    ctx = _make_ctx()
+    poller = ScriptTimerPluginsPoller(config_path=tmp_path / "missing.yaml")
+    await poller.poll_once(ctx)
+    assert not (plugin_dir / "ran.txt").exists()
+    assert not (plugin_dir / PLUGIN_STATE_NAME).exists()
+
+
+async def test_poll_once_fires_plugin_that_has_readme(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "demo"
+    plugin_dir.mkdir()
+    (plugin_dir / RUN_SCRIPT_NAME).write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
+    )
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text(f"fire_at: {int(time.time()) - 60}\n")
+    (plugin_dir / README_NAME).write_text("# demo\nDocumented timer plugin.\n")
+
+    import omnigent.host.polling.pollers.script_timer_plugins as timer_module
+
+    monkeypatch.setattr(
+        timer_module,
+        "iter_timer_plugin_dirs",
+        lambda root=None: [plugin_dir],
+    )
+
+    ctx = _make_ctx()
+    poller = ScriptTimerPluginsPoller(config_path=tmp_path / "missing.yaml")
+    await poller.poll_once(ctx)
+    assert (plugin_dir / "ran.txt").read_text() == "1"
+    state = load_timer_plugin_state(plugin_dir)
+    assert state.fired_at > 0

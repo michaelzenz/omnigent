@@ -1,0 +1,120 @@
+# slack_watch
+
+Poll plugin that ingests inbound Slack messages (channels, DMs, MPIMs, and
+thread replies) as `slack.message.received` task events. It polls the Slack Web
+API on a fixed interval and emits one event per new message from anyone other
+than the token owner.
+
+This is the **pull-based** inbound path. Slack has no firehose endpoint, so this
+plugin fans out: discover conversations → fetch new history per active
+conversation → fetch new thread replies. See `docs/agent-tasks/POLL_PLUGINS.md`
+for the host contract.
+
+## Why polling (not push)
+
+Slack push (Events API / Socket Mode / RTM) needs app config or scopes this
+plugin's token does not have. A user-scoped token (`xoxp-`) can read the
+conversations it's a member of via the Web API, so polling is the complete
+inbound solution. Latency = the poll `interval_s` (no sub-second push).
+
+## Files
+
+- `run.py` — entry point executed by the host every `interval_s`.
+- `config.yaml` — token, types, limit, backfill, filters.
+- `state.yaml` — written by `run.py` each tick; the watermark store.
+
+## Token
+
+Set `OMNIGENT_SLACK_TOKEN` in the host environment (preferred) or `token:` in
+`config.yaml`. A **user token** (`xoxp-`) sees your personal DMs/MPIMs/channels
+including other people's messages to you. A **bot token** (`xoxb-`) sees only
+conversations the bot is a member of (people must DM/invite the bot).
+
+Required scopes (user token): `channels:read`, `groups:read`, `im:read`,
+`mpim:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`.
+
+## config.yaml
+
+| key | default | meaning |
+|---|---|---|
+| `interval_s` | 60 | host poll cadence |
+| `types` | `public_channel,private_channel,im,mpim` | `conversations.list` types filter |
+| `limit` | 200 | page size for list/history/replies |
+| `backfill_s` | 60 | on first discovery, ingest the last N seconds (must be ≥ `interval_s`) |
+| `ignore_bots` | true | skip messages carrying a `bot_id` |
+| `ignore_subtypes` | join/leave/topic/… | skip noisy non-human `subtype`s |
+| `seen_bound` | 2000 | cap on the in-memory dedup set |
+
+## state.yaml shape
+
+```yaml
+conversations:
+  <channel_id>:
+    name: <str>            # channel name (empty for IMs)
+    kind: channel|im|mpim
+    updated: <float>       # last observed Slack `updated` (seconds)
+    watermark: <float>     # ts of last ingested message (seconds)
+    partner: <user_id>     # other participant (IMs only)
+threads:
+  "<channel_id>:<thread_ts>":
+    watermark: <float>     # ts of last ingested reply (seconds)
+seen:                     # bounded list of "{channel}:{ts}" dedup keys
+  - C02EPKPGB:1786850649.499709
+```
+
+## How a tick works
+
+1. `auth.test` → resolve `self_user_id` (to filter our own messages).
+2. **Discovery**: `conversations.list` first page (newest first), diff IDs
+   against `conversations`. New IDs are added with
+   `watermark = now - backfill_s`. `backfill_s` must be ≥ `interval_s` so a
+   brand-new DM created between ticks has its initiating message ingested.
+3. **History**: for each conversation where `updated > watermark`, call
+   `conversations.history(oldest=watermark)`. Dormant conversations
+   (`updated <= watermark`) are skipped — zero API cost. Filter out self,
+   bots, and noisy subtypes; emit one event per remaining message; advance
+   `watermark` to the newest ts.
+4. **Threads**: for a parent whose `latest_reply > thread_watermark`, call
+   `conversations.replies(oldest=thread_watermark)` and emit new replies.
+5. Save state.
+
+Dedup: Slack `ts` is unique per message; `{channel}:{ts}` keys are tracked in
+`seen` (bounded) so boundary messages re-fetched across ticks are not
+double-emitted. Watermarks are also advanced past the newest ts.
+
+## Emitted events
+
+- `slack.message.received` — one per new inbound message.
+  - `source = poll_plugin:slack_watch`
+  - `source_key = "<channel_id>:<ts>"` (dedup key)
+  - `source_offset: 1`
+  - `payload`: `channel_id`, `channel`, `kind`, `user`, `text`, `ts`, optional
+    `thread_ts`, optional `partner`.
+
+## Limitations
+
+- **No push latency**: a new message is seen within `interval_s`, not instantly.
+- **First-page discovery only**: a full `conversations.list` pagination is not
+  done each tick; only the first (newest) page. New conversations appear there,
+  so they're detected within one tick. If `state.yaml` is deleted, only the
+  first page is re-cached — run a manual full scan or accept the partial cache.
+- **Membership-bound**: the token can only read conversations it's a member of.
+  A user token reads your DMs/channels; a bot token reads only bot-joined ones.
+- **Edits/deletes**: edits re-emit the same `ts` (dedup suppresses); deletes
+  are not surfaced.
+
+## Editing this plugin
+
+**Agents editing this plugin MUST read this README first.** The watermark
+contract is subtle and easy to break:
+
+- **Never regress a `watermark`** to re-ingest history — it double-emits.
+  Delete `state.yaml` only to reset everything.
+- **`backfill_s` must stay ≥ `interval_s`** or brand-new DMs' initiating
+  messages fall in the gap and are missed.
+- **Thread fan-out keys** are `"<channel_id>:<thread_ts>"` and must match the
+  `threads` map exactly; renaming the key scheme orphans thread watermarks.
+- **`seen` is dedup, not state of record** — watermarks are. Do not rely on
+  `seen` for correctness across restarts (it's bounded and in-memory).
+- The filter order in `run.py` (self → bots → subtypes) determines what's
+  emitted; changing it changes the event stream retroactively for new messages.

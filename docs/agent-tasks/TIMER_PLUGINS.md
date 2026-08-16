@@ -14,6 +14,7 @@ poll plugins fire on a fixed interval; timer plugins fire when their
 ~/.omnigent/timer_plugins/         # or $OMNIGENT_DATA_DIR/timer_plugins/
   <plugin_name>/
     run.py                         # required — sole entry point
+    README.md                      # required — plugin docs (see below)
     config.yaml                    # required — must contain fire_at
     state.yaml                     # host-managed — tracks last fired_at
     *.json / *.yaml                # optional — plugin-owned state (agent-generated)
@@ -48,6 +49,11 @@ Rules:
 
 - **One folder per plugin** — stable name (`reminder`, `daily_report`, …).
 - **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
+- **`README.md` is required** — the host skips any plugin folder missing it.
+  Every plugin MUST ship a `README.md` describing its purpose, state shape,
+  emitted event types, and the re-arm contract. **An agent updating a timer
+  plugin MUST read that plugin's `README.md` first** — it is the source of
+  truth for the fire/re-arm contract and the `state.yaml` ownership rule.
 - **`config.yaml` is required** and must contain `fire_at` — a unix timestamp
   (seconds) at which the timer fires.
 - **`state.yaml` is host-managed** — the host writes `fired_at` after each
