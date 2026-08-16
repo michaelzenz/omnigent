@@ -36,7 +36,15 @@ export function RolesTab() {
             selected={selectedRoleId === entry.id}
             onSelect={() => setSelectedRoleId(entry.id)}
             headerActions={hasProfile ? <RoleAgentPicker roleId={entry.profileRoleId!} /> : null}
-            descriptionSlot={showDescription ? <RoleDescriptionField roleId={entry.profileRoleId!} /> : null}
+            descriptionSlot={
+              hasProfile ? (
+                showDescription ? (
+                  <RoleDescriptionField roleId={entry.profileRoleId!} />
+                ) : (
+                  <></>
+                )
+              ) : null
+            }
           >
             {hasProfile ? <RoleDefaultsForm roleId={entry.profileRoleId!} /> : null}
           </RoleDefinitionCard>
