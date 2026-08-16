@@ -24,10 +24,17 @@ from omnigent.host.polling.pollers.script_timer_plugins_config import (
     load_timer_plugin_state,
     write_timer_plugin_state,
 )
+from omnigent.host.polling.singleton_gate import (
+    RoleHostResolver,
+    SingletonConfig,
+    SingletonConfigError,
+    should_run_singleton,
+)
 from omnigent.host.polling.timer_plugins_paths import (
     README_NAME,
     RUN_SCRIPT_NAME,
     iter_timer_plugin_dirs,
+    resolve_timer_plugins_root,
 )
 from omnigent.process_logging import data_dir
 
@@ -41,6 +48,7 @@ class ScriptTimerPluginsPoller:
 
     def __init__(self, *, config_path: Path = CONFIG_PATH) -> None:
         self._config_path = config_path
+        self._resolver: RoleHostResolver | None = None
 
     @property
     def name(self) -> str:
@@ -53,14 +61,14 @@ class ScriptTimerPluginsPoller:
         return load_script_timer_plugins_defaults(self._config_path).tick_s
 
     async def on_start(self, ctx: PollContext) -> None:
-        pass
+        self._resolver = RoleHostResolver(ctx.client)
 
     async def on_stop(self) -> None:
-        pass
+        self._resolver = None
 
     async def poll_once(self, ctx: PollContext) -> None:
         defaults = load_script_timer_plugins_defaults(self._config_path)
-        plugin_dirs = iter_timer_plugin_dirs()
+        plugin_dirs = iter_timer_plugin_dirs(resolve_timer_plugins_root(self._config_path))
         if not plugin_dirs:
             return
         now = time.time()
@@ -74,7 +82,15 @@ class ScriptTimerPluginsPoller:
                     README_NAME,
                 )
                 continue
-            cfg = load_timer_plugin_config(plugin_dir, defaults)
+            try:
+                cfg = load_timer_plugin_config(plugin_dir, defaults)
+            except SingletonConfigError as exc:
+                _logger.warning(
+                    "Timer plugin %s skipped — invalid singleton config: %s",
+                    plugin_dir.name,
+                    exc,
+                )
+                continue
             if cfg.fire_at is None:
                 continue
             state = load_timer_plugin_state(plugin_dir)
@@ -82,6 +98,15 @@ class ScriptTimerPluginsPoller:
                 continue
             if state.fired_at >= cfg.fire_at:
                 continue
+            if cfg.singleton and self._resolver is not None:
+                # Singleton timers fire only on the host pinned to the bound
+                # role. Same sticky-pin semantics as poll plugins.
+                if not await should_run_singleton(
+                    self._resolver,
+                    SingletonConfig(singleton=cfg.singleton, bound_role=cfg.bound_role),
+                    host_id=ctx.host_id,
+                ):
+                    continue
             await self._run_plugin(
                 plugin_dir,
                 ctx=ctx,

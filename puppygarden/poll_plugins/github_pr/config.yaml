@@ -1,0 +1,9 @@
+# How often the host runs this plugin's run.py (seconds).
+interval_s: 60
+
+# Singleton: run this plugin on exactly one host — the host pinned to the
+# secretary role (read fresh from the roles store, cached ~60s). The pin is
+# sticky/user-controlled; if that host is down nobody runs the plugin until
+# the user reassigns the role. Avoids duplicate polling across hosts.
+singleton: true
+bound_role: secretary

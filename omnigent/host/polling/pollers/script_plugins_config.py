@@ -9,6 +9,7 @@ import yaml
 
 from omnigent.host.identity import CONFIG_PATH
 from omnigent.host.polling.poll_plugins_paths import PLUGIN_CONFIG_NAME
+from omnigent.host.polling.singleton_gate import parse_singleton_config
 
 _DEFAULT_INTERVAL_S = 60.0
 _DEFAULT_TIMEOUT_S = 120.0
@@ -30,6 +31,8 @@ class PluginPollConfig:
 
     interval_s: float
     timeout_s: float
+    singleton: bool = False
+    bound_role: str | None = None
 
 
 def _positive_float(value: object) -> float | None:
@@ -94,6 +97,7 @@ def load_plugin_poll_config(
     interval_s = defaults.default_interval_s
     timeout_s = defaults.default_timeout_s
     config_path = plugin_dir / PLUGIN_CONFIG_NAME
+    cfg: object = {}
     if config_path.is_file():
         try:
             with config_path.open(encoding="utf-8") as handle:
@@ -107,4 +111,10 @@ def load_plugin_poll_config(
             configured_timeout = _positive_float(cfg.get("timeout_s"))
             if configured_timeout is not None:
                 timeout_s = configured_timeout
-    return PluginPollConfig(interval_s=interval_s, timeout_s=timeout_s)
+    singleton_cfg = parse_singleton_config(cfg)
+    return PluginPollConfig(
+        interval_s=interval_s,
+        timeout_s=timeout_s,
+        singleton=singleton_cfg.singleton,
+        bound_role=singleton_cfg.bound_role,
+    )

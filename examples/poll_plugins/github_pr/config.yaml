@@ -1,2 +1,0 @@
-# How often the host runs this plugin's run.py (seconds).
-interval_s: 60

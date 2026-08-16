@@ -1,6 +1,9 @@
 # How often the host runs this plugin's run.py (seconds). 3 min.
 interval_s: 180
 
+singleton: true
+bound_role: secretary
+
 # How to launch the Slack MCP server (stdio transport). The poller spawns this
 # via the generic `mcp` SDK and calls `slack_read_api_call` directly — NO
 # persisted Slack token. At Databricks `dbexec` resolves auth via dbcert at

@@ -20,11 +20,47 @@ poll plugins fire on a fixed interval; timer plugins fire when their
     *.json / *.yaml                # optional — plugin-owned state (agent-generated)
 ```
 
+### Where the host scans for plugins
+
+By default the host scans `<data_dir>/timer_plugins` (`~/.omnigent/timer_plugins`
+or `$OMNIGENT_DATA_DIR/timer_plugins`). A from-source checkout can point the host
+at a version-controlled plugins directory instead — set
+`host.polling.timer_plugins.root` in `~/.omnigent/config.yaml`:
+
+```yaml
+host:
+  polling:
+    timer_plugins:
+      root: /path/to/omnigent/puppygarden/timer_plugins
+```
+
+The bundled, usable plugins live in the repo at `puppygarden/timer_plugins/`. To
+run them from a cloned checkout (temporary approach — until the host supports a
+proper plugin install/sync), point the host at that directory by setting
+`host.polling.timer_plugins.root` in `~/.omnigent/config.yaml`:
+
+```yaml
+host:
+  polling:
+    timer_plugins:
+      root: /path/to/your/omnigent/clone/puppygarden/timer_plugins
+```
+
+The host scans that directory directly, so edits to repo plugins take effect
+on the next tick with no copy/sync.
+
 Each plugin folder must include **`config.yaml`** with at least:
 
 ```yaml
 fire_at: 1700000000                # required — unix timestamp (seconds)
+singleton: true/false               # required — every plugin must declare this explicitly
+bound_role: secretary               # required when singleton: true (inert when singleton: false)
 ```
+
+A config that omits `singleton`, or sets `singleton: true` without `bound_role`,
+is **rejected at load** — the host logs a warning and skips the timer (it does
+not fire). Surfacing that failure to the user is a later concern (server-side
+plugin monitoring).
 
 Optional per-plugin overrides:
 
@@ -32,6 +68,34 @@ Optional per-plugin overrides:
 fire_at: 1700000000
 timeout_s: 90                      # subprocess timeout override
 ```
+
+### Singleton timers (fire on exactly one host)
+
+A timer that should fire on exactly one host (not on every host that has it)
+opts into singleton with the same semantics as poll plugins:
+
+```yaml
+singleton: true
+bound_role: secretary
+```
+
+- `singleton` is **required** (true or false). `singleton: true` requires
+  `bound_role` (a role key, e.g. `secretary`); without it the timer is rejected
+  at load. `singleton: false` fires on every host (`bound_role` is inert and
+  optional).
+- The host reads the bound role's pinned `host_id` and fires the timer only
+  when that equals its own `OMNIGENT_HOST_ID` (cached ~60s).
+- The pin is **sticky/user-controlled** — never auto-reassigned. If the
+  pinned host is down, the timer does not fire until the user reassigns the
+  role.
+- A skipped singleton timer is **not** marked fired, so the winning host
+  (once the role is reassigned to it) can still fire the due `fire_at`.
+
+### `--healthcheck`
+
+Timer plugins SHOULD support `python3 run.py --healthcheck` with the same
+contract as poll plugins (exit 0 + `{"ok": true, "detail": "..."}` on
+success). It is for later server-side monitoring, not scheduling.
 
 Host-wide defaults (when a plugin omits a field) live in `~/.omnigent/config.yaml`:
 
@@ -171,7 +235,7 @@ Only `run.py` is invoked by the host; `state.yaml` is written by the host.
 
 ## Minimal `run.py` skeleton
 
-See `examples/timer_plugins/reminder/run.py` in the repository.
+See `puppygarden/timer_plugins/reminder/run.py` in the repository.
 
 ## Example: recurring reminder
 

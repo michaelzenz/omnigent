@@ -14,12 +14,47 @@ Each plugin is one folder; the host only executes **`run.py`**.
     *.json / *.yaml                # optional — plugin-owned state (agent-generated)
 ```
 
+### Where the host scans for plugins
+
+By default the host scans `<data_dir>/poll_plugins` (`~/.omnigent/poll_plugins`
+or `$OMNIGENT_DATA_DIR/poll_plugins`). A from-source checkout can point the host
+at a version-controlled plugins directory instead, so edits take effect on the
+next tick with no copy/sync — set `host.polling.poll_plugins.root` in
+`~/.omnigent/config.yaml`:
+
+```yaml
+host:
+  polling:
+    poll_plugins:
+      root: /path/to/omnigent/puppygarden/poll_plugins
+```
+
+The bundled, usable plugins live in the repo at `puppygarden/poll_plugins/`. To run
+them from a cloned checkout (temporary approach — until the host supports a
+proper plugin install/sync), point the host at that directory by setting
+`host.polling.poll_plugins.root` in `~/.omnigent/config.yaml`:
+
+```yaml
+host:
+  polling:
+    poll_plugins:
+      root: /path/to/your/omnigent/clone/puppygarden/poll_plugins
+```
+
+The host scans that directory directly, so edits to repo plugins take effect
+on the next tick with no copy/sync.
+
 Each plugin folder must include **`config.yaml`** with at least:
 
 ```yaml
 interval_s: 60
 description: <a one line description what this plugin does>
+singleton: true/false      # required — every plugin must declare this explicitly
+bound_role: secretary      # required when singleton: true (inert when singleton: false)
 ```
+
+A config that omits `singleton`, or sets `singleton: true` without `bound_role`,
+is **rejected at load** — the host logs a warning and skips the plugin. 
 
 Optional per-plugin overrides:
 
@@ -27,6 +62,38 @@ Optional per-plugin overrides:
 interval_s: 120
 timeout_s: 90
 ```
+
+### Singleton plugins (run on exactly one host)
+
+```yaml
+singleton: true
+bound_role: secretary
+```
+
+- `singleton` is **required** (true or false). `singleton: true` requires
+  `bound_role` (a role key, e.g. `secretary`); without it the plugin is
+  rejected at load. `singleton: false` runs on every host.
+- The host reads the bound role's pinned `host_id` from the server
+  (`GET /v1/agent-tasks/roles/{bound_role}/profile`) and runs the plugin only
+  when that `host_id` equals its own `OMNIGENT_HOST_ID`. The read is cached
+  ~60s.
+- On any fetch failure (server unreachable, HTTP error), the host skips the
+  plugin that tick (safe — no duplicate runs across hosts).
+
+> **Note:** host-side singleton gating is a temporary solution. The durable
+> answer is to support creating custom plugins on the server (lifecycle,
+> scheduling, and state live server-side, independent of which host is
+> connected). We should design that server-side plugin model later and
+> retire this host-side gating.
+
+### `--healthcheck`
+
+Plugins SHOULD support `python3 run.py --healthcheck`:
+
+- Exit `0` + JSON on stdout `{"ok": true, "detail": "..."}` when the plugin
+  can reach its backing service (e.g. spawn the MCP and call `auth.test`).
+- Exit non-zero + `{"ok": false, "detail": "..."}` otherwise.
+- Cheap, side-effect-free.
 
 Host-wide defaults (when a plugin omits a field) live in `~/.omnigent/config.yaml`:
 
@@ -47,8 +114,7 @@ Rules:
 - **One folder per plugin** — stable name (`github_pr`, `slack_watch`, …).
 - **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
 - **`README.md` is required** — the host skips any plugin folder missing it.
-  Every plugin MUST ship a `README.md` describing its purpose, state shape,
-  emitted event types, and any edit notes. **An agent updating a poll plugin
+  **An agent updating a poll plugin
   MUST read that plugin's `README.md` first** — it is the source of truth for
   the plugin's state shape and contracts, and editing without it risks
   duplicate or missed events.
@@ -169,7 +235,7 @@ Agents may invent other filenames; only `run.py` is invoked by the host.
 
 ## Minimal `run.py` skeleton
 
-See `examples/poll_plugins/github_pr/run.py` in the repository.
+See `puppygarden/poll_plugins/github_pr/run.py` in the repository.
 
 ## Example: blocked PR scenario
 

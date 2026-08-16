@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from omnigent.host.identity import CONFIG_PATH
+from omnigent.host.polling.singleton_gate import parse_singleton_config
 from omnigent.host.polling.timer_plugins_paths import (
     PLUGIN_CONFIG_NAME,
     PLUGIN_STATE_NAME,
@@ -31,6 +32,8 @@ class TimerPluginConfig:
 
     fire_at: float | None
     timeout_s: float
+    singleton: bool = False
+    bound_role: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,7 @@ def load_timer_plugin_config(
     fire_at: float | None = None
     timeout_s = defaults.default_timeout_s
     config_path = plugin_dir / PLUGIN_CONFIG_NAME
+    cfg: object = {}
     if config_path.is_file():
         try:
             with config_path.open(encoding="utf-8") as handle:
@@ -116,7 +120,13 @@ def load_timer_plugin_config(
             configured_timeout = _positive_float(cfg.get("timeout_s"))
             if configured_timeout is not None:
                 timeout_s = configured_timeout
-    return TimerPluginConfig(fire_at=fire_at, timeout_s=timeout_s)
+    singleton_cfg = parse_singleton_config(cfg)
+    return TimerPluginConfig(
+        fire_at=fire_at,
+        timeout_s=timeout_s,
+        singleton=singleton_cfg.singleton,
+        bound_role=singleton_cfg.bound_role,
+    )
 
 
 def load_timer_plugin_state(plugin_dir: Path) -> TimerPluginState:

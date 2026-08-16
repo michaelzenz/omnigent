@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 import urllib.request
 from contextlib import suppress
@@ -394,7 +395,38 @@ async def _amain() -> int:
     return 0
 
 
+async def _healthcheck() -> int:
+    """Spawn the Slack MCP and call auth.test; exit 0 if healthy.
+
+    Prints JSON on stdout: ``{"ok": bool, "detail": str}``. Used by the host
+    for server-side plugin monitoring (later). Cheap and side-effect-free.
+    """
+    cfg = load_config()
+    mcfg = cfg.get("mcp")
+    if not isinstance(mcfg, dict) or not mcfg.get("command"):
+        print(json.dumps({"ok": False, "detail": "no mcp launch config in config.yaml"}))
+        return 1
+    params = StdioServerParameters(
+        command=mcfg["command"],
+        args=list(mcfg.get("args") or []),
+        env=mcfg.get("env"),
+    )
+    try:
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            slack = SlackMcp(session)
+            auth = await slack.get("auth.test", {})
+            who = auth.get("user") or auth.get("user_id") or "unknown"
+            print(json.dumps({"ok": True, "detail": f"auth.test ok as {who}"}))
+            return 0
+    except Exception as exc:  # noqa: BLE001 -- report any failure as unhealthy
+        print(json.dumps({"ok": False, "detail": f"{type(exc).__name__}: {exc}"}))
+        return 1
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--healthcheck":
+        return asyncio.run(_healthcheck())
     return asyncio.run(_amain())
 
 

@@ -16,6 +16,14 @@ This plugin does **not** read or persist any Slack token. It drives a Slack MCP
 server directly via the generic `mcp` Python SDK (stdio transport), calling the
 `slack_read_api_call` tool with `raw: true` to get full Slack Web API JSON.
 
+## Singleton — runs on the secretary's host only
+
+`config.yaml` sets `singleton: true` + `bound_role: secretary`, so this
+plugin runs only on the host pinned to the secretary role (read fresh from
+the roles store, cached ~60s). The pin is sticky/user-controlled; if that
+host is down nobody runs the plugin until the user reassigns the secretary
+role. This avoids duplicate polling across multiple hosts.
+
 The MCP launch command lives in `config.yaml` under `mcp:`:
 
 - **At Databricks**: `dbexec repo run mcp start-single slack` — `dbexec`
