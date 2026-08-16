@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,11 +105,39 @@ def packaged_role_agent_names_for_kind(kind: str) -> tuple[str, ...]:
 
 
 _AGENTS_DIR = Path(__file__).parent / "agents"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_MANUALS_ROOT = _PROJECT_ROOT / "puppygarden" / "docs"
 
 
 def task_agent_spec_path(agent_name: str) -> Path:
     """Return the packaged YAML spec for a task-role built-in agent."""
     return _AGENTS_DIR / f"{agent_name}.yaml"
+
+
+def bundle_task_instruction_includes(
+    document: dict[str, object],
+    bundle_dir: Path,
+) -> None:
+    """Copy packaged task manuals into a role bundle and rewrite include paths."""
+    raw_paths = document.get("instructions_include")
+    if isinstance(raw_paths, str):
+        paths = [raw_paths]
+    elif isinstance(raw_paths, list):
+        paths = [path for path in raw_paths if isinstance(path, str) and path.strip()]
+    else:
+        return
+    rewritten: list[str] = []
+    for raw_path in paths:
+        source = (_PROJECT_ROOT / raw_path).resolve()
+        if not source.is_relative_to(_MANUALS_ROOT.resolve()) or not source.is_file():
+            raise ValueError(f"task manual include is outside puppygarden/docs: {raw_path}")
+        relative = source.relative_to(_MANUALS_ROOT.resolve())
+        bundled_path = Path("instructions") / relative
+        destination = bundle_dir / bundled_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        rewritten.append(bundled_path.as_posix())
+    document["instructions_include"] = rewritten
 
 
 def resolve_task_agent_id(

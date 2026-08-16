@@ -2,6 +2,10 @@
 
 The system will send you event batch with prompt, wait for the instruction
 
+For other manuals, resolve `host.puppygarden.root` from
+`~/.omnigent/config.yaml` and use its `docs/` directory. See
+[the manual index](README.md).
+
 ## API access
 
 Call the Omnigent task APIs with the `puppygarden_api` tool. It takes a
@@ -14,7 +18,7 @@ puppygarden_api(method="GET", path="/v1/task-events/ambiguous-inbox")
 ```
 
 Use `puppygarden_api` for every endpoint below. See
-docs/agent-tasks/API_REFERENCE.md for the full catalogue.
+[API_REFERENCE.md](API_REFERENCE.md) for the full catalogue.
 
 ## Triggers
 

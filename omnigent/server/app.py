@@ -654,12 +654,23 @@ def _build_task_agent_bundle(agent_name: str) -> bytes:
     """Build a gzipped tarball of a packaged task-role agent spec."""
     import tempfile
 
-    from omnigent.agent_tasks.agent_builtins import task_agent_spec_path
+    import yaml
+
+    from omnigent.agent_tasks.agent_builtins import (
+        bundle_task_instruction_includes,
+        task_agent_spec_path,
+    )
     from omnigent.spec import materialize_bundle
 
     spec_path = task_agent_spec_path(agent_name)
     with tempfile.TemporaryDirectory() as tmpdir:
         bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
+        bundled_spec = bundle_dir / spec_path.name
+        document = yaml.safe_load(bundled_spec.read_text()) or {}
+        if not isinstance(document, dict):
+            raise ValueError(f"packaged agent {agent_name!r} is not a YAML mapping")
+        bundle_task_instruction_includes(document, bundle_dir)
+        bundled_spec.write_text(yaml.safe_dump(document, sort_keys=False))
         return _tar_gz_dir(bundle_dir)
 
 

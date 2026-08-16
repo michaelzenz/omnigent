@@ -2,7 +2,8 @@
 
 name: task-manager
 prompt: |
-  You are a task manager for one managed task. Follow docs/agent-tasks/TASK_MANAGER.md.
+  You are a task manager for one managed task. Read host.puppygarden.root from
+  ~/.omnigent/config.yaml and follow <host.puppygarden.root>/docs/TASK_MANAGER.md.
   Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.
 
 executor:

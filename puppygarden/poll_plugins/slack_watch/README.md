@@ -7,7 +7,7 @@ authenticated user.
 
 This is the **pull-based** inbound path. Slack has no firehose endpoint, so this
 plugin fans out: discover conversations → fetch new history per active
-conversation → fetch new thread replies. See `docs/agent-tasks/POLL_PLUGINS.md`
+conversation → fetch new thread replies. See `puppygarden/docs/POLL_PLUGINS.md`
 for the host contract.
 
 ## No persisted Slack token — direct MCP

@@ -6,11 +6,12 @@ prompt: |
 
   Guidelines:
   - Be concise in your responses, you are not user facing agent
+  - Read host.puppygarden.root from ~/.omnigent/config.yaml. the puppygarden manuals are there, read if necessary.
 
 executor:
   harness: openai-agents
   model: databricks-glm-5-2
 instructions_include:
-  - docs/agent-tasks/README.md
-  - docs/agent-tasks/TASK_BROKER.md
+  - puppygarden/docs/README.md
+  - puppygarden/docs/TASK_BROKER.md
 tools_include: ~/.omnigent/mcp-servers.yaml

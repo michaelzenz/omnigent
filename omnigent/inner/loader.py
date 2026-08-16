@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -35,6 +36,8 @@ from .tools import (
     SkillTool,
     Tool,
 )
+
+_log = logging.getLogger(__name__)
 
 # Config-dict shape from agent YAML files. The schema is a nested, open-ended
 # tree (tools, policies, executor, os_env, sandbox — each with variant-typed
@@ -225,6 +228,29 @@ def _resolve_instructions(
     return raw_value
 
 
+def _resolve_instructions_include(
+    raw_value: object,
+    instructions_root: Path | None,
+) -> str | None:
+    """Read and concatenate bundle-contained ``instructions_include`` files."""
+    if isinstance(raw_value, str):
+        paths = [raw_value]
+    elif isinstance(raw_value, list):
+        paths = [value for value in raw_value if isinstance(value, str) and value.strip()]
+    else:
+        return None
+    if instructions_root is None:
+        return None
+    parts: list[str] = []
+    for path in paths:
+        content = _read_contained_file(instructions_root, path.strip())
+        if content is None:
+            _log.warning("instructions_include file not found in bundle: %s", path)
+            continue
+        parts.append(content)
+    return "\n\n".join(parts) if parts else None
+
+
 def _parse_agent_def(
     data: YamlData,
     *,
@@ -241,6 +267,19 @@ def _parse_agent_def(
     # in ``agent.instructions`` and the raw user-supplied
     # ``agent.prompt`` — it doesn't have to re-walk the path.
     agent.instructions = _resolve_instructions(data.get("instructions"), instructions_root)
+    included_instructions = _resolve_instructions_include(
+        data.get("instructions_include"),
+        instructions_root,
+    )
+    if included_instructions:
+        base_instructions = agent.instructions
+        if base_instructions is None and isinstance(agent.prompt, str):
+            base_instructions = agent.prompt
+        agent.instructions = (
+            included_instructions
+            if not base_instructions
+            else f"{base_instructions}\n\n{included_instructions}"
+        )
     agent.input_type = data.get("input_type")
     agent.output_type = data.get("output_type")
     if "async_enabled" in data:

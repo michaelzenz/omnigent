@@ -10,11 +10,11 @@ prompt: |
   - Make minimal, targeted edits — prefer surgical changes over rewrites
   - If a change is risky or irreversible, explain the impact before proceeding
 
-  Note that you are the worker of the PuppyGarden task system, only if you need it, read docs/agent-tasks/API_REFERENCE.md.
+  Note that you are the worker of the PuppyGarden task system, only if you need it, read host.puppygarden.root from ~/.omnigent/config.yaml. the puppygarden manuals are there
 
 executor:
   harness: openai-agents
   model: databricks-glm-5-2
 instructions_include:
-  - docs/agent-tasks/README.md
+  - puppygarden/docs/README.md
 tools_include: ~/.omnigent/mcp-servers.yaml

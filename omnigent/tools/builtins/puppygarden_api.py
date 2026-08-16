@@ -7,7 +7,8 @@ posture as the comment / policy / scheduled-task tool families — so auth,
 error handling, and JSON in/out are handled centrally and the model emits a
 typed function call instead of a raw HTTP command string.
 
-See ``docs/agent-tasks/API_REFERENCE.md`` for the full endpoint catalogue.
+See ``<host.puppygarden.root>/docs/API_REFERENCE.md`` for the full endpoint
+catalogue.
 """
 
 from __future__ import annotations
@@ -55,8 +56,9 @@ class PuppyGardenApiTool(Tool):
             "Call a PuppyGarden task API endpoint on the Omnigent server. "
             "Pass the HTTP method, the API path (starting with /v1/...), "
             "and an optional JSON body / query object. Returns the server's "
-            "JSON response. See docs/agent-tasks/API_REFERENCE.md for the "
-            "full endpoint catalogue. Prefer this over curl for task work."
+            "JSON response. The full endpoint catalogue is under "
+            "<host.puppygarden.root>/docs/API_REFERENCE.md. Prefer this over "
+            "curl for task work."
         )
 
     def get_schema(self) -> dict[str, Any]:

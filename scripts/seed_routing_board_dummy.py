@@ -585,14 +585,14 @@ def main() -> int:
         goal="Routing docs reflect the shipped card-based flow",
         description="Routing UI shipped; docs still describe the old inbox flow.",
         instructions="Refresh TASK_BROKER.md and API_REFERENCE after routing cards shipped.",
-        internal_note="See PR #902 and docs/agent-tasks/ for current API shapes.",
+        internal_note="See PR #902 and puppygarden/docs/ for current API shapes.",
         event_ids=_create_events(
             host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10
         ),
         asset_urls=[
             (
                 "API reference",
-                "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/API_REFERENCE.md",
+                "https://github.com/databricks/omnigent-fork/blob/main/puppygarden/docs/API_REFERENCE.md",
             ),
             ("PR #902", "https://github.com/databricks/omnigent-fork/pull/902"),
         ],
@@ -654,7 +654,7 @@ def main() -> int:
     _create_task_asset(
         docs_task,
         "Routing board README",
-        "https://github.com/databricks/omnigent-fork/blob/main/docs/agent-tasks/README.md",
+        "https://github.com/databricks/omnigent-fork/blob/main/puppygarden/docs/README.md",
     )
     _create_unassigned_inbox_item(
         poll_task,

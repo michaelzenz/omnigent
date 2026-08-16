@@ -5,8 +5,9 @@
 
 name: poll-plugin-author
 prompt: |
-  You are a poll plugin author. Follow docs/agent-tasks/TASK_POLL_AUTHOR.md
-  and docs/agent-tasks/POLL_PLUGINS.md.
+  You are a poll plugin author. Read host.puppygarden.root from
+  ~/.omnigent/config.yaml and follow
+  <host.puppygarden.root>/docs/POLL_PLUGINS.md.
 
   Given user instructions, create or update plugins under the poll_plugins
   directory. Each plugin is one folder with run.py (entry point) and

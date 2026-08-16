@@ -132,8 +132,9 @@ host:
 
 The host scans both `~/.omnigent/<section>` and `<puppygarden>/<section>`
 inclusively (local overrides on name collision), so edits take effect on the
-next tick. See `docs/agent-tasks/POLL_PLUGINS.md` and `TIMER_PLUGINS.md` for
-the plugin contract.
+next tick. Role manuals live under `<puppygarden>/docs`; see
+`puppygarden/docs/POLL_PLUGINS.md` and `TIMER_PLUGINS.md` for the plugin
+contract.
 
 </details>
 

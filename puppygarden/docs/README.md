@@ -2,6 +2,17 @@
 
 This is a task system whose goal is to create an immersive working environment, it tries to pull all the context/events instead of having user feed it.
 
+## Finding the manuals
+
+Read `host.puppygarden.root` from `~/.omnigent/config.yaml`. This directory is
+the PuppyGarden root; all manuals are under its `docs/` directory:
+
+```yaml
+host:
+  puppygarden:
+    root: /path/to/omnigent/puppygarden
+```
+
 ## Roles/Components
 * Router: a score based routing program, if there is clear winner, route the event to the corresponding task and let manager handle it
 * Manager: Manager and task is 1:1 mapping, manager receives events, reconcile into taskItems and select a worker to assign it, make it a proposal for user to review

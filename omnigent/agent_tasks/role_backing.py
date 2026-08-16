@@ -17,7 +17,10 @@ from typing import Any
 
 import yaml
 
-from omnigent.agent_tasks.agent_builtins import task_agent_spec_path
+from omnigent.agent_tasks.agent_builtins import (
+    bundle_task_instruction_includes,
+    task_agent_spec_path,
+)
 from omnigent.spec import materialize_bundle
 
 
@@ -100,6 +103,8 @@ def build_backing_bundle_from_packaged(
             _set_yaml_prompt(doc, prompt_override)
         out_yaml.write_text(yaml.safe_dump(doc, sort_keys=False))
         bundle_dir = materialize_bundle(out_yaml, Path(tmp) / "bundle")
+        bundle_task_instruction_includes(doc, bundle_dir)
+        (bundle_dir / out_yaml.name).write_text(yaml.safe_dump(doc, sort_keys=False))
         return _tar_gz_dir(bundle_dir)
 
 
