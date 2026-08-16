@@ -1152,6 +1152,14 @@ async def _resolve_agent_spec_from_server(
         dest.mkdir(parents=True)
         load(resp.content, dest=dest, expand_env=expand_env, prune_invalid_sub_agents=True)
     spec = load(dest, expand_env=expand_env, prune_invalid_sub_agents=True)
+    # Resolve ``tools_include`` here — MCP servers are spawned on the runner
+    # (host daemon), not the server, so the include file must be re-read on
+    # this side. ``load`` only records ``mcp_include_path``; without this
+    # resolve, a synced ~/.omnigent/mcp-servers.yaml would never take effect
+    # for the actual tool subprocesses. Mirrors AgentCache.load on the server.
+    from omnigent.spec import resolve_session_mcp_servers
+
+    spec = resolve_session_mcp_servers(spec, expand_env=expand_env)
     return ResolvedSpec(spec=spec, workdir=dest)
 
 
@@ -1330,12 +1338,14 @@ def create_app(
         if prewarm_path and mcp_manager is not None:
             try:
                 from omnigent.spec import load as _load_spec
+                from omnigent.spec import resolve_session_mcp_servers
 
                 # The prewarm spec is a local operator-provided path
                 # (set by the CLI local-runner spawn), so it is trusted
                 # and ${VAR} expands against the operator env — unlike
                 # tenant session-scoped bundles resolved from the server.
                 prewarm_spec = _load_spec(Path(prewarm_path), expand_env=True)
+                prewarm_spec = resolve_session_mcp_servers(prewarm_spec, expand_env=True)
                 await mcp_manager.prewarm(prewarm_spec)
                 _logger.info(
                     "runner MCP prewarm registered for %s (servers=%d)",

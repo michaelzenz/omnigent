@@ -4027,3 +4027,103 @@ def test_sub_agent_source_rel_dir_uses_directory_not_yaml_name(tmp_path: Path) -
     (child,) = spec.sub_agents
     assert child.name == "Deep Researcher"
     assert child.source_rel_dir == "web-researcher"
+
+
+# ── tools_include: deferred external MCP resolution ──
+
+
+def _write_include_agent(tmp_path: Path, include_path: str) -> Path:
+    """Minimal agent image whose ``tools_include`` points at an external file."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir(parents=True)
+    config = {
+        "spec_version": 1,
+        "name": "include-agent",
+        "tools_include": include_path,
+    }
+    (agent_dir / "config.yaml").write_text(yaml.dump(config))
+    return agent_dir
+
+
+def test_parse_tools_include_records_path_not_servers(tmp_path: Path) -> None:
+    """Parse records the include path on the spec without resolving it.
+
+    ``mcp_servers`` stays empty (bundle-owned only); the external file is read
+    later by ``resolve_session_mcp_servers``. If parse eagerly merged the
+    include, a synced file change could never take effect without a restart.
+    """
+    include_file = tmp_path / "mcp-servers.yaml"
+    include_file.write_text(
+        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
+    )
+    agent_dir = _write_include_agent(tmp_path / "agent", str(include_file))
+
+    spec = parse(agent_dir)
+
+    assert spec.mcp_include_path == str(include_file)
+    assert spec.mcp_servers == []
+
+
+def test_resolve_session_mcp_servers_merges_include(tmp_path: Path) -> None:
+    """resolve_session_mcp_servers re-reads the include file and merges."""
+    from omnigent.spec.parser import resolve_session_mcp_servers
+
+    include_file = tmp_path / "mcp-servers.yaml"
+    include_file.write_text(
+        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
+    )
+    agent_dir = _write_include_agent(tmp_path / "agent", str(include_file))
+    spec = parse(agent_dir)
+
+    resolved = resolve_session_mcp_servers(spec, expand_env=False)
+
+    assert len(resolved.mcp_servers) == 1
+    assert resolved.mcp_servers[0].name == "slack"
+    # The baked spec is not mutated — re-resolving is non-destructive.
+    assert spec.mcp_servers == []
+
+
+def test_resolve_session_mcp_servers_rereads_on_change(tmp_path: Path) -> None:
+    """A synced include file is picked up by the next resolve call."""
+    from omnigent.spec.parser import resolve_session_mcp_servers
+
+    include_file = tmp_path / "mcp-servers.yaml"
+    include_file.write_text(
+        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
+    )
+    agent_dir = _write_include_agent(tmp_path / "agent", str(include_file))
+    spec = parse(agent_dir)
+
+    first = resolve_session_mcp_servers(spec, expand_env=False)
+    assert {s.name for s in first.mcp_servers} == {"slack"}
+
+    # Cron sync rewrites the file with a different server set.
+    include_file.write_text(
+        yaml.dump({"github": {"type": "mcp", "command": "dbexec"}})
+    )
+    second = resolve_session_mcp_servers(spec, expand_env=False)
+    assert {s.name for s in second.mcp_servers} == {"github"}
+
+
+def test_resolve_session_mcp_servers_missing_file_is_graceful(tmp_path: Path) -> None:
+    """A missing include file returns the spec unchanged (no crash)."""
+    from omnigent.spec.parser import resolve_session_mcp_servers
+
+    agent_dir = _write_include_agent(tmp_path / "agent", str(tmp_path / "missing.yaml"))
+    spec = parse(agent_dir)
+
+    resolved = resolve_session_mcp_servers(spec, expand_env=False)
+    assert resolved is spec
+    assert resolved.mcp_servers == []
+
+
+def test_resolve_session_mcp_servers_no_include_is_identity(tmp_path: Path) -> None:
+    """A spec without tools_include is returned unchanged."""
+    from omnigent.spec.parser import resolve_session_mcp_servers
+
+    config = {"spec_version": 1, "name": "plain"}
+    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    spec = parse(tmp_path)
+
+    assert resolve_session_mcp_servers(spec) is spec
+

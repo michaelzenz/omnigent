@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import re
@@ -290,12 +291,10 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         )
     skills = _discover_skills(root / "skills")
     skills_filter = _parse_skills_filter(raw.get("skills"))
-    included_mcp = _parse_included_mcp_servers(
-        raw.get("tools_include"), expand_env=expand_env
-    )
+    mcp_include_path = _extract_tools_include_path(raw.get("tools_include"))
     discovered_mcp = _discover_mcp_servers(root / "tools" / "mcp", expand_env=expand_env)
     inline_mcp = _parse_inline_mcp_servers(raw_tools, expand_env=expand_env)
-    mcp_servers = _merge_mcp_servers_by_name(included_mcp, discovered_mcp, inline_mcp)
+    mcp_servers = _merge_mcp_servers_by_name(discovered_mcp, inline_mcp)
     local_tools = _discover_local_tools(root / "tools")
     sub_agents = _discover_sub_agents(root / "agents", expand_env=expand_env)
 
@@ -314,6 +313,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         skills=skills,
         skills_filter=skills_filter,
         mcp_servers=mcp_servers,
+        mcp_include_path=mcp_include_path,
         local_tools=local_tools,
         sub_agents=sub_agents,
         async_enabled=async_enabled,
@@ -2098,7 +2098,7 @@ def _parse_included_instructions(include_paths: object) -> str | None:
     for raw_path in paths:
         resolved = Path(os.path.expanduser(raw_path.strip()))
         if not resolved.is_file():
-            _logger.warning(
+            _log.warning(
                 "instructions_include file not found: %s — skipping",
                 resolved,
             )
@@ -2667,6 +2667,41 @@ def _parse_inline_mcp_servers(
     return servers
 
 
+def _extract_tools_include_path(include_path: object) -> str | None:
+    """Return the ``~``-expanded ``tools_include`` path, or ``None``.
+
+    The path is recorded on the spec at parse time but NOT resolved — the
+    referenced file lives outside the bundle and is read fresh at session
+    load by :func:`resolve_session_mcp_servers`.
+    """
+    if not isinstance(include_path, str) or not include_path.strip():
+        return None
+    return os.path.expanduser(include_path.strip())
+
+
+def resolve_session_mcp_servers(
+    spec: AgentSpec,
+    *,
+    expand_env: bool = True,
+) -> AgentSpec:
+    """Merge ``tools_include`` MCP servers into *spec* at session load time.
+
+    ``spec.mcp_servers`` carries only the bundle-owned inline + discovered
+    entries (immutable, cached). The external file named by
+    ``spec.mcp_include_path`` is re-read here so a synced
+    ``~/.omnigent/mcp-servers.yaml`` takes effect for new sessions without a
+    server restart. Returns *spec* unchanged when no include is set or the
+    file is missing (graceful — logged once by :func:`_parse_included_mcp_servers`).
+    """
+    if not spec.mcp_include_path:
+        return spec
+    included = _parse_included_mcp_servers(spec.mcp_include_path, expand_env=expand_env)
+    if not included:
+        return spec
+    merged = _merge_mcp_servers_by_name(spec.mcp_servers, included)
+    return dataclasses.replace(spec, mcp_servers=merged)
+
+
 def _parse_included_mcp_servers(
     include_path: object,
     *,
@@ -2692,7 +2727,7 @@ def _parse_included_mcp_servers(
         return []
     resolved = Path(os.path.expanduser(include_path.strip()))
     if not resolved.is_file():
-        _logger.warning(
+        _log.warning(
             "tools_include file not found: %s — skipping MCP server include",
             resolved,
         )

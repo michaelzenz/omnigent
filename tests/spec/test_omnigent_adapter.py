@@ -2175,6 +2175,52 @@ def test_permission_mode_propagates_to_executor_config() -> None:
     assert spec.executor.config.get("permission_mode") == "auto"
 
 
+def test_tools_include_records_path_not_servers(tmp_path: Path) -> None:
+    """``tools_include`` on an omnigent YAML sets ``mcp_include_path`` only.
+
+    The external file is resolved at session load (resolve_session_mcp_servers),
+    not baked into ``mcp_servers`` here — so a synced file takes effect without
+    a restart. Mirrors the parser.parse path.
+    """
+    include_file = tmp_path / "mcp-servers.yaml"
+    include_file.write_text(
+        "slack:\n  type: mcp\n  command: dbexec\n"
+    )
+    agent_def, raw_yaml = _build_agent_def_with_raw_yaml()
+    raw_yaml["tools_include"] = str(include_file)
+
+    spec = agent_def_to_agent_spec(agent_def, raw_yaml=raw_yaml)
+
+    assert spec.mcp_include_path == str(include_file)
+    assert spec.mcp_servers == []
+
+    from omnigent.spec.parser import resolve_session_mcp_servers
+
+    resolved = resolve_session_mcp_servers(spec, expand_env=False)
+    assert len(resolved.mcp_servers) == 1
+    assert resolved.mcp_servers[0].name == "slack"
+
+
+def test_tools_include_expands_tilde() -> None:
+    """``~/`` in ``tools_include`` is expanded to the home directory."""
+    agent_def, raw_yaml = _build_agent_def_with_raw_yaml()
+    raw_yaml["tools_include"] = "~/omnigent/mcp-servers.yaml"
+
+    spec = agent_def_to_agent_spec(agent_def, raw_yaml=raw_yaml)
+
+    import os
+
+    assert spec.mcp_include_path == os.path.expanduser("~/omnigent/mcp-servers.yaml")
+    assert spec.mcp_servers == []
+
+
+def test_tools_include_absent_leaves_mcp_include_path_none() -> None:
+    """No ``tools_include`` → ``mcp_include_path`` stays ``None``."""
+    agent_def, raw_yaml = _build_agent_def_with_raw_yaml()
+    spec = agent_def_to_agent_spec(agent_def, raw_yaml=raw_yaml)
+    assert spec.mcp_include_path is None
+
+
 def test_use_responses_absent_omits_key_from_executor_config() -> None:
     """
     When the omnigent YAML omits ``use_responses``, the key is absent

@@ -1555,6 +1555,13 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     # not shipping them, not by setting this filter to ``"none"``.
     skills_filter: str | list[str] = "all"
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    # Path to an external MCP-server config referenced via ``tools_include:``
+    # (e.g. ``~/.omnigent/mcp-servers.yaml``). Resolved at session load, not
+    # parse time, because the file lives outside the bundle and can change
+    # between server restarts (e.g. a daily cron sync). ``mcp_servers`` above
+    # holds only the bundle-owned inline + discovered entries; the included
+    # servers are merged in by ``resolve_session_mcp_servers`` at load time.
+    mcp_include_path: str | None = None
     local_tools: list[LocalToolInfo] = field(default_factory=list)
     sub_agents: list[AgentSpec] = field(default_factory=list)
     executor: ExecutorSpec = field(default_factory=ExecutorSpec)
