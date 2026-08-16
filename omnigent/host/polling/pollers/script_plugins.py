@@ -11,6 +11,7 @@ from pathlib import Path
 
 from omnigent.host.identity import CONFIG_PATH
 from omnigent.host.polling.context import PollContext
+from omnigent.host.polling.plugin_health import PluginHealthTracker
 from omnigent.host.polling.poll_plugins_paths import (
     README_NAME,
     RUN_SCRIPT_NAME,
@@ -41,6 +42,7 @@ class ScriptPollPluginsPoller:
         self._config_path = config_path
         self._last_run: dict[str, float] = {}
         self._resolver: RoleHostResolver | None = None
+        self._health = PluginHealthTracker(kind="poll")
 
     @property
     def name(self) -> str:
@@ -84,6 +86,7 @@ class ScriptPollPluginsPoller:
                     plugin_dir.name,
                     exc,
                 )
+                self._health.record_config_skip(plugin_dir.name)
                 continue
             last_run = self._last_run.get(plugin_dir.name, 0.0)
             if now - last_run < plugin_config.interval_s:
@@ -100,13 +103,18 @@ class ScriptPollPluginsPoller:
                     ),
                     host_id=ctx.host_id,
                 ):
+                    self._health.record_singleton_skip(
+                        plugin_dir.name, interval_s=plugin_config.interval_s
+                    )
                     continue
             await self._run_plugin(
                 plugin_dir,
                 ctx=ctx,
                 timeout_s=plugin_config.timeout_s,
+                interval_s=plugin_config.interval_s,
             )
             self._last_run[plugin_dir.name] = now
+        await self._health.maybe_post(ctx)
 
     async def _run_plugin(
         self,
@@ -114,6 +122,7 @@ class ScriptPollPluginsPoller:
         *,
         ctx: PollContext,
         timeout_s: float,
+        interval_s: float,
     ) -> None:
         run_py = plugin_dir / RUN_SCRIPT_NAME
         env = {
@@ -139,6 +148,12 @@ class ScriptPollPluginsPoller:
                 plugin_dir.name,
                 exc_info=True,
             )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="start_failed",
+                error="failed to start subprocess",
+                interval_s=interval_s,
+            )
             return
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
@@ -150,6 +165,12 @@ class ScriptPollPluginsPoller:
                 plugin_dir.name,
                 timeout_s,
             )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="timeout",
+                error=f"timed out after {timeout_s:.0f}s",
+                interval_s=interval_s,
+            )
             return
         if proc.returncode != 0:
             detail = (stderr or stdout).decode(errors="replace").strip()
@@ -159,3 +180,11 @@ class ScriptPollPluginsPoller:
                 proc.returncode,
                 f": {detail}" if detail else "",
             )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="exit_nonzero",
+                error=detail or f"exit {proc.returncode}",
+                interval_s=interval_s,
+            )
+            return
+        self._health.record_run(plugin_dir.name, outcome="ok", interval_s=interval_s)

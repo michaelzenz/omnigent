@@ -539,3 +539,31 @@ export async function resolveFyiCluster(
     throw new Error(`${res.status} ${res.statusText}`);
   }
 }
+
+export type ScriptPluginKind = "poll" | "timer";
+
+export interface ScriptPluginHealthRow {
+  host_id: string;
+  name: string;
+  kind: ScriptPluginKind;
+  outcome: string;
+  last_run_at: number | null;
+  last_success_at: number | null;
+  last_failure_at: number | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  singleton_skipped: boolean;
+  interval_s: number | null;
+  fire_at: number | null;
+  fired_at: number | null;
+  updated_at: number;
+}
+
+export async function fetchScriptPluginHealth(
+  kind?: ScriptPluginKind,
+): Promise<ScriptPluginHealthRow[]> {
+  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  const res = await authenticatedFetch(`/v1/agent-tasks/script-plugins/health${qs}`);
+  const body = await readJson<{ plugins: ScriptPluginHealthRow[] }>(res);
+  return body.plugins;
+}

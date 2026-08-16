@@ -160,7 +160,7 @@ async def test_run_plugin_executes_run_py(tmp_path: Path) -> None:
         host_id = "host_test"
 
     poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
-    await poller._run_plugin(plugin_dir, ctx=_Ctx(), timeout_s=10.0)  # type: ignore[arg-type]
+    await poller._run_plugin(plugin_dir, ctx=_Ctx(), timeout_s=10.0, interval_s=60.0)  # type: ignore[arg-type]
     assert (plugin_dir / "ran.txt").read_text() == "1"
 
 

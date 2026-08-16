@@ -350,8 +350,9 @@ async def test_poll_once_posts_fire_failed_event_on_nonzero_exit(
     poller = ScriptTimerPluginsPoller(config_path=tmp_path / "missing.yaml")
     await poller.poll_once(ctx)
 
-    assert len(ctx.client.posts) == 1
-    url, body = ctx.client.posts[0]
+    fire_failed = [p for p in ctx.client.posts if p[0] == "/v1/task-events"]
+    assert len(fire_failed) == 1
+    url, body = fire_failed[0]
     assert url == "/v1/task-events"
     assert body["event_type"] == "timer.fire_failed"
     assert body["source"] == "timer_plugin:demo"

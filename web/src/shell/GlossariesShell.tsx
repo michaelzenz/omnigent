@@ -3,6 +3,7 @@ import { useSearchParams } from "@/lib/routing";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GlossariesPlaceholderTab } from "./glossaries/GlossariesPlaceholderTab";
 import { RolesTab } from "./glossaries/RolesTab";
+import { ScriptPluginsBoard } from "./glossaries/ScriptPluginsBoard";
 
 const TAB_IDS = ["roles", "pollers", "timers", "skills"] as const;
 type GlossariesTabId = (typeof TAB_IDS)[number];
@@ -44,10 +45,10 @@ export function GlossariesShell() {
             <RolesTab />
           </TabsContent>
           <TabsContent value="pollers" className="mt-4">
-            <GlossariesPlaceholderTab title="Pollers" />
+            <ScriptPluginsBoard kind="poll" testId="glossaries-tab-pollers" />
           </TabsContent>
           <TabsContent value="timers" className="mt-4">
-            <GlossariesPlaceholderTab title="Timers" />
+            <ScriptPluginsBoard kind="timer" testId="glossaries-tab-timers" />
           </TabsContent>
           <TabsContent value="skills" className="mt-4">
             <GlossariesPlaceholderTab title="Skills" />

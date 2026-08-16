@@ -18,6 +18,7 @@ from pathlib import Path
 
 from omnigent.host.identity import CONFIG_PATH
 from omnigent.host.polling.context import PollContext
+from omnigent.host.polling.plugin_health import PluginHealthTracker
 from omnigent.host.polling.pollers.script_timer_plugins_config import (
     load_script_timer_plugins_defaults,
     load_timer_plugin_config,
@@ -49,6 +50,7 @@ class ScriptTimerPluginsPoller:
     def __init__(self, *, config_path: Path = CONFIG_PATH) -> None:
         self._config_path = config_path
         self._resolver: RoleHostResolver | None = None
+        self._health = PluginHealthTracker(kind="timer")
 
     @property
     def name(self) -> str:
@@ -90,13 +92,26 @@ class ScriptTimerPluginsPoller:
                     plugin_dir.name,
                     exc,
                 )
+                self._health.record_config_skip(plugin_dir.name)
                 continue
             if cfg.fire_at is None:
                 continue
             state = load_timer_plugin_state(plugin_dir)
             if now < cfg.fire_at:
+                self._health.record_timer_state(
+                    plugin_dir.name,
+                    fire_at=cfg.fire_at,
+                    fired_at=state.fired_at or None,
+                    scheduled=True,
+                )
                 continue
             if state.fired_at >= cfg.fire_at:
+                self._health.record_timer_state(
+                    plugin_dir.name,
+                    fire_at=cfg.fire_at,
+                    fired_at=state.fired_at,
+                    scheduled=False,
+                )
                 continue
             if cfg.singleton and self._resolver is not None:
                 # Singleton timers fire only on the host pinned to the bound
@@ -106,6 +121,7 @@ class ScriptTimerPluginsPoller:
                     SingletonConfig(singleton=cfg.singleton, bound_role=cfg.bound_role),
                     host_id=ctx.host_id,
                 ):
+                    self._health.record_singleton_skip(plugin_dir.name, fire_at=cfg.fire_at)
                     continue
             await self._run_plugin(
                 plugin_dir,
@@ -115,6 +131,7 @@ class ScriptTimerPluginsPoller:
             )
             # Mark fired regardless of subprocess exit code — no retry on failure.
             write_timer_plugin_state(plugin_dir, fired_at=now)
+        await self._health.maybe_post(ctx)
 
     async def _run_plugin(
         self,
@@ -154,6 +171,12 @@ class ScriptTimerPluginsPoller:
                 fire_at=fire_at,
                 reason="start_failed",
             )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="start_failed",
+                error="failed to start subprocess",
+                fire_at=fire_at,
+            )
             return
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
@@ -170,6 +193,12 @@ class ScriptTimerPluginsPoller:
                 plugin_name=plugin_dir.name,
                 fire_at=fire_at,
                 reason="timeout",
+            )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="timeout",
+                error=f"timed out after {timeout_s:.0f}s",
+                fire_at=fire_at,
             )
             return
         if proc.returncode != 0:
@@ -188,6 +217,16 @@ class ScriptTimerPluginsPoller:
                 exit_code=proc.returncode,
                 detail=detail,
             )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="exit_nonzero",
+                error=detail or f"exit {proc.returncode}",
+                fire_at=fire_at,
+            )
+            return
+        self._health.record_run(
+            plugin_dir.name, outcome="ok", fire_at=fire_at, fired_at=time.time()
+        )
 
     async def _post_fire_failed(
         self,

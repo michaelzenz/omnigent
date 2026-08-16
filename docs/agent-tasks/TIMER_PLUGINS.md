@@ -22,6 +22,8 @@ poll plugins fire on a fixed interval; timer plugins fire when their
 
 ### Where the host scans for plugins
 
+`~/.omnigent/timer_plugins/`
+
 The host scans the plugin directory directly, so edits to repo plugins take effect
 on the next tick with no copy/sync.
 
@@ -230,3 +232,6 @@ See `puppygarden/timer_plugins/reminder/run.py` in the repository.
 - Edit `omnigent/host/` for plugin behavior — use this folder instead.
 - Expect retry on failure — `fired_at` is written regardless. To retry, set
   a new `fire_at`.
+
+# Hint
+Look at how existing plugin works, in additional to regular scripts, there are ones directly calling mcps, for ex slack_watch.

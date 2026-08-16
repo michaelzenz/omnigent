@@ -199,7 +199,7 @@ As a manager of the task, again you need to steer the task towards the goal, und
 
 # Follow up
 While most of the cases you can ONLY suggest taskItems, to provide an immersive experience, you are allowed to follow up, for ex:
-* user sent a message, set a command runs 2d later, check if there is reply or reaction, if not create a taskItem saying: "follow up with XXX with message "Gentle bump <message composed based on context>"
+* user sent a message, set a timmer runs 2d later, which check if there is reply or reaction, if not create a taskItem saying: `follow up with XXX with message "Gentle bump <message composed based on context>"`
 * user told a worker to set automerge label on the pr, then use poller to monitor the pr status every 2min. In poller script, issue an event for either pr merged or CI failure, this will later be routed to you, so that you can suggest "CI failed, investigate the issue" or "pr merged, verify the code works in staging"
 
 To reduce token cost, use the special infra below, for EX add the code that directly call the slack mcp to get the new messages.

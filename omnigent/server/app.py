@@ -2516,6 +2516,15 @@ def create_app(
             prefix="/v1",
             tags=["task_events"],
         )
+        from omnigent.server.routes.script_plugin_health import (
+            create_script_plugin_health_router,
+        )
+
+        app.include_router(
+            create_script_plugin_health_router(auth_provider=auth_provider),
+            prefix="/v1",
+            tags=["script_plugin_health"],
+        )
         from omnigent.server.routes.session_watcher import create_session_watcher_router
 
         app.include_router(

@@ -16,6 +16,8 @@ Each plugin is one folder; the host only executes **`run.py`**.
 
 ### Where the host scans for plugins
 
+`~/.omnigent/poll_plugins`
+
 The host scans the plugin directory directly, so edits to repo plugins take effect
 on the next tick with no copy/sync.
 
@@ -213,3 +215,6 @@ See `puppygarden/poll_plugins/github_pr/run.py` in the repository.
 
 - Rename `run.py` or expect the host to run other files.
 - Edit `omnigent/host/` for plugin behavior — use this folder instead.
+
+# Hint
+Look at how existing plugin works, in additional to regular scripts, there are ones directly calling mcps, for ex slack_watch.
