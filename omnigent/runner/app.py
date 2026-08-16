@@ -15649,6 +15649,7 @@ def create_runner_app_from_env() -> FastAPI:
     if not server_url:
         raise RuntimeError("RUNNER_SERVER_URL is required for the runner subprocess factory")
     from omnigent_client._http import is_loopback_url
+
     from omnigent.server_transport import server_async_http_transport_kwargs
 
     server_client = httpx.AsyncClient(
@@ -15953,8 +15954,9 @@ def _build_spawn_env_from_spec(
             # openai-agents sends the model id straight to the AI Gateway,
             # which serves GLM only as system.ai.glm-5-2 (not the
             # databricks-glm-5-2 alias). Native harnesses alias at launch;
-            # the SDK path doesn't, and this override would revert the
-            # spawn-env alias — translate here. No-op for claude/gpt.
+            # the SDK path doesn't, and this overwrite would revert the
+            # spawn-env alias (and trigger a respawn onto the wrong gateway)
+            # — translate here. No-op for claude/gpt.
             if harness == "openai-agents":
                 from omnigent.server.smart_routing import apply_servable_alias
 

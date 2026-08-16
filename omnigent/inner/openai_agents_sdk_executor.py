@@ -58,6 +58,31 @@ from .open_responses_sdk import (
 
 logger = logging.getLogger(__name__)
 
+
+def _databricks_base_url_for_model(host: str, model: str | None) -> str:
+    """Return the Databricks AI Gateway base URL that serves *model*.
+
+    ``system.ai.*`` models that route through the Responses surface (GLM,
+    kimi, inkling, qwen3) are served on the Codex Responses gateway
+    (``/ai-gateway/codex/v1``); the OpenAI gateway (``/ai-gateway/openai/v1``)
+    rejects them with "Responses API passthrough is not supported". Legacy
+    ``databricks-*`` names and GPT models stay on the OpenAI gateway.
+
+    :param host: Databricks workspace host.
+    :param model: The resolved model id (already alias-translated).
+    :returns: The gateway base URL the OpenAI client should target.
+    """
+    if model is not None and model.lower().startswith("system.ai."):
+        from omnigent.pi_model_compatibility import (
+            DatabricksPiSurface,
+            databricks_pi_surface_for_model,
+        )
+
+        if databricks_pi_surface_for_model(model) is DatabricksPiSurface.RESPONSES:
+            return f"{host.rstrip('/')}/ai-gateway/codex/v1"
+    return _databricks_openai_base_url(host)
+
+
 # Total run attempts per turn (1 initial + retries). The Databricks
 # gateway occasionally returns a completed-but-empty turn (status
 # completed, no text / no tool calls / no output items); a single
@@ -504,12 +529,8 @@ def _get_openai_async_client(
     # provider's default", which run_turn resolves from the model catalog.
     # Treating it as Databricks-hosted sent credential-less OpenAI agents into
     # ambient Databricks auth, surfacing an "install databricks-sdk" error at
-    # users who never configured Databricks. ``system.ai.*`` ids are Unity
-    # Catalog model-services served by the Databricks AI Gateway, so they opt
-    # in to ambient Databricks auth just like legacy ``databricks-`` names.
-    allow_ambient_databricks = model is not None and (
-        model.startswith("databricks-") or model.startswith("system.ai.")
-    )
+    # users who never configured Databricks.
+    allow_ambient_databricks = model is not None and model.startswith("databricks-")
 
     # An explicit Databricks profile is authoritative; model-service names
     # are opaque Unity Catalog identifiers such as catalog.schema.service.
@@ -519,7 +540,7 @@ def _get_openai_async_client(
         try:
             auth, host = _resolve_databricks_auth(profile)
             return AsyncOpenAI(
-                base_url=base_url_override or _databricks_openai_base_url(host),
+                base_url=base_url_override or _databricks_base_url_for_model(host, model),
                 api_key=_OPENAI_KEY_PLACEHOLDER,
                 http_client=httpx.AsyncClient(auth=auth),
                 **retry_kwargs,
@@ -583,7 +604,7 @@ def _get_openai_async_client(
             "OPENAI_API_KEY/OPENAI_BASE_URL for non-Databricks OpenAI access."
         ) from exc
     return AsyncOpenAI(
-        base_url=base_url_override or _databricks_openai_base_url(host),
+        base_url=base_url_override or _databricks_base_url_for_model(host, model),
         api_key=_OPENAI_KEY_PLACEHOLDER,
         http_client=httpx.AsyncClient(auth=auth),
         **retry_kwargs,
@@ -1475,15 +1496,10 @@ class OpenAIAgentsSDKExecutor(Executor):
         cfg = config or ExecutorConfig()
         # cfg.model (per-request /model override; agent name no longer
         # leaks here) wins over the spec default
-        # (HARNESS_OPENAI_AGENTS_MODEL → self._model_override).
+        # (HARNESS_OPENAI_AGENTS_MODEL → self._model_override). Both are
+        # already alias-translated upstream (spawn env + runner forward), so
+        # no apply_servable_alias here.
         model = cfg.model or self._model_override
-        if model is not None:
-            # cfg.model carries the raw spec model and bypasses the spawn-env
-            # alias, so map catalog aliases (databricks-glm-5-2) to the
-            # system.ai.* spelling the AI Gateway serves here too.
-            from omnigent.server.smart_routing import apply_servable_alias
-
-            model = apply_servable_alias(model)
         if model is None:
             provider_name = "databricks" if self._databricks else "openai"
             resolution = await run_sync_on_thread(

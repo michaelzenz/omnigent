@@ -1790,7 +1790,13 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     #    up), so it returns early. A spec's explicit ``use_responses`` still
     #    wins over the provider's wire_api.
     provider = _resolve_provider_for_build(spec, harness_type="openai-agents-sdk", for_launch=True)
-    if provider is not None:
+    # A CLI ``subscription`` provider (claude/codex login) carries no API
+    # credentials for the in-process SDK harness — applying it leaves the env
+    # empty and short-circuits the global Databricks / api_key auth below.
+    # Only let credential-bearing providers (key/gateway/local/databricks/
+    # cli-config) take the early return; fall through for subscription so
+    # the global auth / auto-Databricks path can resolve a real endpoint.
+    if provider is not None and provider.kind != SUBSCRIPTION_KIND:
         configure_agent_harness_with_provider(env, provider, harness_type="openai-agents-sdk")
         use_responses = spec.executor.config.get("use_responses")
         if use_responses is not None:
