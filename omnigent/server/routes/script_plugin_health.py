@@ -39,6 +39,7 @@ class PluginHealthInput(BaseModel):
     last_error: str | None = None
     consecutive_failures: int = 0
     singleton_skipped: bool = False
+    warning: str | None = None
     interval_s: float | None = None
     fire_at: float | None = None
     fired_at: float | None = None
@@ -145,6 +146,7 @@ def create_script_plugin_health_router(
                     "last_error": r.plugin.last_error,
                     "consecutive_failures": r.plugin.consecutive_failures,
                     "singleton_skipped": r.plugin.singleton_skipped,
+                    "warning": r.plugin.warning,
                     "interval_s": r.plugin.interval_s,
                     "fire_at": r.plugin.fire_at,
                     "fired_at": r.plugin.fired_at,

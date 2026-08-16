@@ -164,8 +164,8 @@ async def test_poll_once_skips_plugin_not_due_yet(tmp_path: Path, monkeypatch) -
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -192,8 +192,8 @@ async def test_poll_once_fires_due_plugin_and_writes_state(tmp_path: Path, monke
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -221,8 +221,8 @@ async def test_poll_once_does_not_refire_after_state_written(tmp_path: Path, mon
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -254,8 +254,8 @@ async def test_poll_once_refires_after_run_py_advances_fire_at(
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -292,8 +292,8 @@ async def test_poll_once_skips_plugin_with_null_fire_at(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -315,8 +315,8 @@ async def test_poll_once_marks_fired_even_when_run_py_fails(tmp_path: Path, monk
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -342,8 +342,8 @@ async def test_poll_once_posts_fire_failed_event_on_nonzero_exit(
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -380,8 +380,8 @@ async def test_poll_once_skips_plugin_missing_readme(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()
@@ -408,8 +408,8 @@ async def test_poll_once_fires_plugin_that_has_readme(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(
         timer_module,
-        "iter_timer_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_timer_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     ctx = _make_ctx()

@@ -553,6 +553,7 @@ export interface ScriptPluginHealthRow {
   last_error: string | null;
   consecutive_failures: number;
   singleton_skipped: boolean;
+  warning: string | null;
   interval_s: number | null;
   fire_at: number | null;
   fired_at: number | null;

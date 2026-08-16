@@ -15,8 +15,7 @@ from omnigent.host.polling.plugin_health import PluginHealthTracker
 from omnigent.host.polling.poll_plugins_paths import (
     README_NAME,
     RUN_SCRIPT_NAME,
-    iter_plugin_dirs,
-    resolve_poll_plugins_root,
+    iter_plugin_dirs_with_collisions,
 )
 from omnigent.host.polling.pollers.script_plugins_config import (
     load_plugin_poll_config,
@@ -64,8 +63,14 @@ class ScriptPollPluginsPoller:
 
     async def poll_once(self, ctx: PollContext) -> None:
         defaults = load_script_poll_plugins_defaults(self._config_path)
-        plugin_dirs = iter_plugin_dirs(resolve_poll_plugins_root(self._config_path))
+        plugin_dirs, duplicates = iter_plugin_dirs_with_collisions(config_path=self._config_path)
+        self._health.set_warnings(
+            duplicates,
+            "duplicate plugin name exists in both ~/.omnigent and puppygarden; "
+            "using the local copy",
+        )
         if not plugin_dirs:
+            await self._health.maybe_post(ctx)
             return
         now = time.monotonic()
         for plugin_dir in plugin_dirs:

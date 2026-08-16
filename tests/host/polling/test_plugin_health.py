@@ -52,6 +52,30 @@ def test_singleton_skip_records_without_failure() -> None:
     assert snap.interval_s == 60.0
 
 
+def test_set_warnings_carries_into_records_and_clears() -> None:
+    t = PluginHealthTracker(kind="poll")
+    t.set_warnings({"dup"}, "duplicate plugin name")
+    t.record_run("dup", outcome="ok")
+    t.record_run("clean", outcome="ok")
+    by_name = {r.name: r for r in t.snapshot()}
+    assert by_name["dup"].warning == "duplicate plugin name"
+    assert by_name["clean"].warning is None
+    # Resolving the collision clears the warning on the next scan, even for
+    # plugins that don't run again this tick (existing records are updated).
+    t.set_warnings(set(), "duplicate plugin name")
+    by_name = {r.name: r for r in t.snapshot()}
+    assert by_name["dup"].warning is None
+    assert by_name["clean"].warning is None
+
+
+def test_set_warnings_applies_to_existing_records() -> None:
+    t = PluginHealthTracker(kind="poll")
+    t.record_run("dup", outcome="ok")
+    # A collision detected after the run should still mark the existing record.
+    t.set_warnings({"dup"}, "duplicate plugin name")
+    assert t.snapshot()[0].warning == "duplicate plugin name"
+
+
 def test_timer_state_records_scheduled_then_fired() -> None:
     t = PluginHealthTracker(kind="timer")
     t.record_timer_state("r", fire_at=100.0, fired_at=None, scheduled=True)

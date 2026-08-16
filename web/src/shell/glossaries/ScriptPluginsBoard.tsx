@@ -25,6 +25,7 @@ interface BoardRow {
   consecutive_failures: number;
   last_error: string | null;
   singleton_skipped: boolean;
+  warning: string | null;
   interval_s: number | null;
   fire_at: number | null;
   fired_at: number | null;
@@ -115,6 +116,8 @@ function humanize(secs: number): string {
 function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: ScriptPluginKind }) {
   const [open, setOpen] = useState(false);
   const hasError = Boolean(row.last_error);
+  const hasWarning = Boolean(row.warning);
+  const detail = hasError ? "error" : hasWarning ? "warn" : null;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
@@ -122,7 +125,18 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
         style={{ gridTemplateColumns: "minmax(0,1fr) auto auto auto" }}
       >
         <div className="min-w-0">
-          <div className="truncate font-medium">{row.name}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate font-medium">{row.name}</span>
+            {hasWarning && (
+              <span
+                title={row.warning ?? ""}
+                aria-label={row.warning ?? "warning"}
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
+              >
+                ⚠
+              </span>
+            )}
+          </div>
           <div className="truncate text-xs text-muted-foreground">
             last run {formatTime(row.last_run_at)}
           </div>
@@ -146,24 +160,31 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
             </span>
           )}
           <StatusPill status={row.status} />
-          {hasError && (
+          {detail && (
             <CollapsibleTrigger asChild>
               <button
                 type="button"
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline"
                 aria-expanded={open}
               >
-                {open ? "hide" : "error"}
+                {open ? "hide" : detail}
               </button>
             </CollapsibleTrigger>
           )}
         </div>
       </div>
-      {hasError && (
+      {detail && (
         <CollapsibleContent>
-          <pre className="mx-3 mb-2 max-h-40 overflow-auto rounded bg-destructive/10 p-2 text-xs text-destructive whitespace-pre-wrap">
-            {row.last_error}
-          </pre>
+          {hasError && (
+            <pre className="mx-3 mb-2 max-h-40 overflow-auto rounded bg-destructive/10 p-2 text-xs text-destructive whitespace-pre-wrap">
+              {row.last_error}
+            </pre>
+          )}
+          {hasWarning && (
+            <pre className="mx-3 mb-2 max-h-40 overflow-auto rounded bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400 whitespace-pre-wrap">
+              {row.warning}
+            </pre>
+          )}
         </CollapsibleContent>
       )}
     </Collapsible>
@@ -200,6 +221,7 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
       consecutive_failures: r.consecutive_failures,
       last_error: r.last_error,
       singleton_skipped: r.singleton_skipped,
+      warning: r.warning,
       interval_s: r.interval_s,
       fire_at: r.fire_at,
       fired_at: r.fired_at,

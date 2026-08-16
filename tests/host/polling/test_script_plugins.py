@@ -183,8 +183,8 @@ async def test_poll_once_skips_plugin_until_interval_elapsed(
 
     monkeypatch.setattr(
         script_plugins_module,
-        "iter_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     class _Ctx:
@@ -216,8 +216,8 @@ async def test_poll_once_skips_plugin_missing_readme(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(
         script_plugins_module,
-        "iter_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     class _Ctx:
@@ -246,8 +246,8 @@ async def test_poll_once_runs_plugin_that_has_readme(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(
         script_plugins_module,
-        "iter_plugin_dirs",
-        lambda root=None: [plugin_dir],
+        "iter_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
     )
 
     class _Ctx:

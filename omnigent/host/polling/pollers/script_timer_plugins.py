@@ -34,8 +34,7 @@ from omnigent.host.polling.singleton_gate import (
 from omnigent.host.polling.timer_plugins_paths import (
     README_NAME,
     RUN_SCRIPT_NAME,
-    iter_timer_plugin_dirs,
-    resolve_timer_plugins_root,
+    iter_timer_plugin_dirs_with_collisions,
 )
 from omnigent.process_logging import data_dir
 
@@ -70,8 +69,16 @@ class ScriptTimerPluginsPoller:
 
     async def poll_once(self, ctx: PollContext) -> None:
         defaults = load_script_timer_plugins_defaults(self._config_path)
-        plugin_dirs = iter_timer_plugin_dirs(resolve_timer_plugins_root(self._config_path))
+        plugin_dirs, duplicates = iter_timer_plugin_dirs_with_collisions(
+            config_path=self._config_path
+        )
+        self._health.set_warnings(
+            duplicates,
+            "duplicate plugin name exists in both ~/.omnigent and puppygarden; "
+            "using the local copy",
+        )
         if not plugin_dirs:
+            await self._health.maybe_post(ctx)
             return
         now = time.time()
         for plugin_dir in plugin_dirs:

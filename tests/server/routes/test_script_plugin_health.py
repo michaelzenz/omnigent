@@ -44,6 +44,26 @@ async def test_post_then_get_round_trip(client: httpx.AsyncClient) -> None:
     assert row["name"] == "slack_watch"
     assert row["kind"] == "poll"
     assert row["outcome"] == "ok"
+    assert row["warning"] is None
+
+
+async def test_warning_round_trips(client: httpx.AsyncClient) -> None:
+    await client.post(
+        "/v1/agent-tasks/script-plugins/health",
+        headers={HOST_ID_HEADER: "host-A"},
+        json={
+            "plugins": [
+                {
+                    "name": "dup",
+                    "kind": "poll",
+                    "outcome": "ok",
+                    "warning": "duplicate plugin name exists in both roots",
+                }
+            ]
+        },
+    )
+    rows = (await client.get("/v1/agent-tasks/script-plugins/health?kind=poll")).json()["plugins"]
+    assert rows[0]["warning"] == "duplicate plugin name exists in both roots"
 
 
 async def test_kind_filter_excludes_other_kind(client: httpx.AsyncClient) -> None:

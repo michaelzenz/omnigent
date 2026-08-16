@@ -58,6 +58,8 @@ class PluginHealthRecord:
     last_error: str | None = None
     consecutive_failures: int = 0
     singleton_skipped: bool = False
+    # A non-fatal advisory, e.g. "duplicate plugin name across scan roots".
+    warning: str | None = None
     # poll
     interval_s: float | None = None
     # timer
@@ -82,6 +84,21 @@ class PluginHealthTracker:
     _records: dict[str, PluginHealthRecord] = field(default_factory=dict)
     _last_signature: str = ""
     _last_post_at: float = 0.0
+    # Per-plugin advisory warnings (e.g. duplicate name across scan roots).
+    # Replaced wholesale by :meth:`set_warnings` each scan so stale warnings
+    # clear automatically. Carried into every record so the board can show it.
+    _warnings: dict[str, str] = field(default_factory=dict)
+
+    def set_warnings(self, names: set[str], message: str) -> None:
+        """Set the advisory warning for exactly ``names``, clearing others.
+
+        Called once per scan with the set of colliding plugin names. Plugins
+        not in ``names`` get their warning cleared (in existing records too),
+        so a resolved collision stops warning on the next board refresh.
+        """
+        self._warnings = dict.fromkeys(names, message)
+        for name, rec in self._records.items():
+            rec.warning = message if name in names else None
 
     def record_run(
         self,
@@ -115,6 +132,7 @@ class PluginHealthTracker:
             last_error=_truncate(error),
             consecutive_failures=consecutive,
             singleton_skipped=False,
+            warning=self._warnings.get(name),
             interval_s=interval_s,
             fire_at=fire_at,
             fired_at=fired_at,
@@ -139,6 +157,7 @@ class PluginHealthTracker:
             last_error=None,
             consecutive_failures=prev.consecutive_failures if prev else 0,
             singleton_skipped=True,
+            warning=self._warnings.get(name),
             interval_s=interval_s,
             fire_at=fire_at,
             fired_at=prev.fired_at if prev else None,
@@ -158,6 +177,7 @@ class PluginHealthTracker:
             last_error="invalid singleton config",
             consecutive_failures=prev.consecutive_failures if prev else 0,
             singleton_skipped=False,
+            warning=self._warnings.get(name),
         )
 
     def record_timer_state(
@@ -185,6 +205,7 @@ class PluginHealthTracker:
             last_error=None,
             consecutive_failures=prev.consecutive_failures if prev else 0,
             singleton_skipped=False,
+            warning=self._warnings.get(name),
             fire_at=fire_at,
             fired_at=fired_at,
         )
