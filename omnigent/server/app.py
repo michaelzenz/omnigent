@@ -2963,6 +2963,18 @@ def create_app(
         async def _on_hosts_changed(_host_id: str, owner: str | None) -> None:
             announce_hosts_changed(owner)
 
+        async def _on_duplicate_daemon(
+            host_id: str,
+            owner: str | None,
+            host_name: str,
+        ) -> None:
+            announce_hosts_changed(
+                owner,
+                diagnostic="duplicate_host_daemon",
+                host_id=host_id,
+                host_name=host_name,
+            )
+
         app.include_router(
             create_host_tunnel_router(
                 host_registry,
@@ -2973,6 +2985,7 @@ def create_app(
                 on_host_connect=_on_hosts_changed,
                 on_host_disconnect=_on_hosts_changed,
                 on_host_update=_on_hosts_changed,
+                on_duplicate_daemon=_on_duplicate_daemon,
                 conversation_store=conversation_store,
             ),
             prefix="/v1",

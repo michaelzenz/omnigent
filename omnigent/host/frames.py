@@ -104,6 +104,8 @@ class HostHelloFrame:
         ``omnigent.gateway_inference``). A family that could not be evaluated
         is omitted. ``None`` means unknown (an older host that doesn't report
         it) — never treat it as "nothing is gateway-backed".
+    :param instance_id: Process-lifetime identifier used to distinguish a
+        reconnect from a second daemon using the same stable host identity.
     """
 
     version: str
@@ -114,6 +116,7 @@ class HostHelloFrame:
     gateway_inference: dict[str, bool] | None = None
     telemetry_opt_out: bool = False
     installation_id: str | None = None
+    instance_id: str | None = None
 
 
 @dataclass
@@ -932,6 +935,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "gateway_inference": frame.gateway_inference,
                 "telemetry_opt_out": frame.telemetry_opt_out,
                 "installation_id": frame.installation_id,
+                "instance_id": frame.instance_id,
             }
         )
     if isinstance(frame, HostHarnessReadinessFrame):
@@ -1373,6 +1377,7 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
         gateway_inference=optional_str_bool_map(msg, "gateway_inference"),
         telemetry_opt_out=bool(msg.get("telemetry_opt_out", False)),
         installation_id=_optional_nullable_str(msg, "installation_id"),
+        instance_id=_optional_nullable_str(msg, "instance_id"),
     )
 
 

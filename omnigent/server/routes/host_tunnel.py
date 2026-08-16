@@ -124,6 +124,7 @@ def create_host_tunnel_router(
     on_host_connect: Callable[[str, str | None], Awaitable[None]] | None = None,
     on_host_disconnect: Callable[[str, str | None], Awaitable[None]] | None = None,
     on_host_update: Callable[[str, str | None], Awaitable[None]] | None = None,
+    on_duplicate_daemon: Callable[[str, str | None, str], Awaitable[None]] | None = None,
     on_runner_exited: Callable[[str, str], Awaitable[None]] | None = None,
     local_single_user: bool | None = None,
     runner_exit_reports: RunnerExitReports | None = None,
@@ -159,6 +160,9 @@ def create_host_tunnel_router(
         a host's tunnel closes. Receives the ``host_id``.
     :param on_host_update: Optional async callback fired when a connected
         host reports changed harness readiness. Receives ``host_id`` and owner.
+    :param on_duplicate_daemon: Optional async callback fired when a second
+        daemon process replaces a live connection with the same host identity.
+        Receives ``host_id``, owner, and host display name.
     :param local_single_user: When ``True``, allow a host to re-own a
         ``host_id`` already registered under a different owner — needed
         only for the single-user loopback local server, where the owner
@@ -371,6 +375,23 @@ def create_host_tunnel_router(
                 except Exception:
                     _logger.exception(
                         "on_host_connect callback failed for %s",
+                        host_id,
+                    )
+
+            if conn.duplicate_daemon and on_duplicate_daemon is not None:
+                try:
+                    await asyncio.wait_for(
+                        on_duplicate_daemon(host_id, tunnel_owner, frame.name),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    _logger.warning(
+                        "on_duplicate_daemon callback timed out for %s",
+                        host_id,
+                    )
+                except Exception:
+                    _logger.exception(
+                        "on_duplicate_daemon callback failed for %s",
                         host_id,
                     )
 

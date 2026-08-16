@@ -540,7 +540,13 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
     )
 
 
-def announce_hosts_changed(user_id: str | None) -> None:
+def announce_hosts_changed(
+    user_id: str | None,
+    *,
+    diagnostic: str | None = None,
+    host_id: str | None = None,
+    host_name: str | None = None,
+) -> None:
     """
     Push a ``hosts_changed`` event to a user's session-updates streams.
 
@@ -550,8 +556,18 @@ def announce_hosts_changed(user_id: str | None) -> None:
 
     :param user_id: Owner of the host that changed, or ``None`` in
         single-user mode.
+    :param diagnostic: Optional host diagnostic code for the UI.
+    :param host_id: Host associated with the diagnostic.
+    :param host_name: Human-readable host name for the diagnostic.
     """
-    user_session_stream.publish(_discovery_key(user_id), {"type": "hosts_changed"})
+    event: dict[str, object] = {"type": "hosts_changed"}
+    if diagnostic is not None:
+        event["diagnostic"] = diagnostic
+    if host_id is not None:
+        event["host_id"] = host_id
+    if host_name is not None:
+        event["host_name"] = host_name
+    user_session_stream.publish(_discovery_key(user_id), event)
 
 
 def _native_ask_gate_lock(conversation_id: str, deciding_policy: str) -> asyncio.Lock:

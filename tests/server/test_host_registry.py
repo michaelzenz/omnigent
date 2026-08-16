@@ -41,16 +41,22 @@ class FakeWebSocket:
         return ""  # pragma: no cover
 
 
-def _make_hello(name: str = "test-host") -> HostHelloFrame:
+def _make_hello(
+    name: str = "test-host",
+    *,
+    instance_id: str | None = None,
+) -> HostHelloFrame:
     """Build a minimal HostHelloFrame for tests.
 
     :param name: Human-readable host name.
+    :param instance_id: Optional process-lifetime daemon identifier.
     :returns: A :class:`HostHelloFrame` with default values.
     """
     return HostHelloFrame(
         version="0.1.0",
         frame_protocol_version=1,
         name=name,
+        instance_id=instance_id,
     )
 
 
@@ -130,6 +136,46 @@ def test_deregister_guard_keeps_newer_connection() -> None:
 
     assert registry.deregister("host_gen", conn=old_conn) is False
     assert registry.get("host_gen") is new_conn
+
+
+def test_register_marks_different_live_daemon_instance() -> None:
+    """A second process using the same host identity is diagnosed."""
+    registry = HostRegistry()
+    registry.register(
+        "host_duplicate",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-a"),
+        owner="bob",
+    )
+
+    replacement = registry.register(
+        "host_duplicate",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-b"),
+        owner="bob",
+    )
+
+    assert replacement.duplicate_daemon is True
+
+
+def test_register_does_not_mark_same_daemon_reconnect() -> None:
+    """A reconnect from the same process is not a duplicate-daemon warning."""
+    registry = HostRegistry()
+    registry.register(
+        "host_reconnect",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-a"),
+        owner="bob",
+    )
+
+    replacement = registry.register(
+        "host_reconnect",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-a"),
+        owner="bob",
+    )
+
+    assert replacement.duplicate_daemon is False
 
 
 def test_mark_frame_seen_refreshes_current_connection() -> None:

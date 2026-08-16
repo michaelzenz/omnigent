@@ -807,6 +807,7 @@ class HostProcess:
         """
         self._identity = identity
         self._server_url = server_url.rstrip("/")
+        self._instance_id = os.urandom(16).hex()
         self._runners: dict[str, _RunnerHandle] = {}
         # Retain the host's refreshable auth context after the first tunnel
         # handshake so runner launches can reuse its warm bearer. Failed or
@@ -2935,6 +2936,7 @@ class HostProcess:
             gateway_inference=gateway_inference,
             telemetry_opt_out=_tel_opt_out,
             installation_id=_tel_install_id,
+            instance_id=self._instance_id,
         )
         await ws.send(encode_host_frame(hello))
         self._ws = ws

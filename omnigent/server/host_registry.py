@@ -269,6 +269,7 @@ class HostConnection:
     outbound_queue: asyncio.Queue[str | None]
     connected_at: float
     last_frame_at: float
+    duplicate_daemon: bool = False
     pending_launches: dict[str, asyncio.Future[dict[str, str | None]]] = field(
         default_factory=dict,
     )
@@ -389,8 +390,17 @@ class HostRegistry:
             key = (ws_id, host_id)
             old = self._hosts.get(key)
             if old is not None:
-                _logger.info(
-                    "replacing stale host connection: ws=%s host=%s",
+                old_instance = old.hello.instance_id
+                new_instance = hello.instance_id
+                conn.duplicate_daemon = (
+                    old_instance is not None
+                    and new_instance is not None
+                    and old_instance != new_instance
+                )
+                log = _logger.warning if conn.duplicate_daemon else _logger.info
+                log(
+                    "%s host connection: ws=%s host=%s",
+                    "duplicate daemon replacing" if conn.duplicate_daemon else "replacing stale",
                     ws_id,
                     host_id,
                 )

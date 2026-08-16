@@ -564,6 +564,37 @@ def test_session_added_event_pushes_unwatched_session(
         assert added["session_id"] == s2
 
 
+def test_host_diagnostic_is_forwarded_to_updates_stream(
+    app: FastAPI,
+    stores,
+) -> None:
+    """Host-wide diagnostics reach the app-level updates connection."""
+    session_id = _seed_session(stores, owner=ALICE, title="watched")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        ws.send_text(json.dumps({"type": "watch", "session_ids": [session_id]}))
+        _recv_until(ws, {"snapshot"})
+        sessions_routes.user_session_stream.publish(
+            ALICE,
+            {
+                "type": "hosts_changed",
+                "diagnostic": "duplicate_host_daemon",
+                "host_id": "host_123",
+                "host_name": "Michael's Mac",
+            },
+        )
+
+        frame = _recv_until(ws, {"hosts_changed"})
+
+    assert frame == {
+        "type": "hosts_changed",
+        "diagnostic": "duplicate_host_daemon",
+        "host_id": "host_123",
+        "host_name": "Michael's Mac",
+    }
+
+
 def test_session_added_for_inaccessible_session_is_not_pushed(
     app: FastAPI, stores, fast_rescan: None
 ) -> None:

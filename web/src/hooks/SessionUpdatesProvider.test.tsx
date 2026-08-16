@@ -17,6 +17,7 @@ import type { ConversationsInfiniteData } from "@/lib/sessionListCache";
 // inert. subscribe/subscribeStatus return no-op unsubscribers.
 const setWatched = vi.fn();
 const subscribe = vi.fn((_fn: () => void) => () => {});
+const showToast = vi.fn();
 vi.mock("@/lib/sessionUpdatesSocket", () => ({
   sessionUpdatesSocket: {
     start: vi.fn(),
@@ -24,6 +25,9 @@ vi.mock("@/lib/sessionUpdatesSocket", () => ({
     setWatched: (...args: unknown[]) => setWatched(...args),
     subscribe: (fn: () => void) => subscribe(fn),
   },
+}));
+vi.mock("@/components/ui/toast", () => ({
+  showToast: (...args: unknown[]) => showToast(...args),
 }));
 
 import { SessionUpdatesProvider } from "./SessionUpdatesProvider";
@@ -87,6 +91,7 @@ function lastWatched(): string[] {
 beforeEach(() => {
   setWatched.mockClear();
   subscribe.mockClear();
+  showToast.mockClear();
 });
 
 afterEach(() => {
@@ -163,6 +168,27 @@ function frameHandler(): (frame: unknown) => void {
 function wireItem(id: string, commentsCount: number, commentsUpdatedAt: number | null) {
   return { ...conv(id), comments_count: commentsCount, comments_updated_at: commentsUpdatedAt };
 }
+
+describe("SessionUpdatesProvider host diagnostics", () => {
+  it("shows one sticky toast for a duplicate host daemon", () => {
+    const client = new QueryClient();
+    seedConversations(client, []);
+    renderProvider(client, ["/"]);
+    const handler = frameHandler();
+    const frame = {
+      type: "hosts_changed",
+      diagnostic: "duplicate_host_daemon",
+      host_id: "host_123",
+      host_name: "Michael's Mac",
+    };
+
+    act(() => handler(frame));
+    act(() => handler(frame));
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[1]).toEqual({ duration: 0 });
+  });
+});
 
 describe("SessionUpdatesProvider comments fingerprint", () => {
   it("invalidates the comments cache when a changed frame moves the fingerprint", () => {

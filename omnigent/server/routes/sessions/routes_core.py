@@ -1366,7 +1366,12 @@ def register_core_routes(
                 elif evt_type == "hosts_changed":
                     async with emit_lock:
                         try:
-                            await _send({"type": "hosts_changed"})
+                            frame: dict[str, object] = {"type": "hosts_changed"}
+                            for key in ("diagnostic", "host_id", "host_name"):
+                                value = evt.get(key)
+                                if isinstance(value, str):
+                                    frame[key] = value
+                            await _send(frame)
                         except WebSocketDisconnect:
                             raise
                         except Exception:
