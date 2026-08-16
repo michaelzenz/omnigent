@@ -1281,7 +1281,12 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
-    def clear_runner_id(self, conversation_id: str) -> Conversation:
+    def clear_runner_id(
+        self,
+        conversation_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Null out ``conversations.runner_id``.
 
@@ -1291,6 +1296,10 @@ class ConversationStore(ABC):
 
         :param conversation_id: Session/conversation identifier,
             e.g. ``"conv_abc123"``.
+        :param bump_updated_at: When ``False``, leave ``updated_at`` untouched.
+            Used by the host-reconnect liveness sweep, which nulls a stale
+            runner pin without any content change — bumping ``updated_at``
+            there would falsely light the sidebar's unseen dot.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             with ``conversation_id`` exists.

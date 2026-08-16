@@ -99,7 +99,11 @@ async def _invalidate_stale_runner_bindings(
     ]
     for conv_id in stale:
         try:
-            await asyncio.to_thread(conversation_store.clear_runner_id, conv_id)
+            await asyncio.to_thread(
+                conversation_store.clear_runner_id,
+                conv_id,
+                bump_updated_at=False,
+            )
         except Exception:
             _logger.exception("clear_runner_id(%s) failed", conv_id)
             continue
