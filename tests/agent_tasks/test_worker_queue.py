@@ -255,6 +255,10 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
     assert refreshed_item.state == "running"
     queue = queue_store.get_queue(key)
     assert queue is not None and queue.conversation_id is not None
+    worker_conv = worker_setup["conversation_store"].get_conversation(queue.conversation_id)
+    assert worker_conv is not None
+    assert worker_conv.kind == "default"
+    assert worker_conv.parent_conversation_id is None
     worker_setup["ensure_runner"].assert_called_once()
     # The runner was ensured for the freshly created worker conversation.
     assert worker_setup["ensure_runner"].call_args.args[0] == queue.conversation_id

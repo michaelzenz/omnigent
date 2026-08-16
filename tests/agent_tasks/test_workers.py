@@ -111,5 +111,6 @@ async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
     assert activated.agent_profile_id is None
     conv = conversation_store.get_conversation(conversation_id)
     assert conv is not None
-    assert conv.kind == "sub_agent"
-    assert conv.parent_conversation_id == task.manager_conversation_id
+    assert conv.kind == "default"
+    assert conv.parent_conversation_id is None
+    assert conv.sub_agent_name is None

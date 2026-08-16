@@ -150,8 +150,6 @@ async def activate_worker_lane(
     body = build_role_session_request(
         worker_role_profile,
         title=role_key,
-        parent_session_id=manager_conversation_id,
-        sub_agent_name=role_key,
     )
     request = _make_internal_request(app_state)
     if session_creator is None:

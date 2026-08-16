@@ -2004,6 +2004,7 @@ def create_agent_tasks_router(
             task = await _get_task_or_404(worker.task_id, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
             worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
+            had_session = worker.session_id is not None
 
             activated, _conversation_id = await activate_worker_lane(
                 task=task,
@@ -2017,7 +2018,7 @@ def create_agent_tasks_router(
                 app_state=request.app.state,
                 user_id=user_id,
             )
-            if activated.session_id is not None:
+            if had_session and activated.session_id is not None:
                 await _best_effort_ensure_conversation_runner(
                     request,
                     activated.session_id,

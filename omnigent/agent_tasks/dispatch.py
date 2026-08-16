@@ -176,10 +176,8 @@ async def dispatch_worker_for_item(
         from omnigent.server.routes.sessions import _make_internal_request
 
         body = build_role_session_request(
-            _worker_profile_from_params(params, task),
+            _worker_profile_from_params(params),
             title=params.role_key,
-            parent_session_id=task.manager_conversation_id,
-            sub_agent_name=params.role_key,
         )
         request = _make_internal_request(app_state)
         resp = await session_creator(
@@ -238,7 +236,6 @@ async def dispatch_worker_for_item(
 
 def _worker_profile_from_params(
     params: DispatchParams,
-    task: Task,
 ) -> TaskRoleProfile:
     """Build a minimal TaskRoleProfile from resolved dispatch params.
 
