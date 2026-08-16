@@ -11852,6 +11852,13 @@ def create_runner_app(
     ) -> None:
         _dispatched_agent_id = cast(str | None, msg_body.get("agent_id"))
         _prior_agent_id = _session_agent_ids.get(conv)
+        _raw_agent_version = msg_body.get("agent_version")
+        _dispatched_agent_version = (
+            _raw_agent_version
+            if isinstance(_raw_agent_version, int) and not isinstance(_raw_agent_version, bool)
+            else None
+        )
+        _prior_agent_version = _version_cache.get(conv)
         if (
             _dispatched_agent_id
             and _prior_agent_id is not None
@@ -11872,8 +11879,24 @@ def create_runner_app(
             _session_snapshot_cache.pop(conv, None)
             if process_manager is not None:
                 await process_manager.release(conv)
+        elif (
+            _dispatched_agent_version is not None
+            and _prior_agent_version is not None
+            and _dispatched_agent_version > _prior_agent_version
+        ):
+            _logger.info(
+                "agent bundle update detected for %s: v%s -> v%s; resetting session caches",
+                conv,
+                _prior_agent_version,
+                _dispatched_agent_version,
+            )
+            _clear_session_agent_caches(conv, _dispatched_agent_id)
+            if process_manager is not None:
+                await process_manager.release(conv)
         if _dispatched_agent_id:
             _session_agent_ids[conv] = _dispatched_agent_id
+        if _dispatched_agent_version is not None:
+            _version_cache[conv] = _dispatched_agent_version
 
         cached_spec_entry = _session_spec_cache.get(conv)
         cached_spec = _unwrap_resolved_spec(cached_spec_entry)
@@ -11970,6 +11993,7 @@ def create_runner_app(
                 or msg_body.get("has_mcp_servers") is True
             ),
             instructions=instructions,
+            agent_version=_dispatched_agent_version,
         )
 
         harness_body: _JsonObject = {

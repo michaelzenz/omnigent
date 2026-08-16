@@ -2509,6 +2509,7 @@ def create_app(
                 agent_queue_store=agent_queue_store,
                 session_creator=_session_creator,
                 artifact_store=artifact_store,
+                agent_cache=agent_cache,
             ),
             prefix="/v1",
             tags=["agent_tasks"],

@@ -1562,6 +1562,7 @@ def register_events_routes(
             file_store=file_store,
             artifact_store=artifact_store,
             has_mcp_servers=_has_mcp_servers,
+            agent_version=_agent.version if _agent else None,
             created_by=created_by,
             runner_router=runner_router,
             native_terminal_ready=native_terminal_ready,

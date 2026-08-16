@@ -4559,6 +4559,7 @@ async def _forward_event_to_runner(
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     has_mcp_servers: bool = False,
+    agent_version: int | None = None,
     created_by: str | None = None,
     host_store: HostStore | None = None,
 ) -> str:
@@ -4587,6 +4588,8 @@ async def _forward_event_to_runner(
         ``has_mcp_servers`` hint so ``proxy_stream`` knows to load
         the agent spec and initialise :class:`ProxyMcpManager` for
         this turn. ``False`` by default (agents without MCP servers).
+    :param agent_version: Current persisted bundle version. The runner uses a
+        newer value to invalidate the session's loaded spec before this turn.
     :param created_by: Authenticated identity of the posting actor,
         recorded on the persisted item for attribution.
     :param host_store: Host registrations, read only to learn whether this
@@ -4672,6 +4675,7 @@ async def _forward_event_to_runner(
         # servers — False/absent saves the runner from a no-op spec
         # load on every turn for agents without MCP servers.
         "has_mcp_servers": has_mcp_servers,
+        "agent_version": agent_version,
         # Id of the item just persisted for this turn. On a cold runner
         # cache the runner reloads history (which includes this item in
         # PRE-resolution form) and drops it by id, appending its own
@@ -5239,6 +5243,7 @@ async def _dispatch_session_event_to_runner_impl(
     file_store: FileStore | None,
     artifact_store: ArtifactStore | None,
     has_mcp_servers: bool = False,
+    agent_version: int | None = None,
     created_by: str | None = None,
     runner_router: RunnerRouter | None = None,
     native_terminal_ready: bool = False,
@@ -5539,6 +5544,7 @@ async def _dispatch_session_event_to_runner_impl(
         file_store=file_store,
         artifact_store=artifact_store,
         has_mcp_servers=has_mcp_servers,
+        agent_version=agent_version,
         created_by=created_by,
         host_store=host_store,
     )

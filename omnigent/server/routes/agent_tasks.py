@@ -878,6 +878,7 @@ def create_agent_tasks_router(
     agent_queue_store: AgentQueueStore | None = None,
     session_creator: Any | None = None,
     artifact_store: Any | None = None,
+    agent_cache: Any | None = None,
 ) -> APIRouter:
     """Build the managed-task router.
 
@@ -889,6 +890,7 @@ def create_agent_tasks_router(
     :param task_role_profile_store: Glossary role definitions used for bootstrap.
     :param user_role_session_store: Per-user session bindings for singleton roles.
     :param host_store: Used to auto-provision role profiles with a default host.
+    :param agent_cache: Loaded agent-spec cache to warm-swap after bundle edits.
     :param auth_provider: Auth provider for owner attribution and access
         checks. ``None`` disables auth enforcement.
     :param permission_store: Used to let admins list/view any task.
@@ -1541,6 +1543,14 @@ def create_agent_tasks_router(
             bundle_location = f"{bound_agent.id}/{bundle_hash}"
             await asyncio.to_thread(artifact_store.put, bundle_location, bundle_bytes)
             await asyncio.to_thread(agent_store.update, bound_agent.id, bundle_location)
+            if agent_cache is not None:
+                await asyncio.to_thread(
+                    agent_cache.replace,
+                    bound_agent.id,
+                    bundle_location,
+                    bundle_bytes,
+                    expand_env=True,
+                )
             agent_name, candidates, prompt = await _resolve_role_agent_fields(
                 profile, include_prompt=True
             )
@@ -1589,6 +1599,14 @@ def create_agent_tasks_router(
             bundle_location = f"{bound_agent.id}/{bundle_hash}"
             await asyncio.to_thread(artifact_store.put, bundle_location, bundle_bytes)
             await asyncio.to_thread(agent_store.update, bound_agent.id, bundle_location)
+            if agent_cache is not None:
+                await asyncio.to_thread(
+                    agent_cache.replace,
+                    bound_agent.id,
+                    bundle_location,
+                    bundle_bytes,
+                    expand_env=True,
+                )
             agent_name, candidates, prompt = await _resolve_role_agent_fields(
                 profile, include_prompt=True
             )
