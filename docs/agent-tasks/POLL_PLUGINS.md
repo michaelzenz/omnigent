@@ -16,10 +16,21 @@ Each plugin is one folder; the host only executes **`run.py`**.
 
 ### Where the host scans for plugins
 
-`~/.omnigent/poll_plugins`
+The host scans two roots inclusively and merges the results:
 
-The host scans the plugin directory directly, so edits to repo plugins take effect
-on the next tick with no copy/sync.
+1. `~/.omnigent/poll_plugins` (or `$OMNIGENT_DATA_DIR/poll_plugins`)
+2. `<puppygarden_root>/poll_plugins` — 
+    when `host.puppygarden.root` is set in
+   `~/.omnigent/config.yaml`:
+
+   ```yaml
+   host:
+     puppygarden:
+       root: /path/to/your/omnigent/clone/puppygarden
+   ```
+
+The host scans these directories directly, so edits take effect on
+the next tick with no copy/sync.
 
 Each plugin folder must include **`config.yaml`** with at least:
 
@@ -218,3 +229,5 @@ See `puppygarden/poll_plugins/github_pr/run.py` in the repository.
 
 # Hint
 Look at how existing plugin works, in additional to regular scripts, there are ones directly calling mcps, for ex slack_watch.
+
+Try to write new plugins at host.puppygarden.root, it's inside the code dir so have richer tools

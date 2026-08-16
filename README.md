@@ -120,22 +120,20 @@ uv tool install -q --python 3.12 git+https://github.com/omnigent-ai/omnigent.git
 
 The repo ships usable poll/timer plugins under `puppygarden/poll_plugins/` and
 `puppygarden/timer_plugins/`. The host daemon scans `~/.omnigent/...` by default,
-so to run the repo's plugins from a clone, point the host at them in
-`~/.omnigent/config.yaml` (temporary approach until a proper plugin
-install/sync exists):
+so to run the repo's plugins from a clone, point the host at the repo's
+`puppygarden/` directory in `~/.omnigent/config.yaml` (temporary approach until
+a proper plugin install/sync exists):
 
 ```yaml
 host:
-  polling:
-    poll_plugins:
-      root: /path/to/your/omnigent/clone/puppygarden/poll_plugins
-    timer_plugins:
-      root: /path/to/your/omnigent/clone/puppygarden/timer_plugins
+  puppygarden:
+    root: /path/to/your/omnigent/clone/puppygarden
 ```
 
-The host scans those directories directly, so edits take effect on the next
-tick. See `docs/agent-tasks/POLL_PLUGINS.md` and `TIMER_PLUGINS.md` for the
-plugin contract.
+The host scans both `~/.omnigent/<section>` and `<puppygarden>/<section>`
+inclusively (local overrides on name collision), so edits take effect on the
+next tick. See `docs/agent-tasks/POLL_PLUGINS.md` and `TIMER_PLUGINS.md` for
+the plugin contract.
 
 </details>
 
