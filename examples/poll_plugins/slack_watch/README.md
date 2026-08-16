@@ -1,46 +1,57 @@
 # slack_watch
 
 Poll plugin that ingests inbound Slack messages (channels, DMs, MPIMs, and
-thread replies) as `slack.message.received` task events. It polls the Slack Web
-API on a fixed interval and emits one event per new message from anyone other
-than the token owner.
+thread replies) as `slack.message.received` task events. It polls Slack on a
+fixed interval and emits one event per new message from anyone other than the
+authenticated user.
 
 This is the **pull-based** inbound path. Slack has no firehose endpoint, so this
 plugin fans out: discover conversations → fetch new history per active
 conversation → fetch new thread replies. See `docs/agent-tasks/POLL_PLUGINS.md`
 for the host contract.
 
+## No persisted Slack token — direct MCP
+
+This plugin does **not** read or persist any Slack token. It drives a Slack MCP
+server directly via the generic `mcp` Python SDK (stdio transport), calling the
+`slack_read_api_call` tool with `raw: true` to get full Slack Web API JSON.
+
+The MCP launch command lives in `config.yaml` under `mcp:`:
+
+- **At Databricks**: `dbexec repo run mcp start-single slack` — `dbexec`
+  resolves auth via dbcert at runtime as the invoking user. No token is ever
+  written to disk. The MCP acts as *you* (your Slack identity), so it sees your
+  personal DMs/MPIMs/channels including other people's messages to you.
+- **Elsewhere**: swap in your own launch command (`npx`/`uvx`/binary) and add
+  any env vars that server needs under `mcp.env` (e.g. `SLACK_BOT_TOKEN`).
+
+`run.py` imports only the open `mcp` SDK — it contains zero Databricks-specific
+or hardcoded launch strings; everything comes from `config.yaml`.
+
 ## Why polling (not push)
 
 Slack push (Events API / Socket Mode / RTM) needs app config or scopes this
-plugin's token does not have. A user-scoped token (`xoxp-`) can read the
-conversations it's a member of via the Web API, so polling is the complete
-inbound solution. Latency = the poll `interval_s` (no sub-second push).
+plugin does not have. The MCP's user-scoped auth can read the conversations
+you're a member of via the Web API, so polling is the complete inbound
+solution. Latency = the poll `interval_s` (no sub-second push).
 
 ## Files
 
 - `run.py` — entry point executed by the host every `interval_s`.
-- `config.yaml` — token, types, limit, backfill, filters.
+- `config.yaml` — MCP launch config, types, limit, backfill, filters.
 - `state.yaml` — written by `run.py` each tick; the watermark store.
-
-## Token
-
-Set `OMNIGENT_SLACK_TOKEN` in the host environment (preferred) or `token:` in
-`config.yaml`. A **user token** (`xoxp-`) sees your personal DMs/MPIMs/channels
-including other people's messages to you. A **bot token** (`xoxb-`) sees only
-conversations the bot is a member of (people must DM/invite the bot).
-
-Required scopes (user token): `channels:read`, `groups:read`, `im:read`,
-`mpim:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`.
 
 ## config.yaml
 
 | key | default | meaning |
 |---|---|---|
-| `interval_s` | 60 | host poll cadence |
+| `interval_s` | 180 | host poll cadence (3 min) |
+| `mcp.command` | `dbexec` | how to launch the Slack MCP server |
+| `mcp.args` | `["repo","run","mcp","start-single","slack"]` | launch args |
+| `mcp.env` | (inherit) | optional env vars for non-dbcert auth |
 | `types` | `public_channel,private_channel,im,mpim` | `conversations.list` types filter |
 | `limit` | 200 | page size for list/history/replies |
-| `backfill_s` | 60 | on first discovery, ingest the last N seconds (must be ≥ `interval_s`) |
+| `backfill_s` | 180 | on first discovery, ingest the last N seconds (must be ≥ `interval_s`) |
 | `ignore_bots` | true | skip messages carrying a `bot_id` |
 | `ignore_subtypes` | join/leave/topic/… | skip noisy non-human `subtype`s |
 | `seen_bound` | 2000 | cap on the in-memory dedup set |
@@ -64,7 +75,8 @@ seen:                     # bounded list of "{channel}:{ts}" dedup keys
 
 ## How a tick works
 
-1. `auth.test` → resolve `self_user_id` (to filter our own messages).
+1. Spawn the MCP server (per `mcp:` config), initialize, `auth.test` → resolve
+   `self_user_id` (to filter our own messages).
 2. **Discovery**: `conversations.list` first page (newest first), diff IDs
    against `conversations`. New IDs are added with
    `watermark = now - backfill_s`. `backfill_s` must be ≥ `interval_s` so a
@@ -76,7 +88,9 @@ seen:                     # bounded list of "{channel}:{ts}" dedup keys
    `watermark` to the newest ts.
 4. **Threads**: for a parent whose `latest_reply > thread_watermark`, call
    `conversations.replies(oldest=thread_watermark)` and emit new replies.
-5. Save state.
+5. Save state. The MCP subprocess is torn down at end of tick.
+
+All Slack calls go through `slack_read_api_call(endpoint=…, params=…, raw=true)`.
 
 Dedup: Slack `ts` is unique per message; `{channel}:{ts}` keys are tracked in
 `seen` (bounded) so boundary messages re-fetched across ticks are not
@@ -94,12 +108,15 @@ double-emitted. Watermarks are also advanced past the newest ts.
 ## Limitations
 
 - **No push latency**: a new message is seen within `interval_s`, not instantly.
+- **Per-tick MCP spawn**: each tick spawns a fresh `dbexec` subprocess (a couple
+  seconds startup). Fine for a 3-min interval; would matter for sub-second polling.
 - **First-page discovery only**: a full `conversations.list` pagination is not
   done each tick; only the first (newest) page. New conversations appear there,
   so they're detected within one tick. If `state.yaml` is deleted, only the
   first page is re-cached — run a manual full scan or accept the partial cache.
-- **Membership-bound**: the token can only read conversations it's a member of.
-  A user token reads your DMs/channels; a bot token reads only bot-joined ones.
+- **Membership-bound**: the MCP auth can only read conversations it's a member
+  of. A user-scoped auth reads your DMs/channels; a bot-scoped auth reads only
+  bot-joined ones.
 - **Edits/deletes**: edits re-emit the same `ts` (dedup suppresses); deletes
   are not surfaced.
 
@@ -118,3 +135,5 @@ contract is subtle and easy to break:
   `seen` for correctness across restarts (it's bounded and in-memory).
 - The filter order in `run.py` (self → bots → subtypes) determines what's
   emitted; changing it changes the event stream retroactively for new messages.
+- **Do not hardcode a Slack token or launch command in `run.py`.** All transport
+  config lives in `config.yaml` under `mcp:` so the code stays org-agnostic.
