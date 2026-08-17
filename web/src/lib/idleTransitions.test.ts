@@ -169,12 +169,18 @@ describe("computeUnreadBadgeIds", () => {
   /** Conversation with badge-relevant fields under test. */
   function convB(
     id: string,
-    opts: { status?: Conversation["status"]; pending?: number; updatedAt?: number } = {},
+    opts: {
+      status?: Conversation["status"];
+      pending?: number;
+      updatedAt?: number;
+      archived?: boolean;
+    } = {},
   ): Conversation {
     return {
       ...conv(id, opts.status ?? "idle"),
       updated_at: opts.updatedAt ?? 100,
       pending_elicitations_count: opts.pending ?? 0,
+      archived: opts.archived ?? false,
     };
   }
 
@@ -200,6 +206,16 @@ describe("computeUnreadBadgeIds", () => {
     // Neither unseen nor awaiting -> contributes nothing. A failure here
     // means the badge would count every listed session.
     const next = computeUnreadBadgeIds([convB("a")], undefined, true, unseenIds());
+    expect(next.size).toBe(0);
+  });
+
+  it("excludes archived sessions even when unseen or awaiting input", () => {
+    const next = computeUnreadBadgeIds(
+      [convB("unseen", { archived: true }), convB("awaiting", { archived: true, pending: 1 })],
+      undefined,
+      true,
+      unseenIds("unseen"),
+    );
     expect(next.size).toBe(0);
   });
 

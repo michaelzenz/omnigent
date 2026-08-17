@@ -81,9 +81,9 @@ export function detectNewElicitations(
  * flags as needing attention, including sessions that finished while this
  * window wasn't open.
  *
- * A session counts as unread when it is NOT actively viewed (the window is
- * focused AND it's the open conversation — the one suppression rule; a
- * blurred window means even the open conversation counts) AND either:
+ * An unarchived session counts as unread when it is NOT actively viewed (the
+ * window is focused AND it's the open conversation — the one suppression
+ * rule; a blurred window means even the open conversation counts) AND either:
  *
  *   * it has pending elicitations (the sidebar's "awaiting input" badge), or
  *   * \`isUnseen\` says it has activity since the user last had it open (the
@@ -109,6 +109,7 @@ export function computeUnreadBadgeIds(
 ): Set<string> {
   const unread = new Set<string>();
   for (const conversation of conversations) {
+    if (conversation.archived) continue;
     // The broker is a background agent — its chat is not a reading surface,
     // so it never counts toward the unread badge (its output lands on the
     // PuppyGarden board, not in the sidebar).
