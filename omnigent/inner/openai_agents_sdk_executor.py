@@ -32,6 +32,7 @@ from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from
 from omnigent.llms.errors import is_context_length_exceeded as _is_context_length_exceeded
 from omnigent.reasoning_effort import OPENAI_AGENTS_EFFORTS, validate_effort
 from omnigent.spec.types import RetryPolicy
+from omnigent.tools.mcp_search import MCP_TOOL_CALL_NAME
 
 from .async_utils import run_sync_on_thread
 from .executor import (
@@ -839,6 +840,17 @@ def _tool_args_from_raw_item(raw_item: RawToolItem) -> RawToolItemParts:
     return RawToolItemParts(name=resolved_name, args=args, call_id=call_id)
 
 
+def _observed_tool_call(parts: RawToolItemParts) -> tuple[str, ToolArgs]:
+    """Expose the selected MCP tool, not the generic gateway, in events."""
+    if parts.name != MCP_TOOL_CALL_NAME:
+        return parts.name, parts.args
+    target_name = parts.args.get("name")
+    target_args = parts.args.get("arguments")
+    if isinstance(target_name, str) and "__" in target_name and isinstance(target_args, dict):
+        return target_name, target_args
+    return parts.name, parts.args
+
+
 def _build_reasoning_model_settings(effort: str | None) -> dict[str, object]:
     """Build ModelSettings kwargs for reasoning effort."""
     if effort is None:
@@ -1384,7 +1396,26 @@ class OpenAIAgentsSDKExecutor(Executor):
                 except (TypeError, json.JSONDecodeError):
                     args = {}
 
-                result = self._tool_executor(_tool_name, args)
+                dispatch_name = _tool_name
+                dispatch_args = args
+                if _tool_name == MCP_TOOL_CALL_NAME:
+                    target_name = args.get("name") if isinstance(args, dict) else None
+                    target_args = args.get("arguments") if isinstance(args, dict) else None
+                    if (
+                        not isinstance(target_name, str)
+                        or "__" not in target_name
+                        or not isinstance(target_args, dict)
+                    ):
+                        return {
+                            "error": (
+                                "mcp_tool_call requires a namespaced server__tool "
+                                "name and an arguments object"
+                            )
+                        }
+                    dispatch_name = target_name
+                    dispatch_args = target_args
+
+                result = self._tool_executor(dispatch_name, dispatch_args)
                 if hasattr(result, "__await__"):
                     result = await result  # type: ignore[assignment]
                 return result
@@ -1683,14 +1714,15 @@ class OpenAIAgentsSDKExecutor(Executor):
                         sdk_item = item_event.item
                         if sdk_item.type == "tool_call_item":
                             parts = _tool_args_from_raw_item(sdk_item.raw_item)
+                            observed_name, observed_args = _observed_tool_call(parts)
                             pending_tools[parts.call_id or parts.name] = (
-                                parts.name,
+                                observed_name,
                                 time.monotonic(),
                             )
                             saw_tool_activity = True
                             yield ToolCallRequest(
-                                name=parts.name,
-                                args=parts.args,
+                                name=observed_name,
+                                args=observed_args,
                                 metadata={"call_id": parts.call_id} if parts.call_id else {},
                             )
                         elif sdk_item.type == "tool_call_output_item":

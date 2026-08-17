@@ -12109,6 +12109,13 @@ def create_runner_app(
         _spec_tools = _session_tool_schemas.get(conv) or []
         _client_tools = cast(list[_JsonObject], msg_body.get("tools") or [])
         merged_tools = _merge_request_client_tools(_spec_tools, _client_tools)
+        if harness_name == "openai-agents":
+            from omnigent.tools.mcp_search import openai_agents_lazy_tool_schemas
+
+            # The OpenAI Agents SDK has no native ToolSearch equivalent. Keep
+            # builtins eager, but replace the potentially large MCP surface with
+            # two small discovery/dispatch tools before building the request.
+            merged_tools = openai_agents_lazy_tool_schemas(merged_tools)
         if merged_tools:
             harness_body["tools"] = merged_tools
         _spec_names = {
@@ -12463,7 +12470,15 @@ def create_runner_app(
                 return
 
             event_body = _wrap_as_message_event(body)
-            _inject_mcp_schemas(event_body, _mcp_schemas)
+            if harness_name == "openai-agents" and _mcp_schemas:
+                from omnigent.tools.mcp_search import openai_agents_lazy_tool_schemas
+
+                existing_tools = cast(list[_JsonObject], event_body.get("tools") or [])
+                event_body["tools"] = openai_agents_lazy_tool_schemas(
+                    existing_tools + _mcp_schemas
+                )
+            else:
+                _inject_mcp_schemas(event_body, _mcp_schemas)
             _response_id: str | None = None
             try:
                 async with client.stream(
@@ -15139,6 +15154,82 @@ def create_runner_app(
                     status_code=200,
                     content={"error": {"code": -32000, "message": "Missing tool name"}},
                 )
+
+            from omnigent.tools.mcp_search import (
+                MCP_TOOL_SEARCH_NAME,
+                search_mcp_tool_schemas,
+            )
+
+            if tool_name == MCP_TOOL_SEARCH_NAME:
+                if mcp_manager is None:
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "error": {
+                                "code": -32000,
+                                "message": "Runner MCP manager not configured",
+                            }
+                        },
+                    )
+                spec_entry = _session_spec_cache.get(session_id)
+                spec = _unwrap_resolved_spec(spec_entry)
+                if spec is None and spec_resolver is not None:
+                    _agent_id = _session_agent_ids.get(session_id)
+                    if _agent_id:
+                        try:
+                            resolved = await spec_resolver(_agent_id, session_id)
+                            spec = _unwrap_resolved_spec(resolved)
+                        except Exception:  # noqa: BLE001
+                            pass
+                if spec is None:
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "error": {
+                                "code": -32000,
+                                "message": f"No spec available for session {session_id!r}",
+                            }
+                        },
+                    )
+                query = arguments.get("query")
+                if not isinstance(query, str) or not query.strip():
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "error": {
+                                "code": -32602,
+                                "message": "mcp_tool_search requires a non-empty query",
+                            }
+                        },
+                    )
+                server = arguments.get("server")
+                if not isinstance(server, str):
+                    server = None
+                limit = arguments.get("limit", 5)
+                if not isinstance(limit, int):
+                    limit = 5
+                try:
+                    schema_result = await mcp_manager.schemas_for(spec)
+                    search_result = search_mcp_tool_schemas(
+                        schema_result.schemas,
+                        query=query,
+                        server=server,
+                        limit=limit,
+                    )
+                    output = _json.dumps(search_result)
+                except Exception as exc:  # noqa: BLE001
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "error": {
+                                "code": -32000,
+                                "message": _client_safe_error_detail(
+                                    exc, context="MCP tool search"
+                                ),
+                            }
+                        },
+                    )
+                return JSONResponse(content={"result": {"output": output}})
 
             if "__" in tool_name:
                 if mcp_manager is None:

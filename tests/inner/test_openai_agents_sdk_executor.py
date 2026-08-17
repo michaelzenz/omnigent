@@ -31,13 +31,19 @@ from omnigent.inner.executor import (
 )
 from omnigent.inner.openai_agents_sdk_executor import (
     OpenAIAgentsSDKExecutor,
+    RawToolItemParts,
     _normalize_content_blocks_for_chat,
     _normalize_responses_items_for_chat,
+    _observed_tool_call,
     _ReasoningBlockFilterStream,
     _sanitize_replay_item,
     _wrap_client_for_reasoning_models,
 )
 from omnigent.llms.errors import is_context_length_exceeded as _is_context_length_exceeded
+from omnigent.tools.mcp_search import (
+    MCP_TOOL_CALL_NAME,
+    openai_agents_lazy_tool_schemas,
+)
 
 
 def _run(coro):
@@ -481,6 +487,81 @@ class TestOpenAIAgentsSDKExecutor(unittest.TestCase):
             tools[0].params_json_schema["required"],
             ["tool", "session", "args"],
         )
+
+    def test_mcp_tool_call_dispatches_the_discovered_namespaced_tool(self):
+        async def _t():
+            calls = []
+
+            async def _execute(name, args):
+                calls.append((name, args))
+                return {"ok": True}
+
+            executor = OpenAIAgentsSDKExecutor(client=object())
+            executor._tool_executor = _execute
+            schemas = openai_agents_lazy_tool_schemas(
+                [
+                    {
+                        "name": "google__drive_file_list",
+                        "description": "List Drive files",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ]
+            )
+            tools = executor._build_tools(_fake_agents_sdk(), schemas)
+            call_tool = next(tool for tool in tools if tool.name == MCP_TOOL_CALL_NAME)
+
+            result = await call_tool.on_invoke_tool(
+                None,
+                '{"name":"google__drive_file_list","arguments":{"page_size":10}}',
+            )
+
+            self.assertEqual(result, {"ok": True})
+            self.assertEqual(
+                calls,
+                [("google__drive_file_list", {"page_size": 10})],
+            )
+
+        _run(_t())
+
+    def test_mcp_tool_call_rejects_non_namespaced_targets(self):
+        async def _t():
+            executor = OpenAIAgentsSDKExecutor(client=object())
+            executor._tool_executor = lambda name, args: None
+            schemas = openai_agents_lazy_tool_schemas(
+                [
+                    {
+                        "name": "google__drive_file_list",
+                        "description": "List Drive files",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ]
+            )
+            tools = executor._build_tools(_fake_agents_sdk(), schemas)
+            call_tool = next(tool for tool in tools if tool.name == MCP_TOOL_CALL_NAME)
+
+            result = await call_tool.on_invoke_tool(
+                None,
+                '{"name":"sys_os_shell","arguments":{"command":"pwd"}}',
+            )
+
+            self.assertIn("error", result)
+
+        _run(_t())
+
+    def test_mcp_tool_call_events_expose_the_selected_tool_name(self):
+        name, args = _observed_tool_call(
+            RawToolItemParts(
+                name=MCP_TOOL_CALL_NAME,
+                args={
+                    "name": "google__drive_file_list",
+                    "arguments": {"page_size": 10},
+                },
+                call_id="call_1",
+            )
+        )
+
+        self.assertEqual(name, "google__drive_file_list")
+        self.assertEqual(args, {"page_size": 10})
 
     def test_streams_text_and_tool_events(self):
         async def _t():
