@@ -1616,6 +1616,24 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def rewind_conversation(
+        self,
+        conversation_id: str,
+        *,
+        from_message_id: str,
+    ) -> Conversation:
+        """Delete a persisted user message and every item after it.
+
+        The operation is atomic and resets the conversation's position allocator
+        to the removed message's position. Earlier items and child sessions are
+        preserved.
+
+        :raises LookupError: If the conversation or target item does not exist.
+        :raises ValueError: If the target is not a user-authored message.
+        """
+        ...
+
+    @abstractmethod
     def switch_conversation_agent(
         self,
         conversation_id: str,

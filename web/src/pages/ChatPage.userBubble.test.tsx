@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
 import { FileViewerContext } from "@/shell/FileViewerContext";
-import { BubbleView } from "./ChatPage";
+import { useChatStore } from "@/store/chatStore";
+import { BubbleView, SessionRewindContext } from "./ChatPage";
 
 // UserBubble renders its text through the same markdown renderer as the
 // assistant bubble (FilePathAwareMessageResponse → Streamdown). These tests
@@ -46,6 +47,16 @@ function renderBubble(bubble: Bubble) {
   return render(
     <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
       <BubbleView bubble={bubble} />
+    </FileViewerContext.Provider>,
+  );
+}
+
+function renderEditableBubble(bubble: Bubble) {
+  return render(
+    <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
+      <SessionRewindContext.Provider value>
+        <BubbleView bubble={bubble} />
+      </SessionRewindContext.Provider>
     </FileViewerContext.Provider>,
   );
 }
@@ -255,6 +266,27 @@ describe("UserBubble copy button", () => {
       }),
     );
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+});
+
+describe("UserBubble rewind editor", () => {
+  it("opens and cancels locally without rewinding", () => {
+    const rewindAndSend = vi.fn();
+    useChatStore.setState({
+      conversationId: "conv_1",
+      sessionHarness: "openai-agents",
+      boundAgentId: "agent_1",
+      rewindAndSend,
+    });
+    renderEditableBubble(userBubble("edit me"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit and rewind" }));
+
+    expect(screen.getByTestId("rewind-message-editor")).toHaveValue("edit me");
+    expect(rewindAndSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("rewind-message-editor")).toBeNull();
+    expect(screen.getByText("edit me")).toBeInTheDocument();
   });
 });
 

@@ -18,6 +18,7 @@ import {
   interrupt,
   listRunners,
   openSessionStream,
+  rewindSession,
   postEvent,
   SESSION_HISTORY_PAGE_SIZE,
   stopSession,
@@ -308,6 +309,21 @@ describe("forkSession", () => {
   it("surfaces a non-ok response as a thrown error (e.g. 403 no access)", async () => {
     fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 403 }));
     await expect(forkSession("conv_src")).rejects.toThrow(/403/);
+  });
+});
+
+describe("rewindSession", () => {
+  it("POSTs the persisted user message id to the rewind endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ session_id: "conv abc", from_message_id: "msg_1" }),
+    );
+
+    await rewindSession("conv abc", "msg_1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv%20abc/rewind");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ from_message_id: "msg_1" });
   });
 });
 

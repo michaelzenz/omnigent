@@ -54,6 +54,7 @@ from omnigent.db.query_context import query_name_scope
 from omnigent.db.utils import (
     _supports_fts5,
     build_search_snippet,
+    delete_fts_by_conversation,
     delete_fts_by_conversation_ids,
     ensure_fts_table,
     extract_search_text,
@@ -3552,6 +3553,77 @@ class SqlAlchemyConversationStore(ConversationStore):
             up_to_response_id=up_to_response_id,
             project_id=project_id,
         )
+
+    def rewind_conversation(
+        self,
+        conversation_id: str,
+        *,
+        from_message_id: str,
+    ) -> Conversation:
+        """Atomically remove a user message and all subsequent items."""
+        now = now_epoch()
+        with self._conv_session("rewind_conversation") as session:
+            self._lock_conversation(session, conversation_id)
+            conversation = session.get(
+                SqlConversation,
+                (current_workspace_id(), conversation_id),
+            )
+            if conversation is None:
+                raise LookupError(f"conversation not found: {conversation_id!r}")
+
+            target = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == from_message_id,
+                )
+            ).scalar_one_or_none()
+            if target is None:
+                raise LookupError(
+                    f"message not found in conversation {conversation_id!r}: "
+                    f"{from_message_id!r}"
+                )
+            decoded = self._decode_item_data_batch([target.data])[0]
+            item = _to_item(target, decoded)
+            if item.type != "message" or getattr(item.data, "role", None) != "user":
+                raise ValueError(f"rewind target is not a user message: {from_message_id!r}")
+
+            retained_rows = (
+                session.execute(
+                    select(SqlConversationItem)
+                    .where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.position < target.position,
+                    )
+                    .order_by(SqlConversationItem.position.asc())
+                )
+                .scalars()
+                .all()
+            )
+            delete_fts_by_conversation(session, conversation_id)
+            session.execute(
+                delete(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.position >= target.position,
+                )
+            )
+            insert_fts_bulk(
+                session,
+                [
+                    (row.id, conversation_id, row.search_text or "")
+                    for row in retained_rows
+                ],
+            )
+            conversation.next_position = target.position
+            conversation.updated_at = now
+            session.flush()
+
+        rewound = self.get_conversation(conversation_id)
+        if rewound is None:
+            raise LookupError(f"conversation not found after rewind: {conversation_id!r}")
+        return rewound
 
     def _fork_conversation_with_id(
         self,

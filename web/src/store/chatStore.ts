@@ -69,6 +69,7 @@ import {
   interrupt as interruptSession,
   openSessionStream,
   postEvent,
+  rewindSession,
   type SessionItemsPage,
   updateSession,
 } from "@/lib/sessionsApi";
@@ -127,6 +128,10 @@ export interface SendOptions {
    * `send` already set `conversationId` before the callback.
    */
   onConversationCreated?: (conversationId: string) => void;
+  /** Reuse already-uploaded attachment blocks for an edited persisted message. */
+  contentOverride?: MessageContentBlock[];
+  /** Keep the preserved queue paused until the replacement POST is accepted. */
+  preserveQueuePause?: boolean;
 }
 
 /**
@@ -616,6 +621,12 @@ export interface AppChatState {
 /** Actions exposed on the root store. */
 export interface ChatActions {
   send: (text: string, agentId: string, files?: File[], opts?: SendOptions) => Promise<void>;
+  rewindAndSend: (
+    itemId: string,
+    text: string,
+    content: MessageContentBlock[],
+    agentId: string,
+  ) => Promise<void>;
   /**
    * Queue a message client-side instead of POSTing it now, for a send made
    * while the agent is busy. The head is flushed automatically (FIFO, one per
@@ -795,6 +806,7 @@ export function releaseConversation(id: string): void {
 const racedNativeModelOptions = new Map<string, NativeModelOption[]>();
 let pendingSeq = 0;
 let queueSeq = 0;
+const pausedQueueConversationIds = new Set<string>();
 // When a send last latched local `status` to "streaming". Stamped on the way in
 // and never cleared on the way out: after a normal turn `status` settles to
 // "idle" on its own, so a leftover value is inert — only a `status` still
@@ -1364,6 +1376,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   },
 
   clearQueuedMessages: (conversationId) => {
+    pausedQueueConversationIds.delete(conversationId);
     setActive((s) => {
       if (!s.queuedMessages.some((m) => m.conversationId === conversationId)) return {};
       return {
@@ -1382,6 +1395,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     if (s.conversationId === null || s.boundAgentId === null || s.sessionStatus === "running") {
       return;
     }
+    if (pausedQueueConversationIds.has(s.conversationId)) return;
     if (s.status === "streaming") {
       // A send owns the latch, so the queue waits for it — that is the
       // one-message-per-turn contract. Unless the latch is stranded, in which
@@ -1443,6 +1457,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // next idle (via WS/poll) triggers this again for the next message (FIFO).
     const now = Date.now();
     for (const conversationId of candidateIds) {
+      if (pausedQueueConversationIds.has(conversationId)) continue;
       if (statusById.get(conversationId) !== "idle") continue;
       // Skip a conversation mid-POST or in its post-failure cooldown so a
       // persistent failure can't spin this into a tight retry loop (the effect
@@ -1549,10 +1564,11 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         ? { type: "input_image" as const, file_id: `pending:${filename}`, filename }
         : { type: "input_file" as const, file_id: `pending:${filename}`, filename };
     });
-    const content: MessageContentBlock[] = [
-      ...pendingFileBlocks,
-      ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
-    ];
+    const content: MessageContentBlock[] =
+      opts?.contentOverride ?? [
+        ...pendingFileBlocks,
+        ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
+      ];
     const selfAuthor = getCurrentAuthorId();
     setActive((s) => ({
       pendingUserMessages: [
@@ -1603,10 +1619,15 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // a prior successful upload of the same File so a retry after a
       // post-phase failure doesn't re-upload — and orphan — blobs that landed.
       const fileBlocks = await uploadFileBlocks(sessionId, files ?? []);
-      const serverContent: ContentBlock[] = [
-        ...fileBlocks,
-        ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
-      ];
+      const serverContent: ContentBlock[] = opts?.contentOverride
+        ? opts.contentOverride.flatMap((block): ContentBlock[] => {
+            if (block.type === "input_text" || block.type === "input_image") return [block];
+            if (block.type === "input_file") {
+              return [{ ...block, filename: block.filename ?? block.file_id }];
+            }
+            return [];
+          })
+        : [...fileBlocks, ...(text.trim() ? [{ type: "input_text" as const, text }] : [])];
 
       // Promote "pending:<filename>" to real file_ids. Claude-native's
       // session.input.consumed is text-only (transcript round-trip
@@ -1664,6 +1685,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
             p.tempId === tempId ? { ...p, posted: true } : p,
           ),
         }));
+        pausedQueueConversationIds.delete(sessionId);
       }
       // Note: native-terminal messages return a `pending_id`, but the
       // optimistic bubble deliberately keeps its client temp id as its
@@ -1728,6 +1750,43 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // Release the next queued send regardless of success/failure so one
       // failed POST can't stall the chain forever.
       releaseSend();
+    }
+  },
+
+  rewindAndSend: async (itemId, text, originalContent, agentId) => {
+    const sessionId = get().conversationId;
+    if (sessionId === null) throw new Error("No active session to rewind");
+    pausedQueueConversationIds.add(sessionId);
+
+    await rewindSession(sessionId, itemId);
+    const page = await fetchSessionItemsPage(sessionId, { limit: INITIAL_WINDOW_ITEMS });
+    if (get().conversationId !== sessionId) {
+      throw new Error("The active session changed while rewinding");
+    }
+    setActive((s) => ({
+      blocks: itemsToBlocks(page.items),
+      pendingUserMessages: [],
+      activeResponse: null,
+      status: "idle",
+      sessionStatus: "idle",
+      backgroundTaskCount: 0,
+      blockedOn: null,
+      hasMoreHistory: page.hasMore,
+      oldestItemId: page.items[0]?.id ?? null,
+      historyGeneration: s.historyGeneration + 1,
+    }));
+
+    const retainedAttachments = originalContent.filter((block) => block.type !== "input_text");
+    const content: MessageContentBlock[] = [
+      ...retainedAttachments,
+      ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
+    ];
+    await get().send(text, agentId, undefined, {
+      contentOverride: content,
+      preserveQueuePause: true,
+    });
+    if (pausedQueueConversationIds.has(sessionId)) {
+      throw new Error("The edited message could not be sent. Retry to resume the queue.");
     }
   },
 
@@ -1847,6 +1906,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   stop: () => {
     const sessionId = get().conversationId;
     if (!sessionId) return;
+    pausedQueueConversationIds.add(sessionId);
     // Fire-and-forget interrupt; the server emits session.interrupted
     // + response.incomplete on the open stream, which the pump
     // translates into the cancelled bubble decoration. We deliberately

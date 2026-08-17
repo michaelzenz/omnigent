@@ -31,6 +31,7 @@ from omnigent.host.frames import (
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
 from omnigent.runtime import (
+    pending_elicitations,
     session_stream,
 )
 from omnigent.runtime.agent_cache import AgentCache
@@ -158,7 +159,9 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_status,
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
+    _resolve_harness,
     _run_compact_locked,
+    _session_status_from_cache,
     _signal_harness_elicitation_resolved_by_id,
     _stop_session_host_runner,
     _stop_session_via_runner,
@@ -194,6 +197,7 @@ from omnigent.server.schemas import (
     ErrorDetail,
     McpServerStartup,
     SessionEventInput,
+    SessionRewindRequest,
 )
 from omnigent.session_lifecycle import (
     is_session_closed,
@@ -208,6 +212,8 @@ from omnigent.telemetry.events import SessionDeletedEvent as _TelSessionDeletedE
 from omnigent.telemetry.events import SessionStoppedEvent as _TelSessionStoppedEvent
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.tools.client_specified import parse_client_side_tool_specs
+
+_rewinding_sessions: set[str] = set()
 
 
 def register_events_routes(
@@ -334,6 +340,15 @@ def register_events_routes(
         :raises OmnigentError: 404 if no session exists.
         """
         user_id = _get_user_id(request, auth_provider)
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and session_id in _rewinding_sessions
+        ):
+            raise OmnigentError(
+                "Session history is being rewound; retry this message after it completes.",
+                code=ErrorCode.CONFLICT,
+            )
         access = await _require_access_and_level(
             user_id, session_id, LEVEL_EDIT, permission_store, conversation_store
         )
@@ -1552,6 +1567,15 @@ def register_events_routes(
             if pending_background_title is not None:
                 pending_background_title.schedule()
             return {"queued": True, "item_id": item_id}
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and session_id in _rewinding_sessions
+        ):
+            raise OmnigentError(
+                "Session history is being rewound; retry this message after it completes.",
+                code=ErrorCode.CONFLICT,
+            )
         dispatch = await _dispatch_session_event_to_runner(
             session_id,
             conv,
@@ -1584,6 +1608,92 @@ def register_events_routes(
         if dispatch.pending_id is not None:
             response["pending_id"] = dispatch.pending_id
         return response
+
+    @router.post(
+        "/sessions/{session_id}/rewind",
+        response_model=None,
+    )
+    async def rewind_session(
+        request: Request,
+        session_id: str,
+        body: SessionRewindRequest,
+    ) -> dict[str, str]:
+        """Interrupt, settle, then truncate a session from a user message."""
+        user_id = _get_user_id(request, auth_provider)
+        access = await _require_access_and_level(
+            user_id, session_id, LEVEL_EDIT, permission_store, conversation_store
+        )
+        conv = access.conversation
+        if conv is None:
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if conv is None:
+            raise _session_not_found()
+        await _require_access(
+            user_id,
+            session_id,
+            LEVEL_OWNER,
+            permission_store,
+            conversation_store,
+        )
+        if (
+            _resolve_harness(
+                conv,
+                agent_store=agent_store,
+                agent_cache=agent_cache,
+            )
+            != "openai-agents"
+        ):
+            raise OmnigentError(
+                "Rewind is currently supported only for Omnigent harness sessions.",
+                code=ErrorCode.INVALID_INPUT,
+            )
+
+        _rewinding_sessions.add(session_id)
+        try:
+            if (
+                _session_status_from_cache(session_id, conv.live_status) == "running"
+                or pending_elicitations.count_for(session_id) > 0
+            ):
+                await post_event(
+                    request,
+                    session_id,
+                    SessionEventInput(type=_INTERRUPT_TYPE, data={}),
+                )
+
+            deadline = asyncio.get_running_loop().time() + 10.0
+            while True:
+                current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+                db_status = current.live_status if current is not None else None
+                settled = _session_status_from_cache(session_id, db_status) != "running"
+                no_elicitations = pending_elicitations.count_for(session_id) == 0
+                if settled and no_elicitations:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise OmnigentError(
+                        "Timed out waiting for the active turn to stop; history was not changed.",
+                        code=ErrorCode.CONFLICT,
+                    )
+                await asyncio.sleep(0.05)
+
+            try:
+                await asyncio.to_thread(
+                    conversation_store.rewind_conversation,
+                    session_id,
+                    from_message_id=body.from_message_id,
+                )
+            except LookupError as exc:
+                raise OmnigentError(str(exc), code=ErrorCode.NOT_FOUND) from exc
+            except ValueError as exc:
+                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+
+            _interrupt_fenced_sessions.discard(session_id)
+            _publish_status(session_id, "idle")
+            return {
+                "session_id": session_id,
+                "from_message_id": body.from_message_id,
+            }
+        finally:
+            _rewinding_sessions.discard(session_id)
 
     # ── GET /sessions/{session_id}/stream ────────────────────────
 

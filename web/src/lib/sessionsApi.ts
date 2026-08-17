@@ -559,6 +559,19 @@ export async function forkSession(
   return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
 }
 
+/** Stop the active turn, then delete a user message and all later history. */
+export async function rewindSession(sessionId: string, fromMessageId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/rewind`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Omnigent-Client": getClientSurface() },
+      body: JSON.stringify({ from_message_id: fromMessageId }),
+    },
+  );
+  await readJsonOrThrow(res);
+}
+
 /**
  * Switch an existing session in place to a different agent/harness:
  * ``POST /v1/sessions/{id}/switch-agent``.

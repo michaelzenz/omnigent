@@ -26,6 +26,7 @@ import {
   ImageIcon,
   Loader2Icon,
   PaperclipIcon,
+  PencilIcon,
   SettingsIcon,
   SquareIcon,
   WifiOffIcon,
@@ -627,6 +628,7 @@ export function shouldQueueSend(
 // Author labels render only in a shared session; ChatPage provides the
 // value and UserBubble reads it, so the gate lives in one place.
 const SessionSharedContext = createContext(false);
+export const SessionRewindContext = createContext(false);
 
 // Iterate code points (not UTF-16 units) so emoji aren't cut mid-surrogate;
 // prefer the last word boundary within 10 chars of the limit so we don't
@@ -1332,9 +1334,16 @@ export function ChatPage() {
   const reconnectState = hostBound ? "host_offline" : "local_stranded";
   const reconnectIsOwner = isOwnerLevel(permissionLevel);
 
+  const canRewind =
+    permissionLevel !== 1 &&
+    readOnlyReason === null &&
+    (!isSessionShared || isOwnerLevel(permissionLevel));
+
   return (
     <SessionSharedContext.Provider value={isSessionShared}>
-      <SessionLayout mainAgent={mainAgent} />
+      <SessionRewindContext.Provider value={canRewind}>
+        <SessionLayout mainAgent={mainAgent} />
+      </SessionRewindContext.Provider>
       <ReconnectSessionDialog
         open={reconnectDialogOpen}
         onOpenChange={setReconnectDialogOpen}
@@ -3589,6 +3598,14 @@ function useCopyMessage(getText: () => string): {
 
 function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const sessionId = useChatStore((s) => s.conversationId);
+  const sessionHarness = useChatStore((s) => s.sessionHarness);
+  const boundAgentId = useChatStore((s) => s.boundAgentId);
+  const rewindAndSend = useChatStore((s) => s.rewindAndSend);
+  const canRewindSession = useContext(SessionRewindContext);
+  const [editing, setEditing] = useState(false);
+  const [editedText, setEditedText] = useState("");
+  const [rewinding, setRewinding] = useState(false);
+  const [rewindError, setRewindError] = useState<string | null>(null);
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
   // Plain-text path is the common case.
@@ -3624,6 +3641,83 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   // circle + author-tinted bubble, not an email label.
   const author = bubble.createdBy;
   const showAuthorBadge = shouldShowAuthorBadge(author, getCurrentAuthorId(), isSessionShared);
+  const currentAuthor = getCurrentAuthorId();
+  const canEdit =
+    canRewindSession &&
+    sessionHarness === "openai-agents" &&
+    !bubble.itemId.startsWith("pend_") &&
+    (author == null || author === currentAuthor);
+
+  const submitEdit = async (): Promise<void> => {
+    if (!boundAgentId || editedText.trim() === "") return;
+    setRewinding(true);
+    setRewindError(null);
+    try {
+      await rewindAndSend(bubble.itemId, editedText, bubble.content, boundAgentId);
+      setEditing(false);
+    } catch (error) {
+      setRewindError(error instanceof Error ? error.message : "Couldn't rewind this message.");
+    } finally {
+      setRewinding(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <Message from="user" data-testid="message-bubble" data-role="user" className="max-w-[640px]">
+        <form
+          className="ml-auto w-full max-w-[640px] rounded-xl border bg-muted p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitEdit();
+          }}
+        >
+          {(images.length > 0 || fileChips.length > 0) && (
+            <div className="mb-2 text-xs text-muted-foreground">
+              {[...images, ...fileChips]
+                .map((attachment) => attachment.filename ?? attachment.file_id)
+                .join(", ")}
+            </div>
+          )}
+          <textarea
+            autoFocus
+            data-testid="rewind-message-editor"
+            value={editedText}
+            disabled={rewinding}
+            onChange={(event) => setEditedText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !rewinding) setEditing(false);
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void submitEdit();
+              }
+            }}
+            className="min-h-24 w-full resize-y bg-transparent text-sm outline-none"
+          />
+          {rewindError && <p className="mt-2 text-xs text-destructive">{rewindError}</p>}
+          <div className="mt-2 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={rewinding}
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={rewinding || editedText.trim() === "" || !boundAgentId}
+            >
+              {rewinding && <Loader2Icon className="mr-1 size-3.5 animate-spin" />}
+              Send
+            </Button>
+          </div>
+        </form>
+      </Message>
+    );
+  }
 
   return (
     <Message
@@ -3768,6 +3862,19 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
             )}
             {text && (
               <MessageActions>
+                {canEdit && (
+                  <MessageAction
+                    tooltip="Edit and rewind"
+                    size="icon-xxs"
+                    onClick={() => {
+                      setEditedText(text);
+                      setRewindError(null);
+                      setEditing(true);
+                    }}
+                  >
+                    <PencilIcon size={14} />
+                  </MessageAction>
+                )}
                 <MessageAction tooltip="Copy" size="icon-xxs" onClick={handleCopy}>
                   {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                 </MessageAction>

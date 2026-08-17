@@ -2205,6 +2205,14 @@ class SessionForkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SessionRewindRequest(BaseModel):
+    """Request body for rewinding from a persisted user message."""
+
+    from_message_id: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ReadStatePutRequest(BaseModel):
     """
     Request body for ``PUT /v1/sessions/{session_id}/read-state``.
