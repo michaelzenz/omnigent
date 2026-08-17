@@ -4045,6 +4045,39 @@ def test_resolve_session_mcp_servers_merges_include(tmp_path: Path) -> None:
     assert spec.mcp_servers == []
 
 
+def test_openai_agents_implicitly_loads_global_mcp_servers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """openai-agents reads ~/.omnigent/mcp-servers.yaml without YAML opt-in."""
+    from omnigent.spec.parser import resolve_session_mcp_servers
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    omnigent_dir = tmp_path / ".omnigent"
+    omnigent_dir.mkdir()
+    (omnigent_dir / "mcp-servers.yaml").write_text(
+        yaml.dump({"slack": {"type": "mcp", "command": "dbexec"}})
+    )
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / "config.yaml").write_text(
+        yaml.dump(
+            {
+                "spec_version": 1,
+                "name": "openai-agent",
+                "executor": {
+                    "type": "omnigent",
+                    "config": {"harness": "openai-agents"},
+                    "model": "databricks-glm-5-2",
+                },
+            }
+        )
+    )
+
+    resolved = resolve_session_mcp_servers(parse(agent_dir), expand_env=False)
+
+    assert [server.name for server in resolved.mcp_servers] == ["slack"]
+
+
 def test_resolve_session_mcp_servers_rereads_on_change(tmp_path: Path) -> None:
     """A synced include file is picked up by the next resolve call."""
     from omnigent.spec.parser import resolve_session_mcp_servers

@@ -151,6 +151,11 @@ import {
   writeAdoptExternalSessions,
 } from "@/lib/puppyGardenPreferences";
 import {
+  readSendMessageShortcut,
+  type SendMessageShortcut,
+  writeSendMessageShortcut,
+} from "@/lib/sendMessagePreferences";
+import {
   applyThemePalette,
   DEFAULT_PALETTE,
   isThemeSelection,
@@ -1391,8 +1396,42 @@ function StepperButton({
 }
 
 function ShortcutsSection() {
+  const [sendShortcut, setSendShortcut] = useState<SendMessageShortcut>(readSendMessageShortcut);
+  const labelId = useId();
+
+  const updateSendShortcut = (value: SendMessageShortcut) => {
+    setSendShortcut(value);
+    writeSendMessageShortcut(value);
+  };
+
   return (
     <Section title="Keyboard shortcuts" description="Speed up common actions with the keyboard.">
+      <div className="flex items-start justify-between gap-6 border-b border-border pb-6">
+        <div className="flex flex-col">
+          <span id={labelId} className="text-sm font-medium">
+            Send messages
+          </span>
+          <span className="text-sm text-muted-foreground">
+            Choose whether Enter sends immediately or inserts a new line.
+          </span>
+        </div>
+        <Select
+          value={sendShortcut}
+          onValueChange={(value) => updateSendShortcut(value as SendMessageShortcut)}
+        >
+          <SelectTrigger
+            aria-labelledby={labelId}
+            data-testid="send-message-shortcut-select"
+            className="w-48 shrink-0"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="enter">Enter</SelectItem>
+            <SelectItem value="command-enter">Command/Ctrl + Enter</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <KeyboardShortcutsList />
     </Section>
   );

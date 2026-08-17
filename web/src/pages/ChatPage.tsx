@@ -36,6 +36,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { userColor, userColorTint, userInitials } from "@/lib/userBadge";
 import { useNavigate, useParams } from "@/lib/routing";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
+import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
   Conversation,
   ConversationContent,
@@ -5184,9 +5185,9 @@ export function Composer({
       }
     }
 
-    // Enter sends; Shift+Enter inserts a newline. On mobile, Enter inserts a
-    // newline (no Shift available on-screen) and Send must be tapped instead.
-    if (e.key === "Enter" && !e.shiftKey && !isMobile && !e.nativeEvent.isComposing) {
+    // The configured desktop shortcut sends. Other Enter combinations insert
+    // a newline; on mobile, Send must be tapped instead.
+    if (!isMobile && !e.nativeEvent.isComposing && isSendMessageShortcut(e)) {
       e.preventDefault();
       // The mention menu is briefly closed while its listing loads (see
       // ``mentionListingPending``); swallow Enter so the in-progress "@dir/"

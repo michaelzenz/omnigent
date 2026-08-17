@@ -51,6 +51,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Composer, isSubagentRoutingEligible, shouldQueueSend } from "./ChatPage";
 import type { Session } from "@/lib/types";
 import type { QueuedMessage } from "@/store/chatStore";
+import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
   BUILTIN_SLASH_COMMANDS,
   rankedSlashCommandNames,
@@ -116,6 +117,7 @@ describe("Composer growth layout", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   it("keeps multiline growth in layout instead of offsetting the form over the transcript", () => {
@@ -283,6 +285,20 @@ describe("Composer slash-command menu", () => {
     fireEvent.change(ta, { target: { value: "hello there" } });
 
     fireEvent.keyDown(ta, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("hello there", undefined);
+  });
+
+  it("requires Command or Ctrl+Enter when configured", () => {
+    writeSendMessageShortcut("command-enter");
+    const onSend = vi.fn();
+    render(<Composer {...composerProps({ onSend })} />);
+    const ta = textarea();
+    fireEvent.change(ta, { target: { value: "hello there" } });
+
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(ta, { key: "Enter", metaKey: true });
     expect(onSend).toHaveBeenCalledWith("hello there", undefined);
   });
 

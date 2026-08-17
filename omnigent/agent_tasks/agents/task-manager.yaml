@@ -14,4 +14,3 @@ executor:
 instructions_include:
   - puppygarden/docs/README.md
   - puppygarden/docs/TASK_MANAGER.md
-tools_include: ~/.omnigent/mcp-servers.yaml

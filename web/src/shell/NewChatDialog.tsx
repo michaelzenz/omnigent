@@ -69,6 +69,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { authenticatedFetch } from "@/lib/identity";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
+import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import { attachmentKey, validateAttachments } from "@/lib/attachments";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
@@ -4126,8 +4127,9 @@ export function NewChatLandingScreen() {
                     return;
                   }
                 }
-                // Enter sends; Shift+Enter inserts a newline.
-                if (e.key === "Enter" && !e.shiftKey) {
+                // The configured shortcut sends; other Enter combinations
+                // insert a newline.
+                if (isSendMessageShortcut(e)) {
                   e.preventDefault();
                   // The mention menu is briefly closed while its listing loads;
                   // swallow Enter so the in-progress "@dir/" token isn't sent.

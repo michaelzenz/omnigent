@@ -14,6 +14,7 @@ import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { NewChatLandingScreen, resetLandingDraft, sanitizeInitialPrompt } from "./NewChatDialog";
 import { writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
+import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
 
 // The landing screen drives the real Web-start flow end to end: the host and
 // first agent auto-select, the working directory seeds from the host's most-
@@ -445,6 +446,24 @@ describe("NewChatLandingScreen create flow", () => {
     // this through and created an unintended empty session.
     expect(authenticatedFetch).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("uses Command+Enter to create a session when configured", async () => {
+    writeSendMessageShortcut("command-enter");
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    await waitForWorkspaceSeed();
+    const input = screen.getByTestId("new-chat-landing-input");
+    fireEvent.change(input, { target: { value: "start a session" } });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
   });
 
   it("does not create a session when Enter confirms active IME composition", async () => {

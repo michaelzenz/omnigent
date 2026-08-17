@@ -11,4 +11,3 @@ executor:
   model: databricks-glm-5-2
 instructions_include:
   - puppygarden/docs/README.md
-tools_include: ~/.omnigent/mcp-servers.yaml

@@ -96,7 +96,8 @@ when its own `interval_s` has elapsed.
 Rules:
 
 - **One folder per plugin** — stable name (`github_pr`, `slack_watch`, …).
-- **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
+- **Only `run.py` is executed** — the host runs it with the same Python
+  interpreter that is running the Omnigent host daemon.
 - **`README.md` is required** — the host skips any plugin folder missing it.
   **An agent updating a poll plugin
   MUST read that plugin's `README.md` first** — it is the source of truth for
@@ -109,8 +110,27 @@ Rules:
 The host `ScriptPollPluginsPoller` invokes each plugin on a schedule:
 
 ```bash
-python3 ~/.omnigent/poll_plugins/<plugin_name>/run.py
+<omnigent-host-python> ~/.omnigent/poll_plugins/<plugin_name>/run.py
 ```
+
+### Python runtime
+
+Plugins run with `sys.executable` from the Omnigent host process. If the host
+was started with the repository's `.venv/bin/python`, plugins use that same
+virtual environment and its installed packages. If Omnigent was installed with
+`uv tool`, plugins use the Python from that tool environment. The plugin
+shebang does not select a different interpreter.
+
+A plugin can find the exact interpreter path at runtime with:
+
+```python
+import sys
+
+print(sys.executable)
+```
+
+Use that path when manually reproducing a plugin run or installing a dependency
+that the plugin needs.
 
 Environment (set by host):
 

@@ -2684,21 +2684,35 @@ def resolve_session_mcp_servers(
     *,
     expand_env: bool = True,
 ) -> AgentSpec:
-    """Merge ``tools_include`` MCP servers into *spec* at session load time.
+    """Merge default and explicit external MCP servers at session load time.
 
     ``spec.mcp_servers`` carries only the bundle-owned inline + discovered
-    entries (immutable, cached). The external file named by
-    ``spec.mcp_include_path`` is re-read here so a synced
-    ``~/.omnigent/mcp-servers.yaml`` takes effect for new sessions without a
-    server restart. Returns *spec* unchanged when no include is set or the
-    file is missing (graceful — logged once by :func:`_parse_included_mcp_servers`).
+    entries (immutable, cached). ``openai-agents`` specs implicitly read
+    ``~/.omnigent/mcp-servers.yaml``; an explicit ``tools_include`` is applied
+    afterward and can override matching names. External files are re-read here
+    so a sync takes effect for new sessions without a server restart.
     """
-    if not spec.mcp_include_path:
+    include_paths: list[str] = []
+    harness = spec.executor.config.get("harness")
+    if harness == "openai-agents" or spec.executor.type == "agents_sdk":
+        default_path = Path.home() / ".omnigent" / "mcp-servers.yaml"
+        # The implicit global file is optional. An explicitly requested missing
+        # include still follows _parse_included_mcp_servers' warning path.
+        if default_path.is_file():
+            include_paths.append(str(default_path))
+    if spec.mcp_include_path and spec.mcp_include_path not in include_paths:
+        include_paths.append(spec.mcp_include_path)
+    if not include_paths:
         return spec
-    included = _parse_included_mcp_servers(spec.mcp_include_path, expand_env=expand_env)
-    if not included:
+
+    layers = [spec.mcp_servers]
+    for include_path in include_paths:
+        included = _parse_included_mcp_servers(include_path, expand_env=expand_env)
+        if included:
+            layers.append(included)
+    if len(layers) == 1:
         return spec
-    merged = _merge_mcp_servers_by_name(spec.mcp_servers, included)
+    merged = _merge_mcp_servers_by_name(*layers)
     return dataclasses.replace(spec, mcp_servers=merged)
 
 

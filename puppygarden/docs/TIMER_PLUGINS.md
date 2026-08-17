@@ -97,7 +97,8 @@ host:
 Rules:
 
 - **One folder per plugin** — stable name (`reminder`, `daily_report`, …).
-- **Only `run.py` is executed** — host runs `python3 <plugin_dir>/run.py`.
+- **Only `run.py` is executed** — the host runs it with the same Python
+  interpreter that is running the Omnigent host daemon.
 - **`README.md` is required** — the host skips any plugin folder missing it.
   Every plugin MUST ship a `README.md` describing its purpose, state shape,
   emitted event types, and the re-arm contract. **An agent updating a timer
@@ -114,8 +115,27 @@ seconds. For each plugin whose `fire_at` has been reached and whose
 `state.yaml` `fired_at` is older than `fire_at`, the host runs:
 
 ```bash
-python3 ~/.omnigent/timer_plugins/<plugin_name>/run.py
+<omnigent-host-python> ~/.omnigent/timer_plugins/<plugin_name>/run.py
 ```
+
+### Python runtime
+
+Plugins run with `sys.executable` from the Omnigent host process. If the host
+was started with the repository's `.venv/bin/python`, plugins use that same
+virtual environment and its installed packages. If Omnigent was installed with
+`uv tool`, plugins use the Python from that tool environment. The plugin
+shebang does not select a different interpreter.
+
+A plugin can find the exact interpreter path at runtime with:
+
+```python
+import sys
+
+print(sys.executable)
+```
+
+Use that path when manually reproducing a plugin run or installing a dependency
+that the plugin needs.
 
 Environment (set by host):
 
