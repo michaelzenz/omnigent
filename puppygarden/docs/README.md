@@ -13,6 +13,8 @@ host:
     root: /path/to/omnigent/puppygarden
 ```
 
+All manuals are inside <host.puppygarden.root>/docs/
+
 ## Roles/Components
 * Router: a score based routing program, if there is clear winner, route the event to the corresponding task and let manager handle it
 * Manager: Manager and task is 1:1 mapping, manager receives events, reconcile into taskItems and select a worker to assign it, make it a proposal for user to review

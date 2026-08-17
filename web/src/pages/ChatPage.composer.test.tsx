@@ -1813,6 +1813,54 @@ describe("Composer config gear", () => {
     expect(screen.getByTestId("composer-config-effort")).toBeTruthy();
   });
 
+  it("offers SDK models and persists the selected override", async () => {
+    const setModel = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      llmModel: "databricks-glm-5-2",
+      setModel,
+    });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: false,
+          showModels: true,
+          modelPickerKind: "sdk",
+        })}
+      />,
+    );
+
+    fireEvent.click(gear()!);
+    await screen.findByTestId("composer-config-modal");
+    fireEvent.click(screen.getByTestId("composer-config-model"));
+    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
+    fireEvent.click(screen.getByTestId("composer-config-save"));
+
+    await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
+  });
+
+  it("switches SDK models directly from the composer label", async () => {
+    const setModel = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      llmModel: "databricks-glm-5-2",
+      setModel,
+    });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: false,
+          showModels: true,
+          modelPickerKind: "sdk",
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("composer-sdk-model-select")).toHaveTextContent("GLM 5.2");
+    fireEvent.click(screen.getByTestId("composer-sdk-model-select"));
+    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
+
+    await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
+  });
+
   it("uses the Default sentinel when Kiro marks no catalog row as default", async () => {
     const options = [
       { id: "auto", displayName: "Automatic", isDefault: false },

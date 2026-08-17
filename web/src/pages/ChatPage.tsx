@@ -206,6 +206,7 @@ import { GoalControl, GoalStatusPill, useGoalState, type Goal } from "@/componen
 import { copyText } from "@/lib/clipboard";
 import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "@/lib/sdkModels";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -1241,6 +1242,7 @@ export function ChatPage() {
   // Once present, the live session snapshot is authoritative.
   const capabilitySource = {
     labels: activeSession ? (activeSession.labels ?? {}) : (activeConv?.labels ?? {}),
+    harness: activeSession?.harness ?? null,
   };
   const modelPickerKind = modelPickerKindForConv(capabilitySource);
   const effortLevels = effortLevelsForConv(
@@ -5653,6 +5655,7 @@ export function Composer({
                 codexModelOptions={codexModelOptions}
                 costRoutingEligible={costRoutingEligible}
                 harnessLabel={harnessLabel}
+                disabled={isReadOnly || unreachable}
               />
               <ComposerConfigGear
                 harnessLabel={harnessLabel}
@@ -5902,7 +5905,7 @@ const EFFORT_LEVELS = ["low", "medium", "high"] as const;
 /** Anthropic-side efforts for claude-native sessions (matches ANTHROPIC_EFFORTS in reasoning_effort.py). */
 const CLAUDE_NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
-type NativeModelPickerKind = "claude" | "codex" | "cursor" | "kiro" | "opencode" | "pi";
+type NativeModelPickerKind = "claude" | "codex" | "cursor" | "kiro" | "opencode" | "pi" | "sdk";
 
 type LabelSource = { labels?: Record<string, string | null> | null } | null | undefined;
 
@@ -5957,7 +5960,13 @@ export function effortLevelsForConv(
  * `TerminalFirstContext.tsx`).
  */
 export function modelPickerKindForConv(
-  conv: { labels?: Record<string, string | null> | null } | null | undefined,
+  conv:
+    | {
+        labels?: Record<string, string | null> | null;
+        harness?: string | null;
+      }
+    | null
+    | undefined,
 ): NativeModelPickerKind | null {
   switch (conv?.labels?.["omnigent.wrapper"]) {
     case "claude-code-native-ui":
@@ -5983,12 +5992,18 @@ export function modelPickerKindForConv(
       // model_select handler, so the picker surfaces that as the live model.
       return "pi";
     default:
-      return null;
+      return conv?.harness === SDK_HARNESS ? "sdk" : null;
   }
 }
 
 export function shouldShowModelPicker(
-  conv: { labels?: Record<string, string | null> | null } | null | undefined,
+  conv:
+    | {
+        labels?: Record<string, string | null> | null;
+        harness?: string | null;
+      }
+    | null
+    | undefined,
 ): boolean {
   return modelPickerKindForConv(conv) !== null;
 }
@@ -6252,7 +6267,7 @@ function SessionConfigModal({
   const modelSelectOptions = useMemo(() => {
     const catalog = usesServerModelOptions
       ? modelOptions.map((m) => ({ id: m.id, label: m.displayName ?? m.id }))
-      : modelOptions.map((m) => ({ id: m.id, label: m.label ?? m.id }));
+      : modelOptions.map((m) => ({ id: m.id, label: m.label ?? m.displayName ?? m.id }));
     // Smart Routing pins the router's fully-qualified pick
     // (``databricks-claude-opus-4-8``), which the harness catalog carries only
     // under an alias (``opus``) — or not at all. Radix falls back to the
@@ -6586,8 +6601,8 @@ function useResolvedComposerModel(
     modelPickerKind === "pi" ||
     modelPickerKind === "opencode";
   const modelOptions: readonly { id: string; label?: string; displayName?: string }[] =
-    usesServerModelOptions ? codexModelOptions : [];
-  const isNativeModelPicker = modelPickerKind !== null;
+    usesServerModelOptions ? codexModelOptions : modelPickerKind === "sdk" ? SDK_MODEL_OPTIONS : [];
+  const isNativeModelPicker = modelPickerKind !== null && modelPickerKind !== "sdk";
 
   // qwen/goose/cursor/pi/opencode native wrappers pick their model inside
   // the vendor TUI, so the bound `llmModel` is an unused default — don't
@@ -6622,12 +6637,14 @@ function useResolvedComposerModel(
   const sessionStickyModel =
     findNativeModelOption(codexModelOptions, selectedModel) !== null ? selectedModel : null;
   const pickerSelectedModel =
-    modelPickerKind === "cursor" ||
-    modelPickerKind === "kiro" ||
-    modelPickerKind === "opencode" ||
-    modelPickerKind === "pi"
+    modelPickerKind === "sdk"
       ? sessionModelOverride
-      : (sessionModelOverride ?? sessionStickyModel);
+      : modelPickerKind === "cursor" ||
+          modelPickerKind === "kiro" ||
+          modelPickerKind === "opencode" ||
+          modelPickerKind === "pi"
+        ? sessionModelOverride
+        : (sessionModelOverride ?? sessionStickyModel);
   // SDK/bundle agents (no native picker) never have the cross-session sticky
   // applied to them, so their live model is the session's own — the applied
   // override or the bound default — never `selectedModel` (a pick carried over
@@ -6636,7 +6653,7 @@ function useResolvedComposerModel(
   // there it IS the applied model — but only once this session's catalog vouches
   // for it (see `sessionStickyModel`).
   const nonNativeModel =
-    modelPickerKind === null
+    modelPickerKind === null || modelPickerKind === "sdk"
       ? (sessionModelOverride ?? llmModel)
       : (sessionModelOverride ?? sessionStickyModel ?? llmModel);
   const effectiveModel = nativeVendorOwnsModel
@@ -6653,7 +6670,11 @@ function useResolvedComposerModel(
           (sessionModelOverride ?? llmModel)
         : null
     : nonNativeModel;
-  const modelLabel = formatStatusModelLabel(effectiveModel, codexModelOptions);
+  const modelLabel =
+    modelPickerKind === "sdk"
+      ? (SDK_MODEL_OPTIONS.find((option) => option.id === effectiveModel)?.displayName ??
+        effectiveModel)
+      : formatStatusModelLabel(effectiveModel, codexModelOptions);
   return {
     llmModel,
     usesServerModelOptions,
@@ -6663,6 +6684,77 @@ function useResolvedComposerModel(
     effectiveModel,
     modelLabel,
   };
+}
+
+function ComposerSdkModelQuickSelect({
+  costRoutingEligible,
+  disabled,
+}: {
+  costRoutingEligible: boolean;
+  disabled: boolean;
+}) {
+  const [pending, setPending] = useState(false);
+  const modelOverride = useChatStore((s) => s.sessionModelOverride);
+  const llmModel = useChatStore((s) => s.llmModel);
+  const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
+  const routingOn = costRoutingEligible && costControlModeOverride === "on";
+  const effectiveModel = modelOverride ?? llmModel;
+  const modelLabel =
+    SDK_MODEL_OPTIONS.find((option) => option.id === effectiveModel)?.displayName ??
+    effectiveModel ??
+    "Default";
+  const defaultModelLabel =
+    SDK_MODEL_OPTIONS.find((option) => option.id === llmModel)?.displayName ?? llmModel;
+  const value = routingOn ? MODEL_SELECT_SMART : (modelOverride ?? MODEL_SELECT_DEFAULT);
+
+  async function onChange(next: string) {
+    setPending(true);
+    try {
+      const store = useChatStore.getState();
+      if (next === MODEL_SELECT_SMART) {
+        await store.setCostControlMode("on");
+        return;
+      }
+      const model = next === MODEL_SELECT_DEFAULT ? null : next;
+      await store.setModel(model);
+      if (routingOn) await store.setCostControlMode("off");
+    } catch (error) {
+      showToast(
+        <span className="text-ui">
+          Failed to change model: {error instanceof Error ? error.message : "unknown error"}
+        </span>,
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Select value={value} onValueChange={onChange} disabled={disabled || pending}>
+      <SelectTrigger
+        className="h-9 min-w-0 max-w-[220px] border-0 bg-transparent px-2.5 text-sm shadow-none md:h-8"
+        aria-label="Model"
+        data-testid="composer-sdk-model-select"
+      >
+        <SelectValue>{routingOn ? SMART_ROUTING_LABEL : modelLabel}</SelectValue>
+      </SelectTrigger>
+      <SelectContent position="popper" align="end">
+        <SelectItem value={MODEL_SELECT_DEFAULT} data-model-id={MODEL_SELECT_DEFAULT}>
+          {defaultModelLabel ? `Default (${defaultModelLabel})` : "Default"}
+        </SelectItem>
+        {costRoutingEligible && (
+          <SelectItem value={MODEL_SELECT_SMART} data-model-id={MODEL_SELECT_SMART}>
+            {SMART_ROUTING_LABEL}
+          </SelectItem>
+        )}
+        {SDK_MODEL_OPTIONS.map((option) => (
+          <SelectItem key={option.id} value={option.id} data-model-id={option.id}>
+            {option.displayName}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 /**
@@ -6687,6 +6779,7 @@ function ComposerModelEffortLabel({
   codexModelOptions,
   costRoutingEligible,
   harnessLabel,
+  disabled,
 }: {
   showModels: boolean;
   showEffort: boolean;
@@ -6694,11 +6787,17 @@ function ComposerModelEffortLabel({
   codexModelOptions: readonly NativeModelOption[];
   costRoutingEligible: boolean;
   harnessLabel: string | null;
+  disabled: boolean;
 }) {
   const selectedEffort = useSessionEffort();
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
+  if (showModels && modelPickerKind === "sdk") {
+    return (
+      <ComposerSdkModelQuickSelect costRoutingEligible={costRoutingEligible} disabled={disabled} />
+    );
+  }
   // Routing picks the model + effort per turn, so the label reads
   // "Smart Routing" with no pinned model/effort — matching the tooltip.
   if (routingOn) {

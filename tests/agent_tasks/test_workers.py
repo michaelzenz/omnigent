@@ -72,7 +72,13 @@ async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
         role_profile=manager_profile,
     )
 
+    captured_labels: list[Any] = []
+
     async def _mock_session_creator(*, body: Any, request: Any, user_id: Any, **kwargs: Any):
+        # Record the labels each role bootstrap stamps on its session body so
+        # the test can assert native wrapper labels opt the session into the
+        # composer's model picker.
+        captured_labels.append(getattr(body, "labels", None))
         return conversation_store.create_conversation(
             title=body.title or "Task manager",
             agent_id=body.agent_id,
@@ -113,4 +119,12 @@ async def test_activate_worker_lane_starts_session(db_uri: str) -> None:
     assert conv is not None
     assert conv.kind == "default"
     assert conv.parent_conversation_id is None
+    # Both the manager and the worker session carry the native wrapper label
+    # for their harness (cursor -> cursor-native-ui) so the composer's model
+    # picker opts them in. The SDK harness would carry an empty dict instead,
+    # where the PuppyGarden dock surfaces its own switcher.
+    assert captured_labels == [
+        {"omnigent.ui": "terminal", "omnigent.wrapper": "cursor-native-ui"},
+        {"omnigent.ui": "terminal", "omnigent.wrapper": "cursor-native-ui"},
+    ]
     assert conv.sub_agent_name is None

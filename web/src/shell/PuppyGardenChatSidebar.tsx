@@ -180,7 +180,10 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
   }, []);
 
   const activeSessionLabels = activeSession?.labels;
-  const capabilitySource = { labels: activeSessionLabels ?? {} };
+  const capabilitySource = {
+    labels: activeSessionLabels ?? {},
+    harness: activeSession?.harness ?? null,
+  };
   const modelPickerKind = modelPickerKindForConv(capabilitySource);
   const effortLevels = effortLevelsForConv(
     capabilitySource,
@@ -353,9 +356,8 @@ export function PuppyGardenChatSidebar() {
   const { data: conversationsData } = useConversations("", true);
   const dockUpdatedAt = useMemo(
     () =>
-      conversationsData?.pages
-        .flatMap((p) => p.data)
-        .find((c) => c.id === conversationId)?.updated_at,
+      conversationsData?.pages.flatMap((p) => p.data).find((c) => c.id === conversationId)
+        ?.updated_at,
     [conversationsData, conversationId],
   );
   useMarkConversationSeen(conversationId ?? undefined, dockUpdatedAt);

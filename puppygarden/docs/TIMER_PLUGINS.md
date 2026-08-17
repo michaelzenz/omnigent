@@ -4,7 +4,8 @@ Host-side scripts that fire once at a declared wall-clock time and emit task
 events (or run arbitrary side effects). Each plugin is one folder; the host
 only executes **`run.py`**.
 
-Timer plugins are the one-shot counterpart to [poll plugins](POLL_PLUGINS.md):
+Timer plugins are the one-shot counterpart to the poll plugins documented at
+`<host.puppygarden.root>/docs/POLL_PLUGINS.md`:
 poll plugins fire on a fixed interval; timer plugins fire when their
 `fire_at` is reached.
 

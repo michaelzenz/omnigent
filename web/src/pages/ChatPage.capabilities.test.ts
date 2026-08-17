@@ -69,10 +69,15 @@ describe("shouldShowModelPicker", () => {
     expect(shouldShowModelPicker({ labels: { "omnigent.wrapper": "pi-native-ui" } })).toBe(true);
   });
 
+  it("shows the picker for SDK sessions that honor model_override", () => {
+    expect(shouldShowModelPicker({ labels: {}, harness: "openai-agents" })).toBe(true);
+  });
+
   it("hides the picker for other wrappers and missing labels (fail closed)", () => {
     // WHY: a loosened gate would pop a non-functional picker on codex-native
     // (model pinned at launch) and on pre-hydration rows.
     expect(shouldShowModelPicker({ labels: { "omnigent.wrapper": "codex-native" } })).toBe(false);
+    expect(shouldShowModelPicker({ labels: {}, harness: "open-responses" })).toBe(false);
     expect(shouldShowModelPicker({ labels: {} })).toBe(false);
     expect(shouldShowModelPicker(null)).toBe(false);
     expect(shouldShowModelPicker(undefined)).toBe(false);

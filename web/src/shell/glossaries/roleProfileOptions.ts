@@ -2,6 +2,9 @@ import { harnessUnconfiguredOnHost, harnessWarningBadgeText } from "@/shell/NewC
 import type { Host } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { isNativeCodingAgent, nativeCodingAgentForAvailableAgent } from "@/lib/nativeCodingAgents";
+import { SDK_HARNESS } from "@/lib/sdkModels";
+
+export { SDK_HARNESS, SDK_MODEL_OPTIONS, type SdkModelOption } from "@/lib/sdkModels";
 
 export interface HarnessOption {
   harness: string;
@@ -12,21 +15,7 @@ export interface HarnessOption {
 // config — so it's a first-class option in the role picker regardless of the
 // host's configured_harnesses map. Surfaced as "Omnigent" (the PuppyGarden
 // SDK executor path).
-export const SDK_HARNESS = "openai-agents";
 const SDK_HARNESS_DISPLAY_NAME = "Omnigent";
-
-// Models the in-process SDK executor can route to behind the Databricks
-// AI Gateway. Kept short on purpose — the gateway serves more, but these are
-// the two PuppyGarden roles are seeded with (see DATABRICKS-INSTALL.md).
-export interface SdkModelOption {
-  id: string;
-  displayName: string;
-}
-
-export const SDK_MODEL_OPTIONS: readonly SdkModelOption[] = [
-  { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
-  { id: "databricks-kimi-k3", displayName: "Kimi K3" },
-];
 
 /** Harnesses configured on the selected host (same filter as New Chat). */
 export function configuredHarnessesForHost(

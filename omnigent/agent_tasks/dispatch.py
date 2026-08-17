@@ -173,11 +173,16 @@ async def dispatch_worker_for_item(
                 code=ErrorCode.INVALID_INPUT,
             )
         from omnigent.agent_tasks.bootstrap import build_role_session_request
+        from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
         from omnigent.server.routes.sessions import _make_internal_request
 
         body = build_role_session_request(
             _worker_profile_from_params(params),
             title=params.role_key,
+            # Carry the native wrapper label when the role is on a native
+            # harness so the composer's model picker opts the session in. Empty
+            # for the SDK harness — the dock surfaces its own switcher there.
+            labels=presentation_labels_for_harness(params.harness),
         )
         request = _make_internal_request(app_state)
         resp = await session_creator(

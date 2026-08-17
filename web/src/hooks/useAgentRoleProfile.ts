@@ -3,6 +3,7 @@ import {
   fetchAgentRoleProfile,
   importRoleAgent,
   updateAgentRoleProfile,
+  updateRolePrompt,
   type SecretaryProfile,
   type UpdateAgentRoleProfileRequest,
 } from "@/lib/agentTasksApi";

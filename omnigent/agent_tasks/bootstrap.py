@@ -158,6 +158,7 @@ async def bootstrap_task_manager(
 
     from omnigent.server.routes.sessions import _make_internal_request
     from omnigent.server.schemas import SessionCreateRequest
+    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
 
     body = SessionCreateRequest(
         agent_id=params.agent_profile_id,
@@ -166,7 +167,10 @@ async def bootstrap_task_manager(
         workspace=params.workspace,
         harness_override=params.harness,
         model_override=params.model,
-        labels={},
+        # Carry the native wrapper label when the role is on a native harness so
+        # the composer's model picker opts the session in. Empty for the SDK
+        # harness — the dock surfaces its own switcher there.
+        labels=presentation_labels_for_harness(params.harness),
     )
     request = _make_internal_request(app_state)
     resp = await session_creator(

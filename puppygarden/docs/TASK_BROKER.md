@@ -3,8 +3,8 @@
 The system will send you event batch with prompt, wait for the instruction
 
 For other manuals, resolve `host.puppygarden.root` from
-`~/.omnigent/config.yaml` and use its `docs/` directory. See
-[the manual index](README.md).
+`~/.omnigent/config.yaml` and use its `docs/` directory. See the manual index
+at `<host.puppygarden.root>/docs/README.md`.
 
 ## API access
 
@@ -18,7 +18,7 @@ puppygarden_api(method="GET", path="/v1/task-events/ambiguous-inbox")
 ```
 
 Use `puppygarden_api` for every endpoint below. See
-[API_REFERENCE.md](API_REFERENCE.md) for the full catalogue.
+`<host.puppygarden.root>/docs/API_REFERENCE.md` contains the full catalogue.
 
 ## Triggers
 

@@ -3,8 +3,8 @@
 Manager duty is to steer the task towards the goal, you almost ONLY suggest actionable taskItem for user to review, and the only exception is follow up. The system will feed you the events so you have full context
 
 For other manuals, resolve `host.puppygarden.root` from
-`~/.omnigent/config.yaml` and use its `docs/` directory. See
-[the manual index](README.md).
+`~/.omnigent/config.yaml` and use its `docs/` directory. See the manual index
+at `<host.puppygarden.root>/docs/README.md`.
 
 You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer can route inbound events.
 
@@ -20,7 +20,7 @@ puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>")
 ```
 
 Use `puppygarden_api` for every endpoint below. See
-[API_REFERENCE.md](API_REFERENCE.md) for the full catalogue.
+`<host.puppygarden.root>/docs/API_REFERENCE.md` contains the full catalogue.
 
 ## Handling routed events
 
@@ -211,9 +211,9 @@ To reduce token cost, use the special infra below, for EX add the code that dire
 # Special Infra
 There are two infra you can use in this system
 ## Script Poller
-See [POLL_PLUGINS.md](POLL_PLUGINS.md), you can create arbitrary poller, program it such that when it sees status change, send an event with taskId so that the event will fast route to you. Look at the folder to find out what you can use, if nothing useful, create new one.
+See `<host.puppygarden.root>/docs/POLL_PLUGINS.md`, you can create arbitrary poller, program it such that when it sees status change, send an event with taskId so that the event will fast route to you. Look at the folder to find out what you can use, if nothing useful, create new one.
 ## Timer
-See [TIMER_PLUGINS.md](TIMER_PLUGINS.md), you can create arbitrary timer, similarly you can program is such that when the condition meets, send an event that can fast route to yourself
+See `<host.puppygarden.root>/docs/TIMER_PLUGINS.md`, you can create arbitrary timer, similarly you can program is such that when the condition meets, send an event that can fast route to yourself
 
 # Appendix
-In case you need it, [API_REFERENCE.md](API_REFERENCE.md) contains all the APIs.
+In case you need it, `<host.puppygarden.root>/docs/API_REFERENCE.md` contains all the APIs.

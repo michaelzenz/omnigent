@@ -145,11 +145,16 @@ async def activate_worker_lane(
         )
 
     from omnigent.agent_tasks.bootstrap import build_role_session_request
+    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
     from omnigent.server.routes.sessions import _make_internal_request
 
     body = build_role_session_request(
         worker_role_profile,
         title=role_key,
+        # Carry the native wrapper label when the role is on a native harness so
+        # the composer's model picker opts the session in. Empty for the SDK
+        # harness — the dock surfaces its own switcher there.
+        labels=presentation_labels_for_harness(worker_role_profile.harness),
     )
     request = _make_internal_request(app_state)
     if session_creator is None:
