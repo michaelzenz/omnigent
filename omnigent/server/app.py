@@ -68,6 +68,10 @@ from omnigent.server.routes.default_policies import create_default_policies_rout
 from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
+from omnigent.server.routes.model_settings import (
+    configured_omnigent_model_options,
+    create_model_settings_router,
+)
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
@@ -102,6 +106,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
@@ -929,6 +934,7 @@ def create_app(
     runner_tunnel_tokens: frozenset[str] | None = None,
     comment_store: CommentStore | None = None,
     policy_store: PolicyStore | None = None,
+    model_settings_store: ModelSettingsStore | None = None,
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
@@ -2199,7 +2205,10 @@ def create_app(
         }
 
     @app.get("/v1/info")
-    async def info() -> dict[str, bool | str | list[str] | dict[str, bool] | None]:
+    async def info() -> dict[
+        str,
+        bool | str | list[str] | list[dict[str, str]] | dict[str, bool] | None,
+    ]:
         """Runtime capabilities probe for the SPA + CLI.
 
         Returned at app boot by the frontend (and by ``omnigent
@@ -2345,6 +2354,11 @@ def create_app(
             "server_version": _server_version(),
             "smart_routing_enabled": smart_routing_enabled,
             "smart_routing_sources": smart_routing_sources,
+            "omnigent_model_options": (
+                configured_omnigent_model_options(model_settings_store)
+                if model_settings_store is not None
+                else []
+            ),
             "features": app.state.feature_flags.frontend_dict(),
             # Compatibility fields for frontends predating the feature map.
             "harness_install_enabled": harness_install_enabled,
@@ -2654,6 +2668,17 @@ def create_app(
         prefix="/v1",
         tags=["policy_registry"],
     )
+    if model_settings_store is not None:
+        app.include_router(
+            create_model_settings_router(
+                model_settings_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+                server_config=server_config,
+            ),
+            prefix="/v1",
+            tags=["models"],
+        )
     if scheduled_task_store is not None:
         app.include_router(
             create_scheduled_tasks_router(

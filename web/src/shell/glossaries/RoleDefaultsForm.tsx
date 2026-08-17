@@ -21,9 +21,11 @@ import { useHosts, type Host } from "@/hooks/useHosts";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
 import type { SecretaryProfile } from "@/lib/agentTasksApi";
 import { resetAgentRoleSession } from "@/lib/agentTasksApi";
+import { EMPTY_SDK_MODEL_OPTIONS } from "@/lib/sdkModels";
 import { WorkspacePathField } from "@/shell/WorkspacePathField";
 import { RoleHarnessPicker } from "./RoleHarnessPicker";
-import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "./roleProfileOptions";
+import { SDK_HARNESS } from "./roleProfileOptions";
+import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
 
 export const ROLE_PROFILE_SAVE_DEBOUNCE_MS = 2000;
 const PROMPT_SAVE_DEBOUNCE_MS = 1500;
@@ -73,6 +75,7 @@ interface RoleDefaultsFormProps {
 }
 
 export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
+  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
   const { data: profile, isLoading, error } = useAgentRoleProfile(roleId);
   const { data: hosts = [] } = useHosts();
   const { data: agents = [] } = useAvailableAgents();
@@ -294,12 +297,12 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
                 <SelectValue placeholder="Select model" />
               </SelectTrigger>
               <SelectContent>
-                {SDK_MODEL_OPTIONS.map((option) => (
+                {sdkModelOptions.map((option) => (
                   <SelectItem key={option.id} value={option.id}>
                     {option.displayName}
                   </SelectItem>
                 ))}
-                {draft.model && !SDK_MODEL_OPTIONS.some((option) => option.id === draft.model) ? (
+                {draft.model && !sdkModelOptions.some((option) => option.id === draft.model) ? (
                   <SelectItem value={draft.model}>{draft.model}</SelectItem>
                 ) : null}
               </SelectContent>

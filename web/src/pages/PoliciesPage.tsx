@@ -12,7 +12,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PlusIcon, RefreshCwIcon, ShieldCheckIcon, TrashIcon, XIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ChevronsUpDownIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  TrashIcon,
+  XIcon,
+} from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
 import { ModelValueCombobox } from "@/components/ModelValueCombobox";
 import { Button } from "@/components/ui/button";
@@ -26,6 +34,15 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
   useDefaultPolicies,
   useAddDefaultPolicy,
   useUpdateDefaultPolicy,
@@ -33,7 +50,7 @@ import {
   type DefaultPolicy,
 } from "@/hooks/useDefaultPolicies";
 import { usePolicyRegistry, type PolicyRegistryEntry } from "@/hooks/usePolicies";
-import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
+import { useAdminModelSettings, useUpdateAdminModelSettings } from "@/hooks/useModelSettings";
 import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isSingleUserMode } from "@/lib/capabilities";
@@ -45,10 +62,12 @@ import { coercePolicyParams } from "@/lib/policyParams";
 
 function AddDefaultPolicyDialog({
   registry,
+  modelIds,
   open,
   onOpenChange,
 }: {
   registry: PolicyRegistryEntry[];
+  modelIds: string[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -77,7 +96,6 @@ function AddDefaultPolicyDialog({
       }
     | null
     | undefined;
-  const modelIds = useMemo(() => CLAUDE_NATIVE_MODELS.map((m) => m.id), []);
   const properties = useMemo(() => {
     const props = rawSchema?.properties ?? {};
     if (!modelIds.length) return props;
@@ -422,6 +440,117 @@ function AddDefaultPolicyDialog({
 // Main page
 // ---------------------------------------------------------------------------
 
+const NO_POLICY_MODEL = "__none__";
+
+function PolicyModelPicker({
+  models,
+  value,
+  disabled,
+  onChange,
+}: {
+  models: { id: string; displayName: string }[];
+  value: string | null;
+  disabled: boolean;
+  onChange: (model: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = models.find((model) => model.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled}
+          aria-label="Policy checking model"
+          aria-expanded={open}
+          className="mt-3 w-full max-w-md justify-between font-normal"
+        >
+          <span className="truncate">{selected?.displayName ?? value ?? "No model selected"}</span>
+          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+        <Command>
+          <CommandInput placeholder="Search Databricks models…" />
+          <CommandList>
+            <CommandEmpty>No models found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value={NO_POLICY_MODEL}
+                data-checked={value === null}
+                onSelect={() => {
+                  onChange(null);
+                  setOpen(false);
+                }}
+              >
+                No model selected
+              </CommandItem>
+              {models.map((model) => (
+                <CommandItem
+                  key={model.id}
+                  value={`${model.displayName} ${model.id}`}
+                  data-checked={model.id === value}
+                  onSelect={() => {
+                    onChange(model.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate">{model.displayName}</span>
+                    <code className="block truncate text-sm text-muted-foreground">{model.id}</code>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function PolicyCheckingModelSection() {
+  const settings = useAdminModelSettings();
+  const update = useUpdateAdminModelSettings();
+  const data = settings.data;
+
+  return (
+    <section className="mb-6 rounded-lg border border-border bg-background p-4">
+      <h2 className="text-ui font-medium">Policy checking model</h2>
+      <p className="mt-0.5 text-sm text-muted-foreground">
+        Used by intent-based and other LLM-backed policies. This updates the server
+        <code className="mx-1">llm:</code>
+        configuration.
+      </p>
+      {!settings.isLoading && !data?.databricksConnected ? (
+        <div
+          role="alert"
+          className="mt-3 flex items-start gap-2 rounded-md border border-border bg-muted/50 px-3 py-2"
+        >
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">
+            Connect to a Databricks workspace to enable intent based policies.
+          </span>
+        </div>
+      ) : (
+        <PolicyModelPicker
+          models={data?.models ?? []}
+          value={data?.policyModel ?? null}
+          disabled={settings.isLoading || update.isPending}
+          onChange={(policyModel) => update.mutate({ policyModel })}
+        />
+      )}
+      {(settings.isError || update.isError) && (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {settings.error?.message ?? update.error?.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function PoliciesPage() {
   const info = useServerInfo();
   // Explicit single-user local runtime: no auth endpoints exist, so skip the
@@ -431,6 +560,7 @@ export function PoliciesPage() {
   const [meIsAdmin, setMeIsAdmin] = useState<boolean | null>(null);
   const { data: policies = [], refetch } = useDefaultPolicies();
   const { data: registry = [] } = usePolicyRegistry();
+  const modelSettings = useAdminModelSettings();
   const updatePolicy = useUpdateDefaultPolicy();
   const deletePolicy = useDeleteDefaultPolicy();
   const [addOpen, setAddOpen] = useState(false);
@@ -505,12 +635,16 @@ export function PoliciesPage() {
         </Button>
       </div>
 
+      <PolicyCheckingModelSection />
+
       {policies.length > 0 && (
         <div className="flex flex-col gap-3">
           {policies.map((p) => {
             const registryEntry = registryByHandler.get(p.handler);
             const params = p.factory_params;
             const hasParams = params != null && Object.keys(params).length > 0;
+            const missingRequiredModel =
+              p.enabled && registryEntry?.requires_llm === true && !modelSettings.data?.policyModel;
             return (
               <div
                 key={p.id ?? p.name}
@@ -541,6 +675,18 @@ export function PoliciesPage() {
                       <code className="mt-1 block text-sm text-muted-foreground/70">
                         {p.handler}
                       </code>
+                      {missingRequiredModel && (
+                        <div
+                          role="alert"
+                          className="mt-2 flex items-start gap-1.5 text-sm text-warning"
+                        >
+                          <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            This policy requires a policy checking model. Choose one above before
+                            relying on it.
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -605,7 +751,12 @@ export function PoliciesPage() {
         </Button>
       </div>
 
-      <AddDefaultPolicyDialog registry={registry} open={addOpen} onOpenChange={setAddOpen} />
+      <AddDefaultPolicyDialog
+        registry={registry}
+        modelIds={(modelSettings.data?.models ?? []).map((model) => model.id)}
+        open={addOpen}
+        onOpenChange={setAddOpen}
+      />
 
       {/* Delete confirmation */}
       <Dialog

@@ -56,6 +56,7 @@ class PolicyRegistryEntry:
     description: str
     params_schema: dict[str, object] | None = None
     internal_only: bool = False
+    requires_llm: bool = False
 
 
 # Module-level singleton. Populated by load_registry().
@@ -149,6 +150,7 @@ def load_registry(
             description_value = declaration.get("description")
             params_schema = _string_object_dict(declaration.get("params_schema"))
             internal_only_value = declaration.get("internal_only")
+            requires_llm_value = declaration.get("requires_llm")
             entry = PolicyRegistryEntry(
                 handler=handler_path,
                 kind=kind_value if isinstance(kind_value, str) else "callable",
@@ -157,6 +159,9 @@ def load_registry(
                 params_schema=params_schema,
                 internal_only=(
                     internal_only_value if isinstance(internal_only_value, bool) else False
+                ),
+                requires_llm=(
+                    requires_llm_value if isinstance(requires_llm_value, bool) else False
                 ),
             )
             _registry.append(entry)

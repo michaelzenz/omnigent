@@ -640,6 +640,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "TRIVIAL tasks from using operator-designated expensive models. "
             "Requires the server to have an llm: config block."
         ),
+        "requires_llm": True,
         "params_schema": {
             "type": "object",
             "properties": {
@@ -678,6 +679,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "Requires an llm: config block on the server; abstains (fail-open) when "
             "no LLM client is available. Zero required parameters."
         ),
+        "requires_llm": True,
         "params_schema": {
             "type": "object",
             "properties": {},
@@ -694,6 +696,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "before execution. Classification results are cached per exact tool call. "
             "Requires an llm: config block on the server."
         ),
+        "requires_llm": True,
         "params_schema": {
             "type": "object",
             "properties": {},

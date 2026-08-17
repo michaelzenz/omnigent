@@ -4,7 +4,7 @@ import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { isNativeCodingAgent, nativeCodingAgentForAvailableAgent } from "@/lib/nativeCodingAgents";
 import { SDK_HARNESS } from "@/lib/sdkModels";
 
-export { SDK_HARNESS, SDK_MODEL_OPTIONS, type SdkModelOption } from "@/lib/sdkModels";
+export { SDK_HARNESS, type SdkModelOption } from "@/lib/sdkModels";
 
 export interface HarnessOption {
   harness: string;

@@ -130,6 +130,7 @@ try:
     from omnigent.runtime.caps import RuntimeCaps
     from omnigent.server.app import create_app
     from omnigent.server.auth import create_auth_provider, warn_if_single_user_exposed
+    from omnigent.spec.types import LLMConfig
 
     # OTel: the Databricks Apps platform auto-injects
     # OTEL_EXPORTER_OTLP_ENDPOINT when `telemetry_export_destinations`
@@ -149,6 +150,9 @@ try:
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
     from omnigent.stores.host_store import HostStore
+    from omnigent.stores.model_settings_store.sqlalchemy_store import (
+        SqlAlchemyModelSettingsStore,
+    )
     from omnigent.stores.permission_store.sqlalchemy_store import (
         SqlAlchemyPermissionStore,
     )
@@ -185,15 +189,23 @@ try:
     file_comment_store = SqlAlchemyCommentStore(DB_URI)
     permission_store = SqlAlchemyPermissionStore(DB_URI)
     policy_store = SqlAlchemyPolicyStore(DB_URI)
+    model_settings_store = SqlAlchemyModelSettingsStore(DB_URI)
     project_store = SqlAlchemyProjectStore(DB_URI)
     host_store = HostStore(DB_URI)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(DB_URI)
 
     agent_cache = AgentCache(artifact_store=artifact_store, cache_dir=CACHE_DIR)
 
+    model_settings = model_settings_store.get()
     init_runtime(
         agent_cache=agent_cache,
-        caps=RuntimeCaps(),
+        caps=RuntimeCaps(
+            llm=(
+                LLMConfig(model=model_settings.policy_model)
+                if model_settings.policy_model is not None
+                else None
+            )
+        ),
         agent_store=agent_store,
         file_store=file_store,
         conversation_store=conversation_store,
@@ -225,6 +237,7 @@ try:
         comment_store=file_comment_store,
         permission_store=permission_store,
         policy_store=policy_store,
+        model_settings_store=model_settings_store,
         project_store=project_store,
         host_store=host_store,
         scheduled_task_store=scheduled_task_store,

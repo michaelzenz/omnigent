@@ -1,0 +1,78 @@
+"""SQLAlchemy-backed deployment model settings store."""
+
+from __future__ import annotations
+
+import json
+
+from sqlalchemy import select
+
+from omnigent.db.db_models import SqlModelSettings
+from omnigent.db.utils import (
+    get_or_create_engine,
+    make_named_managed_session_maker,
+    now_epoch,
+)
+from omnigent.stores.model_settings_store import ModelSettings, ModelSettingsStore
+
+
+def _decode(row: SqlModelSettings) -> ModelSettings:
+    raw = json.loads(row.harness_models)
+    if not isinstance(raw, dict):
+        raise ValueError("model_settings.harness_models must be an object")
+    harness_models: dict[str, list[str]] = {}
+    for harness, models in raw.items():
+        if not isinstance(harness, str) or not isinstance(models, list):
+            raise ValueError("model_settings.harness_models contains invalid data")
+        if not all(isinstance(model, str) for model in models):
+            raise ValueError("model_settings.harness_models contains invalid model ids")
+        harness_models[harness] = list(models)
+    return ModelSettings(harness_models=harness_models, policy_model=row.policy_model)
+
+
+class SqlAlchemyModelSettingsStore(ModelSettingsStore):
+    """Persist one global settings row for the deployment."""
+
+    def __init__(self, storage_location: str) -> None:
+        super().__init__(storage_location)
+        self._engine = get_or_create_engine(storage_location)
+        self._session = make_named_managed_session_maker(
+            self._engine,
+            query_name_prefix="omnigent.model_settings_store",
+        )
+
+    def get(self) -> ModelSettings:
+        with self._session("get") as session:
+            row = session.get(SqlModelSettings, 1)
+            if row is None:
+                raise RuntimeError("global model settings row is missing")
+            return _decode(row)
+
+    def update(
+        self,
+        *,
+        harness: str | None = None,
+        enabled_models: list[str] | None = None,
+        policy_model: str | None = None,
+        update_policy_model: bool = False,
+        updated_by: str | None = None,
+    ) -> ModelSettings:
+        if (harness is None) != (enabled_models is None):
+            raise ValueError("harness and enabled_models must be updated together")
+        with self._session("update") as session:
+            row = session.execute(
+                select(SqlModelSettings)
+                .where(SqlModelSettings.id == 1)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if row is None:
+                raise RuntimeError("global model settings row is missing")
+            if harness is not None and enabled_models is not None:
+                settings = _decode(row)
+                harness_models = dict(settings.harness_models)
+                harness_models[harness] = list(dict.fromkeys(enabled_models))
+                row.harness_models = json.dumps(harness_models, separators=(",", ":"))
+            if update_policy_model:
+                row.policy_model = policy_model
+            row.updated_at = now_epoch()
+            row.updated_by = updated_by
+            return _decode(row)

@@ -3789,6 +3789,9 @@ def server(
         SqlAlchemyConversationStore,
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+    from omnigent.stores.model_settings_store.sqlalchemy_store import (
+        SqlAlchemyModelSettingsStore,
+    )
     from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
     from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
     from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -3831,6 +3834,7 @@ def server(
     conversation_store = SqlAlchemyConversationStore(db_uri, conv_db_uri)
     comment_store = SqlAlchemyCommentStore(db_uri)
     policy_store = SqlAlchemyPolicyStore(db_uri)
+    model_settings_store = SqlAlchemyModelSettingsStore(db_uri)
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
@@ -3860,7 +3864,17 @@ def server(
 
     from omnigent.spec import parse_default_policies, parse_server_llm
 
-    server_llm = parse_server_llm(cfg.get("llm"))
+    model_settings = model_settings_store.get()
+    if model_settings.policy_model is None:
+        server_llm = None
+    else:
+        raw_llm = dict(cfg.get("llm")) if isinstance(cfg.get("llm"), dict) else {}
+        raw_llm["model"] = model_settings.policy_model
+        if not raw_llm.get("profile"):
+            auth = cfg.get("auth")
+            if isinstance(auth, dict) and auth.get("type") == "databricks":
+                raw_llm["profile"] = auth.get("profile")
+        server_llm = parse_server_llm(raw_llm)
 
     routing_settings = parse_routing_settings(cfg.get("routing"))
     routing_backends = _build_routing_backends(cfg, server_llm, routing_settings)
@@ -3984,6 +3998,7 @@ def server(
         conversation_store=conversation_store,
         comment_store=comment_store,
         policy_store=policy_store,
+        model_settings_store=model_settings_store,
         artifact_store=artifact_store,
         agent_cache=agent_cache,
         runner_tunnel_tokens=_runner_tunnel_tokens,

@@ -86,6 +86,11 @@ function composerProps(overrides: Partial<Parameters<typeof Composer>[0]> = {}) 
     showModels: false,
     modelPickerKind: null,
     codexModelOptions: [],
+    sdkModelOptions: [
+      { id: "databricks-gpt-5-6-luna", displayName: "GPT 5.6 Luna" },
+      { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
+      { id: "databricks-kimi-k3", displayName: "Kimi K3" },
+    ],
     showCodexPlanMode: false,
     ...overrides,
   };

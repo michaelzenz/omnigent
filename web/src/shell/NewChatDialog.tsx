@@ -93,6 +93,7 @@ import {
 import { setPendingInitialPrompt } from "@/store/chatStore";
 import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
 import { CliCommandBlock } from "./CliCommandBlock";
 import { WorkspacePicker, isNavigablePath } from "./WorkspacePicker";
 import {
@@ -132,7 +133,7 @@ import {
   type SmartRoutingUnavailableCause,
 } from "@/lib/smartRoutingAvailability";
 import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
-import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "@/lib/sdkModels";
+import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS } from "@/lib/sdkModels";
 import { partitionAgentsByKind, sortAgentsForDisplay } from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
@@ -1447,6 +1448,7 @@ function HarnessConfigModal({
   setCostControlMode: (mode: CostControlMode) => void;
 }) {
   const info = useServerInfo();
+  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
   // Feature ON → single "needs setup" badge; OFF → per-reason original text.
   const collapsedBadge = isFeatureEnabled(info, "harness_install");
   const entryHarness = nativeCodingAgentForAvailableAgent(agent)?.harness ?? null;
@@ -1515,8 +1517,8 @@ function HarnessConfigModal({
     [codexModelOptions],
   );
   const sdkModelSelectOptions = useMemo(
-    () => SDK_MODEL_OPTIONS.map((m) => ({ id: m.id, label: m.displayName })),
-    [],
+    () => sdkModelOptions.map((m) => ({ id: m.id, label: m.displayName })),
+    [sdkModelOptions],
   );
   const onModelChange = (value: string) => {
     if (value === MODEL_SELECT_SMART) {
@@ -2048,6 +2050,7 @@ export function NewChatLandingScreen() {
   // config can actually serve a managed launch advertise it. "loading"
   // fails closed (option hidden) until the boot probe resolves.
   const info = useServerInfo();
+  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
   const managedSandboxesEnabled = info !== "loading" && info.managed_sandboxes_enabled;
   const smartRoutingEnabled = info !== "loading" && info.smart_routing_enabled;
   // Which router can answer a pick. The external AI-Gateway router only covers
@@ -2816,7 +2819,7 @@ export function NewChatLandingScreen() {
     }
     if (selectedAgentUsesSdk) {
       const modelValue =
-        SDK_MODEL_OPTIONS.find((model) => model.id === pickedModel)?.displayName ??
+        sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ??
         "Default (GLM 5.2)";
       return [{ label: "Model", value: modelValue }];
     }
@@ -2841,6 +2844,7 @@ export function NewChatLandingScreen() {
     pickedModel,
     claudeModelOptions,
     codexModelOptions,
+    sdkModelOptions,
     pickedEffort,
     permissionMode,
     approvalMode,
@@ -2941,12 +2945,12 @@ export function NewChatLandingScreen() {
     if (!selectedAgentUsesSdk) return;
     const storedModel = readHarnessOptions(SDK_HARNESS).model;
     setPickedModel(
-      storedModel != null && SDK_MODEL_OPTIONS.some((model) => model.id === storedModel)
+      storedModel != null && sdkModelOptions.some((model) => model.id === storedModel)
         ? storedModel
         : "",
     );
     setPickedEffort("");
-  }, [selectedAgentUsesSdk, effectiveAgentId, setPickedModel]);
+  }, [selectedAgentUsesSdk, effectiveAgentId, sdkModelOptions, setPickedModel]);
   // Smart Routing is remembered per harness alongside the mode/model
   // knobs, in its own effect because eligibility depends on the server flag
   // (which resolves after mount — this must reseed when it lands). A stored

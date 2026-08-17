@@ -1222,6 +1222,25 @@ class SqlPolicy(OmnigentBase):
     )
 
 
+class SqlModelSettings(OmnigentBase):
+    """Deployment-wide model picker and policy-model settings."""
+
+    __tablename__ = "model_settings"
+
+    id: Mapped[int] = mapped_column(
+        SmallInteger,
+        primary_key=True,
+        default=1,
+        server_default="1",
+    )
+    harness_models: Mapped[str] = mapped_column(Text)
+    policy_model: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    __table_args__ = (CheckConstraint("id = 1", name="ck_model_settings_singleton"),)
+
+
 class SqlHost(OmnigentBase):
     """
     SQLAlchemy model for the ``hosts`` table.

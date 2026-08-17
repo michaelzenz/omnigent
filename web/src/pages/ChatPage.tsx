@@ -207,7 +207,8 @@ import { GoalControl, GoalStatusPill, useGoalState, type Goal } from "@/componen
 import { copyText } from "@/lib/clipboard";
 import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "@/lib/sdkModels";
+import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
+import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS, type SdkModelOption } from "@/lib/sdkModels";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -1007,6 +1008,7 @@ export function ChatPage() {
   // excluded: their CLI bakes the model at launch and can't per-turn route, so
   // Smart Routing is meaningless there.
   const serverInfo = useServerInfo();
+  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
   const costRoutingEligible = isCostRoutingEligible(serverInfo, activeSession);
   // Sub-agent routing is a separate knob with a different gate: a native CLI
   // can't per-turn route itself, but the sub-agents it spawns are routed per
@@ -1301,6 +1303,7 @@ export function ChatPage() {
       showModels={modelPickerKind !== null}
       modelPickerKind={modelPickerKind}
       codexModelOptions={codexModelOptions}
+      sdkModelOptions={sdkModelOptions}
       showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
       showGoalControl={shouldShowGoalControl(capabilitySource)}
       showClaudeGoalControl={shouldShowPollyClaudeGoalControl(activeSession)}
@@ -1537,6 +1540,8 @@ interface MainAgentSurfaceProps {
   modelPickerKind: NativeModelPickerKind | null;
   /** Runner-owned model picker rows for native sessions. */
   codexModelOptions: readonly NativeModelOption[];
+  /** Admin-selected model picker rows for the Omnigent SDK harness. */
+  sdkModelOptions: readonly SdkModelOption[];
   /** Show the Codex Plan-mode toggle. */
   showCodexPlanMode: boolean;
   /** Show the session Goal control. */
@@ -1682,6 +1687,7 @@ export function MainAgentSurface({
   showModels,
   modelPickerKind,
   codexModelOptions,
+  sdkModelOptions,
   showCodexPlanMode,
   showGoalControl = false,
   showClaudeGoalControl = false,
@@ -2188,6 +2194,7 @@ export function MainAgentSurface({
             showModels={showModels}
             modelPickerKind={modelPickerKind}
             codexModelOptions={codexModelOptions}
+            sdkModelOptions={sdkModelOptions}
             showCodexPlanMode={showCodexPlanMode}
             showGoalControl={showGoalControl}
             showClaudeGoalControl={showClaudeGoalControl}
@@ -3956,6 +3963,8 @@ interface ComposerProps {
   modelPickerKind: NativeModelPickerKind | null;
   /** Runner-owned model picker rows for native sessions. */
   codexModelOptions: readonly NativeModelOption[];
+  /** Admin-selected model picker rows for the Omnigent SDK harness. */
+  sdkModelOptions?: readonly SdkModelOption[];
   /** Show the Codex Plan-mode toggle. */
   showCodexPlanMode: boolean;
   /** Show the session Goal control. */
@@ -4432,6 +4441,7 @@ export function Composer({
   showModels,
   modelPickerKind,
   codexModelOptions,
+  sdkModelOptions = EMPTY_SDK_MODEL_OPTIONS,
   showCodexPlanMode,
   showGoalControl = false,
   showClaudeGoalControl = false,
@@ -5668,6 +5678,7 @@ export function Composer({
                 showEffort={showEffort}
                 modelPickerKind={modelPickerKind}
                 codexModelOptions={codexModelOptions}
+                sdkModelOptions={sdkModelOptions}
                 costRoutingEligible={costRoutingEligible}
                 harnessLabel={harnessLabel}
                 disabled={isReadOnly || unreachable}
@@ -5679,6 +5690,7 @@ export function Composer({
                 effortLevels={effortLevels}
                 modelPickerKind={modelPickerKind}
                 codexModelOptions={codexModelOptions}
+                sdkModelOptions={sdkModelOptions}
                 costRoutingEligible={costRoutingEligible}
                 subagentRoutingEligible={subagentRoutingEligible}
                 // Config changes persist server-side and apply on the next
@@ -6129,6 +6141,7 @@ function SessionConfigModal({
   effortLevels,
   modelPickerKind,
   codexModelOptions,
+  sdkModelOptions,
   costRoutingEligible,
   subagentRoutingEligible,
 }: {
@@ -6140,6 +6153,7 @@ function SessionConfigModal({
   effortLevels: readonly string[];
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
+  sdkModelOptions: readonly SdkModelOption[];
   costRoutingEligible: boolean;
   subagentRoutingEligible: boolean;
 }) {
@@ -6149,7 +6163,7 @@ function SessionConfigModal({
   const subagentRoutingOverride = useChatStore((s) => s.subagentRoutingOverride);
   const conversationId = useChatStore((s) => s.conversationId);
   const { llmModel, usesServerModelOptions, modelOptions, pickerSelectedModel, modelLabel } =
-    useResolvedComposerModel(modelPickerKind, codexModelOptions);
+    useResolvedComposerModel(modelPickerKind, codexModelOptions, sdkModelOptions);
 
   // Agents with a Model dropdown fold Smart Routing into it as an option. There
   // is no in-session switch for agents without one — they choose at create.
@@ -6452,6 +6466,7 @@ function ComposerConfigGear({
   effortLevels,
   modelPickerKind,
   codexModelOptions,
+  sdkModelOptions,
   costRoutingEligible,
   subagentRoutingEligible,
   disabled,
@@ -6463,6 +6478,7 @@ function ComposerConfigGear({
   effortLevels: readonly string[];
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
+  sdkModelOptions: readonly SdkModelOption[];
   costRoutingEligible: boolean;
   subagentRoutingEligible: boolean;
   disabled: boolean;
@@ -6488,6 +6504,7 @@ function ComposerConfigGear({
     showEffort,
     modelPickerKind,
     codexModelOptions,
+    sdkModelOptions,
     costRoutingEligible,
   });
 
@@ -6548,6 +6565,7 @@ function ComposerConfigGear({
         effortLevels={effortLevels}
         modelPickerKind={modelPickerKind}
         codexModelOptions={codexModelOptions}
+        sdkModelOptions={sdkModelOptions}
         costRoutingEligible={costRoutingEligible}
         subagentRoutingEligible={subagentRoutingEligible}
       />
@@ -6566,6 +6584,7 @@ function useSessionConfigSummary({
   showEffort,
   modelPickerKind,
   codexModelOptions,
+  sdkModelOptions,
   costRoutingEligible,
 }: {
   harnessLabel: string | null;
@@ -6573,12 +6592,17 @@ function useSessionConfigSummary({
   showEffort: boolean;
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
+  sdkModelOptions: readonly SdkModelOption[];
   costRoutingEligible: boolean;
 }): { label: string; value: string }[] {
   const selectedEffort = useSessionEffort();
   const busySendMode = useChatStore((s) => s.busySendMode);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
-  const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
+  const { modelLabel } = useResolvedComposerModel(
+    modelPickerKind,
+    codexModelOptions,
+    sdkModelOptions,
+  );
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
 
   const rows: { label: string; value: string }[] = [
@@ -6627,12 +6651,12 @@ function useSessionEffort(): string | null {
 function useResolvedComposerModel(
   modelPickerKind: NativeModelPickerKind | null,
   codexModelOptions: readonly NativeModelOption[],
+  sdkModelOptions: readonly SdkModelOption[] = EMPTY_SDK_MODEL_OPTIONS,
 ) {
   const selectedModel = useChatStore((s) => s.selectedModel);
   const sessionModelOverride = useChatStore((s) => s.sessionModelOverride);
   const llmModel = useChatStore((s) => s.llmModel);
   const nativeVendorOwnsModel = useChatStore((s) => s.nativeVendorOwnsModel);
-
   // Native model pickers populate from the snapshot's runner-backed
   // ``model_options`` field. Claude's rows are the aliases pinned to the
   // launch-time Databricks catalog; Codex carries richer effort metadata.
@@ -6644,7 +6668,7 @@ function useResolvedComposerModel(
     modelPickerKind === "pi" ||
     modelPickerKind === "opencode";
   const modelOptions: readonly { id: string; label?: string; displayName?: string }[] =
-    usesServerModelOptions ? codexModelOptions : modelPickerKind === "sdk" ? SDK_MODEL_OPTIONS : [];
+    usesServerModelOptions ? codexModelOptions : modelPickerKind === "sdk" ? sdkModelOptions : [];
   const isNativeModelPicker = modelPickerKind !== null && modelPickerKind !== "sdk";
 
   // qwen/goose/cursor/pi/opencode native wrappers pick their model inside
@@ -6715,7 +6739,7 @@ function useResolvedComposerModel(
     : nonNativeModel;
   const modelLabel =
     modelPickerKind === "sdk"
-      ? (SDK_MODEL_OPTIONS.find((option) => option.id === effectiveModel)?.displayName ??
+      ? (sdkModelOptions.find((option) => option.id === effectiveModel)?.displayName ??
         effectiveModel)
       : formatStatusModelLabel(effectiveModel, codexModelOptions);
   return {
@@ -6732,9 +6756,11 @@ function useResolvedComposerModel(
 function ComposerSdkModelQuickSelect({
   costRoutingEligible,
   disabled,
+  sdkModelOptions,
 }: {
   costRoutingEligible: boolean;
   disabled: boolean;
+  sdkModelOptions: readonly SdkModelOption[];
 }) {
   const [pending, setPending] = useState(false);
   const modelOverride = useChatStore((s) => s.sessionModelOverride);
@@ -6743,11 +6769,11 @@ function ComposerSdkModelQuickSelect({
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
   const effectiveModel = modelOverride ?? llmModel;
   const modelLabel =
-    SDK_MODEL_OPTIONS.find((option) => option.id === effectiveModel)?.displayName ??
+    sdkModelOptions.find((option) => option.id === effectiveModel)?.displayName ??
     effectiveModel ??
     "Default";
   const defaultModelLabel =
-    SDK_MODEL_OPTIONS.find((option) => option.id === llmModel)?.displayName ?? llmModel;
+    sdkModelOptions.find((option) => option.id === llmModel)?.displayName ?? llmModel;
   const value = routingOn ? MODEL_SELECT_SMART : (modelOverride ?? MODEL_SELECT_DEFAULT);
 
   async function onChange(next: string) {
@@ -6790,7 +6816,7 @@ function ComposerSdkModelQuickSelect({
             {SMART_ROUTING_LABEL}
           </SelectItem>
         )}
-        {SDK_MODEL_OPTIONS.map((option) => (
+        {sdkModelOptions.map((option) => (
           <SelectItem key={option.id} value={option.id} data-model-id={option.id}>
             {option.displayName}
           </SelectItem>
@@ -6820,6 +6846,7 @@ function ComposerModelEffortLabel({
   showEffort,
   modelPickerKind,
   codexModelOptions,
+  sdkModelOptions,
   costRoutingEligible,
   harnessLabel,
   disabled,
@@ -6828,17 +6855,26 @@ function ComposerModelEffortLabel({
   showEffort: boolean;
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
+  sdkModelOptions: readonly SdkModelOption[];
   costRoutingEligible: boolean;
   harnessLabel: string | null;
   disabled: boolean;
 }) {
   const selectedEffort = useSessionEffort();
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
-  const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
+  const { modelLabel } = useResolvedComposerModel(
+    modelPickerKind,
+    codexModelOptions,
+    sdkModelOptions,
+  );
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
   if (showModels && modelPickerKind === "sdk") {
     return (
-      <ComposerSdkModelQuickSelect costRoutingEligible={costRoutingEligible} disabled={disabled} />
+      <ComposerSdkModelQuickSelect
+        costRoutingEligible={costRoutingEligible}
+        disabled={disabled}
+        sdkModelOptions={sdkModelOptions}
+      />
     );
   }
   // Routing picks the model + effort per turn, so the label reads

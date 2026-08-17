@@ -23,6 +23,7 @@ export interface PolicyRegistryEntry {
   name: string;
   description: string;
   params_schema: Record<string, unknown> | null;
+  requires_llm: boolean;
 }
 
 // ── Query helpers ────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import { useEffect } from "react";
 import {
   ArchiveIcon,
   ArrowLeftIcon,
+  BoxesIcon,
   DownloadIcon,
   GitBranchIcon,
   Link2Icon,
@@ -39,6 +40,7 @@ export type SettingsSectionId =
   | "puppygarden"
   | "account"
   | "members"
+  | "models"
   | "policies"
   | "sharing"
   | "archived"
@@ -53,6 +55,7 @@ const SECTION_IDS: readonly SettingsSectionId[] = [
   "puppygarden",
   "account",
   "members",
+  "models",
   "policies",
   "sharing",
   "archived",
@@ -127,6 +130,7 @@ export function settingsNavGroups(
     // to a solo user's own sessions too.
     const adminItems: SettingsNavItem[] = [];
     if (!isSingleUser) adminItems.push({ id: "members", label: "Members", icon: UsersIcon });
+    adminItems.push({ id: "models", label: "Models", icon: BoxesIcon });
     adminItems.push({ id: "policies", label: "Policies", icon: ShieldCheckIcon });
     if (!isSingleUser) adminItems.push({ id: "sharing", label: "Sharing", icon: Share2Icon });
     groups.push({ title: "Admin", items: adminItems });

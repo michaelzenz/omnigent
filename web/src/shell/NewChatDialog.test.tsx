@@ -777,6 +777,11 @@ function renderLanding(infoOverrides: Partial<ServerInfo> = {}, route = "/") {
     // routing). Cases that exercise the built-in judge pass the field
     // explicitly.
     smart_routing_sources: { external: infoOverrides.smart_routing_enabled === true, oss: false },
+    omnigent_model_options: [
+      { id: "databricks-gpt-5-6-luna", display_name: "GPT 5.6 Luna" },
+      { id: "databricks-glm-5-2", display_name: "GLM 5.2" },
+      { id: "databricks-kimi-k3", display_name: "Kimi K3" },
+    ],
     features: { harness_install: infoOverrides.harness_install_enabled === true },
     harness_install_enabled: false,
     installable_harnesses: [],

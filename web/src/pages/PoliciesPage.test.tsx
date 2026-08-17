@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PoliciesPage } from "./PoliciesPage";
 import * as identity from "@/lib/identity";
 import * as defaultPolicies from "@/hooks/useDefaultPolicies";
+import * as modelSettings from "@/hooks/useModelSettings";
 import * as policies from "@/hooks/usePolicies";
 
 const serverInfoMocks = vi.hoisted(() => ({
@@ -47,6 +48,10 @@ vi.mock("@/hooks/useDefaultPolicies", () => ({
   useDeleteDefaultPolicy: vi.fn(),
 }));
 vi.mock("@/hooks/usePolicies", () => ({ usePolicyRegistry: vi.fn() }));
+vi.mock("@/hooks/useModelSettings", () => ({
+  useAdminModelSettings: vi.fn(),
+  useUpdateAdminModelSettings: vi.fn(),
+}));
 
 type Policy = ReturnType<typeof policy>;
 function policy(overrides: Partial<Record<string, unknown>> = {}) {
@@ -97,6 +102,22 @@ beforeEach(() => {
   vi.mocked(identity.getCurrentIsAdmin).mockReturnValue(true);
   setPolicies([]);
   vi.mocked(policies.usePolicyRegistry).mockReturnValue({ data: [] } as never);
+  vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+    data: {
+      databricksConnected: true,
+      profile: "test",
+      models: [],
+      omnigentModels: [],
+      policyModel: "databricks-glm-5-2",
+      error: null,
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  } as never);
+  vi.mocked(modelSettings.useUpdateAdminModelSettings).mockReturnValue(
+    mutationStub(vi.fn()) as never,
+  );
   vi.mocked(defaultPolicies.useAddDefaultPolicy).mockReturnValue(mutationStub(addMutate) as never);
   vi.mocked(defaultPolicies.useUpdateDefaultPolicy).mockReturnValue(
     mutationStub(updateMutate) as never,
@@ -319,6 +340,92 @@ describe("PoliciesPage actions", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("PoliciesPage policy model", () => {
+  it("filters the Databricks model list from the policy picker search", async () => {
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: true,
+        profile: "test",
+        models: [
+          { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
+          { id: "databricks-gpt-5-4", displayName: "GPT 5.4" },
+        ],
+        omnigentModels: [],
+        policyModel: null,
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Policy checking model" }));
+    fireEvent.change(screen.getByPlaceholderText("Search Databricks models…"), {
+      target: { value: "gpt" },
+    });
+    expect(screen.getByText("GPT 5.4")).toBeInTheDocument();
+    expect(screen.queryByText("GLM 5.2")).not.toBeInTheDocument();
+  });
+
+  it("prompts for a Databricks connection when model discovery is unavailable", async () => {
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: false,
+        profile: null,
+        models: [],
+        omnigentModels: [],
+        policyModel: null,
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+    renderPage();
+    expect(
+      await screen.findByText("Connect to a Databricks workspace to enable intent based policies."),
+    ).toBeInTheDocument();
+  });
+
+  it("warns when an enabled LLM-backed policy has no checking model", async () => {
+    setPolicies([
+      policy({
+        handler: "omnigent.policies.builtins.routing.intent_based_authorization",
+        enabled: true,
+      }),
+    ]);
+    vi.mocked(policies.usePolicyRegistry).mockReturnValue({
+      data: [
+        {
+          handler: "omnigent.policies.builtins.routing.intent_based_authorization",
+          kind: "factory",
+          name: "Intent Based Authorization",
+          description: "Checks intent.",
+          params_schema: null,
+          requires_llm: true,
+        },
+      ],
+    } as never);
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: true,
+        profile: "test",
+        models: [],
+        omnigentModels: [],
+        policyModel: null,
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+    renderPage();
+    expect(
+      await screen.findByText(/This policy requires a policy checking model/),
+    ).toBeInTheDocument();
   });
 });
 

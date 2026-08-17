@@ -192,6 +192,9 @@ import { cn } from "@/lib/utils";
 const MembersPage = lazy(() =>
   import("@/pages/MembersPage").then((m) => ({ default: m.MembersPage })),
 );
+const ModelsPage = lazy(() =>
+  import("@/pages/ModelsPage").then((m) => ({ default: m.ModelsPage })),
+);
 const PoliciesPage = lazy(() =>
   import("@/pages/PoliciesPage").then((m) => ({ default: m.PoliciesPage })),
 );
@@ -224,11 +227,18 @@ export function SettingsPage() {
   // Rendered in ANY multi-user mode (accounts AND OIDC), not gated on
   // `accountsEnabled` — the nav + pages handle admin gating, and Members runs
   // read-only under OIDC (no password actions).
-  if (section === "members" || section === "policies" || section === "sharing") {
+  if (
+    section === "members" ||
+    section === "models" ||
+    section === "policies" ||
+    section === "sharing"
+  ) {
     return (
       <Suspense fallback={null}>
         {section === "members" ? (
           <MembersPage />
+        ) : section === "models" ? (
+          <ModelsPage />
         ) : section === "policies" ? (
           <PoliciesPage />
         ) : (
