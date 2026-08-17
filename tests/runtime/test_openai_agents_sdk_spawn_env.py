@@ -256,6 +256,56 @@ def test_profile_injects_ucode_state(
     assert env["HARNESS_OPENAI_AGENTS_GATEWAY_AUTH_COMMAND"] == "printf token"
 
 
+@pytest.mark.parametrize(
+    ("use_responses", "expected_suffix"),
+    [
+        (None, "/ai-gateway/openai/v1"),
+        (True, "/ai-gateway/codex/v1"),
+    ],
+)
+def test_profile_routes_kimi_to_matching_gateway_wire(
+    monkeypatch: pytest.MonkeyPatch,
+    use_responses: object | None,
+    expected_suffix: str,
+) -> None:
+    """Kimi defaults to Chat Completions unless Responses is explicitly requested."""
+    from omnigent.onboarding.ucode_state import UcodeAgentState, UcodeWorkspaceState
+
+    workspace_url = "https://example.databricks.com"
+    state = UcodeWorkspaceState(
+        workspace_url=workspace_url,
+        claude_models={},
+        codex_models=["databricks-kimi-k3"],
+        base_urls={"codex": f"{workspace_url}/ai-gateway/codex/v1"},
+        available_tools=["codex"],
+        agents={
+            "codex": UcodeAgentState(
+                model="system.ai.gpt-5-6-luna",
+                base_url=f"{workspace_url}/ai-gateway/codex/v1",
+                auth_command="printf token",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "omnigent.runtime.workflow.get_workspace_url_for_profile",
+        lambda profile: workspace_url,
+    )
+    monkeypatch.setattr(
+        "omnigent.runtime.workflow.read_ucode_state",
+        lambda requested_url: state,
+    )
+
+    env = _build_openai_agents_sdk_spawn_env(
+        _make_spec(
+            model="databricks-kimi-k3",
+            profile="test-profile",
+            use_responses=use_responses,
+        )
+    )
+
+    assert env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] == f"{workspace_url}{expected_suffix}"
+
+
 # ---------------------------------------------------------------------------
 # executor.auth tests
 # ---------------------------------------------------------------------------

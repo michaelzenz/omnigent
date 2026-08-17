@@ -1455,6 +1455,41 @@ def test_build_spawn_env_applies_model_override(
     assert overridden["HARNESS_CLAUDE_SDK_MODEL"] == "claude-sonnet-4-6"
 
 
+def test_openai_agents_model_override_switches_gateway_wire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Kimi override must switch ucode's Codex URL to the OpenAI gateway."""
+    workspace_url = "https://example.databricks.com"
+    monkeypatch.setattr(
+        "omnigent.runtime.workflow._build_openai_agents_sdk_spawn_env",
+        lambda spec: {
+            "HARNESS_OPENAI_AGENTS_MODEL": "system.ai.gpt-5-6-luna",
+            "HARNESS_OPENAI_AGENTS_GATEWAY_HOST": workspace_url,
+            "HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL": (
+                f"{workspace_url}/ai-gateway/codex/v1"
+            ),
+        },
+    )
+    spec = AgentSpec(
+        spec_version=1,
+        name="x",
+        executor=ExecutorSpec(type="omnigent", config={"harness": "openai-agents"}),
+    )
+
+    env = _build_spawn_env_from_spec(
+        spec,
+        "openai-agents",
+        model_override="databricks-kimi-k3",
+    )
+
+    assert env is not None
+    assert env["HARNESS_OPENAI_AGENTS_MODEL"] == "databricks-kimi-k3"
+    assert (
+        env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"]
+        == f"{workspace_url}/ai-gateway/openai/v1"
+    )
+
+
 def test_build_spawn_env_routes_hermes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The dispatch chain routes ``hermes`` to its builder.
 

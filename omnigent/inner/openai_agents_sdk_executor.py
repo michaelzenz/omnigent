@@ -156,7 +156,16 @@ def _normalize_responses_items_for_chat(
     for item in items:
         if item.get("type") == "message":
             raw_content = item.get("content")
-            if isinstance(raw_content, list):
+            if item.get("role") == "assistant" and isinstance(raw_content, str):
+                # The SDK may collapse replayed assistant output to a string
+                # before call_model_input_filter runs. Its Chat Completions
+                # converter treats type=message + role=assistant as a Responses
+                # output item and therefore requires output content blocks.
+                item = {
+                    **item,
+                    "content": [{"type": "output_text", "text": raw_content}],
+                }
+            elif isinstance(raw_content, list):
                 normalized_content = _normalize_content_blocks_for_chat(raw_content)
                 if normalized_content is not raw_content:
                     item = {**item, "content": normalized_content}
@@ -1279,6 +1288,14 @@ class OpenAIAgentsSDKExecutor(Executor):
         state: _AgentsSessionState,
         messages: list[Message],
     ) -> None:
+        if not state.started:
+            # The SDK's SQLiteSession outlives the harness subprocess. After a
+            # model change or runner restart, Omnigent sends the authoritative
+            # full history again, so retaining SDK-local items would duplicate
+            # replay and may feed Responses-shaped state into a Chat model.
+            if await state.sdk_session.get_items():
+                await state.sdk_session.clear_session()
+
         if state.rollback_to_item_count is not None:
             await self._rewind_sdk_session(state, state.rollback_to_item_count)
             state.rollback_to_item_count = None
@@ -1761,7 +1778,7 @@ class OpenAIAgentsSDKExecutor(Executor):
                     logger.error("OpenAIAgentsSDKExecutor: auth failed: %s", auth_msg)
                     yield ExecutorError(message=auth_msg)
                 else:
-                    logger.error("OpenAIAgentsSDKExecutor: run failed: %s", exc)
+                    logger.error("OpenAIAgentsSDKExecutor: run failed: %s", exc, exc_info=True)
                     yield ExecutorError(message=f"OpenAI Agents SDK error: {exc}")
                 return
             finally:

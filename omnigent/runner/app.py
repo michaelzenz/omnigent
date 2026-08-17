@@ -15986,6 +15986,20 @@ def _build_spawn_env_from_spec(
 
                 model_override = apply_servable_alias(model_override)
             env[model_key] = model_override
+            if harness == "openai-agents":
+                from omnigent.runtime.workflow import _openai_agents_uses_responses
+
+                use_responses = spec.executor.config.get("use_responses")
+                gateway_host = env.get("HARNESS_OPENAI_AGENTS_GATEWAY_HOST")
+                if gateway_host:
+                    gateway_family = (
+                        "codex"
+                        if _openai_agents_uses_responses(model_override, use_responses)
+                        else "openai"
+                    )
+                    env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] = (
+                        f"{gateway_host.rstrip('/')}/ai-gateway/{gateway_family}/v1"
+                    )
 
     # Routing visibility: log the resolved gateway target so operators can
     # confirm which provider a turn actually hits (api.anthropic.com /

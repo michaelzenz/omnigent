@@ -1735,6 +1735,18 @@ def _config_flag_is_true(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes"}
 
 
+def _openai_agents_uses_responses(model: str | None, configured: object | None) -> bool:
+    """Resolve the OpenAI Agents wire protocol using the harness's defaults."""
+    if configured is not None:
+        return _config_flag_is_true(configured)
+    if model is None:
+        return True
+    normalized = model.lower()
+    if normalized.startswith("databricks/"):
+        normalized = normalized.removeprefix("databricks/")
+    return not (normalized.startswith("databricks-") and "gpt" not in normalized)
+
+
 def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     """
     Build the env-var dict the openai-agents harness wrap reads.
@@ -1866,6 +1878,15 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
         ucode_profile,
         harness_type="openai-agents-sdk",
     )
+    # ucode's OpenAI Agents entry normally points at the Responses-only
+    # Codex gateway. Chat Completions models such as databricks-kimi-* need
+    # the sibling OpenAI gateway when selected as a per-session override.
+    if not _openai_agents_uses_responses(model, use_responses):
+        gateway_host = env.get("HARNESS_OPENAI_AGENTS_GATEWAY_HOST")
+        if gateway_host:
+            env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] = (
+                f"{gateway_host.rstrip('/')}/ai-gateway/openai/v1"
+            )
     return env
 
 
