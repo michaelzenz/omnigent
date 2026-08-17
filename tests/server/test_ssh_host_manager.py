@@ -399,4 +399,44 @@ async def test_tunnel_resolves_remote_home_and_verifies_socket(
     assert socket_path == "/home/test/.omnigent/server-connection-1.sock"
     start = next(args for args in local_commands if "-fN" in args)
     assert "/home/test/.omnigent/server-connection-1.sock:127.0.0.1:6767" in start
+    assert any(command.startswith("rm -f /home/test/") for command in remote_commands)
     assert any(command.startswith("test -S /home/test/") for command in remote_commands)
+
+
+async def test_tunnel_restarts_existing_control_master(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile()
+    local_commands: list[list[str]] = []
+
+    async def fake_ssh_run(
+        _profile: SshConnectionProfile,
+        command: str,
+        *,
+        timeout_s: float,
+    ) -> tuple[int, bytes, bytes]:
+        del timeout_s
+        if command.startswith("printf"):
+            return 0, b"/home/test", b""
+        return 0, b"", b""
+
+    async def fake_local_run(
+        args: list[str],
+        _timeout_s: float,
+    ) -> tuple[int, bytes, bytes]:
+        local_commands.append(args)
+        return 0, b"", b""
+
+    monkeypatch.setattr("omnigent.server.ssh_host_manager.ssh_run", fake_ssh_run)
+    operations = SshHostOperations(
+        local_host="127.0.0.1",
+        local_port=6767,
+        command_runner=fake_local_run,
+        control_dir=tmp_path,
+    )
+
+    await operations.ensure_tunnel(profile)
+
+    assert any("-O" in args and "exit" in args for args in local_commands)
+    assert any("-fN" in args for args in local_commands)

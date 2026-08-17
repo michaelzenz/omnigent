@@ -110,7 +110,7 @@ def build_install_command(
         'target="$root/versions/$version"; '
         'mkdir -p "$root/versions"; '
         f"if {checksum_guard}; then "
-        'rm -rf "$target"; '
+        'rm -rf "$root/versions/$version"; '
         'mkdir -p "$target"; '
         'if command -v uv >/dev/null 2>&1; then uv_bin="$(command -v uv)"; '
         "else curl -LsSf https://astral.sh/uv/install.sh | sh; "
@@ -334,18 +334,19 @@ class SshHostOperations:
         check = ["ssh", "-S", str(control_path), "-O", "check", profile.alias]
         code, _, _ = await self._run(check, 10)
         if code == 0:
-            remote_socket = await self.remote_socket(profile)
-            socket_code, _, _ = await ssh_run(
-                profile,
-                f"test -S {shlex.quote(remote_socket)}",
-                timeout_s=15,
-            )
-            if socket_code == 0:
-                return remote_socket
             await self._run(["ssh", "-S", str(control_path), "-O", "exit", profile.alias], 10)
         with suppress(FileNotFoundError):
             control_path.unlink()
         remote_socket = await self.remote_socket(profile)
+        code, stdout, stderr = await ssh_run(
+            profile,
+            f"rm -f {shlex.quote(remote_socket)}",
+            timeout_s=15,
+        )
+        if code != 0:
+            raise RuntimeError(
+                (stderr or stdout).decode().strip() or "failed to remove stale remote socket"
+            )
         reverse = f"{remote_socket}:{self._local_host}:{self._local_port}"
         start = [
             "ssh",

@@ -757,7 +757,7 @@ class HostStore:
         """
         now = now_epoch()
         token_hash = hash_host_launch_token(token)
-        with self._session() as session:
+        with self._session("register_ssh_host") as session:
             row = session.execute(
                 select(SqlHost).where(
                     SqlHost.workspace_id == current_workspace_id(),
@@ -765,7 +765,7 @@ class HostStore:
                 )
             ).scalar_one_or_none()
             if row is not None:
-                if row.owner != owner:
+                if row.user_id != owner:
                     raise ValueError(
                         f"host {host_id!r} is registered to a different owner; "
                         "refusing to re-credential it"
@@ -778,7 +778,7 @@ class HostStore:
                 row.updated_at = now
                 return _row_to_host(row)
             row = SqlHost(
-                owner=owner,
+                user_id=owner,
                 name=name,
                 host_id=host_id,
                 status=encode_host_status("offline"),
@@ -794,7 +794,7 @@ class HostStore:
 
     def reassign_ssh_host_owner(self, host_id: str, owner: str) -> bool:
         """Claim a server-managed SSH host for its persisted profile owner."""
-        with self._session() as session:
+        with self._session("reassign_ssh_host_owner") as session:
             row = session.execute(
                 select(SqlHost).where(
                     SqlHost.workspace_id == current_workspace_id(),
@@ -805,7 +805,7 @@ class HostStore:
             ).scalar_one_or_none()
             if row is None:
                 return False
-            row.owner = owner
+            row.user_id = owner
             row.updated_at = now_epoch()
             return True
 

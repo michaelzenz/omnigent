@@ -702,7 +702,7 @@ def test_register_ssh_host_arms_token_without_sandbox_classification(db_uri: str
     )
     assert registered.sandbox_provider is None
     assert registered.sandbox_id is None
-    resolved = store.resolve_launch_token("ssh-launch-token")
+    resolved = store.resolve_launch_token(registered.host_id, "ssh-launch-token")
     assert resolved is not None
     assert resolved.host_id == registered.host_id
 

@@ -528,10 +528,9 @@ def configure_agent_harness_with_provider(
       gateway vars. For codex, pin the built-in ``openai`` provider
       (``HARNESS_CODEX_MODEL_PROVIDER``) so a custom default in the user's
       ``~/.codex/config.toml`` cannot shadow the subscription.
-    - ``cli-config`` — pin the entry's ``model_provider``
-      (``HARNESS_CODEX_MODEL_PROVIDER``); the provider table + credential
-      come from the user's ``~/.codex/config.toml``, which the executor
-      bridges into the per-session ``CODEX_HOME``. Codex harness only.
+    - ``cli-config`` — pin the entry's ``model_provider`` for Codex. A
+      Databricks AI Gateway entry is also translated into the native gateway
+      transport for Pi and OpenAI Agents.
     - ``databricks`` — delegate to the existing ucode path keyed on the
       provider's profile, reusing :func:`configure_agent_harness_with_ucode`
       so the ``polly`` / Databricks coding-agent flow is unchanged.
@@ -595,22 +594,16 @@ def configure_agent_harness_with_provider(
         return
 
     if entry.kind == CLI_CONFIG_KIND:
-        # The pi harness consumes both families and can route a cli-config
-        # Databricks AI Gateway (the gateway's Anthropic Messages surface is one
-        # Pi speaks natively) — the same provider pi-native routes via
-        # ``_cli_config_pi_provider``. Translate it into the pi gateway
-        # transport rather than failing loud; a non-Databricks cli-config is
-        # never selected for pi (see ``default_provider_for_harness``), so it
-        # won't reach here.
         if harness_type == "pi":
             _apply_cli_config_databricks_to_pi(env, entry)
             return
+        if harness_type == "openai-agents-sdk":
+            _apply_cli_config_databricks_to_openai_agents(env, entry)
+            return
         # A custom model provider defined (and authenticated) by the codex
         # CLI's own config.toml: pin it by name; the executor's bridged
-        # config.toml carries the provider table + credential. Only the
-        # codex harness reads that file — openai-agents-sdk / claude-sdk
-        # cannot consume a codex provider table, so fail loud rather than
-        # launch them credential-less.
+        # config.toml carries the provider table + credential. Claude SDK
+        # cannot consume this OpenAI-compatible transport.
         if harness_type != "codex":
             raise OmnigentError(
                 f"provider {entry.name!r} (kind 'cli-config') pins a provider in "
@@ -891,6 +884,34 @@ def _apply_provider_to_pi(env: dict[str, str], entry: ProviderEntry) -> None:
         env["HARNESS_PI_MODEL"] = auth_source.default_model
     if "HARNESS_PI_MODEL" not in env:
         env["HARNESS_PI_MODEL"] = _catalog_default_model(auth_family)
+
+
+def _apply_cli_config_databricks_to_openai_agents(
+    env: dict[str, str],
+    entry: ProviderEntry,
+) -> None:
+    """Translate a Codex Databricks gateway provider for OpenAI Agents."""
+    from omnigent.pi_native_credentials import _cli_config_databricks_transport
+
+    transport = _cli_config_databricks_transport(entry)
+    if transport is None:
+        raise OmnigentError(
+            f"provider {entry.name!r} (kind 'cli-config') cannot drive the "
+            "'openai-agents-sdk' harness because its Codex provider table is not "
+            "a resolvable Databricks AI Gateway. Check ~/.codex/config.toml or "
+            "configure a key/gateway provider in ~/.omnigent/config.yaml.",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    assert transport.auth_command is not None
+    env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] = transport.base_url
+    env["HARNESS_OPENAI_AGENTS_GATEWAY_HOST"] = _origin_of(transport.base_url)
+    env["HARNESS_OPENAI_AGENTS_GATEWAY_AUTH_COMMAND"] = transport.auth_command
+    if "HARNESS_OPENAI_AGENTS_MODEL" not in env:
+        env["HARNESS_OPENAI_AGENTS_MODEL"] = _resolve_catalog_default_model(
+            "databricks",
+            "openai",
+            context=f"provider {entry.name!r}",
+        )
 
 
 def _apply_cli_config_databricks_to_pi(env: dict[str, str], entry: ProviderEntry) -> None:
