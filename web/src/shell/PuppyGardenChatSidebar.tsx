@@ -157,6 +157,7 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
       if (isUnreachable) return;
       const chat = useChatStore.getState();
       if (
+        chat.busySendMode === "queue" &&
         shouldQueueSend(chat.conversationId, chat.status, chat.sessionStatus, chat.queuedMessages)
       ) {
         chat.enqueueMessage(text, files);

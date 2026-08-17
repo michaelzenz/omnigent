@@ -1188,6 +1188,7 @@ export function ChatPage() {
     // FIFO immediately when genuinely idle, so nothing stalls.
     const chat = useChatStore.getState();
     if (
+      chat.busySendMode === "queue" &&
       shouldQueueSend(chat.conversationId, chat.status, chat.sessionStatus, chat.queuedMessages)
     ) {
       chat.enqueueMessage(text, files);
@@ -6094,8 +6095,8 @@ const SUBAGENT_ROUTING_DESCRIPTION = "Model routing for subagents this session s
 /**
  * In-session run-config modal opened from the composer's gear icon. The
  * live-committing analogue of the new-session ``HarnessConfigModal``: only the
- * knobs switchable mid-session appear — Model (which folds Smart Routing in as
- * an option where a dropdown exists), Effort, and Subagent routing. A session's
+ * knobs switchable mid-session appear — busy-send behavior, Model (which folds
+ * Smart Routing in as an option where a dropdown exists), Effort, and Subagent routing. A session's
  * own Smart Routing is otherwise a create-time choice, and
  * permission/approval/cursor modes are launch-time only (no in-session state to
  * read or write), so they are intentionally absent.
@@ -6129,6 +6130,7 @@ function SessionConfigModal({
   subagentRoutingEligible: boolean;
 }) {
   const selectedEffort = useSessionEffort();
+  const busySendMode = useChatStore((s) => s.busySendMode);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const subagentRoutingOverride = useChatStore((s) => s.subagentRoutingOverride);
   const conversationId = useChatStore((s) => s.conversationId);
@@ -6159,6 +6161,7 @@ function SessionConfigModal({
   const [draftModelId, setDraftModelId] = useState<string | null>(resolvedModelId);
   const [draftEffort, setDraftEffort] = useState<string | null>(selectedEffort);
   const [draftRoutingOn, setDraftRoutingOn] = useState(liveRoutingOn);
+  const [draftBusySendMode, setDraftBusySendMode] = useState(busySendMode);
   // The sub-agent row is stored as a PICK, not a pre-seeded draft:
   // `undefined` means "untouched", so the row mirrors the live stored value for
   // as long as the user hasn't chosen anything. A draft seeded once per open
@@ -6173,6 +6176,7 @@ function SessionConfigModal({
     setDraftModelId(resolvedModelId);
     setDraftEffort(selectedEffort);
     setDraftRoutingOn(liveRoutingOn);
+    setDraftBusySendMode(busySendMode);
     setPickedSubagentRouting(undefined);
     // Nothing pushes a routing-switch change to the client (no SSE event, and
     // the session query never goes stale), so re-read them here — otherwise the
@@ -6224,6 +6228,9 @@ function SessionConfigModal({
     void (async () => {
       const store = useChatStore.getState();
       try {
+        if (draftBusySendMode !== store.busySendMode) {
+          store.setBusySendMode(draftBusySendMode);
+        }
         if (draftRoutingOn) {
           if (costRoutingEligible && !liveRoutingOn) await store.setCostControlMode("on");
         } else {
@@ -6288,11 +6295,29 @@ function SessionConfigModal({
         <DialogHeader>
           <DialogTitle>Configure {harnessLabel ?? "session"}</DialogTitle>
           <DialogDescription className="sr-only">
-            Change how this session runs. Model, effort, and smart routing apply to the next turn.
+            Change message delivery and how this session runs.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-1">
+          <ConfigRow label="While working" description="Default message delivery for all chats">
+            <Select
+              value={draftBusySendMode}
+              onValueChange={(value) => setDraftBusySendMode(value === "steer" ? "steer" : "queue")}
+            >
+              <SelectTrigger
+                className="w-full"
+                data-testid="composer-config-busy-send-mode"
+                aria-label="While working"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" align="start">
+                <SelectItem value="queue">Queue</SelectItem>
+                <SelectItem value="steer">Steer</SelectItem>
+              </SelectContent>
+            </Select>
+          </ConfigRow>
           {showModels && (
             <ConfigRow label="Model" description="Underlying LLM">
               <RoutingModelSelect
@@ -6399,8 +6424,8 @@ function SessionConfigModal({
 /**
  * Composer gear affordance: a ghost `SettingsIcon` that shows the session's
  * live run-config on hover and opens `SessionConfigModal` on click. Rendered
- * only when the session has at least one switchable knob (model, effort, or
- * smart routing) — otherwise there's nothing to configure.
+ * Busy-send behavior is always configurable; harness-specific run controls
+ * appear alongside it when supported.
  *
  * @param openNonce External "open the modal" signal, nonce-keyed so repeat
  *   requests re-open (bare ``/model`` submits route here now that the composer
@@ -6430,6 +6455,9 @@ function ComposerConfigGear({
   openNonce?: number;
 }) {
   const [open, setOpen] = useState(false);
+  // SDK models are selected directly from the composer label, so repeating
+  // that dropdown in the gear would expose two controls for the same setting.
+  const showModelSetting = showModels && modelPickerKind !== "sdk";
   const appliedOpenNonce = useRef(0);
   useEffect(() => {
     if (!openNonce || openNonce === appliedOpenNonce.current) return;
@@ -6442,14 +6470,12 @@ function ComposerConfigGear({
   }, [openNonce, disabled]);
   const summary = useSessionConfigSummary({
     harnessLabel,
-    showModels,
+    showModels: showModelSetting,
     showEffort,
     modelPickerKind,
     codexModelOptions,
     costRoutingEligible,
   });
-
-  if (!showModels && !showEffort && !costRoutingEligible && !subagentRoutingEligible) return null;
 
   return (
     <>
@@ -6503,7 +6529,7 @@ function ComposerConfigGear({
         open={open}
         onOpenChange={setOpen}
         harnessLabel={harnessLabel}
-        showModels={showModels}
+        showModels={showModelSetting}
         showEffort={showEffort}
         effortLevels={effortLevels}
         modelPickerKind={modelPickerKind}
@@ -6536,11 +6562,14 @@ function useSessionConfigSummary({
   costRoutingEligible: boolean;
 }): { label: string; value: string }[] {
   const selectedEffort = useSessionEffort();
+  const busySendMode = useChatStore((s) => s.busySendMode);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
 
-  const rows: { label: string; value: string }[] = [];
+  const rows: { label: string; value: string }[] = [
+    { label: "While working", value: busySendMode === "steer" ? "Steer" : "Queue" },
+  ];
   if (harnessLabel) rows.push({ label: "Harness", value: harnessLabel });
   if (showModels) {
     rows.push({

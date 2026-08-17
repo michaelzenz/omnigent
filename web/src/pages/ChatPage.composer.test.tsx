@@ -1667,6 +1667,7 @@ describe("Composer config gear", () => {
       llmModel: null,
       nativeVendorOwnsModel: false,
       selectedEffort: null,
+      busySendMode: "queue",
       costControlModeOverride: null,
       // Opening the gear re-reads the routing switches; stub the fetch away.
       refreshSessionOverrides: vi.fn().mockResolvedValue(undefined),
@@ -1676,6 +1677,7 @@ describe("Composer config gear", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.localStorage.removeItem("omnigent.busy-send-mode");
   });
 
   const gear = () => document.querySelector('[data-testid="composer-config-gear"]');
@@ -1685,14 +1687,25 @@ describe("Composer config gear", () => {
     expect(gear()).not.toBeNull();
   });
 
-  it("does not render when there is nothing to configure", () => {
-    // No models, no effort, not routable → nothing to configure.
+  it("still renders for busy-send behavior when there are no harness knobs", () => {
     renderWithTooltips(
       <Composer
         {...composerProps({ showEffort: false, showModels: false, costRoutingEligible: false })}
       />,
     );
-    expect(gear()).toBeNull();
+    expect(gear()).not.toBeNull();
+  });
+
+  it("changes the default busy-send behavior", async () => {
+    renderWithTooltips(<Composer {...composerProps({ showEffort: false, showModels: false })} />);
+    fireEvent.click(gear()!);
+    await screen.findByTestId("composer-config-modal");
+    fireEvent.click(screen.getByTestId("composer-config-busy-send-mode"));
+    fireEvent.click(screen.getByRole("option", { name: "Steer" }));
+    fireEvent.click(screen.getByTestId("composer-config-save"));
+
+    expect(useChatStore.getState().busySendMode).toBe("steer");
+    expect(window.localStorage.getItem("omnigent.busy-send-mode")).toBe("steer");
   });
 
   it("soft-disables the gear on a read-only session (aria-disabled, click no-ops)", () => {
@@ -1813,11 +1826,9 @@ describe("Composer config gear", () => {
     expect(screen.getByTestId("composer-config-effort")).toBeTruthy();
   });
 
-  it("offers SDK models and persists the selected override", async () => {
-    const setModel = vi.fn().mockResolvedValue(undefined);
+  it("does not repeat the SDK model picker in settings", async () => {
     useChatStore.setState({
       llmModel: "databricks-glm-5-2",
-      setModel,
     });
     renderWithTooltips(
       <Composer
@@ -1831,11 +1842,8 @@ describe("Composer config gear", () => {
 
     fireEvent.click(gear()!);
     await screen.findByTestId("composer-config-modal");
-    fireEvent.click(screen.getByTestId("composer-config-model"));
-    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
-    fireEvent.click(screen.getByTestId("composer-config-save"));
-
-    await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
+    expect(screen.queryByTestId("composer-config-model")).toBeNull();
+    expect(screen.getByTestId("composer-config-busy-send-mode")).toBeTruthy();
   });
 
   it("switches SDK models directly from the composer label", async () => {
@@ -2465,9 +2473,10 @@ describe("Composer config gear — subagent routing", () => {
       expect(gear()).not.toBeNull();
     });
 
-    it("renders exactly one row — the subagent row, with no switch/Model/Effort", async () => {
+    it("renders message delivery and subagent rows, with no Model/Effort", async () => {
       await openBundleModal();
-      expect(configRows()).toHaveLength(1);
+      expect(configRows()).toHaveLength(2);
+      expect(screen.getByTestId("composer-config-busy-send-mode")).toHaveTextContent("Queue");
       expect(row()).not.toBeNull();
       expect(screen.queryByTestId("composer-config-smart-routing")).toBeNull();
       expect(screen.queryByTestId("composer-config-model")).toBeNull();

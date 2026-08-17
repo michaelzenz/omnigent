@@ -195,6 +195,8 @@ export interface QueuedMessage {
   agentId?: string;
 }
 
+export type BusySendMode = "queue" | "steer";
+
 /**
  * A workspace path queued for the composer's "@"-mention chips. ``isDir``
  * marks a folder (delivered with a trailing ``/``); ``lineRange`` marks a
@@ -573,6 +575,8 @@ export interface AppChatState {
    * away from.
    */
   queuedMessages: QueuedMessage[];
+  /** Default behavior when sending while the active agent is running. */
+  busySendMode: BusySendMode;
   /**
    * Sticky picker pick — applies to the current session via PATCH and
    * survives navigation + reload (localStorage). ``null`` means the
@@ -618,6 +622,8 @@ export interface ChatActions {
    * turn) when the session next goes idle — see the `session_status` handler.
    */
   enqueueMessage: (text: string, files?: File[]) => void;
+  /** Set the app-wide busy-send behavior and persist it across reloads. */
+  setBusySendMode: (mode: BusySendMode) => void;
   /** Remove a queued message by id (the strip's per-row delete). */
   dequeueMessage: (queueId: string) => void;
   /**
@@ -1045,6 +1051,7 @@ const MAX_TRANSIENT_404_RETRIES = 10;
 // last pick across reloads and across sessions.
 const PICKER_PREF_EFFORT_KEY = "omnigent.picker.effort";
 const PICKER_PREF_MODEL_KEY = "omnigent.picker.model";
+const BUSY_SEND_MODE_KEY = "omnigent.busy-send-mode";
 
 function loadPickerPref(key: string): string | null {
   try {
@@ -1061,6 +1068,10 @@ function savePickerPref(key: string, value: string | null): void {
   } catch {
     // Ignore — running without storage just means prefs don't survive reload.
   }
+}
+
+function loadBusySendMode(): BusySendMode {
+  return loadPickerPref(BUSY_SEND_MODE_KEY) === "steer" ? "steer" : "queue";
 }
 
 // Bumped by every explicit model pick, so a PATCH that resolves out of order can
@@ -1231,6 +1242,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   blocks: [],
   pendingUserMessages: [],
   queuedMessages: [],
+  busySendMode: loadBusySendMode(),
   activeResponse: null,
   interruptedResponseIds: [],
   status: "idle",
@@ -1299,6 +1311,11 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // to the queue but the turn had already ended) would otherwise wait for an
     // idle edge that never comes — flush now.
     get().maybeFlushQueuedHead();
+  },
+
+  setBusySendMode: (mode) => {
+    savePickerPref(BUSY_SEND_MODE_KEY, mode);
+    _rootSet({ busySendMode: mode });
   },
 
   dequeueMessage: (queueId) => {
