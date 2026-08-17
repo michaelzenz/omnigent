@@ -4093,13 +4093,23 @@ export function buildSlashCommandWithArgsSet(
 /** Circumference of the progress ring (r=5.5). */
 const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
 
+/** Keep low context usage visible instead of rounding everything below 0.5% to zero. */
+function formatContextUsedPercent(fraction: number): string {
+  const percent = Math.min(Math.max(fraction, 0), 1) * 100;
+  if (percent === 0) return "0";
+  if (percent < 0.01) return "<0.01";
+  if (percent < 1) return percent.toFixed(2);
+  if (percent < 10) return percent.toFixed(1);
+  return Math.round(percent).toString();
+}
+
 /** Circular progress ring showing how much context window is used, with the used percentage beside it. */
 function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tokensUsed: number }) {
   const pct = Math.min(tokensUsed / contextWindow, 1);
   // Arc, %, label, and tooltip all encode context USED: a fresh session
   // shows an empty ring at 0% and the ring fills as context is consumed.
   const usedArc = pct * RING_CIRCUMFERENCE;
-  const usedPct = Math.round(pct * 100);
+  const usedPct = formatContextUsedPercent(pct);
 
   const color =
     pct > 0.8 ? "text-destructive" : pct > 0.6 ? "text-warning" : "text-muted-foreground";
@@ -4135,6 +4145,9 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-44 text-center text-sm">
         <p className="tabular-nums">{usedPct}% of context used.</p>
+        <p className="tabular-nums text-muted-foreground">
+          {tokensUsed.toLocaleString()} / {contextWindow.toLocaleString()} tokens
+        </p>
       </TooltipContent>
     </Tooltip>
   );
@@ -4910,7 +4923,7 @@ export function Composer({
           const pct = Math.min(tokensUsed / contextWindow, 1);
           const filled = Math.round(pct * 20);
           const bar = "█".repeat(filled) + "░".repeat(20 - filled);
-          const pctStr = (pct * 100).toFixed(1);
+          const pctStr = formatContextUsedPercent(pct);
           lines.push(
             `${tokensUsed.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${pctStr}%)`,
           );

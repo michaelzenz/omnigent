@@ -6267,6 +6267,32 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     expect(state.selectedEffort).toBe("high");
   });
 
+  it("updates the context window when a model pick settles", async () => {
+    seedSession("conv_model_window", []);
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/v1/sessions/conv_model_window" && init?.method === "PATCH") {
+        return mockResponse({
+          id: "conv_model_window",
+          agent_id: "agent_xyz",
+          status: "idle",
+          created_at: 0,
+          items: [],
+          model_override: "databricks-glm-5-2",
+          context_window: 1_000_000,
+        });
+      }
+      return defaultFetchHandler(input, init);
+    });
+
+    await useChatStore.getState().switchTo("conv_model_window");
+    useChatStore.setState({ contextWindow: 128_000, tokensUsed: 117_068 });
+    await useChatStore.getState().setModel("databricks-glm-5-2");
+
+    expect(useChatStore.getState().contextWindow).toBe(1_000_000);
+    expect(useChatStore.getState().tokensUsed).toBe(117_068);
+  });
+
   it("lets only the newest model pick settle the persisted sticky preference", async () => {
     // A conversation-id guard can't order two picks. If A's PATCH is slow, the
     // user switches to B and picks again, then A resolves last: A's canonical

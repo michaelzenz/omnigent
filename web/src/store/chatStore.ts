@@ -2091,11 +2091,17 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     if (conversationId) {
       const session = await updateSession(conversationId, { modelOverride: model });
       // Server-canonical may differ from the optimistic write (e.g.
-      // when a clear alias was sent) — refresh local state to match.
+      // when a clear alias was sent) — refresh local state to match. The
+      // returned context window is resolved against that canonical model, so
+      // update it atomically instead of leaving the usage ring on the previous
+      // model's denominator until the next snapshot poll.
       const canonical = session.modelOverride ?? null;
       // The override belongs to the session that was PATCHed, so apply it there
       // even if the user has since switched away.
-      setterFor(conversationId)({ sessionModelOverride: canonical });
+      setterFor(conversationId)({
+        sessionModelOverride: canonical,
+        ...(session.contextWindow != null ? { contextWindow: session.contextWindow } : {}),
+      });
       // The sticky pref (root + localStorage) is app-global and must reflect the
       // NEWEST pick, so a slower PATCH that resolves last cannot overwrite it —
       // otherwise the superseded model returns on reload or in a new chat. Both

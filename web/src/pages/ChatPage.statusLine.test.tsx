@@ -177,6 +177,13 @@ describe("Composer status line (branch + context ring)", () => {
     expect(screen.getByLabelText("25% of context used")).toBeInTheDocument();
   });
 
+  it("shows precise percentages for low usage in large context windows", () => {
+    useChatStore.setState({ contextWindow: 1_000_000, tokensUsed: 8_343 });
+    renderComposer();
+
+    expect(screen.getByLabelText("0.83% of context used")).toBeInTheDocument();
+  });
+
   it("no longer renders the harness label in the status tray (moved to the config gear)", () => {
     // The harness identity moved from the tray into the config gear's hover
     // tooltip, so it must never resurface in the status line — for a native
