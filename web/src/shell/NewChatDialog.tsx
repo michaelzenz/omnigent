@@ -131,6 +131,7 @@ import {
   type SmartRoutingUnavailableCause,
 } from "@/lib/smartRoutingAvailability";
 import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
+import { SDK_HARNESS, SDK_MODEL_OPTIONS } from "@/lib/sdkModels";
 import { partitionAgentsByKind, sortAgentsForDisplay } from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
@@ -207,9 +208,14 @@ const NEW_SESSION_HIDDEN_AGENTS = new Set(["nessie", "kimi", "kimi-code"]);
 // Short picker-row blurbs — the spec descriptions are long paragraphs that
 // truncate badly in the dropdown; other dialogs keep the server values.
 const AGENT_PICKER_DESCRIPTIONS: Record<string, string> = {
+  omnigent: "OpenAI Agents SDK",
   polly: "Multi-agent coding",
   debby: "Multi-agent debate",
 };
+
+export function isNewSessionHarnessAgent(agent: AvailableAgent): boolean {
+  return isNativeCodingAgent(agent) || (agent.name === "omnigent" && agent.harness === SDK_HARNESS);
+}
 
 // Agents whose bundled skills render as always-visible pills under the
 // landing composer. Deliberately an allowlist while the pattern proves
@@ -1089,7 +1095,12 @@ export function AgentHarnessPicker({
       // The preference hides harnesses that can't launch here — it outranks
       // both support level and recency, but never buries the active pick.
       if (!selected && hideUnconfigured && harnessUnconfiguredOnHost(a.harness, host)) continue;
-      if (selected || isFullySupportedNativeCodingAgent(a) || isRecentHarness(a, recentHarnesses)) {
+      if (
+        selected ||
+        a.harness === SDK_HARNESS ||
+        isFullySupportedNativeCodingAgent(a) ||
+        isRecentHarness(a, recentHarnesses)
+      ) {
         ready.push(a);
       } else more.push(a);
     }
@@ -1443,6 +1454,7 @@ function HarnessConfigModal({
   const hasCursor = nativeAgentHasCapability(agent, "cursorMode");
   const hasAgySkip = nativeAgentHasCapability(agent, "skipPermissions");
   const isCodex = entryHarness === "codex-native";
+  const isSdk = agent.harness === SDK_HARNESS;
   const modelOptions = isCodex ? codexModelOptions : claudeModelOptions;
   const modelsLoading = isCodex ? codexModelsLoading : claudeModelsLoading;
   const brainDefault =
@@ -1500,6 +1512,10 @@ function HarnessConfigModal({
   const codexModelSelectOptions = useMemo(
     () => codexModelOptions.map((m) => ({ id: m.id, label: displayModelId(m) })),
     [codexModelOptions],
+  );
+  const sdkModelSelectOptions = useMemo(
+    () => SDK_MODEL_OPTIONS.map((m) => ({ id: m.id, label: m.displayName })),
+    [],
   );
   const onModelChange = (value: string) => {
     if (value === MODEL_SELECT_SMART) {
@@ -1561,6 +1577,10 @@ function HarnessConfigModal({
       // Picking the spec default clears the override so the session tracks it.
       setPickedHarness(draftHarness === brainDefault ? null : draftHarness, agent.id);
     }
+    if (isSdk) {
+      setPickedModel(draftModel);
+      writeHarnessOption(SDK_HARNESS, { model: draftModel });
+    }
     // Smart Routing rides the Model dropdown on both routable harnesses
     // (Claude Code and Codex), so commit it outside the per-capability branches.
     // Remembered per harness like the model pick, so the next new session with
@@ -1605,6 +1625,22 @@ function HarnessConfigModal({
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-1">
+          {!autoRouting && isSdk && (
+            <ConfigRow label="Model" description="Underlying LLM">
+              <RoutingModelSelect
+                value={draftModel || MODEL_SELECT_DEFAULT}
+                onValueChange={(value) =>
+                  setDraftModel(value === MODEL_SELECT_DEFAULT ? "" : value)
+                }
+                offerSmartRouting={false}
+                testId="new-chat-landing-config-model"
+                models={sdkModelSelectOptions}
+                defaultLabel="Default (GLM 5.2)"
+                contentClassName="[&_[data-slot=select-item]]:pl-2.5"
+              />
+            </ConfigRow>
+          )}
+
           {!autoRouting && hasPermission && (
             <>
               <ConfigRow label="Model" description="Underlying LLM">
@@ -1908,16 +1944,23 @@ export function NewChatLandingScreen() {
     [agents],
   );
 
-  // Split the picker into "Harnesses" (the native terminal CLIs) and
+  // Split the picker into "Harnesses" (native terminal CLIs plus the
+  // general-purpose in-process Omnigent harness) and
   // "Agents" (SDK / bundle agents like Polly & Debby plus any custom
   // user-registered agents). This is the isNativeCodingAgent split, NOT the
   // builtins/customs split: Polly & Debby are built-ins but belong under
   // "Agents", not "Harnesses".
-  const harnessEntries = useMemo(
-    () => agentList.filter((a) => isNativeCodingAgent(a)),
+  const harnessEntries = useMemo(() => {
+    const entries = agentList.filter((a) => isNewSessionHarnessAgent(a));
+    return [
+      ...entries.filter((a) => a.harness === SDK_HARNESS),
+      ...entries.filter((a) => a.harness !== SDK_HARNESS),
+    ];
+  }, [agentList]);
+  const agentEntries = useMemo(
+    () => agentList.filter((a) => !isNewSessionHarnessAgent(a)),
     [agentList],
   );
-  const agentEntries = useMemo(() => agentList.filter((a) => !isNativeCodingAgent(a)), [agentList]);
 
   // "Create custom agent" dialog state and pending bundle. When the user
   // creates a custom agent via the dialog, the bundle input is stored
@@ -2641,6 +2684,7 @@ export function NewChatLandingScreen() {
   const supportsApprovalMode = nativeAgentHasCapability(selectedAgent, "approvalMode");
   const supportsCursorMode = nativeAgentHasCapability(selectedAgent, "cursorMode");
   const supportsAgySkipPermissions = nativeAgentHasCapability(selectedAgent, "skipPermissions");
+  const selectedAgentUsesSdk = selectedAgent?.harness === SDK_HARNESS;
   const hideUnconfiguredHarnesses = useMemo(() => readHideUnconfiguredHarnesses(), []);
   // The selected native harness, used to persist/seed its option knobs (mode /
   // model / effort), which are harness-specific. null for non-native agents,
@@ -2683,6 +2727,7 @@ export function NewChatLandingScreen() {
     supportsApprovalMode ||
     supportsCursorMode ||
     supportsAgySkipPermissions ||
+    selectedAgentUsesSdk ||
     smartRoutingEligible ||
     (selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll);
   // Label/value pairs summarizing the selected agent's current run-config, for
@@ -2768,6 +2813,12 @@ export function NewChatLandingScreen() {
         AGY_NATIVE_SKIP_MODES.find((m) => m.value === agySkipMode)?.label ?? agySkipMode;
       return [{ label: "Permissions", value: skipValue }, ...routingRow];
     }
+    if (selectedAgentUsesSdk) {
+      const modelValue =
+        SDK_MODEL_OPTIONS.find((model) => model.id === pickedModel)?.displayName ??
+        "Default (GLM 5.2)";
+      return [{ label: "Model", value: modelValue }];
+    }
     if (selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll) {
       const active = pickedHarness ?? selectedAgent.harness;
       return [
@@ -2782,6 +2833,7 @@ export function NewChatLandingScreen() {
     supportsApprovalMode,
     supportsCursorMode,
     supportsAgySkipPermissions,
+    selectedAgentUsesSdk,
     selectedAgent,
     brainHarnessLabelsAll,
     routingOn,
@@ -2882,6 +2934,18 @@ export function NewChatLandingScreen() {
     // capability flags are derived from the same harness and stay omitted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNativeHarness, claudeModelOptions, codexModelOptions]);
+  // The SDK harness has no host-side model catalog, so seed its static model
+  // choices independently from the native harness options above.
+  useEffect(() => {
+    if (!selectedAgentUsesSdk) return;
+    const storedModel = readHarnessOptions(SDK_HARNESS).model;
+    setPickedModel(
+      storedModel != null && SDK_MODEL_OPTIONS.some((model) => model.id === storedModel)
+        ? storedModel
+        : "",
+    );
+    setPickedEffort("");
+  }, [selectedAgentUsesSdk, effectiveAgentId, setPickedModel]);
   // Smart Routing is remembered per harness alongside the mode/model
   // knobs, in its own effect because eligibility depends on the server flag
   // (which resolves after mount — this must reseed when it lands). A stored
@@ -3754,7 +3818,9 @@ export function NewChatLandingScreen() {
             model_override:
               !smartRoutingHarnessSelected &&
               !routingOwnsModel &&
-              (agentSupportsPermissionMode || nativeAgent?.harness === "codex-native") &&
+              (agentSupportsPermissionMode ||
+                nativeAgent?.harness === "codex-native" ||
+                selectedAgentUsesSdk) &&
               pickedModel
                 ? pickedModel
                 : undefined,

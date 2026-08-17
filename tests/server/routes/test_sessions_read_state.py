@@ -80,6 +80,7 @@ def _build_item(user_id: str | None, conv: Conversation) -> object:
     return sessions_mod._build_session_list_item(
         conv,
         agent_names_by_id={"ag_test": "test-agent"},
+        agent_role_flags_by_id={"ag_test": False},
         grants=[],
         user_id=user_id,
         user_is_admin=False,

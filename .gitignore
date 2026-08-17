@@ -58,6 +58,9 @@ run-omnigents.sh
 artifacts/
 .tmp-codex-parity-target/
 
+# PuppyGarden is local workspace state; force-add deliberate additions.
+puppygarden/
+
 # omnidev (dev pod supervisor) Rust build output. Pod state lives outside the
 # repo under ~/.cache/omnidev/, so only the build dir needs ignoring.
 dev/omnidev/target/

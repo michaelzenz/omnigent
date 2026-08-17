@@ -108,6 +108,7 @@ interface SessionListItemWire {
   id: string;
   agent_id?: string | null;
   agent_name?: string | null;
+  agent_is_role?: boolean;
   // Session creation epoch — proxy for "when the user last ran this agent",
   // used to pick the newest among same-named uploads / templates.
   created_at?: number | null;
@@ -179,7 +180,7 @@ async function scanSessionAgents(): Promise<ScannedSessionAgent[]> {
   for (const session of body.data) {
     // Rows without an agent_name are orphaned (agent row deleted); skip
     // them, matching useAgents' sessions-derived list.
-    if (!session.agent_id || !session.agent_name) continue;
+    if (!session.agent_id || !session.agent_name || session.agent_is_role === true) continue;
     if (seen.has(session.agent_id)) continue;
     seen.set(session.agent_id, {
       agentId: session.agent_id,
@@ -280,9 +281,9 @@ export async function prefetchAvailableAgentDetails(
  * `omnigent run` upload exists:
  *
  * - SEEDED built-ins (`builtin: true`, deterministic id) are protected:
- *   they always list verbatim, and a same-named upload (or a fork/switch
- *   clone of one — `agentRootName` peels every `"(fork <id>)"` layer) is
- *   dropped. The seeded agent is the canonical identity for its name.
+ *   they always list verbatim, and a same-named upload is dropped. Forked
+ *   agents are excluded entirely because they are session instances, not
+ *   reusable templates.
  * - USER-registered templates (`builtin: false`, e.g. `--agent`) compete
  *   with same-named uploads on recency: the newest of {template, uploads}
  *   wins, so a fresh `omnigent run agent.yaml` supersedes a stale template
@@ -304,10 +305,13 @@ export async function prefetchAvailableAgentDetails(
  * to the discovery extension.
  */
 async function fetchAvailableAgents(): Promise<AvailableAgent[]> {
-  const [catalog, scanned] = await Promise.all([
+  const [rawCatalog, scanned] = await Promise.all([
     fetchBuiltinAgents(),
     scanSessionAgents().catch(() => [] as ScannedSessionAgent[]),
   ]);
+  // Forks are session instances, not reusable templates. Older servers may
+  // expose a fork row in the built-in catalog, so filter both sources.
+  const catalog = rawCatalog.filter((agent) => agentRootName(agent.name) === agent.name);
   // Seeded built-ins are emitted verbatim and protected; user-registered
   // templates seed the newest-wins buckets so an upload can supersede them.
   // `builtin !== false` keeps both true (seeded) and undefined (older server,
@@ -346,13 +350,14 @@ async function fetchAvailableAgents(): Promise<AvailableAgent[]> {
     // `"<name> (fork ag_a) (fork ag_b)"`, and a single-layer strip would
     // leave a non-matching name that slips the seeded-shadow check.
     const base = agentRootName(agent.agentName);
+    if (base !== agent.agentName) continue;
     // Bound a catalog agent directly (seeded built-in OR user template):
     // already represented (verbatim, or as a candidate above).
     if (catalogIds.has(agent.agentId)) continue;
     // Seeded built-in name (incl. fork/switch clones): the built-in wins.
     if (seededNames.has(base)) continue;
     if (hasKiroBuiltin && kiroLegacyNames.has(base.toLocaleLowerCase())) continue;
-    // Genuine custom upload (or a clone of one). Newest same-named row wins,
+    // Genuine custom upload. Newest same-named row wins,
     // superseding an older user-registered template seeded above. Strict `>`
     // so equal recency keeps the FIRST seen — the scan is newest-first, so
     // ties resolve to the newest session (matches prior collapse behavior).

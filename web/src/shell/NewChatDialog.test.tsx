@@ -16,6 +16,7 @@ import {
   displayNameForHost,
   harnessUnavailableReasonOnHost,
   harnessUnconfiguredOnHost,
+  isNewSessionHarnessAgent,
   isValidSandboxRepoUrl,
   isValidWorkspace,
   matchSkillInvocation,
@@ -46,6 +47,22 @@ import { setOmnigentHostConfig } from "@/lib/host";
 import { writeHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { setPendingInitialPrompt } from "@/store/chatStore";
 import { TooltipProvider } from "@/components/ui/tooltip";
+
+describe("isNewSessionHarnessAgent", () => {
+  const agent = (name: string, harness: string): AvailableAgent => ({
+    id: `ag_${name}`,
+    name,
+    display_name: name,
+    description: null,
+    harness,
+    skills: [],
+  });
+
+  it("classifies the packaged Omnigent OpenAI SDK agent as a harness", () => {
+    expect(isNewSessionHarnessAgent(agent("omnigent", "openai-agents"))).toBe(true);
+    expect(isNewSessionHarnessAgent(agent("custom-sdk-agent", "openai-agents"))).toBe(false);
+  });
+});
 
 // Only authenticatedFetch is stubbed (the create POST under test);
 // the module's other exports stay real for any other consumer in the tree.
@@ -1415,6 +1432,40 @@ describe("NewChatLandingScreen", () => {
     openSelect("new-chat-landing-config-approval");
     expect(screen.getByText("Full access")).toBeTruthy();
     expect(screen.getByText("Read only")).toBeTruthy();
+  });
+
+  it("configures and sends an Omnigent SDK model from the settings gear", async () => {
+    mockAgents([
+      {
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
+        description: null,
+        harness: "openai-agents",
+        skills: [],
+        builtin: true,
+      },
+    ]);
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+
+    expect(screen.getByTestId("new-chat-landing-config-gear")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    openSelect("new-chat-landing-config-model");
+    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
+    saveConfig();
+
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "start with Kimi" },
+    });
+    fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = authenticatedFetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
+    expect(body.model_override).toBe("databricks-kimi-k3");
   });
 
   it("sends the selected Codex launch model without changing Claude's remembered model", async () => {

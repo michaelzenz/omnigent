@@ -119,6 +119,11 @@ class AgentStore(ABC):
         ...
 
     @abstractmethod
+    def get_role_flags(self, agent_ids: builtins.list[str]) -> dict[str, bool]:
+        """Batch-fetch the role-profile visibility flag for agent IDs."""
+        ...
+
+    @abstractmethod
     def update(
         self,
         agent_id: str,

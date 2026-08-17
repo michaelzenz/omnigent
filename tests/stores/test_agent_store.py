@@ -348,6 +348,28 @@ def test_get_names_empty_input(agent_store: SqlAlchemyAgentStore) -> None:
     assert agent_store.get_names([]) == {}
 
 
+def test_get_role_flags_returns_visibility_by_id(agent_store: SqlAlchemyAgentStore) -> None:
+    """get_role_flags distinguishes role profiles from reusable agents."""
+    agent_store.create(
+        agent_id="48503412fcbb7276d9b579ecff34fc35",
+        name="reusable",
+        bundle_location="ag_role_flags_a/hash",
+    )
+    agent_store.create(
+        agent_id="dcd344943ac256f431ac2be389277ba5",
+        name="manager-role",
+        bundle_location="ag_role_flags_b/hash",
+        is_role=True,
+    )
+
+    assert agent_store.get_role_flags(
+        ["48503412fcbb7276d9b579ecff34fc35", "dcd344943ac256f431ac2be389277ba5"]
+    ) == {
+        "48503412fcbb7276d9b579ecff34fc35": False,
+        "dcd344943ac256f431ac2be389277ba5": True,
+    }
+
+
 # ── list edge cases ───────────────────────────────────────────────
 
 

@@ -182,16 +182,20 @@ _WEB_UI_API_FALLBACK_PREFIXES = frozenset({"api", "auth", "health", "v1", ".well
 WELL_KNOWN_MANIFEST_VERSION = 1
 _WEB_UI_GZIP_MINIMUM_SIZE = 1024
 _DEBBY_AGENT_NAME = "debby"
+_OMNIGENT_AGENT_NAME = "omnigent"
 _POLLY_AGENT_NAME = "polly"
 _UNMATCHED_ROUTE_TEMPLATE = "<unmatched>"
 _SESSION_PATH_RE = re.compile(r"/v1/sessions/([^/]+)")
-# polly's and debby's multi-file bundles are packaged under
+# Omnigent, polly, and debby's multi-file bundles are packaged under
 # omnigent.resources.examples (see pyproject package-data), so they resolve
 # in both a repo checkout and an installed wheel. The presence check in each
 # seeder is a safety net.
 # resolve_repo_symlink dereferences the packaged symlink on a no-symlink
 # Windows checkout (where Git leaves it as a stub text file); a no-op elsewhere.
 _DEBBY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "debby")
+_OMNIGENT_BUNDLE_SOURCE = resolve_repo_symlink(
+    Path(_examples_resources.__file__).parent / "omnigent"
+)
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")
 
 
@@ -503,6 +507,7 @@ def _ensure_default_agents(
     :param agent_cache: Cache for loaded agent specs.
     """
     _ensure_default_native_agents(agent_store, artifact_store, agent_cache)
+    _ensure_default_omnigent_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_task_agents(agent_store, artifact_store, agent_cache)
@@ -696,6 +701,36 @@ def _ensure_default_task_agents(
             bundle_bytes=_build_task_agent_bundle(agent_name),
             is_role=True,
         )
+
+
+def _ensure_default_omnigent_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh the general-purpose OpenAI Agents SDK agent."""
+    import tempfile
+
+    from omnigent.spec import materialize_bundle
+
+    if not (_OMNIGENT_BUNDLE_SOURCE / "config.yaml").is_file():
+        _logger.debug(
+            "omnigent bundle not found at %s; skipping seed",
+            _OMNIGENT_BUNDLE_SOURCE,
+        )
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bundle_dir = materialize_bundle(_OMNIGENT_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
+        bundle_bytes = _tar_gz_dir(bundle_dir)
+
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_OMNIGENT_AGENT_NAME,
+        bundle_bytes=bundle_bytes,
+    )
 
 
 def _build_debby_bundle() -> bytes:

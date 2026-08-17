@@ -532,6 +532,40 @@ describe("useAvailableAgents", () => {
     ]);
   });
 
+  it("hides role-profile agents from reusable agent choices", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "ag_catalog_fork",
+            name: "reviewer (fork conv_old)",
+            harness: "openai-agents",
+            builtin: false,
+          },
+        ],
+        has_more: false,
+      }),
+      [SCAN_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "conv_fork",
+            agent_id: "ag_session_fork",
+            agent_name: "planner-role-profile",
+            agent_is_role: true,
+          },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => useAvailableAgents(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([]);
+  });
+
   it("lets a newer upload supersede a same-named user-registered template (builtin: false)", async () => {
     // The regression this guards: a user registers agent A as a template
     // (e.g. `omnigent server --agent`, builtin: false), then `omnigent run`s

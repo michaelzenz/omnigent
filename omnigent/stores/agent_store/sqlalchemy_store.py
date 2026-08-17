@@ -284,6 +284,19 @@ class SqlAlchemyAgentStore(AgentStore):
             ).all()
             return {row.id: row.name for row in rows}
 
+    def get_role_flags(self, agent_ids: builtins.list[str]) -> dict[str, bool]:
+        """Batch-fetch whether each agent is reserved for a role profile."""
+        if not agent_ids:
+            return {}
+        with self._session("select_agent_role_flags") as session:
+            rows = session.execute(
+                select(SqlAgent.id, SqlAgent.is_role).where(
+                    SqlAgent.workspace_id == current_workspace_id(),
+                    SqlAgent.id.in_(agent_ids),
+                )
+            ).all()
+            return {row.id: row.is_role for row in rows}
+
     def update(
         self,
         agent_id: str,
