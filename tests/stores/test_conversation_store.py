@@ -2116,6 +2116,38 @@ def test_append_bumps_updated_at(
     )
 
 
+def test_append_can_preserve_updated_at(
+    conversation_store: SqlAlchemyConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Infrastructure items persist without creating unread activity."""
+    import omnigent.stores.conversation_store.sqlalchemy_store as store_mod
+
+    monkeypatch.setattr(store_mod, "now_epoch", lambda: 1000)
+    conv = conversation_store.create_conversation()
+    monkeypatch.setattr(store_mod, "now_epoch", lambda: 2000)
+
+    conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_infrastructure",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "infrastructure"}],
+                ),
+            ),
+        ],
+        bump_updated_at=False,
+    )
+
+    fetched = conversation_store.get_conversation(conv.id)
+    assert fetched is not None
+    assert fetched.updated_at == 1000
+    assert len(conversation_store.list_items(conv.id).data) == 1
+
+
 def test_update_title_bumps_updated_at(
     conversation_store: SqlAlchemyConversationStore,
     monkeypatch: pytest.MonkeyPatch,
@@ -2661,6 +2693,22 @@ def test_replace_runner_id_allows_internal_non_session_conversation(
     fetched = conversation_store.get_conversation(conv.id)
     assert fetched is not None
     assert fetched.runner_id == "runner-uuid-1"
+
+
+def test_replace_runner_id_can_preserve_content_updated_at(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """Infrastructure relaunches do not masquerade as unread chat activity."""
+    conv = conversation_store.create_conversation()
+
+    updated = conversation_store.replace_runner_id(
+        conv.id,
+        "runner-infrastructure-relaunch",
+        bump_updated_at=False,
+    )
+
+    assert updated.runner_id == "runner-infrastructure-relaunch"
+    assert updated.updated_at == conv.updated_at
 
 
 def test_list_conversations_by_runner_id_filters(

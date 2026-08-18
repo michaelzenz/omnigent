@@ -1981,6 +1981,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         self,
         conversation_id: str,
         items: list[NewConversationItem],
+        *,
+        bump_updated_at: bool = True,
     ) -> list[ConversationItem]:
         """
         Append items to a conversation.
@@ -1993,6 +1995,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             e.g. ``"conv_abc123"``.
         :param items: List of :class:`NewConversationItem` objects
             to persist.
+        :param bump_updated_at: Whether these items represent user-visible
+            activity for ordering and unread indicators.
         :returns: The persisted :class:`ConversationItem` list
             with store-assigned IDs and timestamps.
         """
@@ -2005,9 +2009,11 @@ class SqlAlchemyConversationStore(ConversationStore):
             # SQLite the database-level lock already serializes.
             self._lock_conversation(session, conversation_id)
 
-            # Bump updated_at on the conversation.
-            conv_row = session.get(SqlConversation, (current_workspace_id(), conversation_id))
-            if conv_row is not None:
+            conv_row = session.get(
+                SqlConversation,
+                (current_workspace_id(), conversation_id),
+            )
+            if bump_updated_at and conv_row is not None:
                 conv_row.updated_at = now
 
             # Allocate item positions from the conversation's maintained
@@ -2986,7 +2992,13 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .values(pending_elicitation_count=count)
             )
 
-    def replace_runner_id(self, conversation_id: str, runner_id: str) -> Conversation:
+    def replace_runner_id(
+        self,
+        conversation_id: str,
+        runner_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Atomically overwrite ``conversations.runner_id``.
 
@@ -2998,6 +3010,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param conversation_id: Session/conversation identifier,
             e.g. ``"conv_abc123"``.
         :param runner_id: New runner id, e.g. ``"runner_abc123"``.
+        :param bump_updated_at: When ``False``, preserve the content activity
+            timestamp for infrastructure-only runner relaunches.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             exists for ``conversation_id``.
@@ -3015,7 +3029,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
-            ap_row.updated_at = now_epoch()
+            if bump_updated_at:
+                ap_row.updated_at = now_epoch()
             labels = _fetch_labels(ap_sess, conversation_id)
         return _to_conversation(ap_row, meta, labels)
 

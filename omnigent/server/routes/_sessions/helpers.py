@@ -767,7 +767,7 @@ def _publish_and_persist_resource_event(
         ),
     )
     try:
-        conversation_store.append(session_id, [item])
+        conversation_store.append(session_id, [item], bump_updated_at=False)
     except (AttributeError, TypeError, ValueError, RuntimeError):
         _logger.debug(
             "Failed to persist resource event for session=%s",
@@ -4499,6 +4499,7 @@ async def _launch_runner_on_host_impl(
         conversation_store.replace_runner_id,
         conv.id,
         new_runner_id,
+        bump_updated_at=False,
     )
 
     # Pull workspace from the session row — populated and validated
@@ -6508,6 +6509,8 @@ async def _relay_persist(
     conversation_store: ConversationStore | None,
     session_id: str,
     item: NewConversationItem,
+    *,
+    bump_updated_at: bool = True,
 ) -> None:
     """
     Persist a single conversation item from the relay.
@@ -6515,6 +6518,7 @@ async def _relay_persist(
     :param conversation_store: Store instance, or ``None`` to skip.
     :param session_id: Session/conversation identifier.
     :param item: The item to persist.
+    :param bump_updated_at: Whether the item is user-visible activity.
     """
     if conversation_store is None:
         return
@@ -6523,6 +6527,7 @@ async def _relay_persist(
             conversation_store.append,
             session_id,
             [item],
+            bump_updated_at=bump_updated_at,
         )
     except Exception:  # noqa: BLE001
         _logger.exception(

@@ -5992,6 +5992,7 @@ async def _relay_runner_stream_once(
                             conversation_store,
                             session_id,
                             resource_item,
+                            bump_updated_at=False,
                         )
                         # Self-heal the spin-up flag: a created terminal is
                         # authoritative proof the session is no longer

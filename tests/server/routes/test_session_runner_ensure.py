@@ -109,6 +109,41 @@ async def test_ensure_session_runner_client_launches_for_host_bound_session(
 
 
 @pytest.mark.asyncio
+async def test_host_runner_relaunch_preserves_content_updated_at(
+    conv_store: SqlAlchemyConversationStore,
+) -> None:
+    """Runner rotation alone must not make a conversation appear unread."""
+    conv = conv_store.create_conversation(
+        kind="default",
+        title="secretary",
+        host_id=_host_id("host"),
+        workspace="/tmp/ws",
+    )
+
+    class _DisconnectedRegistry:
+        def send_text(self, host_conn: object, message: str) -> None:
+            raise ConnectionError
+
+    class _HostConnection:
+        def __init__(self) -> None:
+            self.pending_launches: dict[
+                str, asyncio.Future[dict[str, str | None]]
+            ] = {}
+
+    await sessions_module._launch_runner_on_host(
+        conv,
+        conv_store,
+        _DisconnectedRegistry(),  # type: ignore[arg-type]
+        _HostConnection(),  # type: ignore[arg-type]
+    )
+
+    updated = conv_store.get_conversation(conv.id)
+    assert updated is not None
+    assert updated.runner_id != conv.runner_id
+    assert updated.updated_at == conv.updated_at
+
+
+@pytest.mark.asyncio
 async def test_wake_parent_launches_runner_before_dispatch(
     conv_store: SqlAlchemyConversationStore,
     monkeypatch: pytest.MonkeyPatch,

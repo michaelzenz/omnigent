@@ -577,6 +577,8 @@ class ConversationStore(ABC):
         self,
         conversation_id: str,
         items: list[NewConversationItem],
+        *,
+        bump_updated_at: bool = True,
     ) -> list[ConversationItem]:
         """
         Append items to a conversation. Assigns a globally unique
@@ -586,6 +588,8 @@ class ConversationStore(ABC):
             e.g. ``"conv_abc123"``.
         :param items: List of :class:`NewConversationItem` objects
             to persist.
+        :param bump_updated_at: Whether these items represent user-visible
+            activity for ordering and unread indicators.
         :returns: The persisted :class:`ConversationItem` list
             with store-assigned IDs and timestamps.
         """
@@ -1260,7 +1264,13 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
-    def replace_runner_id(self, conversation_id: str, runner_id: str) -> Conversation:
+    def replace_runner_id(
+        self,
+        conversation_id: str,
+        runner_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Replace ``conversations.runner_id`` for a conversation.
 
@@ -1274,6 +1284,9 @@ class ConversationStore(ABC):
         :param runner_id: Runner identifier to bind to,
             e.g. ``"runner_abc123"``. Online-ness is validated
             by the route before calling the store.
+        :param bump_updated_at: When ``False``, leave the content activity
+            timestamp unchanged. Infrastructure-only runner relaunches use this
+            so they do not produce unread-message indicators.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             with ``conversation_id`` exists.
