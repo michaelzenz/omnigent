@@ -89,6 +89,7 @@ from omnigent.server.routes.sessions import (
     set_server_runner_router,
 )
 from omnigent.server.routes.sharing import create_sharing_router
+from omnigent.server.routes.skills import create_skills_router
 from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
@@ -2500,6 +2501,15 @@ def create_app(
         ),
         prefix="/v1",
         tags=["ssh"],
+    )
+    app.include_router(
+        create_skills_router(
+            host_registry,
+            host_store=host_store,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["skills"],
     )
     app.include_router(
         create_terminal_attach_router(

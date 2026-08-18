@@ -34,6 +34,7 @@ from omnigent.host.frames import (
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
+    HostSkillInventoryFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
@@ -43,6 +44,25 @@ from omnigent.host.frames import (
     decode_host_frame,
     encode_host_frame,
 )
+
+
+def test_skill_inventory_frame_round_trip() -> None:
+    skills = [
+        {
+            "name": "demo",
+            "description": "Demo",
+            "rel_home_path": ".claude/skills/demo",
+            "content_sha256": "abc",
+        }
+    ]
+    frame = HostSkillInventoryFrame(
+        skills=skills,
+        skill_sync_harnesses={"claude": True, "codex": True, "cursor": False},
+        skill_search_roots=[
+            {"harness": "claude", "rel_home_path": ".claude/skills"}
+        ],
+    )
+    assert decode_host_frame(encode_host_frame(frame)) == frame
 
 
 def test_model_options_frames_round_trip() -> None:
@@ -150,6 +170,7 @@ def test_hello_frame_round_trip() -> None:
         name="corey-laptop",
         runners=["runner_token_aaa", "runner_token_bbb"],
         instance_id="daemon-instance-1",
+        skill_sync_harnesses={"claude": True, "codex": True, "cursor": False},
     )
     decoded = decode_host_frame(encode_host_frame(original))
     assert isinstance(decoded, HostHelloFrame)
@@ -158,6 +179,11 @@ def test_hello_frame_round_trip() -> None:
     assert decoded.name == "corey-laptop"
     assert decoded.runners == ["runner_token_aaa", "runner_token_bbb"]
     assert decoded.instance_id == "daemon-instance-1"
+    assert decoded.skill_sync_harnesses == {
+        "claude": True,
+        "codex": True,
+        "cursor": False,
+    }
 
 
 def test_hello_frame_empty_runners() -> None:

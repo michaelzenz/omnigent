@@ -180,6 +180,34 @@ def test_update_harness_readiness_replaces_live_map(host_store: HostStore) -> No
     assert fetched.status == "online"
 
 
+def test_skill_configuration_is_persisted_on_host(host_store: HostStore) -> None:
+    host_id = "7d86ee544f1d5b7068ac56f5927a5b5c"
+    host_store.upsert_on_connect(
+        host_id=host_id,
+        name="skill-host",
+        user_id="alice@example.com",
+    )
+    roots = [
+        {"harness": "claude", "rel_home_path": ".claude/skills"},
+        {"harness": "claude", "rel_home_path": ".claude/plugins/example/skills"},
+        {"harness": "codex", "rel_home_path": ".codex/skills"},
+    ]
+    host_store.update_skill_configuration(
+        host_id,
+        {"claude": True, "codex": True, "cursor": False},
+        roots,
+    )
+
+    fetched = host_store.get_host(host_id)
+    assert fetched is not None
+    assert fetched.skill_sync_harnesses == {
+        "claude": True,
+        "codex": True,
+        "cursor": False,
+    }
+    assert fetched.skill_search_roots == roots
+
+
 def test_malformed_configured_harnesses_column_reads_as_none(
     host_store: HostStore,
     db_uri: str,

@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { useSearchParams } from "@/lib/routing";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { GlossariesPlaceholderTab } from "./glossaries/GlossariesPlaceholderTab";
 import { RolesTab } from "./glossaries/RolesTab";
 import { ScriptPluginsBoard } from "./glossaries/ScriptPluginsBoard";
+import { SkillsTab } from "./glossaries/SkillsTab";
 
 const TAB_IDS = ["roles", "pollers", "timers", "skills"] as const;
 type GlossariesTabId = (typeof TAB_IDS)[number];
@@ -51,7 +51,7 @@ export function GlossariesShell() {
             <ScriptPluginsBoard kind="timer" testId="glossaries-tab-timers" />
           </TabsContent>
           <TabsContent value="skills" className="mt-4">
-            <GlossariesPlaceholderTab title="Skills" />
+            <SkillsTab />
           </TabsContent>
         </Tabs>
       </div>

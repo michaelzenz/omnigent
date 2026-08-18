@@ -10,6 +10,27 @@ from omnigent.tools.base import Tool, ToolContext
 from omnigent.tools.builtins._arguments import parse_json_object_arguments
 
 
+def format_skill_catalog_description(skills: list[SkillSpec]) -> str:
+    """
+    Build the ``load_skill`` tool description listing name and description.
+
+    Matches the progressive-disclosure catalog CC/Codex expose before loading
+    the full ``SKILL.md`` body.
+
+    :param skills: Discovered skills (bundled + host-scope).
+    :returns: Tool description text for the model.
+    """
+    if not skills:
+        return "Load a skill's full instructions by name. No skills are available."
+    lines = [
+        "Load a skill's full instructions by name. Available skills:",
+    ]
+    for skill in skills:
+        description = skill.description.strip() if skill.description else "No description."
+        lines.append(f"- {skill.name}: {description}")
+    return "\n".join(lines)
+
+
 class LoadSkillTool(Tool):
     """
     Built-in tool that loads a skill's full instructions by name.
@@ -81,21 +102,16 @@ class LoadSkillTool(Tool):
         """
         Return the OpenAI-format schema for ``load_skill``.
 
-        The description includes the list of available skill
-        names so the LLM knows what it can load.
+        The description includes each skill's name and one-line
+        description so the LLM can choose which to load.
 
         :returns: A tool schema dict.
         """
-        skill_names = [s.name for s in self._skills]
         return {
             "type": "function",
             "function": {
                 "name": "load_skill",
-                "description": (
-                    "Load a skill's full instructions by "
-                    "name. Available skills: "
-                    f"{', '.join(skill_names)}"
-                ),
+                "description": format_skill_catalog_description(self._skills),
                 "parameters": {
                     "type": "object",
                     "properties": {

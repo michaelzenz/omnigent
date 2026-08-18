@@ -44,6 +44,7 @@ class HostFrameKind(str, Enum):
 
     HELLO = "host.hello"
     HARNESS_READINESS = "host.harness_readiness"
+    SKILL_INVENTORY = "host.skill_inventory"
     LAUNCH_RUNNER = "host.launch_runner"
     LAUNCH_RUNNER_RESULT = "host.launch_runner_result"
     STOP_RUNNER = "host.stop_runner"
@@ -117,6 +118,9 @@ class HostHelloFrame:
     telemetry_opt_out: bool = False
     installation_id: str | None = None
     instance_id: str | None = None
+    skills: list[_JsonObject] | None = None
+    skill_sync_harnesses: dict[str, bool] | None = None
+    skill_search_roots: list[_JsonObject] | None = None
 
 
 @dataclass
@@ -135,6 +139,15 @@ class HostHarnessReadinessFrame:
 
     configured_harnesses: dict[str, HarnessAvailability]
     gateway_inference: dict[str, bool] | None = None
+
+
+@dataclass
+class HostSkillInventoryFrame:
+    """Host → server: complete host-local global skill inventory."""
+
+    skills: list[_JsonObject]
+    skill_sync_harnesses: dict[str, bool]
+    skill_search_roots: list[_JsonObject]
 
 
 @dataclass
@@ -855,6 +868,7 @@ class HostModelOptionsResultFrame:
 HostFrame = (
     HostHelloFrame
     | HostHarnessReadinessFrame
+    | HostSkillInventoryFrame
     | HostLaunchRunnerFrame
     | HostLaunchRunnerResultFrame
     | HostStopRunnerFrame
@@ -936,6 +950,9 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "telemetry_opt_out": frame.telemetry_opt_out,
                 "installation_id": frame.installation_id,
                 "instance_id": frame.instance_id,
+                "skills": frame.skills,
+                "skill_sync_harnesses": frame.skill_sync_harnesses,
+                "skill_search_roots": frame.skill_search_roots,
             }
         )
     if isinstance(frame, HostHarnessReadinessFrame):
@@ -944,6 +961,15 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "kind": HostFrameKind.HARNESS_READINESS.value,
                 "configured_harnesses": frame.configured_harnesses,
                 "gateway_inference": frame.gateway_inference,
+            }
+        )
+    if isinstance(frame, HostSkillInventoryFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.SKILL_INVENTORY.value,
+                "skills": frame.skills,
+                "skill_sync_harnesses": frame.skill_sync_harnesses,
+                "skill_search_roots": frame.skill_search_roots,
             }
         )
     if isinstance(frame, HostLaunchRunnerFrame):
@@ -1301,6 +1327,8 @@ def _decode_known_host_frame(
             return _decode_host_hello(msg)
         case HostFrameKind.HARNESS_READINESS:
             return _decode_harness_readiness(msg)
+        case HostFrameKind.SKILL_INVENTORY:
+            return _decode_skill_inventory(msg)
         case HostFrameKind.LAUNCH_RUNNER:
             return _decode_launch_runner(msg)
         case HostFrameKind.LAUNCH_RUNNER_RESULT:
@@ -1378,6 +1406,21 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
         telemetry_opt_out=bool(msg.get("telemetry_opt_out", False)),
         installation_id=_optional_nullable_str(msg, "installation_id"),
         instance_id=_optional_nullable_str(msg, "instance_id"),
+        skills=_optional_object_list(msg, "skills"),
+        skill_sync_harnesses=optional_str_bool_map(msg, "skill_sync_harnesses"),
+        skill_search_roots=_optional_object_list(msg, "skill_search_roots"),
+    )
+
+
+def _decode_skill_inventory(msg: _JsonObject) -> HostSkillInventoryFrame:
+    settings = optional_str_bool_map(msg, "skill_sync_harnesses")
+    roots = _optional_object_list(msg, "skill_search_roots")
+    if settings is None or roots is None:
+        raise ValueError("skill inventory frame requires settings and search roots")
+    return HostSkillInventoryFrame(
+        skills=_required_object_list(msg, "skills"),
+        skill_sync_harnesses=settings,
+        skill_search_roots=roots,
     )
 
 
@@ -1935,6 +1978,19 @@ def _optional_str_list(msg: _JsonObject, key: str) -> list[str]:
     if not isinstance(val, list) or not all(isinstance(item, str) for item in val):
         raise ValueError(f"frame field must be a list of strings: {key!r}")
     return list(val)
+
+
+def _required_object_list(msg: _JsonObject, key: str) -> list[_JsonObject]:
+    val = msg.get(key)
+    if not isinstance(val, list) or not all(isinstance(item, dict) for item in val):
+        raise ValueError(f"frame field must be a list of objects: {key!r}")
+    return list(val)
+
+
+def _optional_object_list(msg: _JsonObject, key: str) -> list[_JsonObject] | None:
+    if key not in msg or msg.get(key) is None:
+        return None
+    return _required_object_list(msg, key)
 
 
 def _optional_str_availability_map(

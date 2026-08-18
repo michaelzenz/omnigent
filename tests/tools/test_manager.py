@@ -345,9 +345,11 @@ def test_schemas_include_load_skill_when_skills_exist(
     schemas = mgr.get_tool_schemas()
     by_name = {s["function"]["name"]: s for s in schemas}
     assert "load_skill" in by_name
-    # The bundled skill ("summarize") is named in the tool description so a
+    load_skill_desc = by_name["load_skill"]["function"]["description"]
+    # The bundled skill is named in the tool description so a
     # loaderless harness can discover and load it.
-    assert "summarize" in by_name["load_skill"]["function"]["description"]
+    assert "summarize" in load_skill_desc
+    assert "Summarizes text." in load_skill_desc
 
 
 def test_schemas_include_read_skill_file_with_resources(

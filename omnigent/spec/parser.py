@@ -2304,6 +2304,18 @@ def discover_host_skills(
         if home_skills.is_dir():
             _scan_dir(home_skills)
 
+    # Optional user override tree — only when explicitly created.
+    omnigent_override = Path.home() / ".omnigent" / "skills"
+    if omnigent_override.is_dir():
+        for spec in _discover_skills(omnigent_override, skipped=skipped):
+            if spec.name in seen_names:
+                seen_names.discard(spec.name)
+                skills = [s for s in skills if s.name != spec.name]
+            if filter_names is not None and spec.name not in filter_names:
+                continue
+            seen_names.add(spec.name)
+            skills.append(spec)
+
     if skipped:
         dest = getattr(sys.stderr, "_original_stderr", sys.stderr)
         n = len(skipped)

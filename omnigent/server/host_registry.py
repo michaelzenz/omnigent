@@ -339,6 +339,24 @@ class HostRegistry:
         # answer) and lost with the process, which is the point — a restarted
         # server re-learns it from the reconnect handshake.
         self._gateway_inference: dict[str, dict[str, bool]] = {}
+        self._skill_inventories: dict[str, list[dict[str, str]]] = {}
+
+    def record_skill_inventory(self, host_id: str, skills: list[dict[str, object]]) -> None:
+        """Replace the latest host-reported global skill inventory."""
+        normalized: list[dict[str, str]] = []
+        for skill in skills:
+            fields = ("name", "description", "harness", "rel_home_path", "content_sha256")
+            if not all(isinstance(skill.get(field), str) for field in fields):
+                continue
+            normalized.append({field: str(skill[field]) for field in fields})
+        with self._lock:
+            self._skill_inventories[_canonical_host_id(host_id)] = normalized
+
+    def skill_inventory(self, host_id: str) -> list[dict[str, str]] | None:
+        """Return a copy of the latest inventory reported by a host."""
+        with self._lock:
+            inventory = self._skill_inventories.get(_canonical_host_id(host_id))
+            return [dict(skill) for skill in inventory] if inventory is not None else None
 
     def register(
         self,

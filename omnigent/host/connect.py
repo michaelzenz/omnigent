@@ -61,6 +61,7 @@ from omnigent.host.frames import (
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
+    HostSkillInventoryFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
@@ -153,6 +154,7 @@ def _coerce_int(value: object) -> int:
 HARNESS_READINESS_REFRESH_INTERVAL_S = 5.0
 # Auth changes and removals need the full, potentially expensive readiness map.
 HARNESS_READINESS_FULL_REFRESH_INTERVAL_S = 60.0
+SKILL_INVENTORY_REFRESH_INTERVAL_S = 5 * 60.0
 
 
 def _unavailable_harness_became_ready(
@@ -2153,6 +2155,42 @@ class HostProcess:
         :returns: A result frame with the runner-shaped payload, or an
             error frame mirroring the status the runner would return.
         """
+        if frame.op.startswith("skill."):
+            try:
+                from omnigent.host.skill_ops import handle_skill_fs_op
+
+                payload = handle_skill_fs_op(frame.op, frame.params or {})
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="ok",
+                    payload=payload,
+                )
+            except FileNotFoundError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=404,
+                    error_code="not_found",
+                    error=str(exc),
+                )
+            except ValueError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=400,
+                    error_code="invalid_request",
+                    error=str(exc),
+                )
+            except Exception as exc:
+                _logger.exception("host skill operation %r failed", frame.op)
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=500,
+                    error_code="skill_operation_failed",
+                    error=str(exc),
+                )
+
         from pathlib import Path
 
         from omnigent.workspace_fs import WorkspaceReader, WorkspaceReaderError
@@ -2925,6 +2963,15 @@ class HostProcess:
             pass
         configured_harnesses = await asyncio.to_thread(configured_harness_map)
         gateway_inference = await asyncio.to_thread(gateway_inference_map)
+        from omnigent.host.skill_ops import (
+            skill_inventory_wire,
+            skill_search_roots_wire,
+            skill_sync_settings_wire,
+        )
+
+        skills = await asyncio.to_thread(skill_inventory_wire)
+        skill_sync_harnesses = await asyncio.to_thread(skill_sync_settings_wire)
+        skill_search_roots = await asyncio.to_thread(skill_search_roots_wire)
         hello = HostHelloFrame(
             version=VERSION,
             frame_protocol_version=1,
@@ -2937,6 +2984,9 @@ class HostProcess:
             telemetry_opt_out=_tel_opt_out,
             installation_id=_tel_install_id,
             instance_id=self._instance_id,
+            skills=skills,
+            skill_sync_harnesses=skill_sync_harnesses,
+            skill_search_roots=skill_search_roots,
         )
         await ws.send(encode_host_frame(hello))
         self._ws = ws
@@ -2965,6 +3015,14 @@ class HostProcess:
         readiness_task = asyncio.create_task(
             self._harness_readiness_loop(ws, configured_harnesses)
         )
+        skill_inventory_task = asyncio.create_task(
+            self._skill_inventory_loop(
+                ws,
+                skills,
+                skill_sync_harnesses,
+                skill_search_roots,
+            )
+        )
         try:
             while True:
                 raw = await ws.recv()
@@ -2983,8 +3041,11 @@ class HostProcess:
                     self._start_frame_task(ws, raw)
         finally:
             readiness_task.cancel()
+            skill_inventory_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await readiness_task
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await skill_inventory_task
 
     async def _harness_readiness_loop(
         self,
@@ -3041,6 +3102,42 @@ class HostProcess:
                 )
                 configured = latest
                 gateway = latest_gateway
+
+    async def _skill_inventory_loop(
+        self,
+        ws: websockets.asyncio.client.ClientConnection,
+        initial: list[dict[str, object]],
+        initial_settings: dict[str, bool],
+        initial_roots: list[dict[str, object]],
+    ) -> None:
+        """Report host-local skill inventory changes while connected."""
+        from omnigent.host.skill_ops import (
+            skill_inventory_wire,
+            skill_search_roots_wire,
+            skill_sync_settings_wire,
+        )
+
+        inventory = initial
+        settings = initial_settings
+        roots = initial_roots
+        while True:
+            await asyncio.sleep(SKILL_INVENTORY_REFRESH_INTERVAL_S)
+            latest = await asyncio.to_thread(skill_inventory_wire)
+            latest_settings = await asyncio.to_thread(skill_sync_settings_wire)
+            latest_roots = await asyncio.to_thread(skill_search_roots_wire)
+            if latest != inventory or latest_settings != settings or latest_roots != roots:
+                await ws.send(
+                    encode_host_frame(
+                        HostSkillInventoryFrame(
+                            skills=latest,
+                            skill_sync_harnesses=latest_settings,
+                            skill_search_roots=latest_roots,
+                        )
+                    )
+                )
+                inventory = latest
+                settings = latest_settings
+                roots = latest_roots
 
     def _start_frame_task(self, ws: websockets.asyncio.client.ClientConnection, raw: str) -> None:
         """Handle one inbound frame on its own task, off the receive loop.

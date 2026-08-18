@@ -41,6 +41,7 @@ from omnigent.host.frames import (
     HostRemoveWorktreeResultFrame,
     HostRunnerExitedFrame,
     HostRunnerStatusResultFrame,
+    HostSkillInventoryFrame,
     HostStatResultFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretResultFrame,
@@ -299,6 +300,12 @@ def create_host_tunnel_router(
                     ),
                 )
                 return
+            if (
+                frame.skill_sync_harnesses is None
+                or frame.skill_search_roots is None
+            ):
+                await ws.close(code=4001, reason="host skill configuration is required")
+                return
 
             await asyncio.to_thread(
                 host_store.upsert_on_connect,
@@ -307,6 +314,12 @@ def create_host_tunnel_router(
                 user_id=tunnel_owner,
                 allow_host_id_reown=allow_host_id_reown,
                 configured_harnesses=frame.configured_harnesses,
+            )
+            await asyncio.to_thread(
+                host_store.update_skill_configuration,
+                host_id,
+                frame.skill_sync_harnesses,
+                frame.skill_search_roots,
             )
 
             conn = host_registry.register(
@@ -319,6 +332,8 @@ def create_host_tunnel_router(
             # started learns the host's gateway backing here, so a server
             # restart converges as soon as each host reconnects.
             host_registry.record_gateway_inference(host_id, frame.gateway_inference)
+            if frame.skills is not None:
+                host_registry.record_skill_inventory(host_id, frame.skills)
             _logger.info(
                 "Host %s connected (version=%s, name=%s, runners=%s)",
                 host_id,
@@ -576,6 +591,21 @@ async def _receive_loop(
                 dict(frame.gateway_inference) if frame.gateway_inference is not None else None
             )
             host_registry.record_gateway_inference(host_id, frame.gateway_inference)
+            if on_host_update is not None:
+                try:
+                    await on_host_update(host_id, conn.owner)
+                except Exception:
+                    _logger.exception("on_host_update callback failed for %s", host_id)
+            continue
+
+        if isinstance(frame, HostSkillInventoryFrame):
+            host_registry.record_skill_inventory(host_id, frame.skills)
+            await asyncio.to_thread(
+                host_store.update_skill_configuration,
+                host_id,
+                frame.skill_sync_harnesses,
+                frame.skill_search_roots,
+            )
             if on_host_update is not None:
                 try:
                     await on_host_update(host_id, conn.owner)
