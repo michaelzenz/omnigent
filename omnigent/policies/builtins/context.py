@@ -515,6 +515,8 @@ POLICY_REGISTRY: list[dict[str, object]] = [
                 },
                 "classification_prompt": {
                     "type": "string",
+                    "x-ui-widget": "textarea",
+                    "default": _DEFAULT_TASK_SWITCH_PROMPT,
                     "description": (
                         "System prompt for the classifier. Must instruct the "
                         'model to return {"verdict": "CONTINUATION"|"TASK_SWITCH"}; '

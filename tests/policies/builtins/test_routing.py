@@ -518,6 +518,19 @@ def test_registry_entry_well_formed() -> None:
     )
     assert intent_entry["kind"] == "factory"
     assert intent_entry["params_schema"]["required"] == []
+    intent_prompt = intent_entry["params_schema"]["properties"]["classification_prompt"]
+    assert intent_prompt["x-ui-widget"] == "textarea"
+    assert intent_prompt["default"]
+
+    dangerous_entry = next(
+        e
+        for e in POLICY_REGISTRY
+        if e["handler"]
+        == "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier"
+    )
+    dangerous_prompt = dangerous_entry["params_schema"]["properties"]["classification_prompt"]
+    assert dangerous_prompt["x-ui-widget"] == "textarea"
+    assert dangerous_prompt["default"]
 
 
 # ── intent_based_authorization ───────────────────────────────────────────────────────────────
@@ -622,6 +635,23 @@ async def test_intent_based_authorization_on_task_allows_and_caches() -> None:
     cache_key = next(k for k in updates if k.startswith(_INTENT_CHECK_PREFIX))
     assert updates[cache_key] == "ON_TASK"
     client._mock_create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_intent_based_authorization_forwards_custom_prompt() -> None:
+    """Installed policy instances can override the intent classifier prompt."""
+    client = _FakePolicyLLMClient(_on_task_response())
+    policy = intent_based_authorization(classification_prompt="Custom intent instructions")
+
+    await policy(
+        _tool_call_event(
+            "read_file",
+            state={_INTENT_KEY: "fix the login bug"},
+            llm_client=client,
+        )
+    )
+
+    assert client._mock_create.await_args.kwargs["instructions"] == "Custom intent instructions"
 
 
 @pytest.mark.asyncio
@@ -753,6 +783,22 @@ async def test_dangerous_action_classifier_allows_safe_call() -> None:
     assert update["key"].startswith(_DANGEROUS_ACTION_CHECK_PREFIX)
     assert update["value"]["verdict"] == "SAFE"
     assert client._mock_create.call_args.kwargs["text"] is _DANGEROUS_ACTION_SCHEMA
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_forwards_custom_prompt() -> None:
+    """Installed policy instances can override the dangerous-action prompt."""
+    client = _FakePolicyLLMClient(_danger_response("SAFE", "Read-only operation."))
+    policy = dangerous_actions_intent_classifier(
+        classification_prompt="Custom dangerous-action instructions"
+    )
+
+    await policy(_tool_call_event("read_file", {"path": "/tmp/a"}, llm_client=client))
+
+    assert (
+        client._mock_create.await_args.kwargs["instructions"]
+        == "Custom dangerous-action instructions"
+    )
 
 
 @pytest.mark.asyncio

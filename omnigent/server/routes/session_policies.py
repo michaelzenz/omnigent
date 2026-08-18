@@ -37,7 +37,7 @@ from omnigent.server.schemas import (
 from omnigent.spec.types import FunctionPolicySpec, PolicySpec
 from omnigent.stores import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
-from omnigent.stores.policy_store import PolicyStore
+from omnigent.stores.policy_store import UNSET_FACTORY_PARAMS, PolicyStore
 from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import PolicyDeletedEvent as _TelPolicyDeletedEvent
 from omnigent.telemetry.events import PolicyRegisteredEvent as _TelPolicyRegisteredEvent
@@ -65,13 +65,12 @@ def _entity_to_response(policy: Policy) -> dict[str, Any]:
         "name": policy.name,
         "type": policy.type,
         "handler": policy.handler,
+        "factory_params": policy.factory_params,
         "enabled": policy.enabled,
         "source": "session",
         "created_at": policy.created_at,
         "updated_at": policy.updated_at,
     }
-    if policy.factory_params is not None:
-        result["factory_params"] = policy.factory_params
     return result
 
 
@@ -317,8 +316,8 @@ def create_session_policies_router(
             ``"conv_abc123"``.
         :param policy_id: The policy to update, e.g.
             ``"pol_abc123"``.
-        :param body: Fields to update; ``None`` fields are left
-            unchanged.
+        :param body: Fields to update. Omitted ``factory_params`` are
+            unchanged; explicit ``null`` clears them.
         :returns: The updated policy as a serialized dict.
         :raises OmnigentError: 401/403 if the user lacks edit
             permission, 404 if the policy is not found, or 409 if
@@ -330,18 +329,24 @@ def create_session_policies_router(
             await require_access(
                 user_id, session_id, LEVEL_EDIT, permission_store, conversation_store
             )
-        # Validate handler against the existing policy's type.
-        if body.handler is not None:
+        update_factory_params = "factory_params" in body.model_fields_set
+        # Validate the resulting handler/params pair against the existing type.
+        if body.handler is not None or update_factory_params:
             existing = store.get(policy_id, session_id)
             if existing is None:
                 raise OmnigentError("Policy not found", code=ErrorCode.NOT_FOUND)
-            if existing.type == "url" and not body.handler.startswith("https://"):
-                raise OmnigentError(
-                    "handler must be an https:// URL for type 'url'",
-                    code=ErrorCode.INVALID_INPUT,
-                )
+            effective_handler = body.handler or existing.handler
+            effective_factory_params = (
+                body.factory_params if update_factory_params else existing.factory_params
+            )
+            if existing.type == "url":
+                if not effective_handler.startswith("https://"):
+                    raise OmnigentError(
+                        "handler must be an https:// URL for type 'url'",
+                        code=ErrorCode.INVALID_INPUT,
+                    )
             if existing.type == "python":
-                if not re.match(_DOTTED_PATH_RE, body.handler):
+                if not re.match(_DOTTED_PATH_RE, effective_handler):
                     raise OmnigentError(
                         "handler must be a valid dotted import path for type 'python'",
                         code=ErrorCode.INVALID_INPUT,
@@ -349,20 +354,28 @@ def create_session_policies_router(
                 # Same registry allowlist as create: a PATCH
                 # must not be a back door to point a policy at an
                 # arbitrary, unregistered callable.
-                if not is_registered_handler(body.handler):
+                if not is_registered_handler(effective_handler):
                     raise OmnigentError(
-                        f"Policy handler '{body.handler}' is not registered. Only "
+                        f"Policy handler '{effective_handler}' is not registered. Only "
                         f"handlers from the policy registry (browse "
                         f"GET /v1/policy-registry) may be attached; a server admin "
                         f"must add custom handlers via the 'policy_modules' config.",
                         code=ErrorCode.INVALID_INPUT,
                     )
+            validation_error = validate_factory_params(
+                effective_handler, effective_factory_params
+            )
+            if validation_error:
+                raise OmnigentError(validation_error, code=ErrorCode.INVALID_INPUT)
         try:
             policy = store.update(
                 policy_id,
                 session_id,
                 name=body.name,
                 handler=body.handler,
+                factory_params=(
+                    body.factory_params if update_factory_params else UNSET_FACTORY_PARAMS
+                ),
                 enabled=body.enabled,
             )
         except IntegrityError as exc:

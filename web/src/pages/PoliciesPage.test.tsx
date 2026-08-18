@@ -209,6 +209,68 @@ describe("PoliciesPage actions", () => {
     expect(deleteMutate).toHaveBeenCalledWith("p1", expect.anything());
   });
 
+  it("prefills and updates a persisted global policy, then closes", async () => {
+    vi.mocked(policies.usePolicyRegistry).mockReturnValue({
+      data: [
+        {
+          handler: "omnigent.policies.rate_limit",
+          kind: "factory",
+          name: "Rate Limit",
+          description: "Cap request rate.",
+          params_schema: {
+            properties: {
+              max_per_min: { type: "integer" },
+              strict: { type: "boolean" },
+            },
+          },
+        },
+      ],
+    } as never);
+    setPolicies([
+      policy({
+        id: "p1",
+        name: "custom_limit",
+        handler: "omnigent.policies.rate_limit",
+        factory_params: { max_per_min: 5, strict: false },
+      }),
+    ]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit custom_limit" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("name")).toHaveValue("custom_limit");
+    expect(within(dialog).getByLabelText(/max_per_min/)).toHaveValue(5);
+    expect(within(dialog).getByLabelText(/strict/)).toHaveValue("false");
+
+    fireEvent.change(within(dialog).getByLabelText("name"), {
+      target: { value: "renamed_limit" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/max_per_min/), {
+      target: { value: "9" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(updateMutate).toHaveBeenCalledWith(
+      {
+        policyId: "p1",
+        name: "renamed_limit",
+        factory_params: { max_per_min: 9, strict: false },
+      },
+      expect.anything(),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps config-file policies non-editable", async () => {
+    setPolicies([policy({ id: null, name: "yaml_guard", source: "config" })]);
+    renderPage();
+
+    expect(await screen.findByText("yaml_guard")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit yaml_guard" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Toggle yaml_guard" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove policy" })).toBeNull();
+  });
+
   it("adds array (multi-select) values via the model combobox as a coerced list", async () => {
     // WHY: the expensive_models-style array param renders the single-input
     // combobox; picking options and typing a free-form value must survive the

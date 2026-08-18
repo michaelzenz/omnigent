@@ -392,13 +392,18 @@ class UpdateSessionPolicyRequest(BaseModel):
     """
     Request body for ``PATCH /v1/sessions/{session_id}/policies/{policy_id}``.
 
-    All fields are optional; ``None`` fields are left unchanged.
+    All fields are optional. ``None`` leaves scalar fields unchanged;
+    omitting ``factory_params`` leaves it unchanged while an explicit
+    ``null`` clears it.
     Unknown fields (including ``type``, which is immutable) are
     rejected with ``422``.
 
     :param name: New policy name. ``None`` leaves it unchanged.
     :param handler: New handler path or URL. ``None`` leaves it
         unchanged.
+    :param factory_params: New factory kwargs. Omit to leave them
+        unchanged, use ``null`` to clear them, or ``{}`` to set an
+        empty mapping.
     :param enabled: New enabled flag. ``None`` leaves it
         unchanged.
     """
@@ -407,6 +412,7 @@ class UpdateSessionPolicyRequest(BaseModel):
 
     name: str | None = None
     handler: str | None = None
+    factory_params: dict[str, Any] | None = None
     enabled: bool | None = None
 
 
@@ -501,13 +507,18 @@ class UpdateDefaultPolicyRequest(BaseModel):
     """
     Request body for ``PATCH /v1/policies/{policy_id}``.
 
-    All fields are optional; ``None`` fields are left unchanged.
+    All fields are optional. ``None`` leaves scalar fields unchanged;
+    omitting ``factory_params`` leaves it unchanged while an explicit
+    ``null`` clears it.
     Unknown fields (including ``type``, which is immutable) are
     rejected with ``422``.
 
     :param name: New policy name. ``None`` leaves it unchanged.
     :param handler: New handler path or URL. ``None`` leaves it
         unchanged.
+    :param factory_params: New factory kwargs. Omit to leave them
+        unchanged, use ``null`` to clear them, or ``{}`` to set an
+        empty mapping.
     :param enabled: New enabled flag. ``None`` leaves it
         unchanged.
     """
@@ -516,6 +527,7 @@ class UpdateDefaultPolicyRequest(BaseModel):
 
     name: str | None = None
     handler: str | None = None
+    factory_params: dict[str, Any] | None = None
     enabled: bool | None = None
 
 

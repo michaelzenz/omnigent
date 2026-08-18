@@ -99,6 +99,37 @@ export function useAddPolicy(sessionId: string) {
   });
 }
 
+/** PATCH /v1/sessions/{id}/policies/{policyId} */
+export function useUpdatePolicy(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      policyId,
+      ...payload
+    }: {
+      policyId: string;
+      name: string;
+      factory_params: Record<string, unknown> | null;
+    }) => {
+      const res = await authenticatedFetch(
+        `/v1/sessions/${encodeURIComponent(sessionId)}/policies/${encodeURIComponent(policyId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return (await res.json()) as SessionPolicy;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: policiesQueryKey(sessionId),
+      });
+    },
+  });
+}
+
 /** DELETE /v1/sessions/{id}/policies/{policyId} */
 export function useDeletePolicy(sessionId: string) {
   const queryClient = useQueryClient();

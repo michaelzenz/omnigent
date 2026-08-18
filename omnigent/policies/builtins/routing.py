@@ -295,7 +295,10 @@ _INTENT_CHECK_SCHEMA: dict[str, object] = {
 }
 
 
-def intent_based_authorization() -> PolicyCallable:
+def intent_based_authorization(
+    *,
+    classification_prompt: str = _DEFAULT_INTENT_CHECK_PROMPT,
+) -> PolicyCallable:
     """Factory: enforce intent-based permissioning across the session.
 
     Implements a two-phase policy:
@@ -427,7 +430,7 @@ def intent_based_authorization() -> PolicyCallable:
                         "content": [{"type": "input_text", "text": user_prompt}],
                     }
                 ],
-                instructions=_DEFAULT_INTENT_CHECK_PROMPT,
+                instructions=classification_prompt,
                 text=_INTENT_CHECK_SCHEMA,
             )
             raw_text = _extract_response_text(response)
@@ -522,7 +525,10 @@ _DANGEROUS_ACTION_SCHEMA: dict[str, object] = {
 }
 
 
-def dangerous_actions_intent_classifier() -> PolicyCallable:
+def dangerous_actions_intent_classifier(
+    *,
+    classification_prompt: str = _DEFAULT_DANGEROUS_ACTION_PROMPT,
+) -> PolicyCallable:
     """Require approval for dangerous or practically irreversible tool calls.
 
     Every tool call is classified by the server-level policy LLM. Safe calls
@@ -530,6 +536,8 @@ def dangerous_actions_intent_classifier() -> PolicyCallable:
     failed classification also returns ``ASK`` so the safety control fails
     closed.
 
+    :param classification_prompt: System instructions defining which actions
+        the classifier treats as dangerous.
     :returns: An async policy callable that evaluates ``tool_call`` events.
     """
 
@@ -581,7 +589,7 @@ def dangerous_actions_intent_classifier() -> PolicyCallable:
                         "content": [{"type": "input_text", "text": user_prompt}],
                     }
                 ],
-                instructions=_DEFAULT_DANGEROUS_ACTION_PROMPT,
+                instructions=classification_prompt,
                 text=_DANGEROUS_ACTION_SCHEMA,
             )
             raw_text = _extract_response_text(response)
@@ -654,6 +662,8 @@ POLICY_REGISTRY: list[dict[str, object]] = [
                 },
                 "classification_prompt": {
                     "type": "string",
+                    "x-ui-widget": "textarea",
+                    "default": _DEFAULT_CLASSIFICATION_PROMPT,
                     "description": (
                         "System instructions for the classifier. Describes "
                         "classification criteria (output format is enforced "
@@ -682,7 +692,17 @@ POLICY_REGISTRY: list[dict[str, object]] = [
         "requires_llm": True,
         "params_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "classification_prompt": {
+                    "type": "string",
+                    "x-ui-widget": "textarea",
+                    "default": _DEFAULT_INTENT_CHECK_PROMPT,
+                    "description": (
+                        "System instructions defining whether a proposed tool call "
+                        "is ON_TASK or OFF_TASK."
+                    ),
+                },
+            },
             "required": [],
         },
     },
@@ -699,7 +719,17 @@ POLICY_REGISTRY: list[dict[str, object]] = [
         "requires_llm": True,
         "params_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "classification_prompt": {
+                    "type": "string",
+                    "x-ui-widget": "textarea",
+                    "default": _DEFAULT_DANGEROUS_ACTION_PROMPT,
+                    "description": (
+                        "System instructions defining which proposed tool calls "
+                        "are dangerous and require approval."
+                    ),
+                },
+            },
             "required": [],
         },
     },

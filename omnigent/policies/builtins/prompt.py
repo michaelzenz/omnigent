@@ -311,6 +311,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "properties": {
                 "prompt": {
                     "type": "string",
+                    "x-ui-widget": "textarea",
                     "description": (
                         "Author-supplied domain logic describing when to "
                         "deny, ask, or allow. Example: "

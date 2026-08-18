@@ -26,7 +26,11 @@ from omnigent.db.utils import (
     now_epoch,
 )
 from omnigent.entities import Policy
-from omnigent.stores.policy_store import PolicyStore
+from omnigent.stores.policy_store import (
+    UNSET_FACTORY_PARAMS,
+    PolicyStore,
+    UnsetFactoryParams,
+)
 
 
 def _to_entity(row: SqlPolicy) -> Policy:
@@ -166,6 +170,7 @@ class SqlAlchemyPolicyStore(PolicyStore):
         *,
         name: str | None = None,
         handler: str | None = None,
+        factory_params: dict[str, Any] | None | UnsetFactoryParams = UNSET_FACTORY_PARAMS,
         enabled: bool | None = None,
     ) -> Policy | None:
         """
@@ -205,6 +210,15 @@ class SqlAlchemyPolicyStore(PolicyStore):
             if handler is not None and row.handler != handler:
                 row.handler = handler
                 changed = True
+            if factory_params is not UNSET_FACTORY_PARAMS:
+                current_factory_params = (
+                    json.loads(row.factory_params) if row.factory_params else None
+                )
+                if current_factory_params != factory_params:
+                    row.factory_params = (
+                        json.dumps(factory_params) if factory_params is not None else None
+                    )
+                    changed = True
             if enabled is not None and bool(row.enabled) != enabled:
                 row.enabled = enabled
                 changed = True
@@ -304,6 +318,7 @@ class SqlAlchemyPolicyStore(PolicyStore):
         *,
         name: str | None = None,
         handler: str | None = None,
+        factory_params: dict[str, Any] | None | UnsetFactoryParams = UNSET_FACTORY_PARAMS,
         enabled: bool | None = None,
     ) -> Policy | None:
         """
@@ -343,6 +358,15 @@ class SqlAlchemyPolicyStore(PolicyStore):
             if handler is not None and row.handler != handler:
                 row.handler = handler
                 changed = True
+            if factory_params is not UNSET_FACTORY_PARAMS:
+                current_factory_params = (
+                    json.loads(row.factory_params) if row.factory_params else None
+                )
+                if current_factory_params != factory_params:
+                    row.factory_params = (
+                        json.dumps(factory_params) if factory_params is not None else None
+                    )
+                    changed = True
             if enabled is not None and bool(row.enabled) != enabled:
                 row.enabled = enabled
                 changed = True

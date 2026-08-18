@@ -355,6 +355,36 @@ def test_update_changes_handler(
     assert updated.handler == "mod.new_func"
 
 
+def test_update_factory_params_patch_semantics(
+    store: SqlAlchemyPolicyStore,
+    session_id: str,
+) -> None:
+    """Factory params distinguish omission, an empty mapping, and null."""
+    policy_id = "f5c22891076648e485997e4e88cc5328"
+    store.create(
+        policy_id=policy_id,
+        session_id=session_id,
+        name="params_policy",
+        type="python",
+        handler="mod.factory",
+        factory_params={"limit": 10},
+    )
+
+    unchanged = store.update(policy_id, session_id)
+    assert unchanged is not None
+    assert unchanged.factory_params == {"limit": 10}
+    assert unchanged.updated_at is None
+
+    emptied = store.update(policy_id, session_id, factory_params={})
+    assert emptied is not None
+    assert emptied.factory_params == {}
+    assert emptied.updated_at is not None
+
+    cleared = store.update(policy_id, session_id, factory_params=None)
+    assert cleared is not None
+    assert cleared.factory_params is None
+
+
 def test_update_noop_does_not_bump_timestamp(
     store: SqlAlchemyPolicyStore,
     session_id: str,
@@ -628,6 +658,34 @@ def test_update_default_changes_handler(store: SqlAlchemyPolicyStore) -> None:
     updated = store.update_default("20bb4920c807fa9012956b59ae70c00f", handler="mod.new_func")
     assert updated is not None
     assert updated.handler == "mod.new_func"
+
+
+def test_update_default_factory_params_patch_semantics(
+    store: SqlAlchemyPolicyStore,
+) -> None:
+    """Default factory params distinguish omission, an empty mapping, and null."""
+    policy_id = "d76a55304481448396c8794e21fd4362"
+    store.create_default(
+        policy_id=policy_id,
+        name="default_params_policy",
+        type="python",
+        handler="mod.factory",
+        factory_params={"limit": 10},
+    )
+
+    unchanged = store.update_default(policy_id)
+    assert unchanged is not None
+    assert unchanged.factory_params == {"limit": 10}
+    assert unchanged.updated_at is None
+
+    emptied = store.update_default(policy_id, factory_params={})
+    assert emptied is not None
+    assert emptied.factory_params == {}
+    assert emptied.updated_at is not None
+
+    cleared = store.update_default(policy_id, factory_params=None)
+    assert cleared is not None
+    assert cleared.factory_params is None
 
 
 def test_update_default_changes_enabled(store: SqlAlchemyPolicyStore) -> None:

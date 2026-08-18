@@ -15,14 +15,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangleIcon,
   ChevronsUpDownIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
   TrashIcon,
-  XIcon,
 } from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
-import { ModelValueCombobox } from "@/components/ModelValueCombobox";
+import {
+  EditPolicyInstanceDialog,
+  PolicyInstanceFields,
+  policyParamProperties,
+} from "@/components/PolicyInstanceEditor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -79,36 +83,7 @@ function AddDefaultPolicyDialog({
   const addPolicy = useAddDefaultPolicy();
 
   const entry = registry.find((r) => r.handler === selected);
-  const rawSchema = entry?.params_schema as
-    | {
-        properties?: Record<
-          string,
-          {
-            type?: string;
-            description?: string;
-            default?: unknown;
-            enum?: string[];
-            items?: { type?: string; enum?: string[]; "x-enum-source"?: string };
-            uniqueItems?: boolean;
-          }
-        >;
-        required?: string[];
-      }
-    | null
-    | undefined;
-  const properties = useMemo(() => {
-    const props = rawSchema?.properties ?? {};
-    if (!modelIds.length) return props;
-    const enriched: typeof props = {};
-    for (const [key, prop] of Object.entries(props)) {
-      if (prop.items?.["x-enum-source"] === "models" && !prop.items.enum) {
-        enriched[key] = { ...prop, items: { ...prop.items, enum: modelIds } };
-      } else {
-        enriched[key] = prop;
-      }
-    }
-    return enriched;
-  }, [rawSchema?.properties, modelIds]);
+  const properties = useMemo(() => policyParamProperties(entry, modelIds), [entry, modelIds]);
   const paramKeys = Object.keys(properties);
 
   function handleSelect(handler: string) {
@@ -240,160 +215,13 @@ function AddDefaultPolicyDialog({
             </div>
           )}
           {entry && (
-            <div>
-              <label className="flex items-center gap-1 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">name</span>
-              </label>
-              <input
-                type="text"
-                value={policyName}
-                onChange={(e) => setPolicyName(e.target.value)}
-                className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-              />
-            </div>
-          )}
-          {entry?.kind === "factory" && paramKeys.length > 0 && (
-            <div className="space-y-2">
-              {paramKeys.map((key) => {
-                const prop = properties[key];
-                return (
-                  <div key={key}>
-                    <label className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">{key}</span>
-                      {prop?.type && (
-                        <span>
-                          (
-                          {prop.type === "array" && prop.items?.enum
-                            ? "multi-select"
-                            : prop.type === "array"
-                              ? "comma-separated"
-                              : prop.type}
-                          )
-                        </span>
-                      )}
-                    </label>
-                    {prop?.description && (
-                      <p className="break-words text-sm text-muted-foreground">
-                        {prop.description}
-                      </p>
-                    )}
-                    {prop?.type === "boolean" ? (
-                      <select
-                        value={
-                          factoryParams[key] ??
-                          (prop?.default !== undefined ? String(prop.default) : "")
-                        }
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      >
-                        <option value="true">true</option>
-                        <option value="false">false</option>
-                      </select>
-                    ) : prop?.type === "string" && prop.enum ? (
-                      <select
-                        value={
-                          factoryParams[key] ??
-                          (prop?.default !== undefined
-                            ? String(prop.default)
-                            : (prop.enum[0] ?? ""))
-                        }
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      >
-                        {prop.enum.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    ) : prop?.type === "array" && prop.items?.enum ? (
-                      (() => {
-                        const current = factoryParams[key]
-                          ? factoryParams[key].split(",").filter(Boolean)
-                          : Array.isArray(prop?.default)
-                            ? (prop.default as string[])
-                            : [];
-                        return (
-                          <div className="mt-0.5 space-y-1.5">
-                            {current.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {current.map((v) => (
-                                  <span
-                                    key={v}
-                                    className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 py-0.5 text-sm"
-                                  >
-                                    {v}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const next = current.filter((x) => x !== v);
-                                        setFactoryParams((prev) => ({
-                                          ...prev,
-                                          [key]: next.join(","),
-                                        }));
-                                      }}
-                                      className="ml-0.5 text-muted-foreground hover:text-foreground"
-                                    >
-                                      <XIcon className="size-3" />
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            <ModelValueCombobox
-                              options={prop.items.enum}
-                              selected={current}
-                              onToggle={(v) => {
-                                const next = current.includes(v)
-                                  ? current.filter((x) => x !== v)
-                                  : [...current, v];
-                                setFactoryParams((prev) => ({
-                                  ...prev,
-                                  [key]: next.join(","),
-                                }));
-                              }}
-                            />
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <input
-                        type={
-                          prop?.type === "integer" || prop?.type === "number" ? "number" : "text"
-                        }
-                        placeholder={
-                          prop?.type === "array"
-                            ? prop?.default !== undefined
-                              ? (prop.default as string[]).join(", ")
-                              : "comma-separated values"
-                            : prop?.default !== undefined
-                              ? String(prop.default)
-                              : ""
-                        }
-                        value={factoryParams[key] ?? ""}
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <PolicyInstanceFields
+              name={policyName}
+              onNameChange={setPolicyName}
+              properties={entry.kind === "factory" ? properties : {}}
+              factoryParams={factoryParams}
+              onFactoryParamsChange={setFactoryParams}
+            />
           )}
           {(paramError || addPolicy.isError) && (
             <div
@@ -527,10 +355,10 @@ function PolicyCheckingModelSection() {
       {!settings.isLoading && !data?.databricksConnected ? (
         <div
           role="alert"
-          className="mt-3 flex items-start gap-2 rounded-md border border-border bg-muted/50 px-3 py-2"
+          className="mt-3 flex items-start gap-2 rounded-md border border-warning/50 bg-warning/15 px-3 py-2 text-foreground"
         >
-          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span className="text-sm font-medium">
             Connect to a Databricks workspace to enable intent based policies.
           </span>
         </div>
@@ -564,6 +392,7 @@ export function PoliciesPage() {
   const updatePolicy = useUpdateDefaultPolicy();
   const deletePolicy = useDeleteDefaultPolicy();
   const [addOpen, setAddOpen] = useState(false);
+  const [editCandidate, setEditCandidate] = useState<DefaultPolicy | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DefaultPolicy | null>(null);
   const [pendingAction, setPendingAction] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -692,6 +521,16 @@ export function PoliciesPage() {
                   <div className="flex shrink-0 items-center gap-2">
                     {p.source !== "config" ? (
                       <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-muted-foreground"
+                          title="Edit policy"
+                          aria-label={`Edit ${p.name}`}
+                          onClick={() => setEditCandidate(p)}
+                        >
+                          <PencilIcon className="size-3.5" />
+                        </Button>
                         <Switch
                           checked={p.enabled}
                           onCheckedChange={(checked) =>
@@ -756,6 +595,33 @@ export function PoliciesPage() {
         modelIds={(modelSettings.data?.models ?? []).map((model) => model.id)}
         open={addOpen}
         onOpenChange={setAddOpen}
+      />
+
+      <EditPolicyInstanceDialog
+        policy={
+          editCandidate
+            ? {
+                name: editCandidate.name,
+                handler: editCandidate.handler,
+                factory_params: editCandidate.factory_params,
+              }
+            : null
+        }
+        registryEntry={editCandidate ? registryByHandler.get(editCandidate.handler) : undefined}
+        modelIds={(modelSettings.data?.models ?? []).map((model) => model.id)}
+        open={editCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditCandidate(null);
+        }}
+        onSave={(payload) => {
+          if (!editCandidate?.id) return;
+          updatePolicy.mutate(
+            { policyId: editCandidate.id, ...payload },
+            { onSuccess: () => setEditCandidate(null) },
+          );
+        }}
+        isPending={updatePolicy.isPending}
+        error={updatePolicy.isError ? updatePolicy.error : null}
       />
 
       {/* Delete confirmation */}
