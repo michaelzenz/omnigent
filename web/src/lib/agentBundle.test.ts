@@ -96,6 +96,20 @@ describe("buildAgentBundle", () => {
     expect(yaml).not.toContain("description:");
   });
 
+  it("leaves launch configuration out of a generic profile", async () => {
+    const yaml = await extractConfigYaml(
+      await buildAgentBundle({
+        name: "generic-profile",
+        instructions: "Help with research.",
+      }),
+    );
+
+    expect(yaml).not.toContain("executor:");
+    expect(yaml).not.toContain("model:");
+    expect(yaml).not.toContain("harness:");
+    expect(yaml).toContain("instructions: AGENTS.md");
+  });
+
   it("includes description when provided", async () => {
     const input: AgentBundleInput = {
       name: "my-agent",

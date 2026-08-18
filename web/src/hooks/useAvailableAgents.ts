@@ -31,6 +31,12 @@ export interface AvailableAgent {
   // same-named `omnigent run` upload, but lets a newer upload supersede a
   // user-registered template (builtin === false).
   builtin?: boolean;
+  enabled?: boolean;
+  archived?: boolean;
+  is_multi_agent?: boolean;
+  subagent_count?: number;
+  default_harness?: string | null;
+  default_model?: string | null;
   // Creation epoch of a catalog agent — recency signal for same-name
   // supersession. Deliberately NOT updated_at: `--agent` re-registration
   // rewrites a template's bundle on every server restart (non-reproducible
@@ -94,6 +100,12 @@ interface BuiltinAgentWire {
   // True only for server-seeded built-ins (deterministic id). Absent on
   // older servers, where every catalog row degrades to a protected entry.
   builtin?: boolean;
+  enabled?: boolean;
+  archived?: boolean;
+  is_multi_agent?: boolean;
+  subagent_count?: number;
+  default_harness?: string | null;
+  default_model?: string | null;
   created_at?: number | null;
 }
 
@@ -144,6 +156,12 @@ async function fetchBuiltinAgents(): Promise<AvailableAgent[]> {
     // sensitive to absent-vs-undefined. Logic that reads builtin treats
     // undefined as "protected" (same as true), so omission is safe.
     ...(a.builtin !== undefined ? { builtin: a.builtin } : {}),
+    ...(a.enabled !== undefined ? { enabled: a.enabled } : {}),
+    ...(a.archived !== undefined ? { archived: a.archived } : {}),
+    ...(a.is_multi_agent !== undefined ? { is_multi_agent: a.is_multi_agent } : {}),
+    ...(a.subagent_count !== undefined ? { subagent_count: a.subagent_count } : {}),
+    ...(a.default_harness !== undefined ? { default_harness: a.default_harness } : {}),
+    ...(a.default_model !== undefined ? { default_model: a.default_model } : {}),
     ...(a.created_at !== undefined ? { created_at: a.created_at } : {}),
   }));
 }

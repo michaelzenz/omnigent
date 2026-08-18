@@ -287,6 +287,38 @@ class AgentObject(BaseModel):
     skills: list[SkillSummary] = Field(default_factory=list)
     terminals: list[str] = Field(default_factory=list)
     builtin: bool = False
+    enabled: bool = True
+    archived: bool = False
+    is_multi_agent: bool = False
+    subagent_count: int = 0
+    default_harness: str | None = None
+    default_model: str | None = None
+
+
+class AgentUpdateRequest(BaseModel):
+    """Profile-management update for a template agent."""
+
+    enabled: bool
+
+
+class AgentAutoSelectRequest(BaseModel):
+    """First user input used to choose an enabled profile."""
+
+    input: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("input")
+    @classmethod
+    def validate_non_whitespace_input(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("input must not be blank")
+        return value
+
+
+class AgentAutoSelectResponse(BaseModel):
+    """Selected profile returned by Auto Select."""
+
+    profile: AgentObject
+    reason: str | None = None
 
 
 # ── Session Policies ───────────────────────────────────────────

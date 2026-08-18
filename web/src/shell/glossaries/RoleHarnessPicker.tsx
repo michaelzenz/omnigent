@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { sortAgentsForDisplay } from "@/lib/agentGrouping";
-import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
 import {
   isNativeCodingAgent,
   nativeAgentHasCapability,
@@ -10,10 +9,6 @@ import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { Host } from "@/hooks/useHosts";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
 import { configuredHarnessesForHost, SDK_HARNESS } from "./roleProfileOptions";
-
-const CLAUDE_NATIVE_DEFAULT_PERMISSION_MODE = "default";
-const CODEX_NATIVE_DEFAULT_APPROVAL_MODE = "default";
-const CURSOR_NATIVE_DEFAULT_EXEC_MODE = "default";
 
 const SDK_HARNESS_DISPLAY_NAME = "Omnigent";
 
@@ -58,13 +53,6 @@ export function RoleHarnessPicker({
   testId,
   onChange,
 }: RoleHarnessPickerProps) {
-  const [permissionMode, setPermissionMode] = useState(CLAUDE_NATIVE_DEFAULT_PERMISSION_MODE);
-  const [approvalMode, setApprovalMode] = useState(CODEX_NATIVE_DEFAULT_APPROVAL_MODE);
-  const [cursorExecMode, setCursorExecMode] = useState(CURSOR_NATIVE_DEFAULT_EXEC_MODE);
-  const [bypassSandbox, setBypassSandbox] = useState(false);
-  const [pickedModel, setPickedModel] = useState(model);
-  const [pickedEffort, setPickedEffort] = useState("");
-
   const harnessEntries = useMemo(() => {
     const allowed = new Set(
       configuredHarnessesForHost(host, agents, harness).map((option) => option.harness),
@@ -95,13 +83,6 @@ export function RoleHarnessPicker({
 
   const agentLabel = selectedAgent?.display_name ?? (harness || "Select harness");
 
-  useEffect(() => {
-    if (!selectedAgent || !nativeAgentHasCapability(selectedAgent, "permissionMode")) return;
-    if (model && CLAUDE_NATIVE_MODELS.some((entry) => entry.id === model)) {
-      setPickedModel(model);
-    }
-  }, [selectedAgent, model]);
-
   const handleSelectAgent = useCallback(
     (agent: AvailableAgent) => {
       const nextHarness =
@@ -109,26 +90,13 @@ export function RoleHarnessPicker({
       // The SDK harness is not a native CLI and has no permissionMode
       // capability, but it does take a model — preserve the current pick
       // (or the stored model) instead of clearing it like the native CLIs.
-      const nextModel =
-        nextHarness === SDK_HARNESS
-          ? (pickedModel || model || "")
-          : modelForHarness(agent, pickedModel);
+      const nextModel = nextHarness === SDK_HARNESS ? model || "" : modelForHarness(agent, model);
       onChange({
         harness: nextHarness,
         model: nextModel,
       });
     },
-    [harness, onChange, pickedModel, model],
-  );
-
-  const handlePickedModel = useCallback(
-    (nextModel: string) => {
-      setPickedModel(nextModel);
-      if (selectedAgent && nativeAgentHasCapability(selectedAgent, "permissionMode")) {
-        onChange({ harness, model: nextModel });
-      }
-    },
-    [harness, onChange, selectedAgent],
+    [harness, onChange, model],
   );
 
   if (!host?.host_id) {
@@ -144,7 +112,6 @@ export function RoleHarnessPicker({
       harnessesOnly
       agentEntries={[]}
       harnessEntries={harnessEntries}
-      brainHarnessLabels={{}}
       effectiveAgentId={effectiveAgentId}
       agentLabel={agentLabel}
       hasAgents={!disabled && harnessEntries.length > 0}
@@ -154,20 +121,6 @@ export function RoleHarnessPicker({
       pendingAgentId="__pending__"
       onSelectPending={() => {}}
       onCreateCustomAgent={() => {}}
-      permissionMode={permissionMode}
-      approvalMode={approvalMode}
-      cursorExecMode={cursorExecMode}
-      bypassSandbox={bypassSandbox}
-      pickedModel={pickedModel}
-      pickedEffort={pickedEffort}
-      pickedHarness={null}
-      setPermissionMode={setPermissionMode}
-      setApprovalMode={setApprovalMode}
-      setCursorExecMode={setCursorExecMode}
-      setBypassSandbox={setBypassSandbox}
-      setPickedModel={handlePickedModel}
-      setPickedEffort={setPickedEffort}
-      setPickedHarness={() => {}}
       triggerTestId={testId}
     />
   );

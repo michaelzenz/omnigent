@@ -27,10 +27,10 @@ export interface AgentBundleInput {
   name: string;
   description?: string;
   instructions?: string;
-  /** Harness kind, e.g. "claude-sdk", "openai-agents". */
-  harness: string;
-  /** Model identifier, e.g. "claude-sonnet-4-20250514". Required by the omnigent executor. */
-  model: string;
+  /** Optional legacy default harness. New profiles choose this when launching. */
+  harness?: string;
+  /** Optional legacy default model. New profiles choose this when launching. */
+  model?: string;
   /** MCP server declarations to include as inline tools entries. */
   mcpServers?: MCPServerInput[];
 }
@@ -51,12 +51,16 @@ export async function buildAgentBundle(input: AgentBundleInput): Promise<File> {
   }
   lines.push("");
 
-  lines.push("executor:");
-  lines.push("  type: omnigent");
-  lines.push(`  model: ${input.model}`);
-  lines.push("  config:");
-  lines.push(`    harness: ${input.harness}`);
-  lines.push("");
+  if (input.harness || input.model) {
+    lines.push("executor:");
+    lines.push("  type: omnigent");
+    if (input.model) lines.push(`  model: ${input.model}`);
+    if (input.harness) {
+      lines.push("  config:");
+      lines.push(`    harness: ${input.harness}`);
+    }
+    lines.push("");
+  }
 
   lines.push("tools:");
   lines.push("  builtins:");

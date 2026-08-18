@@ -88,6 +88,27 @@ def test_set_is_role_toggles_flag(agent_store: SqlAlchemyAgentStore) -> None:
     assert agent_store.get_by_name("flip-agent").is_role is False
 
 
+def test_profile_state_filters_and_archives(agent_store: SqlAlchemyAgentStore) -> None:
+    agent = agent_store.create(
+        agent_id="d4" * 16,
+        name="managed-profile",
+        bundle_location="ag_managed/hash",
+    )
+    disabled = agent_store.set_enabled(agent.id, False)
+    assert disabled is not None
+    assert disabled.enabled is False
+    assert agent.id not in {row.id for row in agent_store.list(limit=100).data}
+    assert agent.id in {
+        row.id for row in agent_store.list(limit=100, include_disabled=True).data
+    }
+
+    archived = agent_store.archive(agent.id)
+    assert archived is not None
+    assert archived.archived is True
+    assert archived.enabled is False
+    assert agent_store.get(agent.id) is not None
+
+
 def test_create_rejects_duplicate_template_name(agent_store: SqlAlchemyAgentStore) -> None:
     """Template names are unique within a workspace, enforced by the store.
 

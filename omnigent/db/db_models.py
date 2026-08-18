@@ -294,6 +294,8 @@ class SqlAgent(OmnigentBase):
     # Hidden from the public GET /v1/agents catalog so they don't clutter the
     # New Chat picker; lookups by id/name are unaffected.
     is_role: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
     __table_args__ = (
         CheckConstraint("kind IN (1, 2)", name="ck_agents_kind"),

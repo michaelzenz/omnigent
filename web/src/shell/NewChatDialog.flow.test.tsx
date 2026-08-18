@@ -162,9 +162,28 @@ function setHosts(hosts: Host[]): void {
 }
 
 function setAgents(agents: AvailableAgent[]): void {
-  vi.mocked(useAvailableAgents).mockReturnValue({ data: agents } as ReturnType<
-    typeof useAvailableAgents
-  >);
+  const isProfile = (candidate: AvailableAgent) =>
+    candidate.name !== "omnigent" && !candidate.name.endsWith("-native-ui");
+  const normalized = agents.map((candidate) =>
+    isProfile(candidate)
+      ? { ...candidate, builtin: candidate.builtin ?? true, enabled: candidate.enabled ?? true }
+      : candidate,
+  );
+  const data =
+    normalized.some(isProfile) && !normalized.some((candidate) => candidate.name === "omnigent")
+      ? [
+          ...normalized,
+          agent({
+            id: "ag_omnigent_test",
+            name: "omnigent",
+            display_name: "Omnigent",
+            harness: "openai-agents",
+            builtin: true,
+            enabled: true,
+          }),
+        ]
+      : normalized;
+  vi.mocked(useAvailableAgents).mockReturnValue({ data } as ReturnType<typeof useAvailableAgents>);
 }
 
 function renderLanding(cachedSessionIds: string[] = []): void {
@@ -223,10 +242,23 @@ function openWorktree(): void {
  */
 function selectAgent(agentId: string): void {
   fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-  if (screen.queryByTestId(`new-chat-landing-agent-${agentId}`) == null) {
-    fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
+  const harnessRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+  if (harnessRow) {
+    fireEvent.click(harnessRow);
+    return;
   }
-  fireEvent.click(screen.getByTestId(`new-chat-landing-agent-${agentId}`));
+  const more = screen.queryByTestId("new-chat-landing-harness-more");
+  if (more) {
+    fireEvent.click(more);
+    const nestedHarnessRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+    if (nestedHarnessRow) {
+      fireEvent.click(nestedHarnessRow);
+      return;
+    }
+  }
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+  fireEvent.click(screen.getByTestId(`new-chat-landing-profile-${agentId}`));
 }
 
 /**
@@ -1253,10 +1285,11 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
+    selectAgent("ag_polly");
     // With no explicit pick the pill shows just the agent name — the spec
     // default is not suffixed (it lives in the Advanced menu's radios).
-    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Polly");
-    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).not.toContain(
+    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Polly");
+    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).not.toContain(
       "Claude SDK",
     );
     typeMessage("go");
@@ -1553,11 +1586,9 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
-    // Pick the non-default agent (Radix opens on pointerdown). "second_agent"
-    // is a custom agent, so it lives in the "Custom agents" submenu.
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-custom-agents"));
-    fireEvent.click(screen.getByTestId("new-chat-landing-agent-ag_two"));
+    // Pick the non-default durable profile.
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-ag_two"));
     // The explicit pick persists immediately — no session has to be created
     // for the preference to stick.
     expect(localStorage.getItem("omnigent:last-agent-id")).toBe("ag_two");
@@ -1598,6 +1629,109 @@ describe("NewChatLandingScreen create flow", () => {
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string).agent_id).toBe("ag_hello");
+  });
+
+  it("resolves Auto Select once and creates the session with the returned profile", async () => {
+    const base = agent({
+      id: "ag_omnigent",
+      name: "omnigent",
+      display_name: "Omnigent",
+      harness: "openai-agents",
+      builtin: true,
+      enabled: true,
+    });
+    const profile = agent({
+      id: "ag_research",
+      name: "research",
+      display_name: "Research",
+      harness: "claude-sdk",
+      builtin: false,
+      enabled: true,
+      default_harness: "claude-sdk",
+    });
+    setAgents([base, profile]);
+    vi.mocked(authenticatedFetch).mockImplementation(async (url) => {
+      if (url === "/v1/agents/auto-select") {
+        return {
+          ok: true,
+          json: async () => ({ profile, reason: null }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ id: "conv_new" }),
+      } as unknown as Response;
+    });
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-auto"));
+    typeMessage("research this change");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
+        "Profile: Research",
+      ),
+    );
+    const autoCalls = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.filter(([url]) => url === "/v1/agents/auto-select");
+    expect(autoCalls).toHaveLength(1);
+    const sessionCall = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.find(([url]) => url === "/v1/sessions");
+    expect(sessionCall).toBeTruthy();
+    if (!sessionCall) throw new Error("Expected a session create call");
+    expect(JSON.parse((sessionCall[1] as RequestInit).body as string).agent_id).toBe("ag_research");
+  });
+
+  it("preserves the draft and avoids repeating a failed Auto Select", async () => {
+    setAgents([
+      agent({
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
+        harness: "openai-agents",
+        builtin: true,
+        enabled: true,
+      }),
+      agent({
+        id: "ag_research",
+        name: "research",
+        display_name: "Research",
+        harness: "claude-sdk",
+        builtin: false,
+        enabled: true,
+      }),
+    ]);
+    vi.mocked(authenticatedFetch).mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: "Auto Select is unavailable." }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-auto"));
+    typeMessage("keep this draft");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-error").textContent).toContain(
+        "Auto Select is unavailable.",
+      ),
+    );
+    expect((screen.getByTestId("new-chat-landing-input") as HTMLTextAreaElement).value).toBe(
+      "keep this draft",
+    );
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await Promise.resolve();
+    expect(
+      vi.mocked(authenticatedFetch).mock.calls.filter(([url]) => url === "/v1/agents/auto-select"),
+    ).toHaveLength(1);
   });
 });
 

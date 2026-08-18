@@ -87,3 +87,21 @@ async def test_builtin_flag_distinguishes_seeded_from_registered(
     by_id = {a["id"]: a for a in resp.json()["data"]}
     assert by_id[seeded_id]["builtin"] is True
     assert by_id[registered_id]["builtin"] is False
+
+
+async def test_top_level_session_rejects_disabled_profile(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent = agent_store.create(
+        generate_agent_id(),
+        name="disabled-profile",
+        bundle_location="test:///disabled",
+    )
+    agent_store.set_enabled(agent.id, False)
+
+    response = await client.post("/v1/sessions", json={"agent_id": agent.id})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conflict"

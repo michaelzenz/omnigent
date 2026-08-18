@@ -12,14 +12,20 @@ wiring and response envelope.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from omnigent.db.utils import builtin_agent_id
+from omnigent.errors import OmnigentError
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -78,11 +84,20 @@ def _register_builtin_agent(
 def agents_app(
     agent_store: SqlAlchemyAgentStore,
     agent_cache: AgentCache,
+    artifact_store: LocalArtifactStore,
 ) -> FastAPI:
     """Minimal app mounting only the built-in agents router at ``/v1``."""
     app = FastAPI()
+
+    @app.exception_handler(OmnigentError)
+    async def _handle_omnigent_error(_request: Request, exc: OmnigentError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
     app.include_router(
-        create_builtin_agents_router(agent_store, agent_cache),
+        create_builtin_agents_router(agent_store, agent_cache, artifact_store),
         prefix="/v1",
     )
     return app
@@ -482,3 +497,253 @@ async def test_catalog_description_prefers_stored_row_over_spec(
     # Stored value present → it wins; the differing spec description
     # proves the route didn't blindly overwrite with the bundle's.
     assert entry["description"] == "Curated catalog label."
+
+
+async def test_disabled_profiles_only_appear_in_management_listing(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent = agent_store.create("aa" * 16, "toggle-me", "aa/bundle")
+
+    patched = await agents_client.patch(f"/v1/agents/{agent.id}", json={"enabled": False})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["enabled"] is False
+
+    visible = await agents_client.get("/v1/agents")
+    assert agent.id not in {row["id"] for row in visible.json()["data"]}
+    managed = await agents_client.get("/v1/agents?include_disabled=true")
+    row = next(row for row in managed.json()["data"] if row["id"] == agent.id)
+    assert row["enabled"] is False
+    assert row["archived"] is False
+
+
+async def test_builtin_delete_is_rejected(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent_id = builtin_agent_id("protected")
+    agent_store.create(agent_id, "protected", "protected/bundle")
+
+    response = await agents_client.delete(f"/v1/agents/{agent_id}")
+
+    assert response.status_code == 409
+    assert agent_store.get(agent_id) is not None
+
+
+async def test_custom_delete_archives_profile(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent = agent_store.create("bb" * 16, "custom", "custom/bundle")
+
+    response = await agents_client.delete(f"/v1/agents/{agent.id}")
+
+    assert response.status_code == 204
+    archived = agent_store.get(agent.id)
+    assert archived is not None
+    assert archived.archived is True
+    assert archived.enabled is False
+
+
+async def test_multipart_create_persists_profile_and_metadata(
+    agents_client: httpx.AsyncClient,
+) -> None:
+    bundle = build_agent_bundle(
+        name="uploaded-profile",
+        description="Created without a session",
+        executor={"type": "omnigent", "model": "gpt-test", "config": {"harness": "codex"}},
+        sub_agents=[{"name": "worker"}],
+    )
+
+    response = await agents_client.post(
+        "/v1/agents",
+        files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["name"] == "uploaded-profile"
+    assert body["description"] == "Created without a session"
+    assert body["default_harness"] == "codex"
+    assert body["default_model"] == "gpt-test"
+    assert body["is_multi_agent"] is True
+    assert body["subagent_count"] == 1
+    duplicate = await agents_client.post(
+        "/v1/agents",
+        files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
+    )
+    assert duplicate.status_code == 409
+
+
+class _FakeAutoSelectLLM:
+    def __init__(self, selected_id: str) -> None:
+        self.selected_id = selected_id
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> SimpleNamespace:
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    content=[SimpleNamespace(text=self.selected_id)],
+                )
+            ]
+        )
+
+
+class _MalformedAutoSelectLLM:
+    async def create(self, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(output=[])
+
+
+async def test_auto_select_uses_only_enabled_profiles_and_returns_metadata(
+    agent_store: SqlAlchemyAgentStore,
+    artifact_store: LocalArtifactStore,
+    agents_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected_id = "cc" * 16
+    _register_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_id=selected_id,
+        name="orchestrator",
+        bundle=build_agent_bundle(
+            name="orchestrator",
+            description="Delegates work",
+            sub_agents=[{"name": "worker"}],
+        ),
+    )
+    disabled = agent_store.create("dd" * 16, "disabled", "disabled/bundle")
+    agent_store.set_enabled(disabled.id, False)
+    agent_store.create("ee" * 16, "role-only", "role/bundle", is_role=True)
+    archived = agent_store.create("ff" * 16, "archived", "archived/bundle")
+    agent_store.archive(archived.id)
+    agent_store.create("11" * 16, "claude-native-ui", "native/bundle")
+    agent_store.create("22" * 16, "kimi", "hidden/bundle")
+    fake = _FakeAutoSelectLLM(selected_id)
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.build_server_llm_client",
+        lambda _config: fake,
+    )
+
+    response = await agents_client.post(
+        "/v1/agents/auto-select",
+        json={"input": "Plan and implement a broad refactor"},
+    )
+
+    assert response.status_code == 200, response.text
+    profile = response.json()["profile"]
+    assert profile["id"] == selected_id
+    assert profile["is_multi_agent"] is True
+    assert profile["subagent_count"] == 1
+    assert len(fake.calls) == 1
+    call = fake.calls[0]
+    assert "untrusted data" in call["instructions"]
+    context = json.loads(call["input"][0]["content"][0]["text"])
+    assert [candidate["profile_id"] for candidate in context["candidates"]] == [selected_id]
+    assert "tools" not in call
+
+
+async def test_auto_select_rejects_unknown_llm_selection(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_store.create("12" * 16, "candidate", "candidate/bundle")
+    fake = _FakeAutoSelectLLM("not-a-candidate")
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.build_server_llm_client",
+        lambda _config: fake,
+    )
+
+    response = await agents_client.post(
+        "/v1/agents/auto-select",
+        json={"input": "Write a short summary"},
+    )
+
+    assert response.status_code == 409
+    assert "invalid or unknown profile ID" in response.json()["error"]["message"]
+
+
+async def test_auto_select_rejects_malformed_llm_output(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_store.create("23" * 16, "candidate", "candidate/bundle")
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.build_server_llm_client",
+        lambda _config: _MalformedAutoSelectLLM(),
+    )
+
+    response = await agents_client.post(
+        "/v1/agents/auto-select",
+        json={"input": "Write a short summary"},
+    )
+
+    assert response.status_code == 409
+    assert "malformed profile selection" in response.json()["error"]["message"]
+
+
+async def test_auto_select_unavailable_without_server_ai(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_store.create("34" * 16, "candidate", "candidate/bundle")
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.get_caps",
+        lambda: SimpleNamespace(llm=None),
+    )
+
+    response = await agents_client.post(
+        "/v1/agents/auto-select",
+        json={"input": "Help me debug this"},
+    )
+
+    assert response.status_code == 409
+    assert "no server AI backend" in response.json()["error"]["message"]
+
+
+async def test_auto_select_rejects_empty_candidate_set(
+    agents_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.server.routes.builtin_agents.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+
+    response = await agents_client.post(
+        "/v1/agents/auto-select",
+        json={"input": "Help me debug this"},
+    )
+
+    assert response.status_code == 409
+    assert "no enabled profiles" in response.json()["error"]["message"]
+
+
+async def test_auto_select_validates_non_empty_bounded_input(
+    agents_client: httpx.AsyncClient,
+) -> None:
+    blank = await agents_client.post("/v1/agents/auto-select", json={"input": "   "})
+    oversized = await agents_client.post(
+        "/v1/agents/auto-select",
+        json={"input": "x" * 20_001},
+    )
+
+    assert blank.status_code == 422
+    assert oversized.status_code == 422

@@ -391,6 +391,9 @@ def _to_agent_object(agent: Agent, cache: AgentCache | None) -> AgentObject:
     # Harness/kind for the UI; None until the spec loads (mirrors the
     # GET /v1/agents catalog so both endpoints report it consistently).
     harness: str | None = None
+    model: str | None = None
+    is_multi_agent = False
+    subagent_count = 0
     # Prefer the stored entity's description; fall back to the spec's
     # top-level description when the stored value is unset (single-file
     # YAML agents don't persist it at registration today). Lets the
@@ -402,6 +405,9 @@ def _to_agent_object(agent: Agent, cache: AgentCache | None) -> AgentObject:
                 agent.id, agent.bundle_location, expand_env=agent.session_id is None
             )
             harness = loaded.spec.executor.harness_kind
+            model = loaded.spec.executor.model
+            is_multi_agent = bool(loaded.spec.sub_agents or loaded.spec.tools.agents)
+            subagent_count = len(loaded.spec.sub_agents)
             if description is None:
                 description = loaded.spec.description
             # Declared terminal names, in spec order — the Web UI
@@ -460,4 +466,10 @@ def _to_agent_object(agent: Agent, cache: AgentCache | None) -> AgentObject:
         policies=policies,
         skills=skills,
         terminals=terminals,
+        enabled=agent.enabled,
+        archived=agent.archived,
+        is_multi_agent=is_multi_agent,
+        subagent_count=subagent_count,
+        default_harness=harness,
+        default_model=model,
     )

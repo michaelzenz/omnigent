@@ -85,6 +85,7 @@ class AgentStore(ABC):
         after: str | None = None,
         before: str | None = None,
         order: str = "desc",
+        include_disabled: bool = False,
     ) -> PagedList[Agent]:
         """
         List registered template agents with cursor-based pagination.
@@ -101,6 +102,16 @@ class AgentStore(ABC):
         :param order: Sort direction, ``"desc"`` or ``"asc"``.
         :returns: A :class:`PagedList` of :class:`Agent` objects.
         """
+        ...
+
+    @abstractmethod
+    def set_enabled(self, agent_id: str, enabled: bool) -> Agent | None:
+        """Set a template agent's enabled state and return the updated row."""
+        ...
+
+    @abstractmethod
+    def archive(self, agent_id: str) -> Agent | None:
+        """Archive a template agent and return the updated row."""
         ...
 
     @abstractmethod

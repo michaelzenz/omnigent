@@ -7515,6 +7515,40 @@ async def _resolve_native_smart_routing(
     return native_agent.agent_name, model, verdict, None
 
 
+def _require_generic_profile_launch_config(
+    agent: Agent,
+    agent_cache: AgentCache | None,
+    *,
+    harness_override: str | None,
+    model_override: str | None,
+) -> None:
+    """Reject a profile with no executor defaults unless launch settings supply both."""
+    if agent_cache is None or harness_override == "auto":
+        return
+    loaded = agent_cache.load(
+        agent.id,
+        agent.bundle_location,
+        expand_env=agent.session_id is None,
+    )
+    spec = loaded.spec
+    if spec.executor.type != "omnigent":
+        return
+    if spec.executor.config.get("harness") or spec.executor.model is not None:
+        return
+
+    missing: list[str] = []
+    if harness_override is None:
+        missing.append("harness")
+    if model_override is None:
+        missing.append("model")
+    if missing:
+        raise OmnigentError(
+            f"Profile {agent.name!r} has no default {' or '.join(missing)}; "
+            f"choose {' and '.join(missing)} in launch settings.",
+            code=ErrorCode.INVALID_INPUT,
+        )
+
+
 async def _create_session_from_existing_agent(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
@@ -7572,6 +7606,11 @@ async def _create_session_from_existing_agent(
         permission_store=permission_store,
         conversation_store=conversation_store,
     )
+    if body.parent_session_id is None and (not agent.enabled or agent.archived):
+        raise OmnigentError(
+            f"Profile {agent.name!r} is disabled.",
+            code=ErrorCode.CONFLICT,
+        )
 
     # Top-level Smart Routing: "auto" on a native wrapper agent means the client
     # picked Smart Routing with no bundle agent, and its ``agent_id`` is only a
@@ -7612,6 +7651,11 @@ async def _create_session_from_existing_agent(
             permission_store=permission_store,
             conversation_store=conversation_store,
         )
+        if not agent.enabled or agent.archived:
+            raise OmnigentError(
+                f"Profile {agent.name!r} is disabled.",
+                code=ErrorCode.CONFLICT,
+            )
 
     # Routing on a native pane whose CLI is not AI-Gateway-backed can never
     # apply, so an explicit request for it is an error rather than a session
@@ -7804,6 +7848,14 @@ async def _create_session_from_existing_agent(
         harness_override = await asyncio.to_thread(
             _validated_harness_override, body.harness_override, agent
         )
+
+    await asyncio.to_thread(
+        _require_generic_profile_launch_config,
+        agent,
+        agent_cache,
+        harness_override=harness_override,
+        model_override=model_override,
+    )
 
     # Inherit runner affinity from the parent session so the child
     # is assigned to the same runner (sub-agent co-location).

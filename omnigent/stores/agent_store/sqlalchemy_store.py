@@ -135,6 +135,8 @@ class SqlAlchemyAgentStore(AgentStore):
             kind=encode_agent_kind("template"),
             description=description,
             is_role=is_role,
+            enabled=True,
+            archived=False,
         )
         with self._session("create_agent") as session:
             # Template names are unique within a workspace. This can't be a
@@ -202,6 +204,7 @@ class SqlAlchemyAgentStore(AgentStore):
         after: str | None = None,
         before: str | None = None,
         order: str = "desc",
+        include_disabled: bool = False,
     ) -> PagedList[Agent]:
         """
         List registered template agents with cursor-based pagination.
@@ -227,11 +230,14 @@ class SqlAlchemyAgentStore(AgentStore):
             # public catalog (the New Chat picker) so they don't clutter it.
             # Lookups by id/name are unaffected, so role bootstrap still resolves.
             not_role = SqlAgent.is_role.is_(False)
-            stmt = select(SqlAgent).where(in_workspace, is_template, not_role)
+            visible = [in_workspace, is_template, not_role]
+            if not include_disabled:
+                visible.extend((SqlAgent.enabled.is_(True), SqlAgent.archived.is_(False)))
+            stmt = select(SqlAgent).where(*visible)
             if after:
                 sub = (
                     select(SqlAgent.created_at)
-                    .where(in_workspace, SqlAgent.id == after, is_template, not_role)
+                    .where(*visible, SqlAgent.id == after)
                     .scalar_subquery()
                 )
                 ts_cmp = SqlAgent.created_at < sub if is_desc else SqlAgent.created_at > sub
@@ -240,7 +246,7 @@ class SqlAlchemyAgentStore(AgentStore):
             if before:
                 sub = (
                     select(SqlAgent.created_at)
-                    .where(in_workspace, SqlAgent.id == before, is_template, not_role)
+                    .where(*visible, SqlAgent.id == before)
                     .scalar_subquery()
                 )
                 ts_cmp = SqlAgent.created_at > sub if is_desc else SqlAgent.created_at < sub
@@ -260,6 +266,29 @@ class SqlAlchemyAgentStore(AgentStore):
                 last_id=entities[-1].id if entities else None,
                 has_more=has_more,
             )
+
+    def set_enabled(self, agent_id: str, enabled: bool) -> Agent | None:
+        """Set a template agent's enabled state."""
+        with self._session("set_agent_enabled") as session:
+            row = session.get(SqlAgent, (current_workspace_id(), agent_id))
+            if row is None or row.kind != encode_agent_kind("template"):
+                return None
+            if row.archived and enabled:
+                return None
+            row.enabled = enabled
+            row.updated_at = now_epoch()
+            return sql_agent_to_entity(row)
+
+    def archive(self, agent_id: str) -> Agent | None:
+        """Soft-delete a template agent while preserving references."""
+        with self._session("archive_agent") as session:
+            row = session.get(SqlAgent, (current_workspace_id(), agent_id))
+            if row is None or row.kind != encode_agent_kind("template"):
+                return None
+            row.archived = True
+            row.enabled = False
+            row.updated_at = now_epoch()
+            return sql_agent_to_entity(row)
 
     def get_names(self, agent_ids: builtins.list[str]) -> dict[str, str]:
         """

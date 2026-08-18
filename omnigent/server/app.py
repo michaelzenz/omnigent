@@ -2476,6 +2476,7 @@ def create_app(
         create_builtin_agents_router(
             agent_store,
             agent_cache,
+            artifact_store,
             auth_provider=auth_provider,
         ),
         prefix="/v1",

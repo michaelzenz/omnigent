@@ -685,6 +685,14 @@ def _build_policy_llm_client(
     )
 
 
+def build_server_llm_client(server_llm: LLMConfig | None) -> PolicyLLMClient | None:
+    """Build an LLM client from the complete server-level configuration."""
+    return _build_policy_llm_client(
+        server_llm,
+        _resolve_server_llm_connection(server_llm),
+    )
+
+
 def _normalize_policy_model(model: str) -> str:
     """
     Apply the ``databricks-`` → ``databricks/`` provider-prefix fixup.
