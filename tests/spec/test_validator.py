@@ -414,11 +414,11 @@ def test_omnigent_executor_accepts_antigravity_native_harness() -> None:
 
 def test_omnigent_executor_rejects_missing_harness() -> None:
     """
-    ``omnigent`` executor without ``config.harness`` is rejected.
+    ``omnigent`` executor with a pinned model but no ``config.harness``
+    is rejected.
 
-    Without the harness selector the omnigent factory cannot
-    pick a backend and would silently fall back to a MockExecutor.
-    The validator fails loud instead.
+    Template profiles that omit both harness and model are allowed;
+    launch-time validation supplies them instead.
     """
     spec = _minimal_spec(
         llm=LLMConfig(model="databricks-claude-sonnet-4-6"),
@@ -429,6 +429,15 @@ def test_omnigent_executor_rejects_missing_harness() -> None:
     assert any("executor.config.harness" in e.path for e in result.errors), (
         f"Expected executor.config.harness error, got: {result.errors}"
     )
+
+
+def test_omnigent_executor_allows_template_without_harness_or_model() -> None:
+    """Prompt-only profiles may omit harness and model until session launch."""
+    spec = _minimal_spec(
+        executor=ExecutorSpec(type="omnigent", config={}),
+    )
+    result = validate(spec)
+    assert result.valid, f"Expected valid template spec, got: {result.errors}"
 
 
 def test_omnigent_executor_rejects_unknown_harness() -> None:

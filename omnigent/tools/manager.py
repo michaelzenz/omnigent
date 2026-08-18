@@ -351,23 +351,13 @@ class ToolManager:
     def _register_default_builtin_tools(self) -> None:
         """Register the portable builtins available to every agent."""
         for name in (
-            "web_fetch",
             "upload_file",
             "list_files",
             "download_file",
             "search_conversations",
             "export_agent",
         ):
-            try:
-                tool = self._create_builtin(name, None)
-            except OmnigentError:
-                if name == "web_fetch":
-                    _logger.warning(
-                        "Default web_fetch is unavailable because the agent "
-                        "declares no bootable harness"
-                    )
-                    continue
-                raise
+            tool = self._create_builtin(name, None)
             if tool is None:
                 raise RuntimeError(f"default builtin {name!r} is unavailable")
             self._tools.setdefault(tool.name(), tool)

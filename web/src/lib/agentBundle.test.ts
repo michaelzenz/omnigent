@@ -91,7 +91,7 @@ describe("buildAgentBundle", () => {
     expect(yaml).toContain("model: claude-sonnet-4-20250514");
     expect(yaml).toContain("harness: claude-sdk");
     expect(yaml).toContain("web_search");
-    expect(yaml).toContain("web_fetch");
+    expect(yaml).not.toContain("web_fetch");
     expect(yaml).not.toContain("instructions:");
     expect(yaml).not.toContain("description:");
   });

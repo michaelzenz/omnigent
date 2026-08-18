@@ -19,7 +19,6 @@ from omnigent.spec.types import AgentSpec
 def test_default_builtins_are_runner_and_native_relay_tools() -> None:
     """Default builtins must work for SDK and native harnesses."""
     names = {
-        "web_fetch",
         "upload_file",
         "list_files",
         "download_file",
@@ -31,6 +30,12 @@ def test_default_builtins_are_runner_and_native_relay_tools() -> None:
 
     assert all(should_dispatch_locally(name) for name in names)
     assert names <= _NATIVE_RELAY_BUILTIN_TOOLS
+
+
+def test_web_fetch_dispatches_locally_when_opted_in() -> None:
+    """web_fetch is opt-in via spec but still runner-dispatched."""
+    assert should_dispatch_locally("web_fetch") is True
+    assert "web_fetch" in _NATIVE_RELAY_BUILTIN_TOOLS
 
 
 @pytest.mark.asyncio

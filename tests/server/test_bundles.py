@@ -138,6 +138,27 @@ def test_validate_bundle_accepts_clean_agent() -> None:
     assert spec.name == "clean_agent"
 
 
+def test_validate_bundle_accepts_generic_profile_without_executor() -> None:
+    """Prompt-only profile bundles may omit harness/model until session launch."""
+    spec = validate_agent_bundle(
+        _make_bundle_bytes(
+            {
+                "config.yaml": yaml.dump(
+                    {
+                        "spec_version": 1,
+                        "name": "generic-profile",
+                        "tools": {"builtins": ["web_search"]},
+                    }
+                ),
+                "AGENTS.md": "Help the user.",
+            }
+        ),
+    )
+    assert spec.name == "generic-profile"
+    assert spec.executor.config.get("harness") in (None, "")
+    assert spec.executor.model is None
+
+
 def test_validate_bundle_allows_custom_handler_when_not_enforced() -> None:
     """``enforce_handler_allowlist=False`` accepts a custom handler.
 

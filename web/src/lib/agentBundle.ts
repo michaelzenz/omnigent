@@ -51,21 +51,18 @@ export async function buildAgentBundle(input: AgentBundleInput): Promise<File> {
   }
   lines.push("");
 
-  if (input.harness || input.model) {
+  if (input.harness) {
     lines.push("executor:");
     lines.push("  type: omnigent");
     if (input.model) lines.push(`  model: ${input.model}`);
-    if (input.harness) {
-      lines.push("  config:");
-      lines.push(`    harness: ${input.harness}`);
-    }
+    lines.push("  config:");
+    lines.push(`    harness: ${input.harness}`);
     lines.push("");
   }
 
   lines.push("tools:");
   lines.push("  builtins:");
   lines.push("    - web_search");
-  lines.push("    - web_fetch");
   // Inline MCP server declarations (parsed by _parse_inline_mcp_servers).
   if (input.mcpServers?.length) {
     for (const mcp of input.mcpServers) {

@@ -185,12 +185,14 @@ def validate_omnigent_executor(
             " — harness manages context internally",
         )
     harness = spec.executor.config.get("harness")
+    model = spec.executor.model or (spec.llm.model if spec.llm is not None else None)
     if not harness:
-        result.add(
-            "executor.config.harness",
-            f"required when executor.type is {OMNIGENT_EXECUTOR_TYPE!r} — "
-            f"must be one of {sorted(_OMNIGENT_ACCEPTED_HARNESSES)}",
-        )
+        if model is not None:
+            result.add(
+                "executor.config.harness",
+                f"required when executor.type is {OMNIGENT_EXECUTOR_TYPE!r} — "
+                f"must be one of {sorted(_OMNIGENT_ACCEPTED_HARNESSES)}",
+            )
     elif canonicalize_harness(harness) not in OMNIGENT_HARNESSES:
         package = missing_install_packages().get(harness) or missing_install_packages().get(
             canonicalize_harness(harness) or harness
