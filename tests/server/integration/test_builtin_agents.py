@@ -504,6 +504,7 @@ async def test_disabled_profiles_only_appear_in_management_listing(
     agents_client: httpx.AsyncClient,
 ) -> None:
     agent = agent_store.create("aa" * 16, "toggle-me", "aa/bundle")
+    agent_store.create("ab" * 16, "keep-enabled", "ab/bundle")
 
     patched = await agents_client.patch(f"/v1/agents/{agent.id}", json={"enabled": False})
     assert patched.status_code == 200, patched.text
@@ -535,6 +536,7 @@ async def test_custom_delete_archives_profile(
     agents_client: httpx.AsyncClient,
 ) -> None:
     agent = agent_store.create("bb" * 16, "custom", "custom/bundle")
+    agent_store.create("bc" * 16, "remaining", "remaining/bundle")
 
     response = await agents_client.delete(f"/v1/agents/{agent.id}")
 
@@ -543,6 +545,19 @@ async def test_custom_delete_archives_profile(
     assert archived is not None
     assert archived.archived is True
     assert archived.enabled is False
+
+
+async def test_last_custom_profile_cannot_be_deleted(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent = agent_store.create("bd" * 16, "only-profile", "only/bundle")
+
+    response = await agents_client.delete(f"/v1/agents/{agent.id}")
+
+    assert response.status_code == 409
+    assert "last profile" in response.json()["error"]["message"]
+    assert agent_store.get(agent.id) is not None
 
 
 async def test_multipart_create_persists_profile_and_metadata(
@@ -573,6 +588,45 @@ async def test_multipart_create_persists_profile_and_metadata(
         files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
     )
     assert duplicate.status_code == 409
+
+
+async def test_custom_profile_can_edit_prompt_fields_in_place(
+    agents_client: httpx.AsyncClient,
+) -> None:
+    bundle = build_agent_bundle(
+        name="editable-profile",
+        description="Before",
+        skills=[
+            {
+                "name": "keep-me",
+                "description": "Preserved capability",
+                "content": "Keep this skill.",
+            }
+        ],
+    )
+    created = await agents_client.post(
+        "/v1/agents",
+        files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
+    )
+    agent_id = created.json()["id"]
+
+    response = await agents_client.put(
+        f"/v1/agents/{agent_id}",
+        json={
+            "name": "edited-profile",
+            "description": "After",
+            "instructions": "Updated instructions",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == agent_id
+    assert body["name"] == "edited-profile"
+    assert body["description"] == "After"
+    assert body["instructions"] == "Updated instructions"
+    assert [skill["name"] for skill in body["skills"]] == ["keep-me"]
+    assert body["version"] == 2
 
 
 class _FakeAutoSelectLLM:
@@ -623,11 +677,11 @@ async def test_auto_select_uses_only_enabled_profiles_and_returns_metadata(
     agent_store.create("22" * 16, "kimi", "hidden/bundle")
     fake = _FakeAutoSelectLLM(selected_id)
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.get_caps",
+        "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.build_server_llm_client",
+        "omnigent.profile_selection.build_server_llm_client",
         lambda _config: fake,
     )
 
@@ -657,11 +711,11 @@ async def test_auto_select_rejects_unknown_llm_selection(
     agent_store.create("12" * 16, "candidate", "candidate/bundle")
     fake = _FakeAutoSelectLLM("not-a-candidate")
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.get_caps",
+        "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.build_server_llm_client",
+        "omnigent.profile_selection.build_server_llm_client",
         lambda _config: fake,
     )
 
@@ -681,11 +735,11 @@ async def test_auto_select_rejects_malformed_llm_output(
 ) -> None:
     agent_store.create("23" * 16, "candidate", "candidate/bundle")
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.get_caps",
+        "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.build_server_llm_client",
+        "omnigent.profile_selection.build_server_llm_client",
         lambda _config: _MalformedAutoSelectLLM(),
     )
 
@@ -705,7 +759,7 @@ async def test_auto_select_unavailable_without_server_ai(
 ) -> None:
     agent_store.create("34" * 16, "candidate", "candidate/bundle")
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.get_caps",
+        "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=None),
     )
 
@@ -723,7 +777,7 @@ async def test_auto_select_rejects_empty_candidate_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "omnigent.server.routes.builtin_agents.get_caps",
+        "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
 

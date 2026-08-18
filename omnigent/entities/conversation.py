@@ -247,6 +247,14 @@ class Conversation:
 # ── Conversation item data types ───────────────────────
 
 
+class MessageExecutionContext(BaseModel):
+    """Execution selections captured when a user message starts a turn."""
+
+    profile: str | None = None
+    harness: str | None = None
+    model: str | None = None
+
+
 class MessageData(BaseModel):
     """
     Data for a message item (user or assistant).
@@ -273,6 +281,7 @@ class MessageData(BaseModel):
     agent: str | None = Field(default=None, serialization_alias="model")
     is_meta: bool = Field(default=False, exclude_if=lambda value: value is False)
     interrupted: bool = Field(default=False, exclude_if=lambda value: value is False)
+    execution_context: MessageExecutionContext | None = None
 
     @model_validator(mode="after")
     def check_agent_for_assistant(self) -> MessageData:

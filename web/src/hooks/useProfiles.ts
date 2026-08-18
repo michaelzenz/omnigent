@@ -13,6 +13,7 @@ interface AgentWire {
   id: string;
   name: string;
   description?: string | null;
+  instructions?: string | null;
   harness?: string | null;
   skills?: { name: string; description: string }[];
   builtin?: boolean;
@@ -31,6 +32,7 @@ function mapAgent(agent: AgentWire): AvailableAgent {
     name: agent.name,
     display_name: capitalizeAgentName(agent.name),
     description: agent.description ?? null,
+    instructions: agent.instructions ?? null,
     harness: agent.harness ?? null,
     skills: agent.skills ?? [],
     builtin: agent.builtin ?? false,
@@ -45,9 +47,10 @@ function mapAgent(agent: AgentWire): AvailableAgent {
 }
 
 async function profileApiError(response: Response, fallback: string): Promise<Error> {
-  const body = (await response.json().catch(() => null)) as
-    | { detail?: string; error?: { message?: string } }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    detail?: string;
+    error?: { message?: string };
+  } | null;
   return new Error(body?.error?.message ?? body?.detail ?? `${fallback} (${response.status})`);
 }
 
@@ -93,6 +96,25 @@ async function createProfile(bundle: File): Promise<AvailableAgent> {
   form.append("bundle", bundle);
   const response = await authenticatedFetch("/v1/agents", { method: "POST", body: form });
   if (!response.ok) throw await profileApiError(response, "Couldn't create profile");
+  return mapAgent((await response.json()) as AgentWire);
+}
+
+async function editProfile(input: {
+  id: string;
+  name: string;
+  description?: string;
+  instructions?: string;
+}): Promise<AvailableAgent> {
+  const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(input.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description ?? null,
+      instructions: input.instructions ?? "",
+    }),
+  });
+  if (!response.ok) throw await profileApiError(response, "Couldn't edit profile");
   return mapAgent((await response.json()) as AgentWire);
 }
 
@@ -163,6 +185,22 @@ export function useCreateProfile() {
   return useMutation({
     mutationFn: createProfile,
     onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["profiles"] }),
+        queryClient.invalidateQueries({ queryKey: ["available-agents"] }),
+      ]);
+    },
+  });
+}
+
+export function useEditProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: editProfile,
+    onSuccess: async (updated) => {
+      queryClient.setQueryData<AvailableAgent[]>(["profiles", "include-disabled"], (current) =>
+        current?.map((profile) => (profile.id === updated.id ? updated : profile)),
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["profiles"] }),
         queryClient.invalidateQueries({ queryKey: ["available-agents"] }),

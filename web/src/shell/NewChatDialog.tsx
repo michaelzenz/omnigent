@@ -158,7 +158,6 @@ import {
   prefetchAvailableAgentDetails,
   type AvailableAgent,
 } from "@/hooks/useAvailableAgents";
-import { autoSelectProfile } from "@/hooks/useProfiles";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useDictationInsert } from "@/hooks/useDictationInsert";
 import { useRecentHarnesses } from "@/hooks/useRecentHarnesses";
@@ -201,6 +200,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { AgentRowTooltip } from "@/components/AgentHoverCard";
 import type { AgentBundleInput } from "@/lib/agentBundle";
 import { ProfileControls, type ProfileSelection } from "./ProfileControls";
+import { PROMPT_PROFILE_AUTO_VALUE, PROMPT_PROFILE_LABEL_KEY } from "@/lib/profileSelection";
 
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
@@ -2144,17 +2144,12 @@ export function NewChatLandingScreen() {
     () => landingDraft?.pickedAgentId ?? (projectParam !== "" ? null : readLastAgentId()),
   );
   const [profileSelection, setProfileSelection] = useState<ProfileSelection>(
-    () => landingDraft?.profileSelection ?? "default",
+    () => landingDraft?.profileSelection ?? PROMPT_PROFILE_AUTO_VALUE,
   );
   const [resolvedAutoProfile, setResolvedAutoProfile] = useState<AvailableAgent | null>(() => {
     const id = landingDraft?.resolvedAutoProfileId;
     return id ? (agents?.find((agent) => agent.id === id) ?? null) : null;
   });
-  const autoSelectAttemptRef = useRef<{
-    key: string;
-    result: AvailableAgent | null;
-    error: string | null;
-  } | null>(null);
   const [selectedHostId, setSelectedHostId] = useState<string | null>(
     () => landingDraft?.selectedHostId ?? null,
   );
@@ -2721,23 +2716,21 @@ export function NewChatLandingScreen() {
     selectedAgent?.id === omnigentBaseAgent?.id ||
     profiles.some((profile) => profile.id === selectedAgent?.id) ||
     resolvedAutoProfile?.id === selectedAgent?.id;
+  const promptProfilesEnabled =
+    omnigentSelected &&
+    (pickedHarness ?? omnigentBaseAgent?.default_harness ?? omnigentBaseAgent?.harness) ===
+      SDK_HARNESS;
   const harnessPickerAgentId = omnigentSelected
     ? (omnigentBaseAgent?.id ?? effectiveAgentId)
     : effectiveAgentId;
   useEffect(() => {
     if (agents === undefined) return;
-    const persistedProfile = profiles.find((profile) => profile.id === effectiveAgentId);
-    if (profileSelection === "default" && persistedProfile) {
-      setProfileSelection(persistedProfile.id);
-      return;
-    }
     if (
-      profileSelection !== "default" &&
       profileSelection !== "auto" &&
       !profiles.some((profile) => profile.id === profileSelection) &&
       resolvedAutoProfile?.id !== profileSelection
     ) {
-      setProfileSelection("default");
+      setProfileSelection(PROMPT_PROFILE_AUTO_VALUE);
       setResolvedAutoProfile(null);
       if (pickedAgentId === profileSelection) setPickedAgentId(omnigentBaseAgent?.id ?? null);
     }
@@ -2751,13 +2744,6 @@ export function NewChatLandingScreen() {
     resolvedAutoProfile?.id,
   ]);
 
-  useEffect(() => {
-    if (profileSelection !== "auto" || resolvedAutoProfile === null) return;
-    const attemptedInput = autoSelectAttemptRef.current?.key;
-    if (attemptedInput === message.trim()) return;
-    setResolvedAutoProfile(null);
-    setPickedAgentId(omnigentBaseAgent?.id ?? null);
-  }, [message, omnigentBaseAgent?.id, profileSelection, resolvedAutoProfile]);
   const supportsPermissionMode = nativeAgentHasCapability(selectedAgent, "permissionMode");
   const supportsApprovalMode = nativeAgentHasCapability(selectedAgent, "approvalMode");
   const supportsCursorMode = nativeAgentHasCapability(selectedAgent, "cursorMode");
@@ -3633,13 +3619,8 @@ export function NewChatLandingScreen() {
   const handleSelectAgent = (agent: AvailableAgent) => {
     setSmartRoutingDropped(null);
     if (agent.id === omnigentBaseAgent?.id) {
-      const profile =
-        profileSelection === "auto"
-          ? resolvedAutoProfile
-          : profiles.find((candidate) => candidate.id === profileSelection);
-      const id = profile?.id ?? omnigentBaseAgent.id;
-      setPickedAgentId(id);
-      writeLastAgentId(id);
+      setPickedAgentId(omnigentBaseAgent.id);
+      writeLastAgentId(omnigentBaseAgent.id);
       return;
     }
     if (agent.id !== effectiveAgentId) {
@@ -3664,9 +3645,8 @@ export function NewChatLandingScreen() {
     setResolvedAutoProfile(
       profile && !profiles.some((candidate) => candidate.id === profile.id) ? profile : null,
     );
-    autoSelectAttemptRef.current = null;
     setCreateError(null);
-    if (selection !== "default" && selection !== "auto" && profile) {
+    if (selection !== "auto" && profile) {
       handleSelectAgent(profile);
       return;
     }
@@ -3757,32 +3737,20 @@ export function NewChatLandingScreen() {
     try {
       let sessionAgentId = effectiveAgentId;
       let sessionAgent = selectedAgent;
-      if (profileSelection === "auto") {
-        const key = message.trim();
-        let attempt = autoSelectAttemptRef.current;
-        if (attempt?.key !== key) {
-          try {
-            const result = await autoSelectProfile(key);
-            attempt = { key, result, error: null };
-          } catch (error) {
-            attempt = {
-              key,
-              result: null,
-              error: error instanceof Error ? error.message : "Auto Select failed",
-            };
-          }
-          autoSelectAttemptRef.current = attempt;
-        }
-        if (attempt.error || !attempt.result) {
-          returnDraftToUser();
-          setCreateError(attempt.error ?? "Auto Select didn't return a profile.");
-          return;
-        }
-        sessionAgent = attempt.result;
-        sessionAgentId = attempt.result.id;
-        setResolvedAutoProfile(attempt.result);
-        setPickedAgentId(attempt.result.id);
-        writeLastAgentId(attempt.result.id);
+      const promptProfile =
+        promptProfilesEnabled && profileSelection !== "auto"
+          ? profiles.find((profile) => profile.id === profileSelection)
+          : undefined;
+      const promptProfileId = promptProfilesEnabled
+        ? profileSelection === PROMPT_PROFILE_AUTO_VALUE
+          ? PROMPT_PROFILE_AUTO_VALUE
+          : promptProfile?.id
+        : undefined;
+      // Profiles are prompt overlays on the Omnigent harness. Keep the bound
+      // agent (and therefore its harness/model/tools) on the Omnigent base.
+      if (promptProfileId && omnigentBaseAgent) {
+        sessionAgent = omnigentBaseAgent;
+        sessionAgentId = omnigentBaseAgent.id;
       }
       const trimmedBranch = branchName.trim();
       // `shouldCreateWorktree` (component scope): true only when a branch is
@@ -3855,6 +3823,9 @@ export function NewChatLandingScreen() {
       const createLabels = selectedProject
         ? { ...(baseLabels ?? {}), [PROJECT_LABEL_KEY]: selectedProject }
         : baseLabels;
+      const sessionLabels = promptProfileId
+        ? { ...(createLabels ?? {}), [PROMPT_PROFILE_LABEL_KEY]: promptProfileId }
+        : createLabels;
 
       let data: { id: string };
       {
@@ -3915,7 +3886,7 @@ export function NewChatLandingScreen() {
             // placeholder, so the placeholder's wrapper labels, launch args and
             // model would all describe a CLI the router may not pick. The
             // server stamps the routed wrapper's labels once it has rebound.
-            labels: smartRoutingHarnessSelected ? undefined : createLabels,
+            labels: smartRoutingHarnessSelected ? undefined : sessionLabels,
             // Permission / approval / cursor mode → CLI flag pair, persisted as
             // terminal_launch_args. Omitted for the default and non-native agents.
             terminal_launch_args: smartRoutingHarnessSelected
@@ -4410,7 +4381,7 @@ export function NewChatLandingScreen() {
                 />
               </div>
               <div className="flex items-center gap-0.5 md:gap-2">
-                {omnigentSelected && omnigentBaseAgent && (
+                {promptProfilesEnabled && omnigentBaseAgent && (
                   <ProfileControls
                     profiles={profiles}
                     selection={profileSelection}

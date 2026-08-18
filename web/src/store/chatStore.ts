@@ -48,6 +48,7 @@ import type {
   AnyBlock,
   ElicitationBlock,
   ErrorBlock,
+  MessageExecutionContext,
   MessageContentBlock,
   TextDone,
   ToolGroup,
@@ -1567,11 +1568,10 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         ? { type: "input_image" as const, file_id: `pending:${filename}`, filename }
         : { type: "input_file" as const, file_id: `pending:${filename}`, filename };
     });
-    const content: MessageContentBlock[] =
-      opts?.contentOverride ?? [
-        ...pendingFileBlocks,
-        ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
-      ];
+    const content: MessageContentBlock[] = opts?.contentOverride ?? [
+      ...pendingFileBlocks,
+      ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
+    ];
     const selfAuthor = getCurrentAuthorId();
     setActive((s) => ({
       pendingUserMessages: [
@@ -4850,6 +4850,23 @@ function userContentFromEvent(event: SessionInputConsumedEvent): MessageContentB
   );
 }
 
+function executionContextFromEvent(
+  event: SessionInputConsumedEvent,
+): MessageExecutionContext | undefined {
+  const raw = event.data.execution_context;
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const value = raw as Record<string, unknown>;
+  const optionalString = (field: string): string | null | undefined => {
+    const entry = value[field];
+    return typeof entry === "string" || entry === null ? entry : undefined;
+  };
+  return {
+    profile: optionalString("profile"),
+    harness: optionalString("harness"),
+    model: optionalString("model"),
+  };
+}
+
 function hasCommittedItem(blocks: AnyBlock[], itemId: string): boolean {
   return itemId !== "" && blocks.some((block) => block.ctx.itemId === itemId);
 }
@@ -4902,6 +4919,7 @@ function committedUserBlock(
   stableKey?: string,
   createdBy?: string,
   createdAtS?: number,
+  executionContext?: MessageExecutionContext,
 ): UserMessageBlock {
   return {
     type: "user_message",
@@ -4922,6 +4940,7 @@ function committedUserBlock(
     },
     content,
     stableKey,
+    ...(executionContext ? { executionContext } : {}),
   };
 }
 
@@ -5607,6 +5626,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
                   matched.tempId,
                   event.createdBy ?? matched.author,
                   matched.createdAtS,
+                  executionContextFromEvent(event),
                 ),
               ],
             };
@@ -5641,6 +5661,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
                 head.tempId,
                 event.createdBy ?? head.author,
                 head.createdAtS,
+                executionContextFromEvent(event),
               ),
             ],
           };
@@ -5652,7 +5673,14 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         return {
           blocks: [
             ...s.blocks,
-            committedUserBlock(event.itemId, eventContent, undefined, event.createdBy),
+            committedUserBlock(
+              event.itemId,
+              eventContent,
+              undefined,
+              event.createdBy,
+              undefined,
+              executionContextFromEvent(event),
+            ),
           ],
         };
       });

@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { autoSelectProfile, useProfiles } from "./useProfiles";
+import { autoSelectProfile, useEditProfile, useProfiles } from "./useProfiles";
 
 const fetchMock = vi.fn();
 
@@ -86,6 +86,41 @@ describe("profile API hooks", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ input: "investigate the outage" }),
+      }),
+    );
+  });
+
+  it("puts edited prompt fields without replacing capabilities client-side", async () => {
+    fetchMock.mockResolvedValue(
+      response({
+        id: "ag_team",
+        name: "edited-team",
+        description: "Updated",
+        instructions: "New prompt",
+        harness: "claude-sdk",
+        enabled: true,
+      }),
+    );
+    const { result } = renderHook(() => useEditProfile(), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        id: "ag_team",
+        name: "edited-team",
+        description: "Updated",
+        instructions: "New prompt",
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/v1/agents/ag_team",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          name: "edited-team",
+          description: "Updated",
+          instructions: "New prompt",
+        }),
       }),
     );
   });

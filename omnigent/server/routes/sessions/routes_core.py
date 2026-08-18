@@ -39,6 +39,12 @@ from omnigent.entities import (
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.model_override import validate_model_override
+from omnigent.profile_selection import (
+    PROMPT_PROFILE_AUTO_VALUE,
+    PROMPT_PROFILE_HARNESS,
+    PROMPT_PROFILE_LABEL_KEY,
+    load_prompt_profile_instructions,
+)
 from omnigent.reasoning_effort import (
     EFFORT_CLEAR_VALUES,
     EFFORT_VALUES,
@@ -132,6 +138,7 @@ from omnigent.server.routes._sessions.helpers import (
     _require_collaboration_mode_forward,
     _require_cost_control_label_authority,
     _reset_runner_resources_after_switch,
+    _resolve_harness,
     _same_provider_family,
     _session_status_from_cache,
     _set_read_state,
@@ -1783,6 +1790,37 @@ def register_core_routes(
                     "Not a session (no agent binding)",
                     code=ErrorCode.NOT_FOUND,
                 )
+
+        if "profile_id" in body.model_fields_set:
+            if not body.profile_id:
+                raise OmnigentError(
+                    "profile_id must be a non-empty profile id",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if agent_cache is None:
+                raise OmnigentError(
+                    "Profile selection is unavailable",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            harness = _resolve_harness(
+                conv,
+                agent_store=agent_store,
+                agent_cache=agent_cache,
+            )
+            if harness != PROMPT_PROFILE_HARNESS:
+                raise OmnigentError(
+                    "Profiles can only be changed on Omnigent harness sessions",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if body.profile_id != PROMPT_PROFILE_AUTO_VALUE:
+                await asyncio.to_thread(
+                    load_prompt_profile_instructions,
+                    body.profile_id,
+                    agent_store,
+                    agent_cache,
+                    require_selectable=True,
+                )
+            labels_to_set[PROMPT_PROFILE_LABEL_KEY] = body.profile_id
 
         updated = await asyncio.to_thread(
             conversation_store.update_conversation,

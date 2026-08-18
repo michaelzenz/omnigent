@@ -327,17 +327,19 @@ describe("NewChatLandingScreen create flow", () => {
     const [url, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/v1/sessions");
     expect(init.method).toBe("POST");
-    // The host (auto-selected), seeded workspace and default agent must all
+    // The host, seeded workspace, Omnigent base agent, and default prompt
+    // profile must all reach the server.
     // reach the server. A missing host_id/workspace would create an unbound
     // session; a wrong agent_id would launch the wrong assistant.
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({
-      agent_id: "ag_hello",
+      agent_id: "ag_omnigent_test",
       host_id: "host_1",
       workspace: SEEDED_WORKSPACE,
     });
-    // A plain YAML agent carries no terminal-wrapper labels.
-    expect(body.labels).toBeUndefined();
+    expect(body.labels).toMatchObject({
+      "omnigent.prompt_profile_id": "auto",
+    });
 
     // On success the screen routes to the freshly created session.
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_new"));
@@ -385,7 +387,7 @@ describe("NewChatLandingScreen create flow", () => {
     const isOurs = pushMatchers[0]!;
     const ours: SessionListWireItem = {
       id: "conv_mine",
-      agent_id: "ag_hello",
+      agent_id: "ag_omnigent_test",
       host_id: "host_1",
     };
     expect(isOurs(ours)).toBe(true);
@@ -561,7 +563,7 @@ describe("NewChatLandingScreen create flow", () => {
     const body = JSON.parse(init.body as string);
     // Anchor on a required field so the absence checks below can't pass
     // vacuously against a malformed/empty body.
-    expect(body.agent_id).toBe("ag_hello");
+    expect(body.agent_id).toBe("ag_omnigent_test");
     // The prompt must NOT ride in the create body: for host sessions
     // initial_items are persisted history-only and never fire a turn, so the
     // agent would never respond. It goes through the normal message path from
@@ -609,7 +611,7 @@ describe("NewChatLandingScreen create flow", () => {
     );
   });
 
-  it("hands a bundled-skill first message off as a structured invocation", async () => {
+  it("does not inherit bundled skills from a prompt-only profile", async () => {
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
       json: async () => ({ id: "conv_new" }),
@@ -625,14 +627,12 @@ describe("NewChatLandingScreen create flow", () => {
     typeMessage("/review-pr 123 focus on auth");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
-    // The skill payload is what ChatPage's auto-send keys off to post a
-    // slash_command instead of a plain message. If matching regressed (or
-    // the handoff dropped the skill), the agent would receive literal
-    // "/review-pr 123 focus on auth" text — the original bug.
+    // Profiles only replace instructions. Their skills must not change the
+    // base Omnigent agent's capabilities or first-message dispatch.
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
         text: "/review-pr 123 focus on auth",
-        skill: { name: "review-pr", args: "123 focus on auth" },
+        skill: null,
         files: [],
       }),
     );
@@ -1319,7 +1319,7 @@ describe("NewChatLandingScreen create flow", () => {
     openAgentConfig("ag_polly");
     pickSelectOption("new-chat-landing-config-harness", "Pi");
     saveConfig();
-    openAgentConfig("ag_polly");
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     pickSelectOption("new-chat-landing-config-harness", "Claude SDK");
     saveConfig();
     typeMessage("go");
@@ -1594,8 +1594,8 @@ describe("NewChatLandingScreen create flow", () => {
     expect(localStorage.getItem("omnigent:last-agent-id")).toBe("ag_two");
 
     // A fresh mount (the "next visit") must start on the remembered agent:
-    // submitting without touching the picker posts ag_two, not the
-    // catalog-default ag_hello.
+    // submitting without touching the picker keeps ag_two as the prompt
+    // profile while binding the Omnigent base agent.
     cleanup();
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
@@ -1608,7 +1608,11 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string).agent_id).toBe("ag_two");
+    const body = JSON.parse(init.body as string);
+    expect(body.agent_id).toBe("ag_omnigent_test");
+    expect(body.labels).toMatchObject({
+      "omnigent.prompt_profile_id": "ag_two",
+    });
   });
 
   it("falls back to the default agent when the remembered id is no longer listed", async () => {
@@ -1628,10 +1632,60 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string).agent_id).toBe("ag_hello");
+    const body = JSON.parse(init.body as string);
+    expect(body.agent_id).toBe("ag_omnigent_test");
+    expect(body.labels).toMatchObject({
+      "omnigent.prompt_profile_id": "auto",
+    });
   });
 
-  it("resolves Auto Select once and creates the session with the returned profile", async () => {
+  it("launches a prompt-only profile on the Omnigent base agent", async () => {
+    setAgents([
+      agent({
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
+        harness: "openai-agents",
+        default_harness: "openai-agents",
+        default_model: "databricks-glm-5-2",
+        builtin: true,
+        enabled: true,
+      }),
+      agent({
+        id: "ag_general",
+        name: "general-agent",
+        display_name: "General-agent",
+        harness: null,
+        default_harness: null,
+        default_model: null,
+        builtin: false,
+        enabled: true,
+      }),
+    ]);
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-ag_general"));
+    typeMessage("start with this profile");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
+    const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.agent_id).toBe("ag_omnigent");
+    expect(body.labels).toMatchObject({
+      "omnigent.prompt_profile_id": "ag_general",
+    });
+    expect(body.harness_override).toBeUndefined();
+    expect(body.model_override).toBeUndefined();
+  });
+
+  it("persists Auto Select for per-turn server selection", async () => {
     const base = agent({
       id: "ag_omnigent",
       name: "omnigent",
@@ -1650,18 +1704,10 @@ describe("NewChatLandingScreen create flow", () => {
       default_harness: "claude-sdk",
     });
     setAgents([base, profile]);
-    vi.mocked(authenticatedFetch).mockImplementation(async (url) => {
-      if (url === "/v1/agents/auto-select") {
-        return {
-          ok: true,
-          json: async () => ({ profile, reason: null }),
-        } as unknown as Response;
-      }
-      return {
-        ok: true,
-        json: async () => ({ id: "conv_new" }),
-      } as unknown as Response;
-    });
+    vi.mocked(authenticatedFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
 
     renderLanding();
     await waitForWorkspaceSeed();
@@ -1670,68 +1716,23 @@ describe("NewChatLandingScreen create flow", () => {
     typeMessage("research this change");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
-    await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
-        "Profile: Research",
-      ),
+    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
+      "Profile: Auto Select",
     );
     const autoCalls = vi
       .mocked(authenticatedFetch)
       .mock.calls.filter(([url]) => url === "/v1/agents/auto-select");
-    expect(autoCalls).toHaveLength(1);
+    expect(autoCalls).toHaveLength(0);
     const sessionCall = vi
       .mocked(authenticatedFetch)
       .mock.calls.find(([url]) => url === "/v1/sessions");
     expect(sessionCall).toBeTruthy();
     if (!sessionCall) throw new Error("Expected a session create call");
-    expect(JSON.parse((sessionCall[1] as RequestInit).body as string).agent_id).toBe("ag_research");
-  });
-
-  it("preserves the draft and avoids repeating a failed Auto Select", async () => {
-    setAgents([
-      agent({
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
-        harness: "openai-agents",
-        builtin: true,
-        enabled: true,
-      }),
-      agent({
-        id: "ag_research",
-        name: "research",
-        display_name: "Research",
-        harness: "claude-sdk",
-        builtin: false,
-        enabled: true,
-      }),
-    ]);
-    vi.mocked(authenticatedFetch).mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({ detail: "Auto Select is unavailable." }),
-    } as unknown as Response);
-
-    renderLanding();
-    await waitForWorkspaceSeed();
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-auto"));
-    typeMessage("keep this draft");
-    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-error").textContent).toContain(
-        "Auto Select is unavailable.",
-      ),
-    );
-    expect((screen.getByTestId("new-chat-landing-input") as HTMLTextAreaElement).value).toBe(
-      "keep this draft",
-    );
-    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
-    await Promise.resolve();
-    expect(
-      vi.mocked(authenticatedFetch).mock.calls.filter(([url]) => url === "/v1/agents/auto-select"),
-    ).toHaveLength(1);
+    const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
+    expect(body.agent_id).toBe("ag_omnigent");
+    expect(body.labels).toMatchObject({
+      "omnigent.prompt_profile_id": "auto",
+    });
   });
 });
 

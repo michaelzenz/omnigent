@@ -2,6 +2,7 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   createContext,
   memo,
   useCallback,
@@ -12,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpIcon,
   BotIcon,
@@ -120,6 +122,7 @@ import {
 } from "@/store/chatStore";
 import {
   isNativeTerminalSession,
+  isNativeCodingAgent,
   nativeCodingAgentForHarness,
   nativeCodingAgentForSubagentWrapper,
   WRAPPER_LABEL_KEY,
@@ -210,6 +213,10 @@ import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
 import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS, type SdkModelOption } from "@/lib/sdkModels";
+import { useProfiles } from "@/hooks/useProfiles";
+import { ProfileControls, type ProfileSelection } from "@/shell/ProfileControls";
+import { PROMPT_PROFILE_AUTO_VALUE, PROMPT_PROFILE_LABEL_KEY } from "@/lib/profileSelection";
+import { updateSession } from "@/lib/sessionsApi";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -217,6 +224,12 @@ import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS, type SdkModelOption } from "@/lib
 const ATTACHED_RE = /\[Attached(?: file)?:\s*([^\]]*)\]\s*/g;
 /** Server-info as consumers see it: the probe's result, or "loading". */
 type ServerInfoValue = ServerInfo | "loading";
+
+export function supportsSessionProfileSelection(
+  session: Pick<Session, "harness" | "parentSessionId"> | null | undefined,
+): boolean {
+  return session?.parentSessionId == null && session?.harness === SDK_HARNESS;
+}
 
 /**
  * Whether the deployment has smart routing at all. `"loading"` (the `/v1/info`
@@ -693,6 +706,7 @@ const sessionDrafts = loadDraftsFromStorage();
 export function ChatPage() {
   const { conversationId: urlConvId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   // Optional first message handed off by the landing composer through the
   // shared chatStore (keyed by conversation id), not router state — router state
   // doesn't survive the embed's host-provided routing. Consumed read-once
@@ -732,6 +746,8 @@ export function ChatPage() {
     error: agentsError,
     refetch: refetchAgents,
   } = useAgents({ enabled: !urlConvId });
+  const profilesQuery = useProfiles({ enabled: Boolean(urlConvId) });
+  const [profileChangeBusy, setProfileChangeBusy] = useState(false);
   const { data: conversationsData } = useConversations("", true);
   const conversations = useMemo(
     () => conversationsData?.pages.flatMap((p) => p.data),
@@ -1250,6 +1266,64 @@ export function ChatPage() {
     labels: activeSession ? (activeSession.labels ?? {}) : (activeConv?.labels ?? {}),
     harness: activeSession?.harness ?? null,
   };
+  const profileCatalog = profilesQuery.data ?? [];
+  const omnigentBaseProfile = profileCatalog.find(
+    (profile) => profile.name === "omnigent" && profile.harness === SDK_HARNESS,
+  );
+  const storedProfileId = capabilitySource.labels[PROMPT_PROFILE_LABEL_KEY] ?? null;
+  const legacyBoundProfile = storedProfileId
+    ? undefined
+    : profileCatalog.find(
+        (profile) =>
+          profile.name !== "omnigent" &&
+          !isNativeCodingAgent(profile) &&
+          profile.name === boundAgentBySession?.name,
+      );
+  const activeProfileId =
+    storedProfileId ?? legacyBoundProfile?.id ?? omnigentBaseProfile?.id ?? null;
+  const profileSelection: ProfileSelection =
+    activeProfileId &&
+    activeProfileId !== omnigentBaseProfile?.id &&
+    profileCatalog.some((profile) => profile.id === activeProfileId)
+      ? activeProfileId
+      : PROMPT_PROFILE_AUTO_VALUE;
+  const selectableProfiles = profileCatalog.filter(
+    (profile) =>
+      profile.name !== "omnigent" &&
+      !profile.archived &&
+      !isNativeCodingAgent(profile) &&
+      (profile.enabled || profile.id === activeProfileId),
+  );
+  const showProfileSelector =
+    Boolean(urlConvId) &&
+    supportsSessionProfileSelection(activeSession) &&
+    omnigentBaseProfile != null;
+  const profileControls = showProfileSelector ? (
+    <ProfileControls
+      profiles={selectableProfiles}
+      selection={profileSelection}
+      resolvedAutoProfile={null}
+      selectedAgentId={activeProfileId}
+      disabled={profileChangeBusy || permissionLevel === 1 || readOnlyReason !== null}
+      onSelect={(selection, profile) => {
+        const targetId =
+          selection === PROMPT_PROFILE_AUTO_VALUE
+            ? PROMPT_PROFILE_AUTO_VALUE
+            : (profile?.id ?? selection);
+        if (!urlConvId || !targetId || targetId === activeProfileId) return;
+        setProfileChangeBusy(true);
+        void updateSession(urlConvId, { profileId: targetId })
+          .then((updated) => {
+            queryClient.setQueryData(["session", urlConvId], updated);
+          })
+          .catch((error: unknown) => {
+            const detail = error instanceof Error ? error.message : String(error);
+            showToast(`Couldn't change profile: ${detail}`);
+          })
+          .finally(() => setProfileChangeBusy(false));
+      }}
+    />
+  ) : null;
   const modelPickerKind = modelPickerKindForConv(capabilitySource);
   const effortLevels = effortLevelsForConv(
     capabilitySource,
@@ -1306,6 +1380,7 @@ export function ChatPage() {
       modelPickerKind={modelPickerKind}
       codexModelOptions={codexModelOptions}
       sdkModelOptions={sdkModelOptions}
+      profileControls={profileControls}
       showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
       showGoalControl={shouldShowGoalControl(capabilitySource)}
       showClaudeGoalControl={shouldShowPollyClaudeGoalControl(activeSession)}
@@ -1551,6 +1626,8 @@ interface MainAgentSurfaceProps {
   codexModelOptions: readonly NativeModelOption[];
   /** Admin-selected model picker rows for the Omnigent SDK harness. */
   sdkModelOptions: readonly SdkModelOption[];
+  /** Omnigent prompt-profile selector shown beside composer configuration. */
+  profileControls?: ReactNode;
   /** Show the Codex Plan-mode toggle. */
   showCodexPlanMode: boolean;
   /** Show the session Goal control. */
@@ -1697,6 +1774,7 @@ export function MainAgentSurface({
   modelPickerKind,
   codexModelOptions,
   sdkModelOptions,
+  profileControls,
   showCodexPlanMode,
   showGoalControl = false,
   showClaudeGoalControl = false,
@@ -2204,6 +2282,7 @@ export function MainAgentSurface({
             modelPickerKind={modelPickerKind}
             codexModelOptions={codexModelOptions}
             sdkModelOptions={sdkModelOptions}
+            profileControls={profileControls}
             showCodexPlanMode={showCodexPlanMode}
             showGoalControl={showGoalControl}
             showClaudeGoalControl={showClaudeGoalControl}
@@ -3629,6 +3708,15 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const flashing = useChatStore((s) => s.flashItemId === bubble.itemId);
   const { isCopied, handleCopy } = useCopyMessage(() => text);
   const ts = formatBubbleTimestamp(bubble.createdAtS);
+  const executionContext = bubble.executionContext;
+  const executionSummary = executionContext
+    ? [
+        executionContext.profile ? `Profile: ${agentDisplayLabel(executionContext.profile)}` : null,
+        [executionContext.harness, executionContext.model].filter(Boolean).join(" / ") || null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
   // Runtime-injected `[System: ...]` notifications (task completion,
   // timer firings, terminal idle) ride in on role=user. When the content
   // is a pure system marker — no attached images or files — swap the
@@ -3850,8 +3938,17 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
             action. 40%-visible on touch (no hover), hover/focus-reveal on
             desktop. py-1 matches the design prototype's 24px action row;
             the timestamp rides inside it instead of adding a new row. */}
-        {(ts || text) && (
+        {(executionSummary || ts || text) && (
           <div className="flex items-center justify-end gap-3 py-1 opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+            {executionSummary && (
+              <span
+                className="max-w-[420px] truncate select-none text-[11px] leading-4 text-foreground/56"
+                data-testid="message-execution-summary"
+                title={executionSummary}
+              >
+                {executionSummary}
+              </span>
+            )}
             {ts && (
               <span
                 className="select-none text-[11px] leading-4 text-foreground/56"
@@ -4072,6 +4169,8 @@ interface ComposerProps {
   codexModelOptions: readonly NativeModelOption[];
   /** Admin-selected model picker rows for the Omnigent SDK harness. */
   sdkModelOptions?: readonly SdkModelOption[];
+  /** Omnigent prompt-profile selector. */
+  profileControls?: ReactNode;
   /** Show the Codex Plan-mode toggle. */
   showCodexPlanMode: boolean;
   /** Show the session Goal control. */
@@ -4571,6 +4670,7 @@ export function Composer({
   modelPickerKind,
   codexModelOptions,
   sdkModelOptions = EMPTY_SDK_MODEL_OPTIONS,
+  profileControls,
   showCodexPlanMode,
   showGoalControl = false,
   showClaudeGoalControl = false,
@@ -5801,6 +5901,7 @@ export function Composer({
                 backendLabel="Codex"
               />
             )}
+            {profileControls}
             <div className="flex min-h-9 min-w-0 items-center rounded-lg transition-colors empty:hidden md:min-h-8 has-[button:not([aria-disabled=true])]:hover:bg-muted dark:has-[button:not([aria-disabled=true])]:hover:bg-muted/50 [&>button]:bg-transparent!">
               <ComposerModelEffortLabel
                 showModels={showModels}

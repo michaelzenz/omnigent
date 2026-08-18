@@ -12,7 +12,7 @@
 // passed through silently as `BaseItem & Record<string, unknown>` so the
 // translator can skip them without crashing.
 
-import type { MessageContentBlock } from "./blocks";
+import type { MessageContentBlock, MessageExecutionContext } from "./blocks";
 
 export interface BaseItem {
   id: string;
@@ -36,6 +36,8 @@ export interface MessageItem extends BaseItem {
   is_meta?: boolean;
   /** Assistant-only marker for durable partial text from an interrupted turn. */
   interrupted?: boolean;
+  /** Execution selections captured when this user turn was submitted. */
+  execution_context?: MessageExecutionContext | null;
 }
 
 export interface FunctionCallItem extends BaseItem {

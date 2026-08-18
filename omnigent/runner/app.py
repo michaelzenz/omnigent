@@ -11980,9 +11980,16 @@ def create_runner_app(
                 model_override=cast(str | None, msg_body.get("model_override")),
                 session_id=conv,
             )
+            from omnigent.profile_selection import apply_prompt_profile
             from omnigent.runtime.prompt import build_instructions
 
-            instructions = build_instructions(cached_spec, None, [])
+            profile_instructions = msg_body.get("profile_instructions")
+            prompt_spec = apply_prompt_profile(
+                cached_spec,
+                harness_name,
+                profile_instructions if isinstance(profile_instructions, str) else None,
+            )
+            instructions = build_instructions(prompt_spec, None, [])
 
         ctx = TurnDispatch(
             agent_id=_dispatched_agent_id,

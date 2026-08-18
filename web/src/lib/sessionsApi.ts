@@ -695,6 +695,7 @@ export async function updateSession(
     runnerId?: string;
     silent?: boolean;
     labels?: Record<string, string>;
+    profileId?: string;
   },
 ): Promise<Session> {
   const body: Record<string, string | boolean | null | Record<string, string>> = {};
@@ -720,6 +721,9 @@ export async function updateSession(
     // Merge-upsert on the server; an empty-string value clears a label
     // (e.g. the pinned flag on unpin — see PATCH /v1/sessions handler).
     body.labels = updates.labels;
+  }
+  if (updates.profileId !== undefined) {
+    body.profile_id = updates.profileId;
   }
   if (updates.silent) {
     body.silent = true;

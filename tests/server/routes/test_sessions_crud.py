@@ -14,6 +14,7 @@ import httpx
 import pytest_asyncio
 
 from omnigent.db.utils import generate_agent_id
+from omnigent.profile_selection import PROMPT_PROFILE_LABEL_KEY
 from omnigent.server.routes import sessions as sessions_module
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
@@ -92,6 +93,51 @@ async def test_get_session_not_found(client: httpx.AsyncClient) -> None:
     """Getting a nonexistent session returns 404."""
     resp = await client.get("/v1/sessions/4fe12335002377c209e501c3fe3bcffc")
     assert resp.status_code == 404
+
+
+async def test_patch_prompt_profile_persists_for_omnigent_session(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    session_id: str,
+) -> None:
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    profile_id = generate_agent_id()
+    agent_store.create(profile_id, name="focused", bundle_location="test:///focused")
+
+    with (
+        patch(
+            "omnigent.server.routes.sessions.routes_core._resolve_harness",
+            return_value="openai-agents",
+        ),
+        patch(
+            "omnigent.server.routes.sessions.routes_core.load_prompt_profile_instructions",
+            return_value="Focus on the selected task.",
+        ),
+    ):
+        response = await client.patch(
+            f"/v1/sessions/{session_id}",
+            json={"profile_id": profile_id},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["labels"][PROMPT_PROFILE_LABEL_KEY] == profile_id
+
+
+async def test_patch_prompt_profile_accepts_per_turn_auto_select(
+    client: httpx.AsyncClient,
+    session_id: str,
+) -> None:
+    with patch(
+        "omnigent.server.routes.sessions.routes_core._resolve_harness",
+        return_value="openai-agents",
+    ):
+        response = await client.patch(
+            f"/v1/sessions/{session_id}",
+            json={"profile_id": "auto"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["labels"][PROMPT_PROFILE_LABEL_KEY] == "auto"
 
 
 # ── DELETE /v1/sessions/{id} ────────────────────────────────────────

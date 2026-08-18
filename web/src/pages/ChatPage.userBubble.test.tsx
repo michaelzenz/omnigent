@@ -269,6 +269,29 @@ describe("UserBubble copy button", () => {
   });
 });
 
+describe("UserBubble execution summary", () => {
+  it("shows the used profile and harness/model left of the timestamp", () => {
+    renderBubble(
+      userBubble("hello", {
+        createdAtS: 1_700_000_000,
+        executionContext: {
+          profile: "research",
+          harness: "openai-agents",
+          model: "databricks-gpt-5-5",
+        },
+      }),
+    );
+
+    const summary = screen.getByTestId("message-execution-summary");
+    const timestamp = screen.getByTestId("message-timestamp");
+    expect(summary.textContent).toBe("Profile: Research · openai-agents / databricks-gpt-5-5");
+    expect(summary.parentElement).toBe(timestamp.parentElement);
+    expect(summary.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+      0,
+    );
+  });
+});
+
 describe("UserBubble rewind editor", () => {
   it("opens and cancels locally without rewinding", () => {
     const rewindAndSend = vi.fn();

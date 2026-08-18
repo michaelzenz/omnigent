@@ -90,7 +90,9 @@ describe("createSession", () => {
       harness: null,
       modelOverride: undefined,
       costControlModeOverride: undefined,
+      subagentRoutingOverride: undefined,
       reasoningEffort: undefined,
+      contextWindowIsEstimate: false,
       pendingElicitations: [],
       pendingInputs: [],
       permissionLevel: null,
@@ -419,6 +421,23 @@ describe("runner binding", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ reasoning_effort: "high" });
+  });
+
+  it("PATCHes profile_id without changing session execution settings", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    await updateSession("conv_abc", { profileId: "ag_focused" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ profile_id: "ag_focused" });
   });
 
   it("PATCHes model_override as snake_case", async () => {

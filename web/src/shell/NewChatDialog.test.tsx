@@ -1177,7 +1177,7 @@ describe("NewChatLandingScreen", () => {
       "Profile: Researcher",
     );
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    expect(screen.getByTestId("new-chat-landing-profile-default")).toBeTruthy();
+    expect(screen.queryByTestId("new-chat-landing-profile-default")).toBeNull();
     expect(screen.getByTestId("new-chat-landing-profile-auto")).toBeTruthy();
     closeMenu();
     selectAgent("ag_native");

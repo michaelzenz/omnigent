@@ -278,6 +278,7 @@ class AgentObject(BaseModel):
     name: str
     version: int = 1
     description: str | None = None
+    instructions: str | None = None
     created_at: int
     updated_at: int | None = None
     harness: str | None = None
@@ -301,8 +302,24 @@ class AgentUpdateRequest(BaseModel):
     enabled: bool
 
 
+class AgentProfileEditRequest(BaseModel):
+    """Editable prompt-profile fields; bundle capabilities remain unchanged."""
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str = Field(max_length=100_000)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+
 class AgentAutoSelectRequest(BaseModel):
-    """First user input used to choose an enabled profile."""
+    """User input used to choose an enabled profile."""
 
     input: str = Field(min_length=1, max_length=20_000)
 
@@ -2071,6 +2088,8 @@ class UpdateSessionRequest(BaseModel):
         owner-private, only the session owner may file it, and only into a
         project they own — the server verifies both. Independent of the
         legacy ``omni_project`` label, which is set via ``labels``.
+    :param profile_id: Durable prompt profile to apply on future Omnigent
+        harness turns. Omitted leaves the selection unchanged.
     """
 
     runner_id: str | None = None
@@ -2085,6 +2104,7 @@ class UpdateSessionRequest(BaseModel):
     terminal_launch_args: list[str] | None = None
     archived: bool | None = None
     project_id: str | None = None
+    profile_id: str | None = None
     silent: bool = False
 
     model_config = ConfigDict(extra="forbid")

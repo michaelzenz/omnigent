@@ -330,6 +330,10 @@ class SqlAlchemyAgentStore(AgentStore):
         self,
         agent_id: str,
         bundle_location: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        _update_metadata: bool = False,
     ) -> Agent | None:
         """
         Update an agent's bundle location, bump version, and set
@@ -347,6 +351,11 @@ class SqlAlchemyAgentStore(AgentStore):
             if not row:
                 return None
             row.bundle_location = bundle_location
+            if _update_metadata:
+                if name is None:
+                    raise ValueError("name is required when updating agent metadata")
+                row.name = name
+                row.description = description
             row.version = row.version + 1
             row.updated_at = now_epoch()
         # Reverse lookup targets the AP DB — see _session_id_for_agent.

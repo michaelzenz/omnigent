@@ -28,6 +28,14 @@ from omnigent.host.frames import (
 from omnigent.host.frames import (
     WORKSPACE_MISSING_ERROR_CODE as _WORKSPACE_MISSING_ERROR_CODE,
 )
+from omnigent.profile_selection import (
+    PROMPT_PROFILE_AUTO_VALUE,
+    PROMPT_PROFILE_HARNESS,
+    PROMPT_PROFILE_LABEL_KEY,
+    auto_select_prompt_profile,
+    is_prompt_profile,
+    load_prompt_profile_instructions,
+)
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
 from omnigent.runtime import (
@@ -1512,6 +1520,8 @@ def register_events_routes(
         # asyncio.to_thread wrapper covers the rare cold-cache path
         # where the bundle is extracted from disk for the first time.
         _has_mcp_servers = False
+        _profile_instructions: str | None = None
+        _loaded_spec: Any | None = None
         if _agent is not None and agent_cache is not None and _agent.bundle_location:
             try:
                 _loaded_agent = await asyncio.to_thread(
@@ -1519,6 +1529,7 @@ def register_events_routes(
                     _agent.id,
                     _agent.bundle_location,
                 )
+                _loaded_spec = _loaded_agent.spec
                 _has_mcp_servers = bool(_loaded_agent.spec.mcp_servers)
             except Exception:
                 _logger.warning(
@@ -1526,6 +1537,48 @@ def register_events_routes(
                     session_id,
                     exc_info=True,
                 )
+        _resolved_harness = _resolve_harness(
+            conv,
+            agent_store=agent_store,
+            agent_cache=agent_cache,
+        )
+        _selected_profile_name = _agent.name if _agent is not None else None
+        _profile_id = conv.labels.get(PROMPT_PROFILE_LABEL_KEY, PROMPT_PROFILE_AUTO_VALUE)
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and agent_cache is not None
+            and _resolved_harness == PROMPT_PROFILE_HARNESS
+        ):
+            _stored_profile = (
+                agent_store.get(_profile_id)
+                if _profile_id != PROMPT_PROFILE_AUTO_VALUE
+                else None
+            )
+            if _stored_profile is None or not is_prompt_profile(_stored_profile):
+                _stored_profile = await auto_select_prompt_profile(
+                    background_title_prompt(body) or "",
+                    agent_store,
+                )
+            _selected_profile_name = _stored_profile.name
+            _profile_instructions = await asyncio.to_thread(
+                load_prompt_profile_instructions,
+                _stored_profile.id,
+                agent_store,
+                agent_cache,
+                require_selectable=False,
+            )
+        if body.type == "message" and body.data.get("role") == "user":
+            _spec_model = None
+            if _loaded_spec is not None:
+                _spec_model = _loaded_spec.executor.model or (
+                    _loaded_spec.llm.model if _loaded_spec.llm is not None else None
+                )
+            body.data["execution_context"] = {
+                "profile": _selected_profile_name,
+                "harness": _resolved_harness,
+                "model": body.model_override or conv.model_override or _spec_model,
+            }
         pending_background_title = prepare_background_session_title(
             coordinator=background_title_coordinator,
             conversation=conv,
@@ -1590,6 +1643,7 @@ def register_events_routes(
             created_by=created_by,
             runner_router=runner_router,
             native_terminal_ready=native_terminal_ready,
+            profile_instructions=_profile_instructions,
             # Read only for the gateway-backing check that decides which router
             # serves this turn; absent, routing keeps its default posture.
             host_store=getattr(request.app.state, "host_store", None),

@@ -48,7 +48,12 @@ vi.mock("@/lib/agentLabels", async (importOriginal) => ({
 }));
 import type { ElicitationBlock } from "@/lib/blocks";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Composer, isSubagentRoutingEligible, shouldQueueSend } from "./ChatPage";
+import {
+  Composer,
+  isSubagentRoutingEligible,
+  shouldQueueSend,
+  supportsSessionProfileSelection,
+} from "./ChatPage";
 import type { Session } from "@/lib/types";
 import type { QueuedMessage } from "@/store/chatStore";
 import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
@@ -103,6 +108,29 @@ const CLAUDE_MODEL_OPTIONS = [
   { id: "sonnet_5", displayName: "Sonnet 5" },
   { id: "haiku", displayName: "Haiku" },
 ];
+
+describe("supportsSessionProfileSelection", () => {
+  it("supports only top-level Omnigent SDK sessions", () => {
+    expect(
+      supportsSessionProfileSelection({
+        harness: "openai-agents",
+        parentSessionId: null,
+      }),
+    ).toBe(true);
+    expect(
+      supportsSessionProfileSelection({
+        harness: "claude-sdk",
+        parentSessionId: null,
+      }),
+    ).toBe(false);
+    expect(
+      supportsSessionProfileSelection({
+        harness: "openai-agents",
+        parentSessionId: "conv_parent",
+      }),
+    ).toBe(false);
+  });
+});
 
 /** The composer textarea, located by its aria-label. */
 function textarea() {

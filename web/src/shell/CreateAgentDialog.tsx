@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PlusIcon, TrashIcon } from "lucide-react";
 import {
   Dialog,
@@ -115,12 +115,16 @@ export function CreateAgentDialog({
   onCreate,
   title = "Create custom agent",
   submitLabel = "Create",
+  initialValue,
+  showMcpServers = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: AgentBundleInput) => void;
   title?: string;
   submitLabel?: string;
+  initialValue?: AgentBundleInput;
+  showMcpServers?: boolean;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -128,10 +132,19 @@ export function CreateAgentDialog({
   const [mcpEntries, setMcpEntries] = useState<MCPFormEntry[]>([]);
   const [nextKey, setNextKey] = useState(0);
 
+  useEffect(() => {
+    if (!open) return;
+    setName(initialValue?.name ?? "");
+    setDescription(initialValue?.description ?? "");
+    setInstructions(initialValue?.instructions ?? "");
+    setMcpEntries([]);
+    setNextKey(0);
+  }, [open, initialValue?.name, initialValue?.description, initialValue?.instructions]);
+
   function reset() {
-    setName("");
-    setDescription("");
-    setInstructions("");
+    setName(initialValue?.name ?? "");
+    setDescription(initialValue?.description ?? "");
+    setInstructions(initialValue?.instructions ?? "");
     setMcpEntries([]);
     setNextKey(0);
   }
@@ -216,7 +229,6 @@ export function CreateAgentDialog({
                 placeholder="A short summary of what this agent does"
               />
             </div>
-
           </div>
 
           {/* Instructions / System Prompt */}
@@ -239,30 +251,32 @@ export function CreateAgentDialog({
           </div>
 
           {/* MCP Servers */}
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-muted-foreground">MCP Tools</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={addMCPServer}
-                data-testid="create-agent-add-mcp"
-                className="h-6 gap-1 px-2 text-sm text-muted-foreground"
-              >
-                <PlusIcon className="size-3" />
-                Add server
-              </Button>
+          {showMcpServers && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground">MCP Tools</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={addMCPServer}
+                  data-testid="create-agent-add-mcp"
+                  className="h-6 gap-1 px-2 text-sm text-muted-foreground"
+                >
+                  <PlusIcon className="size-3" />
+                  Add server
+                </Button>
+              </div>
+              {mcpEntries.map((entry) => (
+                <MCPServerRow
+                  key={entry.key}
+                  entry={entry}
+                  onChange={(patch) => updateMCPEntry(entry.key, patch)}
+                  onRemove={() => removeMCPServer(entry.key)}
+                />
+              ))}
             </div>
-            {mcpEntries.map((entry) => (
-              <MCPServerRow
-                key={entry.key}
-                entry={entry}
-                onChange={(patch) => updateMCPEntry(entry.key, patch)}
-                onRemove={() => removeMCPServer(entry.key)}
-              />
-            ))}
-          </div>
+          )}
         </div>
 
         <DialogFooter>

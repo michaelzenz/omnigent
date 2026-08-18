@@ -4574,6 +4574,7 @@ async def _forward_event_to_runner(
     agent_version: int | None = None,
     created_by: str | None = None,
     host_store: HostStore | None = None,
+    profile_instructions: str | None = None,
 ) -> str:
     """
     Persist a user event and forward it to the runner.
@@ -4607,6 +4608,8 @@ async def _forward_event_to_runner(
     :param host_store: Host registrations, read only to learn whether this
         session's harness is AI-Gateway-backed (which router may route it).
         ``None`` reads as unknown, which counts as backed.
+    :param profile_instructions: Omnigent-only system prompt selected for
+        this session, replacing the bound agent's instructions for this turn.
     :returns: The store-assigned id of the persisted item.
     """
     import uuid
@@ -4694,6 +4697,8 @@ async def _forward_event_to_runner(
         # resolved copy — id-based dedup, not a role/content guess.
         "persisted_item_id": persisted_items[0].id,
     }
+    if profile_instructions is not None:
+        runner_body["profile_instructions"] = profile_instructions
     # Persist the turn-initiating actor so /policies/evaluate and MCP
     # tools/call can read it back on any server replica.  Skip system-driven
     # forwards (sub-agent results, parent-wake carry created_by=None) — they
@@ -5260,6 +5265,7 @@ async def _dispatch_session_event_to_runner_impl(
     runner_router: RunnerRouter | None = None,
     native_terminal_ready: bool = False,
     host_store: HostStore | None = None,
+    profile_instructions: str | None = None,
 ) -> _SessionEventDispatchResult:
     """
     Forward an item-event to the runner with harness-aware dispatch.
@@ -5559,6 +5565,7 @@ async def _dispatch_session_event_to_runner_impl(
         agent_version=agent_version,
         created_by=created_by,
         host_store=host_store,
+        profile_instructions=profile_instructions,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
 

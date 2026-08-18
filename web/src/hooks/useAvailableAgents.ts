@@ -13,6 +13,7 @@ export interface AvailableAgent {
   name: string;
   display_name: string;
   description: string | null;
+  instructions?: string | null;
   // Harness/kind from GET /v1/agents, e.g. "codex", "codex-native",
   // "claude-native", or "claude-sdk". null when the server couldn't load
   // the agent's spec. Lets the picker recognise Codex vs Claude agents

@@ -139,6 +139,10 @@ class AgentStore(ABC):
         self,
         agent_id: str,
         bundle_location: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        _update_metadata: bool = False,
     ) -> Agent | None:
         """
         Update an agent's bundle location, bump its version, and
@@ -149,6 +153,9 @@ class AgentStore(ABC):
             e.g. ``"agent_abc123"``.
         :param bundle_location: New artifact store key for the
             bundle, e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
+        :param name: Updated profile name when metadata is being updated.
+        :param description: Updated profile description, including ``None``.
+        :param _update_metadata: Whether to replace name and description.
         :returns: The updated :class:`Agent`, or ``None`` if not
             found.
         """
