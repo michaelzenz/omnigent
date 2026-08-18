@@ -237,6 +237,42 @@ async def test_stage_failure_persists_and_retry_is_idempotent(
     assert operations.calls == []
 
 
+async def test_reconciliation_captures_phase_and_error_logs(
+    lifecycle_store: SshHostInstallationStore,
+) -> None:
+    """The settings UI reads captured lifecycle events for visibility."""
+    profile = _profile()
+    lifecycle_store.sync_connections({profile.id: profile}, bundle_version=VERSION, owner="local")
+    host_store = _FakeHostStore()
+    operations = _FakeOperations(host_store, fail_install=True)
+    manager = SshHostInstallationManager(
+        store=lifecycle_store,
+        host_store=host_store,  # type: ignore[arg-type]
+        local_host="127.0.0.1",
+        local_port=8123,
+        operations=operations,  # type: ignore[arg-type]
+    )
+    row = lifecycle_store.acquire(
+        profile.id,
+        lease_owner=manager.worker_id,
+        lease_seconds=180,
+    )
+    assert row is not None
+    await manager._reconcile(row, profile)
+
+    entries = manager.logs(profile.id)
+    phases = [entry.phase for entry in entries]
+    assert "waiting_for_ssh" in phases
+    assert "installing" in phases
+    assert "backoff" in phases
+    error_entry = next(entry for entry in entries if entry.level == "error")
+    assert "mock install failure" in error_entry.message
+
+    assert manager.retry(profile.id)
+    retry_entries = manager.logs(profile.id)
+    assert any("Retry requested by user" in entry.message for entry in retry_entries)
+
+
 async def test_startup_resumes_queued_installation(
     lifecycle_store: SshHostInstallationStore,
 ) -> None:

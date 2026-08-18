@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   fetchSshConnections: vi.fn(),
   saveSshConnections: vi.fn(),
   retrySshConnection: vi.fn(),
-  testSshConnection: vi.fn(),
+  fetchSshConnectionLogs: vi.fn(),
 }));
 
 vi.mock("@/lib/sshApi", () => ({
@@ -17,7 +17,7 @@ vi.mock("@/lib/sshApi", () => ({
   saveSshConnections: (connections: SshConnection[], packageIndexUrl: string | null) =>
     mocks.saveSshConnections(connections, packageIndexUrl),
   retrySshConnection: (...args: unknown[]) => mocks.retrySshConnection(...args),
-  testSshConnection: (...args: unknown[]) => mocks.testSshConnection(...args),
+  fetchSshConnectionLogs: (...args: unknown[]) => mocks.fetchSshConnectionLogs(...args),
 }));
 
 function connection(overrides: Partial<SshConnection> = {}): SshConnection {
@@ -53,7 +53,15 @@ beforeEach(() => {
     },
   );
   mocks.retrySshConnection.mockResolvedValue(undefined);
-  mocks.testSshConnection.mockResolvedValue({ ok: true, message: "Connected", latencyMs: 12 });
+  mocks.fetchSshConnectionLogs.mockResolvedValue([
+    {
+      timestamp: 1_786_000_000,
+      time: "2026-01-01T00:00:00.000Z",
+      phase: "ready",
+      level: "info",
+      message: "Host is online and ready",
+    },
+  ]);
 });
 
 afterEach(() => {
@@ -78,7 +86,6 @@ describe("ConnectionSettingsBody", () => {
     expect(screen.getByTestId("ssh-connections-list")).toBeTruthy();
     expect(screen.getByText("Arca")).toBeTruthy();
     expect(mocks.connections).toHaveLength(1);
-    expect(mocks.testSshConnection).not.toHaveBeenCalled();
   });
 
   it("restores durable lifecycle without probing on mount", async () => {
@@ -96,10 +103,9 @@ describe("ConnectionSettingsBody", () => {
     expect(screen.getByText("SSH connection timed out")).toBeTruthy();
     expect(screen.getByText("3 attempts")).toBeTruthy();
     expect(screen.getByTestId("ssh-connection-retry-saved-1")).toBeTruthy();
-    expect(mocks.testSshConnection).not.toHaveBeenCalled();
   });
 
-  it("queues an immediate retry from backoff", async () => {
+  it("queues an immediate retry from the refresh button", async () => {
     mocks.connections = [
       connection({
         phase: "backoff",
@@ -116,14 +122,25 @@ describe("ConnectionSettingsBody", () => {
     });
   });
 
-  it("keeps Test SSH explicit", async () => {
-    mocks.connections = [connection()];
+  it("expands to show installation logs", async () => {
+    mocks.connections = [
+      connection({ phase: "installing", status: "offline", hostId: null }),
+    ];
     render(<ConnectionSettingsBody />);
-    fireEvent.click(await screen.findByTestId("ssh-connection-retest-saved-1"));
+    fireEvent.click(await screen.findByTestId("ssh-connection-expand-saved-1"));
 
     await waitFor(() => {
-      expect(mocks.testSshConnection).toHaveBeenCalledWith("arca.ssh");
+      expect(mocks.fetchSshConnectionLogs).toHaveBeenCalledWith("saved-1");
     });
+    expect(await screen.findByTestId("ssh-connection-logs-saved-1")).toBeTruthy();
+    expect(screen.getByText("Host is online and ready")).toBeTruthy();
+  });
+
+  it("hides the expand button when the host is online", async () => {
+    mocks.connections = [connection()];
+    render(<ConnectionSettingsBody />);
+    await screen.findByTestId("ssh-connection-row-saved-1");
+    expect(screen.queryByTestId("ssh-connection-expand-saved-1")).toBeNull();
   });
 
   it("saves a custom package index URL", async () => {

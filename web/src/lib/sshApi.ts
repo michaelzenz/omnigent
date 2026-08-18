@@ -110,6 +110,28 @@ export async function retrySshConnection(id: string): Promise<void> {
   }
 }
 
+export interface SshConnectionLogEntry {
+  timestamp: number;
+  time: string;
+  phase: string;
+  level: string;
+  message: string;
+}
+
+export async function fetchSshConnectionLogs(id: string): Promise<SshConnectionLogEntry[]> {
+  const res = await authenticatedFetch(
+    `/v1/ssh/connections/${encodeURIComponent(id)}/logs`,
+  );
+  if (!res.ok) {
+    const body = (await res.json()) as { detail?: string };
+    throw new Error(
+      typeof body.detail === "string" ? body.detail : `${res.status} ${res.statusText}`,
+    );
+  }
+  const body = (await res.json()) as { entries?: SshConnectionLogEntry[] };
+  return body.entries ?? [];
+}
+
 export async function testSshConnection(alias: string): Promise<SshTestResult> {
   const res = await authenticatedFetch("/v1/ssh/test", {
     method: "POST",

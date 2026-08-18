@@ -11,6 +11,7 @@ import shutil
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
@@ -41,6 +42,18 @@ InstallCommandBuilder = Callable[
     [str, str | None, str | None, str | None, str | None],
     str,
 ]
+
+_MAX_LOG_ENTRIES = 200
+
+
+@dataclass(frozen=True)
+class SshHostLogEntry:
+    """One captured installation lifecycle event for the settings UI."""
+
+    timestamp: int
+    phase: str
+    level: str
+    message: str
 
 
 class _ReconciliationSuperseded(Exception):
@@ -469,6 +482,7 @@ class SshHostInstallationManager:
         self._profiles: dict[str, SshConnectionProfile] = {}
         self._inflight: dict[str, asyncio.Task[None]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._logs: dict[str, list[SshHostLogEntry]] = {}
 
     async def start(self) -> None:
         if self._task is not None:
@@ -522,6 +536,12 @@ class SshHostInstallationManager:
     def retry(self, connection_id: str) -> bool:
         changed = self.store.retry_now(connection_id)
         if changed:
+            self._append_log(
+                connection_id,
+                phase="queued",
+                level="info",
+                message="Retry requested by user",
+            )
             self.wake()
         return changed
 
@@ -538,6 +558,30 @@ class SshHostInstallationManager:
 
     def snapshot(self) -> dict[str, SshHostInstallation]:
         return self.store.snapshots()
+
+    def logs(self, connection_id: str) -> list[SshHostLogEntry]:
+        """Return captured lifecycle events for a connection (newest last)."""
+        return list(self._logs.get(connection_id, []))
+
+    def _append_log(
+        self,
+        connection_id: str,
+        *,
+        phase: str,
+        level: str,
+        message: str,
+    ) -> None:
+        entries = self._logs.setdefault(connection_id, [])
+        entries.append(
+            SshHostLogEntry(
+                timestamp=now_epoch(),
+                phase=phase,
+                level=level,
+                message=message[:4000],
+            )
+        )
+        if len(entries) > _MAX_LOG_ENTRIES:
+            del entries[: len(entries) - _MAX_LOG_ENTRIES]
 
     async def _run(self) -> None:
         while not self._stopping:
@@ -611,6 +655,7 @@ class SshHostInstallationManager:
                 return
 
     async def _phase(self, row: SshHostInstallation, phase: str) -> None:
+        self._append_log(row.connection_id, phase=phase, level="info", message=phase)
         changed = await asyncio.to_thread(
             self.store.set_phase,
             row.connection_id,
@@ -705,6 +750,12 @@ class SshHostInstallationManager:
                     )
                     if not changed:
                         raise _ReconciliationSuperseded
+                    self._append_log(
+                        row.connection_id,
+                        phase="ready",
+                        level="info",
+                        message="Host is online and ready",
+                    )
                     return
                 await asyncio.sleep(1)
             raise TimeoutError("remote host did not become online before timeout")
@@ -720,6 +771,12 @@ class SshHostInstallationManager:
             attempt = row.attempt + 1
             delay = min(_MAX_BACKOFF_SECONDS, 2 ** min(attempt, 10))
             _logger.warning("SSH host %s reconciliation failed: %s", row.connection_id, exc)
+            self._append_log(
+                row.connection_id,
+                phase="backoff",
+                level="error",
+                message=str(exc),
+            )
             await asyncio.to_thread(
                 self.store.set_phase,
                 row.connection_id,

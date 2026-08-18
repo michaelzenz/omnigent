@@ -165,6 +165,38 @@ async def test_retry_unknown_connection_is_not_found(
     assert detaching.status_code == 409
 
 
+async def test_logs_endpoint_returns_captured_entries(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+) -> None:
+    """The settings UI reads installation lifecycle events for visibility."""
+    from omnigent.server.ssh_host_manager import SshHostLogEntry
+
+    entry = SshHostLogEntry(timestamp=1_786_000_000, phase="ready", level="info", message="ok")
+    app.state.ssh_host_manager = SimpleNamespace(
+        snapshot=lambda: {"profile-1": SimpleNamespace(desired_state="connected")},
+        logs=lambda _connection_id: [entry],
+    )
+    response = await client.get("/v1/ssh/connections/profile-1/logs")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["entries"]) == 1
+    assert body["entries"][0]["phase"] == "ready"
+    assert body["entries"][0]["message"] == "ok"
+
+
+async def test_logs_unknown_connection_is_not_found(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+) -> None:
+    app.state.ssh_host_manager = SimpleNamespace(
+        snapshot=lambda: {},
+        logs=lambda _connection_id: [],
+    )
+    response = await client.get("/v1/ssh/connections/profile-9/logs")
+    assert response.status_code == 404
+
+
 async def test_put_rejects_unsafe_id_and_duplicate_alias(client: httpx.AsyncClient) -> None:
     unsafe = await client.put(
         "/v1/ssh/connections",

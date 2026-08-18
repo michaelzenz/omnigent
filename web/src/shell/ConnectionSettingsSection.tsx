@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2Icon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   Loader2Icon,
   PlusIcon,
   RefreshCwIcon,
@@ -12,23 +14,19 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   fetchSshConnections,
+  fetchSshConnectionLogs,
   retrySshConnection,
   saveSshConnections,
-  testSshConnection,
+  type SshConnectionLogEntry,
 } from "@/lib/sshApi";
 import {
   createSshConnectionId,
   type SshConnection,
-  type SshConnectionStatus,
 } from "@/lib/sshConnectionPreferences";
-
-type StatusMap = Record<
-  string,
-  { status: SshConnectionStatus; message?: string; latencyMs?: number }
->;
 
 const ACTIVE_POLL_MS = 2_000;
 const STABLE_POLL_MS = 20_000;
+const LOG_POLL_MS = 3_000;
 
 const PHASE_LABELS: Record<string, string> = {
   queued: "Queued",
@@ -54,7 +52,6 @@ function needsFrequentPolling(connection: SshConnection): boolean {
 export function ConnectionSettingsBody() {
   const [connections, setConnections] = useState<SshConnection[]>([]);
   const [packageIndexUrl, setPackageIndexUrl] = useState("");
-  const [statusById, setStatusById] = useState<StatusMap>({});
   const [label, setLabel] = useState("");
   const [alias, setAlias] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -93,22 +90,6 @@ export function ConnectionSettingsBody() {
       setLoadError(error instanceof Error ? error.message : "Failed to refresh connections");
     }
     return saved;
-  }, []);
-
-  const runProbe = useCallback(async (connection: SshConnection) => {
-    setStatusById((prev) => ({
-      ...prev,
-      [connection.id]: { status: "checking" },
-    }));
-    const result = await testSshConnection(connection.alias);
-    setStatusById((prev) => ({
-      ...prev,
-      [connection.id]: {
-        status: result.ok ? "ok" : "failed",
-        message: result.message,
-        latencyMs: result.latencyMs ?? undefined,
-      },
-    }));
   }, []);
 
   useEffect(() => {
@@ -235,11 +216,6 @@ export function ConnectionSettingsBody() {
       setSaving(true);
       try {
         await persist(next, packageIndexUrl.trim() || null);
-        setStatusById((prev) => {
-          const copy = { ...prev };
-          delete copy[id];
-          return copy;
-        });
       } catch (error) {
         setFormError(error instanceof Error ? error.message : "Failed to remove connection");
       } finally {
@@ -309,8 +285,6 @@ export function ConnectionSettingsBody() {
               <SshConnectionRow
                 key={connection.id}
                 connection={connection}
-                status={statusById[connection.id]}
-                onRetest={() => void runProbe(connection)}
                 onRetry={() => void handleRetry(connection.id)}
                 retrying={retryingIds.has(connection.id)}
                 actionsDisabled={saving || retryingIds.size > 0}
@@ -388,127 +362,199 @@ export function ConnectionSettingsBody() {
 
 function SshConnectionRow({
   connection,
-  status,
-  onRetest,
   onRetry,
   retrying,
   actionsDisabled,
   onRemove,
 }: {
   connection: SshConnection;
-  status?: StatusMap[string];
-  onRetest: () => void;
   onRetry: () => void;
   retrying: boolean;
   actionsDisabled: boolean;
   onRemove: () => void;
 }) {
-  const current = status?.status ?? "unknown";
-  const canRetry =
-    connection.lifecycle !== "detached" &&
-    connection.phase !== "detaching" &&
-    connection.phase !== "detached" &&
-    (connection.phase === "backoff" ||
-      Boolean(connection.lastError) ||
-      (connection.phase === "ready" && connection.status === "offline"));
+  const [expanded, setExpanded] = useState(false);
+  const isOnline = connection.phase === "ready" && connection.status === "online";
+  useEffect(() => {
+    if (isOnline) setExpanded(false);
+  }, [isOnline]);
   const phaseLabel =
     connection.lifecycle === "detached"
       ? PHASE_LABELS.detached
       : (PHASE_LABELS[connection.phase] ?? connection.phase.replaceAll("_", " "));
   return (
     <li
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2.5"
+      className="flex flex-col rounded-lg border border-border bg-card px-3 py-2.5"
       data-testid={`ssh-connection-row-${connection.id}`}
     >
-      <div className="flex min-w-0 flex-1 items-start gap-2.5">
-        <LifecycleStatusIcon connection={connection} />
-        <div className="min-w-0">
-          <div className="text-sm font-medium">{connection.label}</div>
-          <div className="truncate text-xs text-muted-foreground">{connection.alias}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
-            <span data-testid={`ssh-connection-phase-${connection.id}`}>{phaseLabel}</span>
-            {connection.hostId && (
-              <span
-                className={connection.status === "online" ? "text-green-600" : "text-destructive"}
-                data-testid={`ssh-connection-online-status-${connection.id}`}
-              >
-                {connection.status === "online" ? "Online" : "Offline"}
-              </span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+          <LifecycleStatusIcon connection={connection} />
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{connection.label}</div>
+            <div className="truncate text-xs text-muted-foreground">{connection.alias}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+              <span data-testid={`ssh-connection-phase-${connection.id}`}>{phaseLabel}</span>
+              {connection.hostId && (
+                <span
+                  className={connection.status === "online" ? "text-green-600" : "text-destructive"}
+                  data-testid={`ssh-connection-online-status-${connection.id}`}
+                >
+                  {connection.status === "online" ? "Online" : "Offline"}
+                </span>
+              )}
+              {connection.attempt > 0 && (
+                <span className="text-muted-foreground">
+                  {connection.attempt} {connection.attempt === 1 ? "attempt" : "attempts"}
+                </span>
+              )}
+            </div>
+            {connection.nextRetryAt && (
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                Next retry: {new Date(connection.nextRetryAt).toLocaleString()}
+              </div>
             )}
-            {connection.attempt > 0 && (
-              <span className="text-muted-foreground">
-                {connection.attempt} {connection.attempt === 1 ? "attempt" : "attempts"}
-              </span>
+            {connection.lastError && (
+              <div
+                className="mt-0.5 text-xs text-destructive"
+                data-testid={`ssh-connection-last-error-${connection.id}`}
+              >
+                {connection.lastError}
+              </div>
             )}
           </div>
-          {connection.nextRetryAt && (
-            <div className="mt-0.5 text-xs text-muted-foreground">
-              Next retry: {new Date(connection.nextRetryAt).toLocaleString()}
-            </div>
-          )}
-          {connection.lastError && (
-            <div
-              className="mt-0.5 text-xs text-destructive"
-              data-testid={`ssh-connection-last-error-${connection.id}`}
-            >
-              {connection.lastError}
-            </div>
-          )}
-          {status?.message && current === "failed" && (
-            <div className="mt-0.5 text-xs text-destructive">SSH test: {status.message}</div>
-          )}
-          {current === "ok" && status?.latencyMs != null && (
-            <div className="mt-0.5 text-xs text-muted-foreground">
-              SSH test passed ({status.latencyMs} ms)
-            </div>
-          )}
         </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {canRetry && (
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
-            variant="outline"
-            size="sm"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            aria-label={`Retry ${connection.label}`}
+            title="Retry connection"
             data-testid={`ssh-connection-retry-${connection.id}`}
             onClick={onRetry}
             disabled={actionsDisabled}
           >
-            {retrying && <Loader2Icon className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            Retry now
+            {retrying ? (
+              <Loader2Icon className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCwIcon className="h-4 w-4" />
+            )}
           </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          aria-label={`Test SSH ${connection.label}`}
-          title="Test SSH"
-          data-testid={`ssh-connection-retest-${connection.id}`}
-          onClick={onRetest}
-          disabled={actionsDisabled || current === "checking"}
-        >
-          {current === "checking" ? (
-            <Loader2Icon className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCwIcon className="h-4 w-4" />
+          {!isOnline && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              aria-label={expanded ? `Collapse ${connection.label}` : `Expand ${connection.label}`}
+              title={expanded ? "Hide installation logs" : "Show installation logs"}
+              data-testid={`ssh-connection-expand-${connection.id}`}
+              onClick={() => setExpanded((prev) => !prev)}
+            >
+              {expanded ? (
+                <ChevronDownIcon className="h-4 w-4" />
+              ) : (
+                <ChevronRightIcon className="h-4 w-4" />
+              )}
+            </Button>
           )}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-          aria-label={`Remove ${connection.label}`}
-          data-testid={`ssh-connection-remove-${connection.id}`}
-          onClick={onRemove}
-          disabled={actionsDisabled}
-        >
-          <Trash2Icon className="h-4 w-4" />
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+            aria-label={`Remove ${connection.label}`}
+            data-testid={`ssh-connection-remove-${connection.id}`}
+            onClick={onRemove}
+            disabled={actionsDisabled}
+          >
+            <Trash2Icon className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
+      {expanded && <InstallationLogsPanel connectionId={connection.id} />}
     </li>
+  );
+}
+
+function InstallationLogsPanel({ connectionId }: { connectionId: string }) {
+  const [logs, setLogs] = useState<SshConnectionLogEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const entries = await fetchSshConnectionLogs(connectionId);
+        if (!cancelled) {
+          setLogs(entries);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load logs");
+        }
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(poll, LOG_POLL_MS);
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [connectionId]);
+
+  if (error && logs.length === 0) {
+    return (
+      <div
+        className="mt-2 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground"
+        data-testid={`ssh-connection-logs-${connectionId}`}
+      >
+        {error}
+      </div>
+    );
+  }
+
+  if (logs.length === 0) {
+    return (
+      <div
+        className="mt-2 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground"
+        data-testid={`ssh-connection-logs-${connectionId}`}
+      >
+        No installation events yet.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="mt-2 max-h-64 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 font-mono text-xs"
+      data-testid={`ssh-connection-logs-${connectionId}`}
+    >
+      {logs.map((entry) => (
+        <div
+          key={`${entry.timestamp}-${entry.phase}-${entry.message}`}
+          className={cn(
+            "flex gap-2 py-0.5",
+            entry.level === "error" ? "text-destructive" : "text-foreground",
+          )}
+        >
+          <span className="shrink-0 text-muted-foreground">
+            {new Date(entry.time).toLocaleTimeString()}
+          </span>
+          <span className="shrink-0 font-medium">{entry.phase}</span>
+          <span className="break-all">{entry.message}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 

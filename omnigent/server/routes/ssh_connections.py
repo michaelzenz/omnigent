@@ -252,6 +252,33 @@ def create_ssh_connections_router(
             )
         return {"queued": True}
 
+    @router.get("/ssh/connections/{connection_id}/logs")
+    async def get_ssh_connection_logs(
+        connection_id: str,
+        request: Request,
+    ) -> dict[str, object]:
+        """Return captured installation lifecycle events for the settings UI."""
+        require_user(request, auth_provider)
+        manager = getattr(request.app.state, "ssh_host_manager", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="SSH host manager is unavailable")
+        snapshots = await asyncio.to_thread(manager.snapshot)
+        if connection_id not in snapshots:
+            raise HTTPException(status_code=404, detail="SSH connection not found")
+        entries = await asyncio.to_thread(manager.logs, connection_id)
+        return {
+            "entries": [
+                {
+                    "timestamp": entry.timestamp,
+                    "time": datetime.fromtimestamp(entry.timestamp, UTC).isoformat(),
+                    "phase": entry.phase,
+                    "level": entry.level,
+                    "message": entry.message,
+                }
+                for entry in entries
+            ],
+        }
+
     @router.post("/ssh/test")
     async def test_ssh_connection(body: SshTestRequest, request: Request) -> SshTestResponse:
         """Probe SSH connectivity from this host using a config alias."""
