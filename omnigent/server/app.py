@@ -2207,7 +2207,7 @@ def create_app(
     @app.get("/v1/info")
     async def info() -> dict[
         str,
-        bool | str | list[str] | list[dict[str, str]] | dict[str, bool] | None,
+        bool | str | list[str] | list[dict[str, Any]] | dict[str, bool] | None,
     ]:
         """Runtime capabilities probe for the SPA + CLI.
 

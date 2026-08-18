@@ -132,6 +132,7 @@ describe("Composer status line (branch + context ring)", () => {
       conversationId: "conv_test",
       skills: [],
       contextWindow: null,
+      contextWindowIsEstimate: false,
       tokensUsed: null,
       sessionCostUsd: null,
       gitBranch: null,
@@ -179,6 +180,30 @@ describe("Composer status line (branch + context ring)", () => {
 
   it("shows precise percentages for low usage in large context windows", () => {
     useChatStore.setState({ contextWindow: 1_000_000, tokensUsed: 8_343 });
+    renderComposer();
+
+    expect(screen.getByLabelText("0.83% of context used")).toBeInTheDocument();
+  });
+
+  it("marks an estimated Omnigent context window as potentially inaccurate", () => {
+    useChatStore.setState({
+      contextWindow: 1_000_000,
+      contextWindowIsEstimate: true,
+      tokensUsed: 8_343,
+      sessionHarness: "openai-agents",
+    });
+    renderComposer();
+
+    expect(screen.getByLabelText("0.83% of context used (estimated window)")).toBeInTheDocument();
+  });
+
+  it("does not apply the Omnigent estimate warning to other harnesses", () => {
+    useChatStore.setState({
+      contextWindow: 1_000_000,
+      contextWindowIsEstimate: true,
+      tokensUsed: 8_343,
+      sessionHarness: "pi",
+    });
     renderComposer();
 
     expect(screen.getByLabelText("0.83% of context used")).toBeInTheDocument();

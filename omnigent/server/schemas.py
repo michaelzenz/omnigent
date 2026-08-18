@@ -1906,6 +1906,7 @@ class SessionResponse(BaseModel):
     cost_control_mode_override: str | None = None
     subagent_routing_override: str | None = None
     context_window: int | None = None
+    context_window_is_estimate: bool = False
     last_total_tokens: int | None = None
     total_cost_usd: float | None = None
     usage_by_model: dict[str, ModelUsage] | None = None

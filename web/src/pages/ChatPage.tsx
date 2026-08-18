@@ -4220,7 +4220,15 @@ function formatContextUsedPercent(fraction: number): string {
 }
 
 /** Circular progress ring showing how much context window is used, with the used percentage beside it. */
-function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tokensUsed: number }) {
+function ContextRing({
+  contextWindow,
+  tokensUsed,
+  estimated,
+}: {
+  contextWindow: number;
+  tokensUsed: number;
+  estimated: boolean;
+}) {
   const pct = Math.min(tokensUsed / contextWindow, 1);
   // Arc, %, label, and tooltip all encode context USED: a fresh session
   // shows an empty ring at 0% and the ring fills as context is consumed.
@@ -4235,7 +4243,7 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
       <TooltipTrigger asChild>
         <span
           className={cn("flex items-center gap-1.5", color)}
-          aria-label={`${usedPct}% of context used`}
+          aria-label={`${usedPct}% of context used${estimated ? " (estimated window)" : ""}`}
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
             {/* Track */}
@@ -4257,6 +4265,7 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
           <span className="text-sm tabular-nums" aria-hidden="true">
             {usedPct}%
           </span>
+          {estimated && <AlertTriangleIcon className="size-3.5 text-warning" aria-hidden="true" />}
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-44 text-center text-sm">
@@ -4264,6 +4273,11 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
         <p className="tabular-nums text-muted-foreground">
           {tokensUsed.toLocaleString()} / {contextWindow.toLocaleString()} tokens
         </p>
+        {estimated && (
+          <p className="mt-1 text-warning">
+            Estimated context window; the actual model limit may differ.
+          </p>
+        )}
       </TooltipContent>
     </Tooltip>
   );
@@ -4380,6 +4394,8 @@ function ComposerStatusLine({
 }) {
   const conversationId = useChatStore((s) => s.conversationId);
   const contextWindow = useChatStore((s) => s.contextWindow);
+  const contextWindowIsEstimate = useChatStore((s) => s.contextWindowIsEstimate);
+  const sessionHarness = useChatStore((s) => s.sessionHarness);
   const tokensUsed = useChatStore((s) => s.tokensUsed);
   const codexPlanMode = useChatStore((s) => s.codexPlanMode);
   // Seeded from the session snapshot on bind (chatStore.sessionBindingPatch),
@@ -4448,7 +4464,13 @@ function ComposerStatusLine({
           </span>
         )}
         {showGoal && goal && <GoalStatusPill goal={goal} />}
-        {showRing && <ContextRing contextWindow={contextWindow} tokensUsed={tokensUsed} />}
+        {showRing && (
+          <ContextRing
+            contextWindow={contextWindow}
+            tokensUsed={tokensUsed}
+            estimated={contextWindowIsEstimate && sessionHarness === SDK_HARNESS}
+          />
+        )}
       </div>
     </div>
   );

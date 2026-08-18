@@ -369,7 +369,11 @@ describe("AgentInfoButton session cost row", () => {
   // composer status line). It reads from the shared chat store, so reset
   // the field between cases to keep them independent.
   beforeEach(() => {
-    useChatStore.setState({ sessionCostUsd: null });
+    useChatStore.setState({
+      sessionCostUsd: null,
+      sessionUsageByModel: null,
+      sessionHarness: null,
+    });
   });
 
   it("shows the formatted session cost in the popover when priced", () => {
@@ -399,6 +403,26 @@ describe("AgentInfoButton session cost row", () => {
     // The rest of the popover still renders (agent name proves it opened).
     expect(screen.getByText("Databricks_coding_agent")).toBeInTheDocument();
     expect(screen.queryByTestId("agent-info-session-cost")).toBeNull();
+  });
+
+  it("shows UnknownPrice for Omnigent usage without published pricing", () => {
+    useChatStore.setState({
+      sessionHarness: "openai-agents",
+      sessionUsageByModel: {
+        "databricks-kimi-k3": {
+          inputTokens: 1000,
+          outputTokens: 200,
+          totalTokens: 1200,
+          cacheReadInputTokens: null,
+          cacheCreationInputTokens: null,
+          totalCostUsd: null,
+        },
+      },
+    });
+    renderButtonWithSession(AGENT_WITH_BOTH, "conv_cost");
+    fireEvent.click(screen.getByTestId("agent-info-trigger"));
+
+    expect(screen.getByTestId("agent-info-session-cost")).toHaveTextContent("UnknownPrice");
   });
 });
 
@@ -527,7 +551,7 @@ describe("AgentInfoButton per-model usage breakdown", () => {
   // The breakdown reads `sessionUsageByModel` from the store; reset between
   // cases so they stay independent.
   beforeEach(() => {
-    useChatStore.setState({ sessionUsageByModel: null });
+    useChatStore.setState({ sessionUsageByModel: null, sessionHarness: null });
   });
 
   it("renders per-model token buckets and cost for multiple models", () => {

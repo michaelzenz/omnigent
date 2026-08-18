@@ -12,6 +12,10 @@ from pydantic import BaseModel, Field
 
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.model_catalog import ModelEntry, model_family_token
+from omnigent.omnigent_model_catalog import (
+    get_omnigent_model_metadata,
+    refresh_omnigent_model_catalog,
+)
 from omnigent.runtime import get_caps
 from omnigent.runtime.credentials.databricks import resolve_databricks_workspace
 from omnigent.server.auth import AuthProvider
@@ -92,13 +96,35 @@ def _display_name(model_id: str) -> str:
 
 def configured_omnigent_model_options(
     model_settings_store: ModelSettingsStore,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Return the configured public picker rows for the Omnigent harness."""
     model_ids = model_settings_store.get().harness_models.get(OMNIGENT_HARNESS, [])
+    refresh_omnigent_model_catalog(model_ids)
     return [
-        {"id": model_id, "display_name": _display_name(model_id)}
+        _model_option(model_id)
         for model_id in model_ids
     ]
+
+
+def _model_option(model_id: str) -> dict[str, Any]:
+    """Serialize one model with Omnigent-owned runtime metadata."""
+    metadata = get_omnigent_model_metadata(model_id)
+    return {
+        "id": model_id,
+        "display_name": _display_name(model_id),
+        "context_window": metadata.context_window,
+        "context_window_is_estimate": metadata.context_window_is_estimate,
+        "max_output_tokens": metadata.metadata.max_output_tokens,
+        "capabilities": {
+            capability.value: supported
+            for supported, values in (
+                (True, metadata.metadata.supported_capabilities),
+                (False, metadata.metadata.unsupported_capabilities),
+            )
+            for capability in sorted(values, key=lambda value: value.value)
+        },
+        "pricing_status": "known" if metadata.pricing is not None else "unknown",
+    }
 
 
 async def _require_admin(
@@ -177,6 +203,10 @@ def create_model_settings_router(
             }
         try:
             models = await asyncio.to_thread(_serving_models, profile)
+            await asyncio.to_thread(
+                refresh_omnigent_model_catalog,
+                [model.id for model in models],
+            )
         except (OSError, ValueError, httpx.HTTPError) as exc:
             return {
                 "object": "model_settings",
@@ -191,9 +221,7 @@ def create_model_settings_router(
             "object": "model_settings",
             "databricks_connected": True,
             "profile": profile,
-            "models": [
-                {"id": model.id, "display_name": _display_name(model.id)} for model in models
-            ],
+            "models": [_model_option(model.id) for model in models],
             "omnigent_models": enabled,
             "policy_model": settings.policy_model,
             "error": None,

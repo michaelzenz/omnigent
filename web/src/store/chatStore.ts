@@ -435,6 +435,8 @@ export interface ConversationState {
    * model is not in litellm's registry.
    */
   contextWindow: number | null;
+  /** Whether contextWindow is the Omnigent harness's 1M fallback estimate. */
+  contextWindowIsEstimate: boolean;
   /**
    * Provider-reported input token count from the most recent
    * ``response.completed`` SSE event's ``usage.input_tokens``.
@@ -1287,6 +1289,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   sessionHarness: null,
   subAgentName: null,
   contextWindow: null,
+  contextWindowIsEstimate: false,
   tokensUsed: null,
   sessionCostUsd: null,
   sessionUsageByModel: null,
@@ -2161,6 +2164,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       setterFor(conversationId)({
         sessionModelOverride: canonical,
         ...(session.contextWindow != null ? { contextWindow: session.contextWindow } : {}),
+        contextWindowIsEstimate: session.contextWindowIsEstimate ?? false,
       });
       // The sticky pref (root + localStorage) is app-global and must reflect the
       // NEWEST pick, so a slower PATCH that resolves last cannot overwrite it —
@@ -2935,6 +2939,7 @@ function sessionBindingPatch(
   | "subagentRoutingOverride"
   | "codexPlanMode"
   | "contextWindow"
+  | "contextWindowIsEstimate"
   | "gitBranch"
   | "skills"
   | "codexModelOptions"
@@ -2960,6 +2965,7 @@ function sessionBindingPatch(
     subagentRoutingOverride: session.subagentRoutingOverride ?? null,
     codexPlanMode: codexPlanModeFromSession(session),
     contextWindow: session.contextWindow ?? null,
+    contextWindowIsEstimate: session.contextWindowIsEstimate ?? false,
     gitBranch: session.gitBranch ?? null,
     skills: session.skills ?? [],
     codexModelOptions: session.codexModelOptions ?? [],
@@ -3381,6 +3387,7 @@ async function bindStream(
             ? state.sessionModelOverride
             : effectiveSessionOverride,
         tokensUsed: session.lastTotalTokens ?? null,
+        contextWindowIsEstimate: session.contextWindowIsEstimate ?? false,
         sessionCostUsd: session.totalCostUsd ?? null,
         sessionUsageByModel: session.usageByModel ?? null,
         todos: (session.todos ?? []) as {
@@ -3523,6 +3530,7 @@ function reconnectStatusPatch(session: Session, s: ChatState): Partial<ChatState
   // returns to "N background tasks still running" rather than vanishing on reconnect.
   patch.backgroundTaskCount = session.backgroundTaskCount ?? 0;
   if (session.contextWindow != null) patch.contextWindow = session.contextWindow;
+  patch.contextWindowIsEstimate = session.contextWindowIsEstimate ?? false;
   if (session.lastTotalTokens != null) patch.tokensUsed = session.lastTotalTokens;
   if (session.totalCostUsd != null) patch.sessionCostUsd = session.totalCostUsd;
   if (session.usageByModel != null) patch.sessionUsageByModel = session.usageByModel;

@@ -6280,6 +6280,7 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
           items: [],
           model_override: "databricks-glm-5-2",
           context_window: 1_000_000,
+          context_window_is_estimate: true,
         });
       }
       return defaultFetchHandler(input, init);
@@ -6290,6 +6291,7 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     await useChatStore.getState().setModel("databricks-glm-5-2");
 
     expect(useChatStore.getState().contextWindow).toBe(1_000_000);
+    expect(useChatStore.getState().contextWindowIsEstimate).toBe(true);
     expect(useChatStore.getState().tokensUsed).toBe(117_068);
   });
 

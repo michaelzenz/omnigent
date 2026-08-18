@@ -176,7 +176,13 @@ const MODEL_TOKEN_ROWS: readonly { key: keyof ModelUsage; label: string }[] = [
  *
  * @param usageByModel - Map of raw harness model id to its cumulative usage.
  */
-function ModelUsageBreakdown({ usageByModel }: { usageByModel: Record<string, ModelUsage> }) {
+function ModelUsageBreakdown({
+  usageByModel,
+  showUnknownPrice,
+}: {
+  usageByModel: Record<string, ModelUsage>;
+  showUnknownPrice: boolean;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   // Stable display order: most total tokens first, so the dominant model
   // leads. Falls back to 0 for models that haven't recorded a total yet.
@@ -228,6 +234,12 @@ function ModelUsageBreakdown({ usageByModel }: { usageByModel: Record<string, Mo
                   <span className="tabular-nums text-muted-foreground">
                     {formatSessionCostUsd(usage.totalCostUsd)}
                   </span>
+                </div>
+              )}
+              {usage.totalCostUsd == null && showUnknownPrice && (
+                <div className="flex items-baseline justify-between gap-3 pl-2 text-sm">
+                  <span className="text-muted-foreground/70">Cost</span>
+                  <span className="text-muted-foreground">UnknownPrice</span>
                 </div>
               )}
             </div>
@@ -1268,11 +1280,18 @@ export function AgentInfoContent({
   // by SSE ``session_usage``). ``null`` when the session is unpriced (no
   // turn priced yet) — omit the row rather than show "$0.00" / "—".
   const sessionCostUsd = useChatStore((s) => s.sessionCostUsd);
+  const sessionHarness = useChatStore((s) => s.sessionHarness);
   // Per-model usage breakdown, live from the store (seeded on bind, updated
   // by SSE ``session_usage``). ``null`` until usage is first recorded. The
   // popover renders it directly — the frontend derives any aggregate view
   // from this map rather than receiving flat token fields.
   const usageByModel = useChatStore((s) => s.sessionUsageByModel);
+  const hasModelUsage = usageByModel != null && Object.keys(usageByModel).length > 0;
+  const showUnknownPrice =
+    hasModelUsage &&
+    (sessionHarness === "openai-agents" ||
+      sessionHarness === "openai-agents-sdk" ||
+      sessionHarness === "agents_sdk");
   // Version footer: the server version (global, from the boot capabilities
   // probe) and the bound host's version (per-session, from the health poll).
   // Either may be absent — the footer renders whatever is known and hides
@@ -1374,21 +1393,24 @@ export function AgentInfoContent({
       )}
       {sessionId &&
         (sessionCostUsd != null ||
-          (usageByModel != null && Object.keys(usageByModel).length > 0)) && (
+          hasModelUsage) && (
           <div className="flex flex-col gap-2 py-3">
-            {sessionCostUsd != null && (
+            {(sessionCostUsd != null || showUnknownPrice) && (
               <div className="flex items-baseline justify-between gap-3">
                 <SectionLabel>Session cost</SectionLabel>
                 <span
                   className="font-mono text-sm tabular-nums text-muted-foreground"
                   data-testid="agent-info-session-cost"
                 >
-                  {formatSessionCostUsd(sessionCostUsd)}
+                  {sessionCostUsd != null ? formatSessionCostUsd(sessionCostUsd) : "UnknownPrice"}
                 </span>
               </div>
             )}
-            {usageByModel != null && Object.keys(usageByModel).length > 0 && (
-              <ModelUsageBreakdown usageByModel={usageByModel} />
+            {usageByModel != null && hasModelUsage && (
+              <ModelUsageBreakdown
+                usageByModel={usageByModel}
+                showUnknownPrice={showUnknownPrice}
+              />
             )}
           </div>
         )}

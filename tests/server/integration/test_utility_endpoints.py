@@ -89,6 +89,13 @@ async def test_info_returns_expected_fields(client: httpx.AsyncClient) -> None:
         "usage_page": False,
         "harness_install": False,
     }
+    model_options = data["omnigent_model_options"]
+    assert isinstance(model_options, list)
+    for option in model_options:
+        assert isinstance(option["id"], str)
+        assert isinstance(option["display_name"], str)
+        assert isinstance(option["context_window"], int)
+        assert isinstance(option["context_window_is_estimate"], bool)
     # Compatibility field for frontend builds predating the nested map.
     assert data["harness_install_enabled"] is False
     # installable_harnesses is the allowlist the SPA offers setup for; blank

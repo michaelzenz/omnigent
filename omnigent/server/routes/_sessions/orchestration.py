@@ -947,6 +947,7 @@ def _build_session_response(
     background_task_count: int | None = None,
     llm_model: str | None = None,
     context_window: int | None = None,
+    context_window_is_estimate: bool = False,
     last_total_tokens: int | None = None,
     last_task_error: dict[str, str] | None = None,
     agent_name: str | None = None,
@@ -1084,6 +1085,7 @@ def _build_session_response(
         cost_control_mode_override=conv.cost_control_mode_override,
         subagent_routing_override=conv.subagent_routing_override,
         context_window=context_window,
+        context_window_is_estimate=context_window_is_estimate,
         last_total_tokens=last_total_tokens,
         # Seed the client's cost indicator on resume. Uses the SUBTREE
         # total (this session + its sub-agents) when the caller computed
@@ -1233,8 +1235,14 @@ def _accumulate_session_usage(
             priced = True
         else:
             from omnigent.llms.context_window import compute_llm_cost, fetch_model_pricing
+            from omnigent.omnigent_model_catalog import find_omnigent_model_metadata
 
-            pricing = fetch_model_pricing(llm_model)
+            omnigent_metadata = find_omnigent_model_metadata(llm_model)
+            pricing = (
+                omnigent_metadata.pricing
+                if omnigent_metadata is not None
+                else fetch_model_pricing(llm_model)
+            )
             priced = pricing is not None
             if pricing is not None:
                 # Cache-aware: usage_obj carries cache_read/cache_creation
@@ -9081,6 +9089,7 @@ async def _get_session_snapshot(
             status = "failed"
     llm_model: str | None = None
     context_window: int | None = None
+    context_window_is_estimate = False
     agent_name: str | None = None
     if agent_store is not None and agent_cache is not None and conv.agent_id is not None:
         try:
@@ -9129,12 +9138,36 @@ async def _get_session_snapshot(
                     # catalog fetch (blocking HTTP / CPU-bound litellm) inside
                     # the resolver, which would otherwise stall the single-worker
                     # event loop and serialize every concurrent snapshot.
-                    context_window = await asyncio.to_thread(
-                        resolve_effective_context_window,
-                        spec.executor.context_window,
-                        llm_model,
-                        model_override=conv.model_override,
+                    harness = _resolve_harness(
+                        conv,
+                        agent_store=agent_store,
+                        agent_cache=agent_cache,
                     )
+                    if harness in {"openai-agents", "openai-agents-sdk", "agents_sdk"}:
+                        effective_model = conv.model_override or llm_model
+                        if (
+                            spec.executor.context_window is not None
+                            and conv.model_override is None
+                        ):
+                            context_window = spec.executor.context_window
+                        elif effective_model is not None:
+                            from omnigent.omnigent_model_catalog import (
+                                get_omnigent_model_metadata,
+                            )
+
+                            metadata = await asyncio.to_thread(
+                                get_omnigent_model_metadata,
+                                effective_model,
+                            )
+                            context_window = metadata.context_window
+                            context_window_is_estimate = metadata.context_window_is_estimate
+                    else:
+                        context_window = await asyncio.to_thread(
+                            resolve_effective_context_window,
+                            spec.executor.context_window,
+                            llm_model,
+                            model_override=conv.model_override,
+                        )
         except Exception:  # noqa: BLE001
             pass
     # Skills are runner-owned: the bound runner discovers them against its
@@ -9157,6 +9190,7 @@ async def _get_session_snapshot(
         observed = int(raw_window_label)
         if observed > 0:
             context_window = observed
+            context_window_is_estimate = False
     # Resolve strict runner + host liveness for the open-session view.
     # The lookup hits the conversations + hosts tables, so offload it to
     # a worker thread (mirroring _apply_liveness_to_items). Left None on
@@ -9194,6 +9228,7 @@ async def _get_session_snapshot(
         background_task_count=_session_background_task_count_cache.get(session_id),
         llm_model=llm_model,
         context_window=context_window,
+        context_window_is_estimate=context_window_is_estimate,
         last_total_tokens=last_total_tokens,
         last_task_error=last_task_error,
         agent_name=agent_name,

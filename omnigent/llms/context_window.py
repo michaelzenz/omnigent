@@ -60,6 +60,41 @@ _FALLBACK_CACHE_READ_INPUT_RATIO: float = 0.10
 _FALLBACK_CACHE_WRITE_INPUT_RATIO: float = 1.25
 
 
+def lookup_model_context_window(model: str) -> tuple[int | None, str | None]:
+    """Return a known context window and its metadata source.
+
+    Unlike :func:`get_model_context_window`, this function does not invent a
+    fallback. Callers that surface confidence to users can therefore
+    distinguish published metadata from an estimate.
+    """
+    override = os.environ.get("AP_CONTEXT_WINDOW_OVERRIDE")
+    if override is not None:
+        return int(override), "override"
+    encoded = _encoded_context_window(model)
+    if encoded is not None:
+        return encoded, "model-id"
+    catalog_window = _catalog_context_window(model)
+    if catalog_window is not None:
+        return catalog_window, "mlflow"
+    try:
+        litellm = cast(_LiteLLM, importlib.import_module("litellm"))
+    except ImportError:
+        return None, None
+    candidates = [model]
+    if model.startswith("databricks-"):
+        candidates.append(f"databricks/{model}")
+    for candidate in candidates:
+        try:
+            info = litellm.get_model_info(candidate)
+            if info:
+                limit = info.get("max_input_tokens")
+                if isinstance(limit, (int, float, str)) and limit:
+                    return int(limit), "litellm"
+        except Exception:
+            pass
+    return None, None
+
+
 def get_model_context_window(model: str) -> int:
     """
     Look up the model's context window size in tokens.
@@ -80,37 +115,8 @@ def get_model_context_window(model: str) -> int:
         ``"databricks-gpt-5-5"``.
     :returns: Context window size in tokens.
     """
-    override = os.environ.get("AP_CONTEXT_WINDOW_OVERRIDE")
-    if override is not None:
-        return int(override)
-    encoded = _encoded_context_window(model)
-    if encoded is not None:
-        return encoded
-    catalog_window = _catalog_context_window(model)
-    if catalog_window is not None:
-        return catalog_window
-    try:
-        litellm = cast(_LiteLLM, importlib.import_module("litellm"))
-    except ImportError:
-        return _DEFAULT_CONTEXT_WINDOW
-    try:
-        info = litellm.get_model_info(model)
-        if info:
-            limit = info.get("max_input_tokens")
-            if isinstance(limit, (int, float, str)) and limit:
-                return int(limit)
-    except Exception:
-        pass
-    if model.startswith("databricks-"):
-        try:
-            info = litellm.get_model_info(f"databricks/{model}")
-            if info:
-                limit = info.get("max_input_tokens")
-                if isinstance(limit, (int, float, str)) and limit:
-                    return int(limit)
-        except Exception:
-            pass
-    return _DEFAULT_CONTEXT_WINDOW
+    window, _source = lookup_model_context_window(model)
+    return window if window is not None else _DEFAULT_CONTEXT_WINDOW
 
 
 def resolve_effective_context_window(

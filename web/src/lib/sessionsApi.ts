@@ -151,6 +151,7 @@ interface SessionResponseWire {
   /** Sub-agent routing switch; `null`/absent reads the same as `"off"` (Default). */
   subagent_routing_override?: "on" | "off" | null;
   context_window?: number | null;
+  context_window_is_estimate?: boolean;
   last_total_tokens?: number | null;
   total_cost_usd?: number | null;
   /**
@@ -311,6 +312,7 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     costControlModeOverride: wire.cost_control_mode_override,
     subagentRoutingOverride: wire.subagent_routing_override,
     contextWindow: wire.context_window,
+    contextWindowIsEstimate: wire.context_window_is_estimate ?? false,
     lastTotalTokens: wire.last_total_tokens,
     totalCostUsd: wire.total_cost_usd,
     usageByModel: usageByModelFromWire(wire.usage_by_model),
