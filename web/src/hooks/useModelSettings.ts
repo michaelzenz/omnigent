@@ -69,11 +69,12 @@ export function useOmnigentModelOptions() {
   };
 }
 
-export function useAdminModelSettings() {
+export function useAdminModelSettings(enabled = true) {
   return useQuery({
     queryKey: ADMIN_KEY,
     queryFn: fetchAdminModelSettings,
     staleTime: 30_000,
+    enabled,
   });
 }
 

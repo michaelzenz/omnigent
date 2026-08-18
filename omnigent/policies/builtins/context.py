@@ -483,6 +483,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "stale context. Requires an llm: config block on the server; "
             "abstains (fail-open) when no LLM client is available."
         ),
+        "requires_llm": True,
         "params_schema": {
             "type": "object",
             "properties": {

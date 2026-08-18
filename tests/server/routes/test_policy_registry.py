@@ -26,6 +26,27 @@ async def test_policy_registry_entry_shape(client: httpx.AsyncClient) -> None:
             assert "params_schema" in entry
 
 
+def test_all_builtin_ai_policies_are_marked_as_requiring_llm() -> None:
+    """Every built-in policy that calls the policy LLM advertises that dependency."""
+    from omnigent.policies.builtins.context import POLICY_REGISTRY as context_registry
+    from omnigent.policies.builtins.prompt import POLICY_REGISTRY as prompt_registry
+    from omnigent.policies.builtins.routing import POLICY_REGISTRY as routing_registry
+
+    by_handler = {
+        entry["handler"]: entry
+        for entry in [*context_registry, *prompt_registry, *routing_registry]
+    }
+    ai_handlers = {
+        "omnigent.policies.builtins.context.detect_task_switch",
+        "omnigent.policies.builtins.prompt.prompt_policy",
+        "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier",
+        "omnigent.policies.builtins.routing.deny_trivial_to_expensive_model",
+        "omnigent.policies.builtins.routing.intent_based_authorization",
+    }
+    assert ai_handlers <= by_handler.keys()
+    assert all(by_handler[handler]["requires_llm"] is True for handler in ai_handlers)
+
+
 async def test_internal_only_policies_excluded_from_registry(
     client: httpx.AsyncClient,
 ) -> None:
