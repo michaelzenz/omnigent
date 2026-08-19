@@ -20,6 +20,7 @@ import type {
   ModelUsage,
   NativeModelOption,
   NestedSessionItem,
+  PromptProfileSelection,
   SandboxStatus,
   Session,
   SessionEventInput,
@@ -132,6 +133,7 @@ interface SessionResponseWire {
    */
   title?: string | null;
   labels?: Record<string, string>;
+  prompt_profile: { mode: "auto" } | { mode: "fixed"; profile_id: string } | null;
   /** Canonical working directory; ``null`` when unbound. */
   workspace?: string | null;
   /** Worktree branch; ``null`` when the session uses no worktree. */
@@ -301,6 +303,10 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     createdAt: wire.created_at,
     title: wire.title ?? null,
     labels: wire.labels,
+    promptProfile:
+      wire.prompt_profile?.mode === "fixed"
+        ? { mode: "fixed", profileId: wire.prompt_profile.profile_id }
+        : wire.prompt_profile,
     workspace: wire.workspace ?? null,
     gitBranch: wire.git_branch ?? null,
     items: wire.items ?? [],
@@ -446,6 +452,7 @@ export async function createSession(
     parentSessionId?: string;
     subAgentName?: string | null;
     title?: string;
+    promptProfile?: PromptProfileSelection | null;
   } = {},
 ): Promise<Session> {
   const body: {
@@ -454,6 +461,7 @@ export async function createSession(
     parent_session_id?: string;
     sub_agent_name?: string | null;
     title?: string;
+    prompt_profile?: { mode: "auto" } | { mode: "fixed"; profile_id: string } | null;
   } = { agent_id: agentId, initial_items: initialItems };
   if (options.parentSessionId !== undefined) {
     body.parent_session_id = options.parentSessionId;
@@ -463,6 +471,12 @@ export async function createSession(
   }
   if (options.title !== undefined) {
     body.title = options.title;
+  }
+  if (options.promptProfile !== undefined) {
+    body.prompt_profile =
+      options.promptProfile?.mode === "fixed"
+        ? { mode: "fixed", profile_id: options.promptProfile.profileId }
+        : options.promptProfile;
   }
   const res = await authenticatedFetch("/v1/sessions", {
     method: "POST",
@@ -563,14 +577,11 @@ export async function forkSession(
 
 /** Stop the active turn, then delete a user message and all later history. */
 export async function rewindSession(sessionId: string, fromMessageId: string): Promise<void> {
-  const res = await authenticatedFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/rewind`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Omnigent-Client": getClientSurface() },
-      body: JSON.stringify({ from_message_id: fromMessageId }),
-    },
-  );
+  const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/rewind`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Omnigent-Client": getClientSurface() },
+    body: JSON.stringify({ from_message_id: fromMessageId }),
+  });
   await readJsonOrThrow(res);
 }
 
@@ -695,10 +706,18 @@ export async function updateSession(
     runnerId?: string;
     silent?: boolean;
     labels?: Record<string, string>;
-    profileId?: string;
+    promptProfile?: PromptProfileSelection | null;
   },
 ): Promise<Session> {
-  const body: Record<string, string | boolean | null | Record<string, string>> = {};
+  const body: Record<
+    string,
+    | string
+    | boolean
+    | null
+    | Record<string, string>
+    | { mode: "auto" }
+    | { mode: "fixed"; profile_id: string }
+  > = {};
   if ("reasoningEffort" in updates) {
     body.reasoning_effort = updates.reasoningEffort ?? "default";
   }
@@ -722,8 +741,11 @@ export async function updateSession(
     // (e.g. the pinned flag on unpin — see PATCH /v1/sessions handler).
     body.labels = updates.labels;
   }
-  if (updates.profileId !== undefined) {
-    body.profile_id = updates.profileId;
+  if (updates.promptProfile !== undefined) {
+    body.prompt_profile =
+      updates.promptProfile?.mode === "fixed"
+        ? { mode: "fixed", profile_id: updates.promptProfile.profileId }
+        : updates.promptProfile;
   }
   if (updates.silent) {
     body.silent = true;

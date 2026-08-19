@@ -1,4 +1,4 @@
-"""Routes for discovering and managing durable agent profiles.
+"""Routes for discovering and managing durable execution-target agents.
 
 Built-in agents are the long-lived, shared agents the server provides
 out of the box — the seeded ``claude-native-ui`` agent plus anything
@@ -13,8 +13,7 @@ built-ins, then creates a session with
 ``POST /v1/sessions {agent_id, host_id, workspace}``. See
 ``designs/BUILTIN_AGENTS.md``.
 
-The catalog also supports durable profile upload, editing, enable/disable,
-archive, and per-turn Auto Select.
+The catalog also supports durable bundle upload, editing, and archive.
 """
 
 from __future__ import annotations
@@ -30,22 +29,14 @@ from sqlalchemy.exc import IntegrityError
 from omnigent.db.utils import builtin_agent_id, generate_agent_id
 from omnigent.entities import Agent
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.profile_selection import (
-    auto_select_prompt_profile,
-    is_prompt_profile,
-    list_prompt_profiles,
-)
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import AuthProvider, local_single_user_enabled
 from omnigent.server.bundles import bundle_location, edit_agent_bundle, validate_agent_bundle
 from omnigent.server.routes._auth_helpers import require_user as _require_user
 from omnigent.server.routes._origin import require_trusted_origin
 from omnigent.server.schemas import (
-    AgentAutoSelectRequest,
-    AgentAutoSelectResponse,
+    AgentEditRequest,
     AgentObject,
-    AgentProfileEditRequest,
-    AgentUpdateRequest,
     MCPServerSummary,
     PaginatedList,
     SkillSummary,
@@ -146,7 +137,6 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         # upload supersede the latter.
         builtin=agent.session_id is None and agent.id == builtin_agent_id(agent.name),
         enabled=agent.enabled,
-        auto_select_enabled=agent.auto_select_enabled,
         archived=agent.archived,
         is_multi_agent=is_multi_agent,
         subagent_count=subagent_count,
@@ -237,7 +227,7 @@ def create_builtin_agents_router(
         assert spec.name is not None
         if await asyncio.to_thread(agent_store.get_by_name, spec.name) is not None:
             raise OmnigentError(
-                f"Profile name already exists: {spec.name!r}",
+                f"Agent name already exists: {spec.name!r}",
                 code=ErrorCode.ALREADY_EXISTS,
             )
         agent_id = generate_agent_id()
@@ -250,66 +240,22 @@ def create_builtin_agents_router(
                 spec.name,
                 location,
                 spec.description,
-                auto_select_enabled=True,
             )
         except IntegrityError as exc:
             await asyncio.to_thread(artifact_store.delete, location)
             raise OmnigentError(
-                f"Profile name already exists: {spec.name!r}",
+                f"Agent name already exists: {spec.name!r}",
                 code=ErrorCode.ALREADY_EXISTS,
             ) from exc
         return _to_agent_object(agent, agent_cache)
-
-    @router.post("/agents/auto-select")
-    async def auto_select_agent(
-        request: Request,
-        body: AgentAutoSelectRequest,
-    ) -> AgentAutoSelectResponse:
-        """Choose one enabled template profile using the server AI backend."""
-        _require_user(request, auth_provider)
-        selected = await auto_select_prompt_profile(body.input, agent_store)
-        return AgentAutoSelectResponse(profile=_to_agent_object(selected, agent_cache))
-
-    @router.patch("/agents/{agent_id}")
-    async def update_agent(
-        request: Request,
-        agent_id: str,
-        body: AgentUpdateRequest,
-    ) -> AgentObject:
-        """Enable or disable a template agent."""
-        _require_user(request, auth_provider)
-        existing = await asyncio.to_thread(agent_store.get, agent_id)
-        if existing is None or existing.session_id is not None:
-            raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
-        if not is_prompt_profile(existing) or existing.archived:
-            raise OmnigentError("Profile not found", code=ErrorCode.NOT_FOUND)
-        if not body.auto_select_enabled:
-            enabled_profiles = await asyncio.to_thread(
-                list_prompt_profiles,
-                agent_store,
-                include_disabled=False,
-            )
-            if len(enabled_profiles) == 1 and enabled_profiles[0].id == agent_id:
-                raise OmnigentError(
-                    "The last enabled profile cannot be disabled.",
-                    code=ErrorCode.CONFLICT,
-                )
-        updated = await asyncio.to_thread(
-            agent_store.set_auto_select_enabled,
-            agent_id,
-            body.auto_select_enabled,
-        )
-        if updated is None:
-            raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
-        return _to_agent_object(updated, agent_cache)
 
     @router.put("/agents/{agent_id}")
     async def edit_agent(
         request: Request,
         agent_id: str,
-        body: AgentProfileEditRequest,
+        body: AgentEditRequest,
     ) -> AgentObject:
-        """Edit custom profile metadata and instructions in place."""
+        """Edit custom agent metadata and bundled instructions in place."""
         _require_user(request, auth_provider)
         if artifact_store is None:
             raise OmnigentError(
@@ -320,11 +266,11 @@ def create_builtin_agents_router(
         if existing is None or existing.session_id is not None:
             raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
         if existing.id == builtin_agent_id(existing.name):
-            raise OmnigentError("Built-in profiles cannot be edited.", code=ErrorCode.CONFLICT)
+            raise OmnigentError("Built-in agents cannot be edited.", code=ErrorCode.CONFLICT)
         same_name = await asyncio.to_thread(agent_store.get_by_name, body.name)
         if same_name is not None and same_name.id != agent_id:
             raise OmnigentError(
-                f"Profile name already exists: {body.name!r}",
+                f"Agent name already exists: {body.name!r}",
                 code=ErrorCode.ALREADY_EXISTS,
             )
         original = await asyncio.to_thread(artifact_store.get, existing.bundle_location)
@@ -354,7 +300,7 @@ def create_builtin_agents_router(
         except IntegrityError as exc:
             await asyncio.to_thread(artifact_store.delete, location)
             raise OmnigentError(
-                f"Profile name already exists: {body.name!r}",
+                f"Agent name already exists: {body.name!r}",
                 code=ErrorCode.ALREADY_EXISTS,
             ) from exc
         if updated is None:
@@ -379,17 +325,7 @@ def create_builtin_agents_router(
         if agent is None or agent.session_id is not None:
             raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
         if agent.id == builtin_agent_id(agent.name):
-            raise OmnigentError("Built-in profiles cannot be deleted.", code=ErrorCode.CONFLICT)
-        profiles = await asyncio.to_thread(
-            list_prompt_profiles,
-            agent_store,
-            include_disabled=True,
-        )
-        if len(profiles) == 1 and profiles[0].id == agent_id:
-            raise OmnigentError(
-                "The last profile cannot be deleted.",
-                code=ErrorCode.CONFLICT,
-            )
+            raise OmnigentError("Built-in agents cannot be deleted.", code=ErrorCode.CONFLICT)
         await asyncio.to_thread(agent_store.archive, agent_id)
         return Response(status_code=204)
 

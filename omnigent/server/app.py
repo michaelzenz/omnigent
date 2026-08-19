@@ -75,6 +75,7 @@ from omnigent.server.routes.model_settings import (
 )
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
+from omnigent.server.routes.prompt_profiles import create_prompt_profiles_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
 from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
 from omnigent.server.routes.session_mcp_servers import create_session_mcp_servers_router
@@ -103,6 +104,7 @@ from omnigent.stores import (
     ArtifactStore,
     ConversationStore,
     FileStore,
+    PromptProfileStore,
 )
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
@@ -113,6 +115,7 @@ from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
+from omnigent.stores.prompt_profile_store.sqlalchemy_store import SqlAlchemyPromptProfileStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 from omnigent.stores.task_asset_store import TaskAssetStore
@@ -966,6 +969,7 @@ def create_app(
     public_sharing: bool | Callable[[], bool] | None = None,
     server_config: dict[str, Any] | None = None,
     feature_flags: FeatureFlags | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application with all routes mounted.
@@ -1584,6 +1588,8 @@ def create_app(
             # inside shutdown_all().
             await _mcp_pool.shutdown_all()
 
+    if prompt_profile_store is None:
+        prompt_profile_store = SqlAlchemyPromptProfileStore(agent_store.storage_location)
     app = FastAPI(title="Omnigent Server", lifespan=_lifespan)
     from omnigent.runtime import telemetry
 
@@ -1598,6 +1604,7 @@ def create_app(
     app.state.host_registry = host_registry
     app.state.host_store = host_store
     app.state.agent_store = agent_store
+    app.state.prompt_profile_store = prompt_profile_store
     app.state.model_settings_store = model_settings_store
     app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
@@ -2453,6 +2460,7 @@ def create_app(
             memory_store=memory_store,
             memory_max_tokens=memory_max_tokens,
             background_title_coordinator=background_title_coordinator,
+            prompt_profile_store=prompt_profile_store,
         ),
         prefix="/v1",
         tags=["sessions"],
@@ -2490,6 +2498,14 @@ def create_app(
         ),
         prefix="/v1",
         tags=["agents"],
+    )
+    app.include_router(
+        create_prompt_profiles_router(
+            prompt_profile_store,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["prompt-profiles"],
     )
     app.include_router(
         create_harnesses_router(auth_provider=auth_provider),

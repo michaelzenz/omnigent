@@ -48,6 +48,7 @@ def build_instructions(
     *,
     memory_instructions: str | None = None,
     framework_instructions: Sequence[str] = (),
+    effective_instructions: str | None = None,
 ) -> str:
     """
     Build the system instructions string from the agent's
@@ -71,8 +72,11 @@ def build_instructions(
     """
     parts: list[str] = []
 
-    if spec.instructions:
-        parts.append(spec.instructions)
+    base_instructions = (
+        effective_instructions if effective_instructions is not None else spec.instructions
+    )
+    if base_instructions:
+        parts.append(base_instructions)
 
     if per_request_instructions:
         parts.append(per_request_instructions)

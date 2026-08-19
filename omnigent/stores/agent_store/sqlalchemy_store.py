@@ -111,7 +111,6 @@ class SqlAlchemyAgentStore(AgentStore):
         bundle_location: str,
         description: str | None = None,
         is_role: bool = False,
-        auto_select_enabled: bool | None = None,
     ) -> Agent:
         """
         Register a new template agent in the database.
@@ -125,8 +124,6 @@ class SqlAlchemyAgentStore(AgentStore):
         :param description: Optional free-text description.
         :param is_role: True for a role-bound profile hidden from the
             public catalog (backs a glossary role).
-        :param auto_select_enabled: ``None`` for ordinary agents; whether
-            Auto Select may choose this prompt profile otherwise.
         :returns: The newly created :class:`Agent`.
         """
         row = SqlAgent(
@@ -138,7 +135,6 @@ class SqlAlchemyAgentStore(AgentStore):
             kind=encode_agent_kind("template"),
             description=description,
             is_role=is_role,
-            auto_select_enabled=auto_select_enabled,
             enabled=True,
             archived=False,
         )
@@ -283,21 +279,6 @@ class SqlAlchemyAgentStore(AgentStore):
             row.updated_at = now_epoch()
             return sql_agent_to_entity(row)
 
-    def set_auto_select_enabled(self, agent_id: str, enabled: bool) -> Agent | None:
-        """Set a prompt profile's Auto Select membership."""
-        with self._session("set_agent_auto_select_enabled") as session:
-            row = session.get(SqlAgent, (current_workspace_id(), agent_id))
-            if (
-                row is None
-                or row.kind != encode_agent_kind("template")
-                or row.auto_select_enabled is None
-                or row.archived
-            ):
-                return None
-            row.auto_select_enabled = enabled
-            row.updated_at = now_epoch()
-            return sql_agent_to_entity(row)
-
     def archive(self, agent_id: str) -> Agent | None:
         """Soft-delete a template agent while preserving references."""
         with self._session("archive_agent") as session:
@@ -305,8 +286,6 @@ class SqlAlchemyAgentStore(AgentStore):
             if row is None or row.kind != encode_agent_kind("template"):
                 return None
             row.archived = True
-            if row.auto_select_enabled is not None:
-                row.auto_select_enabled = False
             row.enabled = False
             row.updated_at = now_epoch()
             return sql_agent_to_entity(row)

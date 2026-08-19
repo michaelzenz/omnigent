@@ -699,6 +699,25 @@ async def test_route_turn_prefers_the_callers_session_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_route_turn_treats_an_empty_authoritative_catalog_as_disabled() -> None:
+    routing_client = FakeRoutingClient(
+        RoutingResult(model="databricks-gpt-5-6-sol", rationale="cheap")
+    )
+    with patch(
+        "omnigent.runtime._globals._caps",
+        new=FakeCaps(routing_client=routing_client),
+    ):
+        model, verdict = await route_turn(
+            "openai-agents",
+            "hello",
+            catalog=[],
+        )
+
+    assert (model, verdict) == (None, None)
+    assert routing_client.offered == []
+
+
+@pytest.mark.asyncio
 async def test_route_turn_drops_out_of_family_catalog_models() -> None:
     """A native terminal's catalog can list other families; they aren't offered."""
     mock_response = MagicMock()
@@ -917,6 +936,51 @@ async def test_route_turn_applies_omnigent_settings_to_external_router() -> None
     assert body["route_selector"]["config"]["model"] == "databricks-gpt-5-6-luna"
     assert "User request:\nwrite tests" in body["task"]["prompt"]
     assert "Routing guidance:\nPrefer stronger coding models." in body["task"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_route_turn_substitutes_a_disabled_sol_pick_within_omnigent_allowlist() -> None:
+    import httpx
+
+    from omnigent.server.smart_routing import ExternalRoutingClient
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "route_selection": [
+                    {
+                        "route_option": {
+                            "model": "gpt-5-6-sol",
+                            "harness": "openai-agents",
+                        }
+                    }
+                ],
+                "rationale": "simple task",
+            },
+        )
+
+    external = ExternalRoutingClient(
+        base_url="https://host/ai-gateway/routing/v1",
+        router_name="task_v1",
+    )
+    with (
+        patch("omnigent.runtime._globals._caps", new=FakeCaps(routing_client=external)),
+        _patch_httpx(httpx.MockTransport(handler)),
+    ):
+        model, verdict = await route_turn(
+            "openai-agents",
+            "hello",
+            catalog=[
+                "databricks-gpt-5-6-luna",
+                "databricks-glm-5-2",
+                "databricks-kimi-k3",
+            ],
+        )
+
+    assert model == "databricks-gpt-5-6-luna"
+    assert verdict is not None
+    assert verdict["raw_model"] == "gpt-5-6-sol"
 
 
 @pytest.mark.asyncio

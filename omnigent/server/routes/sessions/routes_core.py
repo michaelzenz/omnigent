@@ -39,12 +39,7 @@ from omnigent.entities import (
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.model_override import validate_model_override
-from omnigent.profile_selection import (
-    PROMPT_PROFILE_AUTO_VALUE,
-    PROMPT_PROFILE_HARNESS,
-    PROMPT_PROFILE_LABEL_KEY,
-    load_prompt_profile_instructions,
-)
+from omnigent.profile_selection import PROMPT_PROFILE_HARNESS, load_prompt_profile_instructions
 from omnigent.reasoning_effort import (
     EFFORT_CLEAR_VALUES,
     EFFORT_VALUES,
@@ -183,7 +178,7 @@ from omnigent.server.schemas import (
 from omnigent.session_lifecycle import (
     labels_with_closed_status,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import (
@@ -215,6 +210,7 @@ def register_core_routes(
     host_registry: HostRegistry | None = None,
     project_store: ProjectStore | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> None:
     """Register the core session routes on router."""
 
@@ -306,6 +302,7 @@ def register_core_routes(
             file_store=file_store,
             artifact_store=artifact_store,
             background_title_coordinator=background_title_coordinator,
+            prompt_profile_store=prompt_profile_store,
         )
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
@@ -1791,13 +1788,11 @@ def register_core_routes(
                     code=ErrorCode.NOT_FOUND,
                 )
 
-        if "profile_id" in body.model_fields_set:
-            if not body.profile_id:
-                raise OmnigentError(
-                    "profile_id must be a non-empty profile id",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            if agent_cache is None:
+        prompt_profile_mode: str | None = None
+        prompt_profile_id: str | None = None
+        update_prompt_profile = "prompt_profile" in body.model_fields_set
+        if update_prompt_profile and body.prompt_profile is not None:
+            if agent_cache is None or prompt_profile_store is None:
                 raise OmnigentError(
                     "Profile selection is unavailable",
                     code=ErrorCode.INTERNAL_ERROR,
@@ -1812,15 +1807,15 @@ def register_core_routes(
                     "Profiles can only be changed on Omnigent harness sessions",
                     code=ErrorCode.INVALID_INPUT,
                 )
-            if body.profile_id != PROMPT_PROFILE_AUTO_VALUE:
+            prompt_profile_mode = body.prompt_profile.mode
+            if body.prompt_profile.mode == "fixed":
+                prompt_profile_id = body.prompt_profile.profile_id
                 await asyncio.to_thread(
                     load_prompt_profile_instructions,
-                    body.profile_id,
-                    agent_store,
-                    agent_cache,
+                    prompt_profile_id,
+                    prompt_profile_store,
                     require_selectable=True,
                 )
-            labels_to_set[PROMPT_PROFILE_LABEL_KEY] = body.profile_id
 
         updated = await asyncio.to_thread(
             conversation_store.update_conversation,
@@ -1838,6 +1833,9 @@ def register_core_routes(
             _unset_subagent_routing_override=clear_subagent_routing,
             terminal_launch_args=terminal_launch_args,
             archived=body.archived,
+            prompt_profile_mode=prompt_profile_mode,
+            prompt_profile_id=prompt_profile_id,
+            _update_prompt_profile=update_prompt_profile,
         )
         if updated is None:
             raise _session_not_found()

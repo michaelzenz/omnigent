@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from omnigent.db.db_models import SqlAgent
+from omnigent.db.db_models import SqlAgent, SqlPromptProfile
 from omnigent.db.enum_codecs import AGENT_KIND
-from omnigent.entities import Agent
+from omnigent.entities import Agent, PromptProfile
 
 
 def sql_agent_to_entity(row: SqlAgent, session_id: str | None = None) -> Agent:
@@ -29,7 +29,20 @@ def sql_agent_to_entity(row: SqlAgent, session_id: str | None = None) -> Agent:
         updated_at=row.updated_at,
         session_id=None if row.kind == AGENT_KIND["template"] else session_id,
         is_role=row.is_role,
-        auto_select_enabled=row.auto_select_enabled,
         enabled=row.enabled,
         archived=row.archived,
+    )
+
+
+def sql_prompt_profile_to_entity(row: SqlPromptProfile) -> PromptProfile:
+    """Convert a prompt-profile ORM row to its entity."""
+    return PromptProfile(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        instructions=row.instructions,
+        enabled=row.enabled,
+        archived=row.archived,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )

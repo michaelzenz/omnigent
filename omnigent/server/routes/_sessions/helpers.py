@@ -4772,11 +4772,7 @@ async def ensure_session_runner_client(
         get_server_runner_infrastructure,
     )
 
-    infra = (
-        infrastructure
-        if infrastructure is not None
-        else get_server_runner_infrastructure()
-    )
+    infra = infrastructure if infrastructure is not None else get_server_runner_infrastructure()
 
     runner_client = await _get_runner_client(session_id, runner_router)
     if runner_client is not None:
@@ -6123,12 +6119,13 @@ async def _emit_server_routing_decision(
     raw_model = verdict.get("raw_model")
     # Which router answered, so the chip can mark an AI-Gateway-routed decision.
     router_source = verdict.get("router_source")
+    display_harness = "omnigent" if harness in {"omnigent", "openai-agents"} else harness
     item_data: dict[str, Any] = {
         "model": model,
         "applied": bool(applied),
         "rationale": rationale if isinstance(rationale, str) else "",
         "scope": scope,
-        "harness": harness,
+        "harness": display_harness,
         "decision_id": resolved_decision_id,
         "raw_model": raw_model if isinstance(raw_model, str) and raw_model else None,
         "attempted_override": attempted_override,

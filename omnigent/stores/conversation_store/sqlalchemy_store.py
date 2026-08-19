@@ -203,6 +203,8 @@ def _to_conversation(
         parent_conversation_id=row.parent_conversation_id,
         root_conversation_id=row.root_conversation_id,
         agent_id=row.agent_id,
+        prompt_profile_mode=row.prompt_profile_mode,
+        prompt_profile_id=row.prompt_profile_id,
         runner_id=meta.runner_id if meta else None,
         host_id=meta.host_id if meta else None,
         labels=labels if labels is not None else {},
@@ -238,6 +240,17 @@ def _to_conversation(
     )
 
 
+def _validate_prompt_profile_columns(mode: str | None, profile_id: str | None) -> None:
+    """Enforce the nullable tagged-union shape stored on conversations."""
+    if mode is None and profile_id is None:
+        return
+    if mode == "auto" and profile_id is None:
+        return
+    if mode == "fixed" and profile_id:
+        return
+    raise ValueError("invalid prompt profile selection columns")
+
+
 def _new_session_conversation_row(
     conversation_id: str,
     now: int,
@@ -245,6 +258,8 @@ def _new_session_conversation_row(
     parent_conversation_id: str | None = None,
     root_conversation_id: str | None = None,
     agent_id: str | None = None,
+    prompt_profile_mode: str | None = None,
+    prompt_profile_id: str | None = None,
     session_overrides: str | None = None,
 ) -> SqlConversation:
     """
@@ -270,6 +285,7 @@ def _new_session_conversation_row(
         it NULL.
     :returns: Unsaved :class:`SqlConversation` row.
     """
+    _validate_prompt_profile_columns(prompt_profile_mode, prompt_profile_id)
     # Sub-agent children must have a unique title per parent.
     # Fall back to the conversation id to guarantee uniqueness.
     if parent_conversation_id and not title:
@@ -285,6 +301,8 @@ def _new_session_conversation_row(
         # root. Child rows inherit their parent's root.
         root_conversation_id=root_conversation_id or conversation_id,
         agent_id=agent_id,
+        prompt_profile_mode=prompt_profile_mode,
+        prompt_profile_id=prompt_profile_id,
         session_overrides=session_overrides,
     )
 
@@ -862,6 +880,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         title: str | None = None,
         parent_conversation_id: str | None = None,
         agent_id: str | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
         runner_id: str | None = None,
         sub_agent_name: str | None = None,
         host_id: str | None = None,
@@ -928,6 +948,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         """
         from sqlalchemy.exc import IntegrityError
 
+        _validate_prompt_profile_columns(prompt_profile_mode, prompt_profile_id)
         from omnigent.stores.conversation_store import (
             ConversationNotFoundError,
             NameAlreadyExistsError,
@@ -987,6 +1008,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                     parent_conversation_id=parent_conversation_id,
                     root_conversation_id=root_id,
                     agent_id=agent_id,
+                    prompt_profile_mode=prompt_profile_mode,
+                    prompt_profile_id=prompt_profile_id,
                 )
                 ap_sess.add(row)
             meta = SqlConversationMetadata(
@@ -2700,6 +2723,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         _unset_harness_override: bool = False,
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
+        _update_prompt_profile: bool = False,
     ) -> Conversation | None:
         """
         Update mutable fields on a conversation.
@@ -2741,6 +2767,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             if the conversation does not exist.
         """
         now = now_epoch()
+        if _update_prompt_profile:
+            _validate_prompt_profile_columns(prompt_profile_mode, prompt_profile_id)
         # Two transactions: AP (the conversation row, which carries the agent
         # binding + per-session override blob) and Omnigent (metadata).
         with self._conv_session("update_conversation") as ap_sess:
@@ -2791,6 +2819,10 @@ class SqlAlchemyConversationStore(ConversationStore):
             if archived is not None:
                 # archived lives on the AP conversations row; a visible state change.
                 row.archived = archived
+                ap_changed = True
+            if _update_prompt_profile:
+                row.prompt_profile_mode = prompt_profile_mode
+                row.prompt_profile_id = prompt_profile_id
                 ap_changed = True
             if ap_changed:
                 row.updated_at = now
@@ -3165,18 +3197,15 @@ class SqlAlchemyConversationStore(ConversationStore):
         :meth:`ConversationStore.runner_bindings_for_host`.
         """
         with self._session("runner_bindings_for_host") as session:
-            rows = (
-                session.execute(
-                    select(
-                        SqlConversationMetadata.id,
-                        SqlConversationMetadata.runner_id,
-                    ).where(
-                        SqlConversationMetadata.workspace_id == current_workspace_id(),
-                        SqlConversationMetadata.host_id == host_id,
-                    )
+            rows = session.execute(
+                select(
+                    SqlConversationMetadata.id,
+                    SqlConversationMetadata.runner_id,
+                ).where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.host_id == host_id,
                 )
-                .all()
-            )
+            ).all()
         return {row.id: row.runner_id for row in rows}
 
     def set_host_id(
@@ -3595,8 +3624,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             ).scalar_one_or_none()
             if target is None:
                 raise LookupError(
-                    f"message not found in conversation {conversation_id!r}: "
-                    f"{from_message_id!r}"
+                    f"message not found in conversation {conversation_id!r}: {from_message_id!r}"
                 )
             decoded = self._decode_item_data_batch([target.data])[0]
             item = _to_item(target, decoded)
@@ -3626,10 +3654,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             )
             insert_fts_bulk(
                 session,
-                [
-                    (row.id, conversation_id, row.search_text or "")
-                    for row in retained_rows
-                ],
+                [(row.id, conversation_id, row.search_text or "") for row in retained_rows],
             )
             conversation.next_position = target.position
             conversation.updated_at = now
@@ -3717,6 +3742,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # An explicit agent_id (clone or existing) beats inheriting the
                 # source's binding.
                 agent_id=(agent_id if agent_id is not None else source.agent_id),
+                prompt_profile_mode=source.prompt_profile_mode,
+                prompt_profile_id=source.prompt_profile_id,
                 session_overrides=fork_overrides,
             )
             session.add(new_conv)

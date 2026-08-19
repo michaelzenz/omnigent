@@ -332,6 +332,8 @@ class ConversationStore(ABC):
         title: str | None = None,
         parent_conversation_id: str | None = None,
         agent_id: str | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
         runner_id: str | None = None,
         sub_agent_name: str | None = None,
         host_id: str | None = None,
@@ -773,6 +775,9 @@ class ConversationStore(ABC):
         _unset_harness_override: bool = False,
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
+        _update_prompt_profile: bool = False,
     ) -> Conversation | None:
         """
         Update mutable fields on a conversation.

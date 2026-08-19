@@ -294,9 +294,6 @@ class SqlAgent(OmnigentBase):
     # Hidden from the public GET /v1/agents catalog so they don't clutter the
     # New Chat picker; lookups by id/name are unaffected.
     is_role: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
-    # NULL means this agent is not a prompt profile. Profiles store whether
-    # Auto Select may choose them.
-    auto_select_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
@@ -311,6 +308,40 @@ class SqlAgent(OmnigentBase):
         # do — kind is included so the seek skips same-named session copies
         # straight to the template row.
         Index("ix_agents_name", "workspace_id", "name", "kind", "id"),
+    )
+
+
+class SqlPromptProfile(OmnigentBase):
+    """Workspace-scoped plain-text prompt profile."""
+
+    __tablename__ = "prompt_profiles"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    instructions: Mapped[str] = mapped_column(CompressedText, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index("ix_prompt_profiles_name", "workspace_id", "name", "id"),
+        Index(
+            "ix_prompt_profiles_active",
+            "workspace_id",
+            "archived",
+            "enabled",
+            "created_at",
+            "id",
+        ),
     )
 
 
@@ -862,6 +893,8 @@ class SqlConversation(ConversationBase):
     # created without an agent binding. Indexed for the agent→conversation
     # reverse lookup and the list filters (agent_id / has_agent_id / agent_name).
     agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    prompt_profile_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    prompt_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     # Per-session config overrides packed as a compact JSON object, e.g.
     # ``{"model_override":"claude-opus-4-8","reasoning_effort":"high"}``. Keys:
     # reasoning_effort, model_override, cost_control_mode_override,
@@ -878,6 +911,10 @@ class SqlConversation(ConversationBase):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "prompt_profile_mode IS NULL OR prompt_profile_mode IN ('auto', 'fixed')",
+            name="ck_conversations_prompt_profile_mode",
+        ),
         # No bare created_at/updated_at indexes: the sessions list is ACL-scoped
         # (id IN (...)) and resolves via the PK; the default sidebar (archived=
         # false, updated_at DESC) is served by the archived_updated index below.

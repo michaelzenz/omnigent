@@ -120,6 +120,8 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
     conv_store = SqlAlchemyConversationStore(db_uri)
     settings_store = SqlAlchemyModelSettingsStore(db_uri)
     settings_store.update(
+        harness="openai-agents",
+        enabled_models=[GPT_MODEL, GLM_MODEL],
         smart_routing_cadence=cadence,
         update_smart_routing_cadence=True,
     )
@@ -154,7 +156,14 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
                 )
 
     assert len(router.calls) == expected_calls
-    assert len(_routing_decisions(conv_store, session_id)) == expected_calls
+    assert router.offered == [
+        {"openai-agents": [GPT_MODEL, GLM_MODEL]} for _ in range(expected_calls)
+    ]
+    decisions = _routing_decisions(conv_store, session_id)
+    assert len(decisions) == expected_calls
+    assert [decision.data.harness for decision in decisions] == [
+        "omnigent" for _ in range(expected_calls)
+    ]
     messages = [
         item
         for item in conv_store.list_items(session_id).data

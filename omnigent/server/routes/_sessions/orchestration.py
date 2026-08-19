@@ -41,6 +41,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ElicitationDeclinedError, ErrorCode, OmnigentError
+from omnigent.harness_aliases import canonicalize_harness
 from omnigent.harness_availability import (
     HARNESS_BINARY_MISSING,
     HARNESS_NEEDS_AUTH,
@@ -330,7 +331,7 @@ from omnigent.spec.types import (
     Phase,
     PolicyAction,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.conversation_store import (
     PINNED_LABEL_KEY,
@@ -1081,6 +1082,15 @@ def _build_session_response(
             conv,
             agent_store=agent_store,
             agent_cache=agent_cache,
+        ),
+        prompt_profile=(
+            None
+            if conv.prompt_profile_mode is None
+            else (
+                {"mode": "auto"}
+                if conv.prompt_profile_mode == "auto"
+                else {"mode": "fixed", "profile_id": conv.prompt_profile_id}
+            )
         ),
         model_override=conv.model_override,
         cost_control_mode_override=conv.cost_control_mode_override,
@@ -4979,6 +4989,14 @@ async def _forward_event_to_runner(
                 _turn_backed = _gateway_backed(
                     await _session_routing_host(conv, host_store), (_harness or "",)
                 )
+                _turn_catalog = await _native_turn_catalog(session_id, conv, runner_client)
+                if _omnigent_routing_settings is not None:
+                    # Omnigent's Models settings are the user's routing
+                    # allowlist. The runner catalog is wider and must not
+                    # re-enable models the user toggled off.
+                    _turn_catalog = list(
+                        _omnigent_routing_settings.harness_models.get("openai-agents", [])
+                    )
                 # ``_or_decline``: a routing outage returns an error string
                 # rather than raising. Raised here it became a 500 on the
                 # events POST, so a router that was merely down cost the user
@@ -4988,7 +5006,7 @@ async def _forward_event_to_runner(
                     _user_text,
                     session_id=session_id,
                     runner_client=runner_client,
-                    catalog=await _native_turn_catalog(session_id, conv, runner_client),
+                    catalog=_turn_catalog,
                     gateway_backed=_turn_backed,
                     allow_static_fallback=_turn_backed,
                     decision_model=(
@@ -7603,7 +7621,7 @@ def _require_generic_profile_launch_config(
         missing.append("model")
     if missing:
         raise OmnigentError(
-            f"Profile {agent.name!r} has no default {' or '.join(missing)}; "
+            f"Agent {agent.name!r} has no default {' or '.join(missing)}; "
             f"choose {' and '.join(missing)} in launch settings.",
             code=ErrorCode.INVALID_INPUT,
         )
@@ -7622,6 +7640,7 @@ async def _create_session_from_existing_agent(
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> SessionResponse:
     """
     Create a session bound to an already-registered agent.
@@ -7668,9 +7687,45 @@ async def _create_session_from_existing_agent(
     )
     if body.parent_session_id is None and (not agent.enabled or agent.archived):
         raise OmnigentError(
-            f"Profile {agent.name!r} is disabled.",
+            f"Agent {agent.name!r} is disabled.",
             code=ErrorCode.CONFLICT,
         )
+
+    prompt_profile_mode: str | None = None
+    prompt_profile_id: str | None = None
+    if body.prompt_profile is not None:
+        if prompt_profile_store is None or agent_cache is None:
+            raise OmnigentError(
+                "Prompt profile selection is unavailable",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        loaded_agent = await asyncio.to_thread(
+            agent_cache.load,
+            agent.id,
+            agent.bundle_location,
+            expand_env=agent.session_id is None,
+        )
+        selected_harness = canonicalize_harness(
+            body.harness_override
+            or loaded_agent.spec.executor.config.get("harness")
+            or loaded_agent.spec.executor.type
+        )
+        if selected_harness != "openai-agents":
+            raise OmnigentError(
+                "Prompt profiles can only be selected for Omnigent sessions",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        prompt_profile_mode = body.prompt_profile.mode
+        if body.prompt_profile.mode == "fixed":
+            prompt_profile_id = body.prompt_profile.profile_id
+            from omnigent.profile_selection import load_prompt_profile_instructions
+
+            await asyncio.to_thread(
+                load_prompt_profile_instructions,
+                prompt_profile_id,
+                prompt_profile_store,
+                require_selectable=True,
+            )
 
     # Top-level Smart Routing: "auto" on a native wrapper agent means the client
     # picked Smart Routing with no bundle agent, and its ``agent_id`` is only a
@@ -7713,7 +7768,7 @@ async def _create_session_from_existing_agent(
         )
         if not agent.enabled or agent.archived:
             raise OmnigentError(
-                f"Profile {agent.name!r} is disabled.",
+                f"Agent {agent.name!r} is disabled.",
                 code=ErrorCode.CONFLICT,
             )
 
@@ -8044,6 +8099,8 @@ async def _create_session_from_existing_agent(
             workspace=canonical_workspace,
             git_branch=git_branch,
             terminal_launch_args=validated_launch_args,
+            prompt_profile_mode=prompt_profile_mode,
+            prompt_profile_id=prompt_profile_id,
         )
     except Exception:
         # Broad catch is intentional: ANY create_conversation failure

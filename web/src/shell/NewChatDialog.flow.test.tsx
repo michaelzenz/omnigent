@@ -12,6 +12,7 @@ import type { Host } from "@/hooks/useHosts";
 import { useHosts } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
+import type { PromptProfile } from "@/hooks/usePromptProfiles";
 import { NewChatLandingScreen, resetLandingDraft, sanitizeInitialPrompt } from "./NewChatDialog";
 import { writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
@@ -91,6 +92,13 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
   useAvailableAgents: vi.fn(),
   prefetchAvailableAgentDetails: vi.fn(),
 }));
+const promptProfileMocks = vi.hoisted(() => ({ rows: [] as PromptProfile[] }));
+vi.mock("@/hooks/usePromptProfiles", () => ({
+  usePromptProfiles: () => ({ data: promptProfileMocks.rows }),
+  useArchivePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 // The home listing is only consulted when there's no recent; the recent is
 // always set here, so keep this inert (returns no listing).
 vi.mock("@/hooks/useHostFilesystem", () => ({
@@ -162,33 +170,23 @@ function setHosts(hosts: Host[]): void {
 }
 
 function setAgents(agents: AvailableAgent[]): void {
-  const isProfile = (candidate: AvailableAgent) =>
-    candidate.name !== "omnigent" && !candidate.name.endsWith("-native-ui");
-  const normalized = agents.map((candidate) =>
-    isProfile(candidate)
-      ? {
-          ...candidate,
-          builtin: candidate.builtin ?? true,
-          enabled: candidate.enabled ?? true,
-          auto_select_enabled: candidate.auto_select_enabled ?? true,
-        }
-      : candidate,
-  );
-  const data =
-    normalized.some(isProfile) && !normalized.some((candidate) => candidate.name === "omnigent")
-      ? [
-          ...normalized,
-          agent({
-            id: "ag_omnigent_test",
-            name: "omnigent",
-            display_name: "Omnigent",
-            harness: "openai-agents",
-            builtin: true,
-            enabled: true,
-          }),
-        ]
-      : normalized;
-  vi.mocked(useAvailableAgents).mockReturnValue({ data } as ReturnType<typeof useAvailableAgents>);
+  vi.mocked(useAvailableAgents).mockReturnValue({ data: agents } as ReturnType<
+    typeof useAvailableAgents
+  >);
+}
+
+function promptProfile(overrides: Partial<PromptProfile> = {}): PromptProfile {
+  return {
+    id: "profile_general",
+    name: "General",
+    description: null,
+    instructions: "",
+    enabled: true,
+    archived: false,
+    created_at: 1,
+    updated_at: 1,
+    ...overrides,
+  };
 }
 
 function renderLanding(cachedSessionIds: string[] = []): void {
@@ -261,6 +259,16 @@ function selectAgent(agentId: string): void {
       return;
     }
   }
+  const custom = screen.queryByTestId("new-chat-landing-custom-agents");
+  if (custom) {
+    fireEvent.pointerMove(custom);
+    fireEvent.click(custom);
+    const customRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+    if (customRow) {
+      fireEvent.click(customRow);
+      return;
+    }
+  }
   fireEvent.keyDown(document, { key: "Escape" });
   fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
   fireEvent.click(screen.getByTestId(`new-chat-landing-profile-${agentId}`));
@@ -308,6 +316,7 @@ beforeEach(() => {
   localStorage.setItem(RECENT_KEY, JSON.stringify({ host_1: [SEEDED_WORKSPACE] }));
   setHosts([host()]);
   setAgents([agent()]);
+  promptProfileMocks.rows = [];
 });
 
 afterEach(() => {
@@ -332,19 +341,16 @@ describe("NewChatLandingScreen create flow", () => {
     const [url, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/v1/sessions");
     expect(init.method).toBe("POST");
-    // The host, seeded workspace, Omnigent base agent, and default prompt
-    // profile must all reach the server.
+    // The host, seeded workspace, and selected execution target must all
     // reach the server. A missing host_id/workspace would create an unbound
     // session; a wrong agent_id would launch the wrong assistant.
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({
-      agent_id: "ag_omnigent_test",
+      agent_id: "ag_hello",
       host_id: "host_1",
       workspace: SEEDED_WORKSPACE,
     });
-    expect(body.labels).toMatchObject({
-      "omnigent.prompt_profile_id": "auto",
-    });
+    expect(body.prompt_profile).toBeNull();
 
     // On success the screen routes to the freshly created session.
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_new"));
@@ -392,7 +398,7 @@ describe("NewChatLandingScreen create flow", () => {
     const isOurs = pushMatchers[0]!;
     const ours: SessionListWireItem = {
       id: "conv_mine",
-      agent_id: "ag_omnigent_test",
+      agent_id: "ag_hello",
       host_id: "host_1",
     };
     expect(isOurs(ours)).toBe(true);
@@ -568,7 +574,7 @@ describe("NewChatLandingScreen create flow", () => {
     const body = JSON.parse(init.body as string);
     // Anchor on a required field so the absence checks below can't pass
     // vacuously against a malformed/empty body.
-    expect(body.agent_id).toBe("ag_omnigent_test");
+    expect(body.agent_id).toBe("ag_hello");
     // The prompt must NOT ride in the create body: for host sessions
     // initial_items are persisted history-only and never fire a turn, so the
     // agent would never respond. It goes through the normal message path from
@@ -623,9 +629,14 @@ describe("NewChatLandingScreen create flow", () => {
     } as unknown as Response);
     setAgents([
       agent({
-        skills: [{ name: "review-pr", description: "Review a pull request" }],
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
+        harness: "openai-agents",
+        skills: [],
       }),
     ]);
+    promptProfileMocks.rows = [promptProfile({ instructions: "Review pull requests carefully" })];
 
     renderLanding();
     await waitForWorkspaceSeed();
@@ -1293,8 +1304,8 @@ describe("NewChatLandingScreen create flow", () => {
     selectAgent("ag_polly");
     // With no explicit pick the pill shows just the agent name — the spec
     // default is not suffixed (it lives in the Advanced menu's radios).
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Polly");
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).not.toContain(
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Polly");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).not.toContain(
       "Claude SDK",
     );
     typeMessage("go");
@@ -1591,16 +1602,12 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
-    // Pick the non-default durable profile.
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-ag_two"));
+    selectAgent("ag_two");
     // The explicit pick persists immediately — no session has to be created
     // for the preference to stick.
     expect(localStorage.getItem("omnigent:last-agent-id")).toBe("ag_two");
 
-    // A fresh mount (the "next visit") must start on the remembered agent:
-    // submitting without touching the picker keeps ag_two as the prompt
-    // profile while binding the Omnigent base agent.
+    // A fresh mount keeps the execution target itself selected.
     cleanup();
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
@@ -1614,10 +1621,8 @@ describe("NewChatLandingScreen create flow", () => {
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(body.agent_id).toBe("ag_omnigent_test");
-    expect(body.labels).toMatchObject({
-      "omnigent.prompt_profile_id": "ag_two",
-    });
+    expect(body.agent_id).toBe("ag_two");
+    expect(body.prompt_profile).toBeNull();
   });
 
   it("falls back to the default agent when the remembered id is no longer listed", async () => {
@@ -1638,10 +1643,8 @@ describe("NewChatLandingScreen create flow", () => {
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(body.agent_id).toBe("ag_omnigent_test");
-    expect(body.labels).toMatchObject({
-      "omnigent.prompt_profile_id": "auto",
-    });
+    expect(body.agent_id).toBe("ag_hello");
+    expect(body.prompt_profile).toBeNull();
   });
 
   it("launches a prompt-only profile on the Omnigent base agent", async () => {
@@ -1656,17 +1659,8 @@ describe("NewChatLandingScreen create flow", () => {
         builtin: true,
         enabled: true,
       }),
-      agent({
-        id: "ag_general",
-        name: "general-agent",
-        display_name: "General-agent",
-        harness: null,
-        default_harness: null,
-        default_model: null,
-        builtin: false,
-        enabled: true,
-      }),
     ]);
+    promptProfileMocks.rows = [promptProfile({ id: "profile_general", name: "General agent" })];
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
       json: async () => ({ id: "conv_new" }),
@@ -1675,7 +1669,7 @@ describe("NewChatLandingScreen create flow", () => {
     renderLanding();
     await waitForWorkspaceSeed();
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-ag_general"));
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-profile_general"));
     typeMessage("start with this profile");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
@@ -1683,8 +1677,9 @@ describe("NewChatLandingScreen create flow", () => {
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
     expect(body.agent_id).toBe("ag_omnigent");
-    expect(body.labels).toMatchObject({
-      "omnigent.prompt_profile_id": "ag_general",
+    expect(body.prompt_profile).toEqual({
+      mode: "fixed",
+      profile_id: "profile_general",
     });
     expect(body.harness_override).toBeUndefined();
     expect(body.model_override).toBeUndefined();
@@ -1699,16 +1694,8 @@ describe("NewChatLandingScreen create flow", () => {
       builtin: true,
       enabled: true,
     });
-    const profile = agent({
-      id: "ag_research",
-      name: "research",
-      display_name: "Research",
-      harness: "claude-sdk",
-      builtin: false,
-      enabled: true,
-      default_harness: "claude-sdk",
-    });
-    setAgents([base, profile]);
+    setAgents([base]);
+    promptProfileMocks.rows = [promptProfile({ id: "profile_research", name: "Research" })];
     vi.mocked(authenticatedFetch).mockResolvedValue({
       ok: true,
       json: async () => ({ id: "conv_new" }),
@@ -1724,10 +1711,6 @@ describe("NewChatLandingScreen create flow", () => {
     expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
       "Profile: Auto Select",
     );
-    const autoCalls = vi
-      .mocked(authenticatedFetch)
-      .mock.calls.filter(([url]) => url === "/v1/agents/auto-select");
-    expect(autoCalls).toHaveLength(0);
     const sessionCall = vi
       .mocked(authenticatedFetch)
       .mock.calls.find(([url]) => url === "/v1/sessions");
@@ -1735,9 +1718,7 @@ describe("NewChatLandingScreen create flow", () => {
     if (!sessionCall) throw new Error("Expected a session create call");
     const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
     expect(body.agent_id).toBe("ag_omnigent");
-    expect(body.labels).toMatchObject({
-      "omnigent.prompt_profile_id": "auto",
-    });
+    expect(body.prompt_profile).toEqual({ mode: "auto" });
   });
 });
 

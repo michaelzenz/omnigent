@@ -129,7 +129,6 @@ import {
 } from "@/store/chatStore";
 import {
   isNativeTerminalSession,
-  isNativeCodingAgent,
   nativeCodingAgentForHarness,
   nativeCodingAgentForSubagentWrapper,
   WRAPPER_LABEL_KEY,
@@ -220,9 +219,8 @@ import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
 import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS, type SdkModelOption } from "@/lib/sdkModels";
-import { useProfiles } from "@/hooks/useProfiles";
+import { usePromptProfiles } from "@/hooks/usePromptProfiles";
 import { ProfileControls, type ProfileSelection } from "@/shell/ProfileControls";
-import { PROMPT_PROFILE_AUTO_VALUE, PROMPT_PROFILE_LABEL_KEY } from "@/lib/profileSelection";
 import { updateSession } from "@/lib/sessionsApi";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
@@ -753,7 +751,7 @@ export function ChatPage() {
     error: agentsError,
     refetch: refetchAgents,
   } = useAgents({ enabled: !urlConvId });
-  const profilesQuery = useProfiles({ enabled: Boolean(urlConvId) });
+  const profilesQuery = usePromptProfiles({ enabled: Boolean(urlConvId) });
   const [profileChangeBusy, setProfileChangeBusy] = useState(false);
   const { data: conversationsData } = useConversations("", true);
   const conversations = useMemo(
@@ -1274,52 +1272,35 @@ export function ChatPage() {
     harness: activeSession?.harness ?? null,
   };
   const profileCatalog = profilesQuery.data ?? [];
-  const omnigentBaseProfile = profileCatalog.find(
-    (profile) => profile.name === "omnigent" && profile.harness === SDK_HARNESS,
-  );
-  const storedProfileId = capabilitySource.labels[PROMPT_PROFILE_LABEL_KEY] ?? null;
-  const legacyBoundProfile = storedProfileId
-    ? undefined
-    : profileCatalog.find(
-        (profile) =>
-          profile.name !== "omnigent" &&
-          !isNativeCodingAgent(profile) &&
-          profile.name === boundAgentBySession?.name,
-      );
   const activeProfileId =
-    storedProfileId ?? legacyBoundProfile?.id ?? omnigentBaseProfile?.id ?? null;
+    activeSession?.promptProfile?.mode === "fixed" ? activeSession.promptProfile.profileId : null;
   const profileSelection: ProfileSelection =
-    activeProfileId &&
-    activeProfileId !== omnigentBaseProfile?.id &&
-    profileCatalog.some((profile) => profile.id === activeProfileId)
+    activeProfileId && profileCatalog.some((profile) => profile.id === activeProfileId)
       ? activeProfileId
-      : PROMPT_PROFILE_AUTO_VALUE;
+      : "auto";
   const selectableProfiles = profileCatalog.filter(
-    (profile) =>
-      profile.name !== "omnigent" &&
-      !profile.archived &&
-      !isNativeCodingAgent(profile) &&
-      (profile.enabled || profile.id === activeProfileId),
+    (profile) => profile.enabled || profile.id === activeProfileId,
   );
-  const showProfileSelector =
-    Boolean(urlConvId) &&
-    supportsSessionProfileSelection(activeSession) &&
-    omnigentBaseProfile != null;
+  const showProfileSelector = Boolean(urlConvId) && supportsSessionProfileSelection(activeSession);
   const profileControls = showProfileSelector ? (
     <ProfileControls
       profiles={selectableProfiles}
       selection={profileSelection}
-      resolvedAutoProfile={null}
-      selectedAgentId={activeProfileId}
+      selectedProfileId={activeProfileId}
       disabled={profileChangeBusy || permissionLevel === 1 || readOnlyReason !== null}
-      onSelect={(selection, profile) => {
-        const targetId =
-          selection === PROMPT_PROFILE_AUTO_VALUE
-            ? PROMPT_PROFILE_AUTO_VALUE
-            : (profile?.id ?? selection);
-        if (!urlConvId || !targetId || targetId === activeProfileId) return;
+      onSelect={(selection) => {
+        const nextProfile =
+          selection === "auto"
+            ? ({ mode: "auto" } as const)
+            : ({ mode: "fixed", profileId: selection } as const);
+        if (
+          !urlConvId ||
+          (nextProfile.mode === "auto" && activeSession?.promptProfile?.mode === "auto") ||
+          (nextProfile.mode === "fixed" && nextProfile.profileId === activeProfileId)
+        )
+          return;
         setProfileChangeBusy(true);
-        void updateSession(urlConvId, { profileId: targetId })
+        void updateSession(urlConvId, { promptProfile: nextProfile })
           .then((updated) => {
             queryClient.setQueryData(["session", urlConvId], updated);
           })

@@ -729,7 +729,7 @@ from omnigent.spec.types import (
     PolicyAction,
     PolicySpec,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import (
@@ -808,6 +808,7 @@ def create_sessions_router(
     memory_store: MemoryStore | None = None,
     memory_max_tokens: int = 20_000,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> APIRouter:
     """
     Factory that builds the sessions router.
@@ -906,6 +907,7 @@ def create_sessions_router(
         runner_exit_reports=runner_exit_reports,
         host_registry=host_registry,
         project_store=project_store,
+        prompt_profile_store=prompt_profile_store,
         background_title_coordinator=background_title_coordinator,
     )
 
@@ -972,6 +974,7 @@ def create_sessions_router(
         runner_tunnel_tokens=runner_tunnel_tokens,
         memory_store=memory_store,
         memory_max_tokens=memory_max_tokens,
+        prompt_profile_store=prompt_profile_store,
     )
 
     register_permissions_routes(

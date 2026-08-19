@@ -38,6 +38,7 @@ import {
   type Host,
 } from "@/hooks/useHosts";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
+import type { PromptProfile } from "@/hooks/usePromptProfiles";
 import { useHostFilesystem, type HostFilesystemEntry } from "@/hooks/useHostFilesystem";
 import { useHostWorktrees } from "@/hooks/useHostWorktrees";
 import { useDirectorySessions } from "@/hooks/useDirectorySessions";
@@ -91,6 +92,13 @@ vi.mock("@/components/ui/toast", () => ({ showToast: showToastMock }));
 vi.mock("@/hooks/useAvailableAgents", () => ({
   useAvailableAgents: vi.fn(),
   prefetchAvailableAgentDetails: vi.fn(),
+}));
+const promptProfileMocks = vi.hoisted(() => ({ rows: [] as PromptProfile[] }));
+vi.mock("@/hooks/usePromptProfiles", () => ({
+  usePromptProfiles: () => ({ data: promptProfileMocks.rows }),
+  useArchivePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/hooks/useHostFilesystem", () => ({
   useHostFilesystem: vi.fn(),
@@ -683,37 +691,27 @@ function mockHosts(hosts: Host[]) {
 }
 
 function mockAgents(agents: AvailableAgent[]) {
-  const isProfile = (agent: AvailableAgent) =>
-    agent.name !== "omnigent" && !agent.name.endsWith("-native-ui");
-  const hasProfile = agents.some(isProfile);
-  const withProfileMetadata = agents.map((agent) =>
-    isProfile(agent)
-      ? {
-          ...agent,
-          builtin: agent.builtin ?? true,
-          enabled: agent.enabled ?? true,
-          auto_select_enabled: agent.auto_select_enabled ?? true,
-        }
-      : agent,
-  );
   useAvailableAgentsMock.mockReturnValue({
-    data:
-      hasProfile && !agents.some((agent) => agent.name === "omnigent")
-        ? [
-            ...withProfileMetadata,
-            {
-              id: "ag_omnigent_test",
-              name: "omnigent",
-              display_name: "Omnigent",
-              description: null,
-              harness: "openai-agents",
-              skills: [],
-              builtin: true,
-              enabled: true,
-            },
-          ]
-        : withProfileMetadata,
+    data: agents,
   } as unknown as ReturnType<typeof useAvailableAgents>);
+}
+
+function mockPromptProfiles(profiles: PromptProfile[]) {
+  promptProfileMocks.rows = profiles;
+}
+
+function promptProfile(overrides: Partial<PromptProfile> = {}): PromptProfile {
+  return {
+    id: "profile_research",
+    name: "Researcher",
+    description: null,
+    instructions: "",
+    enabled: true,
+    archived: false,
+    created_at: 1,
+    updated_at: 1,
+    ...overrides,
+  };
 }
 
 // Shared mock setup for the landing-screen tests: one online host (host_1,
@@ -740,6 +738,7 @@ function setupLandingMocks() {
   vi.mocked(useInstallingHarnesses).mockReturnValue(new Set<string>());
   setOmnigentHostConfig({});
   resetLandingDraft();
+  mockPromptProfiles([]);
   localStorage.clear();
   // host_1's most-recent workspace seeds the field (so submit can enable
   // without manual picks). Tests that exercise the home fallback clear this.
@@ -870,18 +869,17 @@ async function readCreateBody(): Promise<{ raw: string; body: Record<string, unk
 
 function selectAgent(agentId: string): void {
   fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-  const harnessRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
-  if (harnessRow) {
-    fireEvent.click(harnessRow);
-    return;
+  let row = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+  if (!row) {
+    const customAgents = screen.queryByTestId("new-chat-landing-custom-agents");
+    if (customAgents) {
+      fireEvent.pointerMove(customAgents);
+      fireEvent.click(customAgents);
+      row = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+    }
   }
-  if (screen.queryByTestId("new-chat-landing-profile-select") == null) {
-    fireEvent.click(screen.getByRole("menuitem", { name: /^Omnigent/ }));
-  } else {
-    closeMenu();
-  }
-  fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-  fireEvent.click(screen.getByTestId(`new-chat-landing-profile-${agentId}`));
+  if (!row) throw new Error(`Agent ${agentId} not found in execution-target picker`);
+  fireEvent.click(row);
 }
 
 /**
@@ -1074,7 +1072,7 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByText("No agents")).toBeTruthy();
   });
 
-  it("keeps profiles out of the harness picker and exposes them separately", () => {
+  it("keeps Polly as a top-level execution target beside harnesses", () => {
     mockAgents([
       {
         id: "a_pi",
@@ -1127,11 +1125,11 @@ describe("NewChatLandingScreen", () => {
     ]);
     renderLanding();
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-    // Only harnesses appear here; durable profiles have their own control.
+    // Execution targets include both harnesses and opaque bundle agents.
     const claude = screen.getByTestId("new-chat-landing-agent-a_claude");
     const codex = screen.getByTestId("new-chat-landing-agent-a_codex");
     expect(claude.compareDocumentPosition(codex) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByTestId("new-chat-landing-agent-a_polly")).toBeNull();
+    expect(screen.getByTestId("new-chat-landing-agent-a_polly")).toBeTruthy();
     // Every other harness folds into "More", even though all are configured
     // here — support level, not host readiness, decides the split.
     for (const id of ["a_cursor", "a_pi", "a_kiro"]) {
@@ -1150,22 +1148,19 @@ describe("NewChatLandingScreen", () => {
     ).toBeTruthy();
     closeMenu();
     selectAgent("a_polly");
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
-      "Profile: Polly",
-    );
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("Polly");
+    expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
   });
 
-  it("shows Profile only for the Omnigent harness and offers Default and Auto Select", () => {
+  it("shows Profile only for the Omnigent target without changing that target", () => {
     mockAgents([
       {
-        id: "ag_profile",
-        name: "researcher",
-        display_name: "Researcher",
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
         description: null,
-        harness: "claude-sdk",
+        harness: "openai-agents",
         skills: [],
-        builtin: false,
-        enabled: true,
       },
       {
         id: "ag_native",
@@ -1176,48 +1171,39 @@ describe("NewChatLandingScreen", () => {
         skills: [],
       },
     ]);
+    mockPromptProfiles([promptProfile()]);
     renderLanding();
-    selectAgent("ag_profile");
+    selectAgent("ag_omnigent");
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-profile_research"));
     expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
       "Profile: Researcher",
     );
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    expect(screen.queryByTestId("new-chat-landing-profile-default")).toBeNull();
-    expect(screen.getByTestId("new-chat-landing-profile-auto")).toBeTruthy();
-    closeMenu();
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("Omnigent");
     selectAgent("ag_native");
     expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
   });
 
-  it("lists only profiles enabled for Auto Select", () => {
+  it("lists only enabled profiles returned by the selectable-profile hook", () => {
     mockAgents([
       {
-        id: "ag_enabled",
-        name: "enabled-profile",
-        display_name: "Enabled profile",
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
         description: null,
-        harness: "omnigent",
+        harness: "openai-agents",
         skills: [],
-        auto_select_enabled: true,
-      },
-      {
-        id: "ag_disabled",
-        name: "disabled-profile",
-        display_name: "Disabled profile",
-        description: null,
-        harness: "omnigent",
-        skills: [],
-        auto_select_enabled: false,
       },
     ]);
+    mockPromptProfiles([promptProfile({ id: "profile_enabled", name: "Enabled profile" })]);
     renderLanding();
 
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    expect(screen.getByTestId("new-chat-landing-profile-ag_enabled")).toBeTruthy();
-    expect(screen.queryByTestId("new-chat-landing-profile-ag_disabled")).toBeNull();
+    expect(screen.getByTestId("new-chat-landing-profile-profile_enabled")).toBeTruthy();
+    expect(screen.queryByText("Disabled profile")).toBeNull();
   });
 
-  it("uses coordinator wording for multi-agent profile overrides", () => {
+  it("uses coordinator wording for multi-agent execution targets", () => {
     mockAgents([
       {
         id: "ag_team",
@@ -3371,7 +3357,7 @@ describe("NewChatLandingScreen agent picker (mobile drill-in)", () => {
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
   }
 
-  it("keeps profiles in their own picker on mobile", () => {
+  it("keeps custom execution targets in the agent picker on mobile", () => {
     mockAgents([
       {
         id: "a1",
@@ -3391,12 +3377,12 @@ describe("NewChatLandingScreen agent picker (mobile drill-in)", () => {
       },
     ]);
     renderLanding();
-    selectAgent("ag_custom");
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
+    openPicker();
+    fireEvent.click(screen.getByTestId("new-chat-landing-custom-agents"));
+    fireEvent.click(screen.getByTestId("new-chat-landing-agent-ag_custom"));
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent(
       "My Custom Agent",
     );
-    openPicker();
-    expect(screen.queryByTestId("new-chat-landing-agent-ag_custom")).toBeNull();
   });
 
   it("drills into the More page for harnesses outside the supported set", () => {
@@ -3923,11 +3909,10 @@ describe("NewChatLandingScreen Auto harness", () => {
   it("keeps naming the agent on the composer chip — the routed brain is its knob", () => {
     renderLanding({ smart_routing_enabled: true });
     selectAutoHarness();
-    const chip = screen.getByTestId("new-chat-landing-profile-select");
+    const chip = screen.getByTestId("new-chat-landing-agent-select");
     // The session still runs as Polly; routing her brain must not rewrite the
     // whole selection as if top-level Smart Routing had been picked.
     expect(chip.textContent).toContain("Polly");
-    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Omnigent");
   });
 
   it("shows the harness row alone in the Auto config modal, still titled 'Configure Polly'", () => {
@@ -3954,11 +3939,11 @@ describe("NewChatLandingScreen Auto harness", () => {
   it("keeps the routed brain when the agent's own row is re-picked", () => {
     renderLanding({ smart_routing_enabled: true });
     selectAutoHarness();
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Polly");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Polly");
     // Re-clicking Polly is a pick of Polly, not a reset of her saved brain — she
     // was already selected, and the gear row is the way to switch away.
     selectAgent("ag_polly");
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Polly");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Polly");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Smart Routing",
@@ -4762,7 +4747,7 @@ describe("NewChatLandingScreen bundle-agent Smart Routing", () => {
     renderLanding({ smart_routing_enabled: true });
     draftSmartRouting("ag_debby");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-cancel"));
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Debby");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Debby");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Claude SDK",
@@ -4775,7 +4760,7 @@ describe("NewChatLandingScreen bundle-agent Smart Routing", () => {
     saveConfig();
     // The chip still names Debby — the routed brain is her knob, not a different
     // selection. (This is the leak the whole scope fix is about.)
-    const chip = screen.getByTestId("new-chat-landing-profile-select");
+    const chip = screen.getByTestId("new-chat-landing-agent-select");
     expect(chip.textContent).toContain("Debby");
     expect(chip.textContent).not.toContain("Smart Routing");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
@@ -4862,7 +4847,7 @@ describe("NewChatLandingScreen bundle-agent Smart Routing", () => {
       ag_debby: "auto",
     });
     selectAgent("ag_polly");
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Polly");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Polly");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Claude SDK",
@@ -4875,7 +4860,7 @@ describe("NewChatLandingScreen bundle-agent Smart Routing", () => {
     renderLanding({ smart_routing_enabled: true });
     // Restored as Debby-with-a-routed-brain, so the chip is hers; the gear row is
     // where the restored pick shows.
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Debby");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Debby");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Smart Routing",
@@ -4900,7 +4885,7 @@ describe("NewChatLandingScreen bundle-agent Smart Routing", () => {
     // The chip names Debby whether or not the pick degraded (a routed brain never
     // renames the selection), so it can't carry this test — the gear row and the
     // create payload below are what pin the degrade.
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Debby");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Debby");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Claude SDK",
@@ -4980,7 +4965,7 @@ describe("NewChatLandingScreen Smart Routing flavors are scoped separately", () 
     routeDebbysBrain();
     // The session is still Debby's — this is the leak the fix closes: keying the
     // chip on the union of both flavors renamed everything "Smart Routing".
-    const chip = screen.getByTestId("new-chat-landing-profile-select");
+    const chip = screen.getByTestId("new-chat-landing-agent-select");
     expect(chip.textContent).toContain("Debby");
     expect(chip.textContent).not.toContain("Smart Routing");
     // The top-level row is offered here (both wrappers ready) and was NOT picked.
@@ -5022,7 +5007,7 @@ describe("NewChatLandingScreen Smart Routing flavors are scoped separately", () 
     );
     // The reverse leak: the top-level sentinel must not read as Debby's brain.
     selectAgent("ag_debby");
-    const chip = screen.getByTestId("new-chat-landing-profile-select");
+    const chip = screen.getByTestId("new-chat-landing-agent-select");
     expect(chip.textContent).toContain("Debby");
     expect(chip.textContent).not.toContain("Smart Routing");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
@@ -5042,7 +5027,7 @@ describe("NewChatLandingScreen Smart Routing flavors are scoped separately", () 
     // modal has no harness row to escape through) but must leave a saved brain
     // pick alone — the gear row is how you switch that one away.
     selectAgent("ag_debby");
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain("Debby");
+    expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Debby");
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Smart Routing",

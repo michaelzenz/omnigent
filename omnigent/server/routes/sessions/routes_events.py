@@ -30,11 +30,8 @@ from omnigent.host.frames import (
 )
 from omnigent.memory import compose_memory
 from omnigent.profile_selection import (
-    PROMPT_PROFILE_AUTO_VALUE,
     PROMPT_PROFILE_HARNESS,
-    PROMPT_PROFILE_LABEL_KEY,
     auto_select_prompt_profile,
-    is_prompt_profile,
     load_prompt_profile_instructions,
 )
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
@@ -211,7 +208,7 @@ from omnigent.server.schemas import (
 from omnigent.session_lifecycle import (
     is_session_closed,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.host_store import host_is_live
@@ -271,6 +268,7 @@ def register_events_routes(
     runner_tunnel_tokens: frozenset[str] | None = None,
     memory_store: MemoryStore | None = None,
     memory_max_tokens: int = 20_000,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> None:
     """Register the events, stream, and delete routes on router."""
 
@@ -1589,27 +1587,38 @@ def register_events_routes(
             model=body.model_override or conv.model_override or _spec_model,
         )
         _selected_profile_name = _agent.name if _agent is not None else None
-        _profile_id = conv.labels.get(PROMPT_PROFILE_LABEL_KEY, PROMPT_PROFILE_AUTO_VALUE)
         if (
             body.type == "message"
             and body.data.get("role") == "user"
-            and agent_cache is not None
             and _resolved_harness == PROMPT_PROFILE_HARNESS
+            and conv.prompt_profile_mode is not None
         ):
-            _stored_profile = (
-                agent_store.get(_profile_id) if _profile_id != PROMPT_PROFILE_AUTO_VALUE else None
-            )
-            if _stored_profile is None or not is_prompt_profile(_stored_profile):
+            if prompt_profile_store is None:
+                raise OmnigentError(
+                    "Prompt profile selection is unavailable",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            if conv.prompt_profile_mode == "auto":
                 _stored_profile = await auto_select_prompt_profile(
                     background_title_prompt(body) or "",
-                    agent_store,
+                    prompt_profile_store,
                 )
+            else:
+                assert conv.prompt_profile_id is not None
+                _stored_profile = await asyncio.to_thread(
+                    prompt_profile_store.get,
+                    conv.prompt_profile_id,
+                )
+                if _stored_profile is None:
+                    raise OmnigentError(
+                        f"Profile not found or unavailable: {conv.prompt_profile_id!r}",
+                        code=ErrorCode.NOT_FOUND,
+                    )
             _selected_profile_name = _stored_profile.name
             _profile_instructions = await asyncio.to_thread(
                 load_prompt_profile_instructions,
                 _stored_profile.id,
-                agent_store,
-                agent_cache,
+                prompt_profile_store,
                 require_selectable=False,
             )
         if body.type == "message" and body.data.get("role") == "user":

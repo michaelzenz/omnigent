@@ -423,7 +423,7 @@ describe("runner binding", () => {
     expect(JSON.parse(init.body as string)).toEqual({ reasoning_effort: "high" });
   });
 
-  it("PATCHes profile_id without changing session execution settings", async () => {
+  it("PATCHes the typed prompt profile without changing execution settings", async () => {
     fetchMock.mockResolvedValueOnce(
       mockJsonResponse({
         id: "conv_abc",
@@ -434,10 +434,14 @@ describe("runner binding", () => {
       }),
     );
 
-    await updateSession("conv_abc", { profileId: "ag_focused" });
+    await updateSession("conv_abc", {
+      promptProfile: { mode: "fixed", profileId: "profile_focused" },
+    });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ profile_id: "ag_focused" });
+    expect(JSON.parse(init.body as string)).toEqual({
+      prompt_profile: { mode: "fixed", profile_id: "profile_focused" },
+    });
   });
 
   it("PATCHes model_override as snake_case", async () => {

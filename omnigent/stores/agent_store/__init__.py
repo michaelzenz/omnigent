@@ -35,7 +35,6 @@ class AgentStore(ABC):
         bundle_location: str,
         description: str | None = None,
         is_role: bool = False,
-        auto_select_enabled: bool | None = None,
     ) -> Agent:
         """
         Register a new template agent. Name must be unique among
@@ -53,8 +52,6 @@ class AgentStore(ABC):
             agent's purpose.
         :param is_role: True for a role-bound profile hidden from the
             public catalog (backs a glossary role).
-        :param auto_select_enabled: ``None`` for ordinary agents; whether
-            Auto Select may choose this prompt profile otherwise.
         :returns: The newly created :class:`Agent`.
         """
         ...
@@ -110,11 +107,6 @@ class AgentStore(ABC):
     @abstractmethod
     def set_enabled(self, agent_id: str, enabled: bool) -> Agent | None:
         """Set a template agent's enabled state and return the updated row."""
-        ...
-
-    @abstractmethod
-    def set_auto_select_enabled(self, agent_id: str, enabled: bool) -> Agent | None:
-        """Set a prompt profile's Auto Select membership."""
         ...
 
     @abstractmethod

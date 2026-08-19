@@ -38,8 +38,6 @@ class Agent:
     session_id: str | None = None  # owning conversation id; None for template agents
     # True for role-bound agent profiles hidden from the public catalog.
     is_role: bool = False
-    # None for ordinary agents; profiles store their Auto Select membership.
-    auto_select_enabled: bool | None = None
     enabled: bool = True
     archived: bool = False
 

@@ -233,6 +233,8 @@ export interface ModelUsage {
   totalCostUsd: number | null;
 }
 
+export type PromptProfileSelection = { mode: "auto" } | { mode: "fixed"; profileId: string };
+
 export interface Session {
   id: string;
   agentId: string;
@@ -282,6 +284,8 @@ export interface Session {
    * `omnigent.fork.source_id` on an unbound coding clone).
    */
   labels?: Record<string, string>;
+  /** Prompt overlay used by Omnigent; null for other execution targets. */
+  promptProfile?: PromptProfileSelection | null;
   /**
    * Canonical working directory the runner starts in, e.g.
    * ``"/Users/alice/myrepo"`` (or a worktree path). ``null`` when

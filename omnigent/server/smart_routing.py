@@ -2343,10 +2343,17 @@ async def route_turn(
     # workers' models are not this session's. Key the map by harness id, not the
     # "self" label, so the seam infers the right single-harness scenario.
     available: dict[str, list[str]] | None = None
-    if catalog:
+    if catalog is not None:
         in_vocabulary = models_in_family(harness, catalog)
-        if in_vocabulary:
-            available = {harness or "self": in_vocabulary}
+        if not in_vocabulary:
+            _logger.info(
+                "smart_routing: route_turn skipped for session=%s: "
+                "the authoritative catalog has no candidates for harness=%s",
+                session_id,
+                harness,
+            )
+            return None, None
+        available = {harness or "self": in_vocabulary}
     if available is None and session_id and runner_client is not None:
         _catalog_fetched = True
         runner_catalog = await fetch_runner_models(session_id, runner_client)

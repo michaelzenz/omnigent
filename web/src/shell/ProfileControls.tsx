@@ -8,18 +8,14 @@ import {
   SettingsIcon,
   Trash2Icon,
 } from "lucide-react";
-import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import {
-  useArchiveProfile,
-  useCreateProfile,
-  useEditProfile,
-  useProfiles,
-  useUpdateProfileAutoSelect,
-} from "@/hooks/useProfiles";
-import { buildAgentBundle, type AgentBundleInput } from "@/lib/agentBundle";
-import { isNativeCodingAgent } from "@/lib/nativeCodingAgents";
+  type PromptProfile,
+  useArchivePromptProfile,
+  useCreatePromptProfile,
+  usePromptProfiles,
+  useUpdatePromptProfile,
+} from "@/hooks/usePromptProfiles";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -37,28 +33,25 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CreateAgentDialog } from "./CreateAgentDialog";
+import type { AgentBundleInput } from "@/lib/agentBundle";
 
 export type ProfileSelection = "auto" | string;
 
 export function ProfileControls({
   profiles,
   selection,
-  resolvedAutoProfile,
-  selectedAgentId,
+  selectedProfileId,
   disabled,
   onSelect,
 }: {
-  profiles: AvailableAgent[];
+  profiles: PromptProfile[];
   selection: ProfileSelection;
-  resolvedAutoProfile: AvailableAgent | null;
-  selectedAgentId: string | null;
+  selectedProfileId: string | null;
   disabled: boolean;
-  onSelect: (selection: ProfileSelection, profile?: AvailableAgent) => void;
+  onSelect: (selection: ProfileSelection, profile?: PromptProfile) => void;
 }) {
-  const selected =
-    profiles.find((profile) => profile.id === selection) ??
-    (resolvedAutoProfile?.id === selection ? resolvedAutoProfile : undefined);
-  const label = selection === "auto" ? "Auto Select" : (selected?.display_name ?? "Auto Select");
+  const selected = profiles.find((profile) => profile.id === selection);
+  const label = selection === "auto" ? "Auto Select" : (selected?.name ?? "Auto Select");
 
   return (
     <div
@@ -96,14 +89,14 @@ export function ProfileControls({
               onSelect={() => onSelect(profile.id, profile)}
               className="data-[active=true]:bg-muted"
             >
-              <span className="truncate">{profile.display_name}</span>
+              <span className="truncate">{profile.name}</span>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
       <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
       <ManageProfilesDialog
-        selectedAgentId={selectedAgentId}
+        selectedProfileId={selectedProfileId}
         onSelectProfile={(profile) => onSelect(profile.id, profile)}
         onSelectedProfileRemoved={() => onSelect("auto")}
       />
@@ -112,54 +105,40 @@ export function ProfileControls({
 }
 
 function ManageProfilesDialog({
-  selectedAgentId,
+  selectedProfileId,
   onSelectProfile,
   onSelectedProfileRemoved,
 }: {
-  selectedAgentId: string | null;
-  onSelectProfile: (profile: AvailableAgent) => void;
+  selectedProfileId: string | null;
+  onSelectProfile: (profile: PromptProfile) => void;
   onSelectedProfileRemoved: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState<AvailableAgent | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AvailableAgent | null>(null);
+  const [editTarget, setEditTarget] = useState<PromptProfile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PromptProfile | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const profilesQuery = useProfiles({ enabled: open });
-  const updateAutoSelect = useUpdateProfileAutoSelect();
-  const archive = useArchiveProfile();
-  const create = useCreateProfile();
-  const edit = useEditProfile();
+  const profilesQuery = usePromptProfiles({ enabled: open });
+  const archive = useArchivePromptProfile();
+  const create = useCreatePromptProfile();
+  const update = useUpdatePromptProfile();
 
-  const managedProfiles = useMemo(
-    () =>
-      (profilesQuery.data ?? []).filter(
-        (profile) =>
-          profile.auto_select_enabled != null && !profile.archived && !isNativeCodingAgent(profile),
-      ),
-    [profilesQuery.data],
-  );
   const rows = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    return managedProfiles.filter(
+    return (profilesQuery.data ?? []).filter(
       (profile) =>
         !query ||
-        profile.display_name.toLocaleLowerCase().includes(query) ||
+        profile.name.toLocaleLowerCase().includes(query) ||
         profile.description?.toLocaleLowerCase().includes(query),
     );
-  }, [managedProfiles, search]);
-  const autoSelectCount = managedProfiles.filter(
-    (profile) => profile.auto_select_enabled === true,
-  ).length;
+  }, [profilesQuery.data, search]);
 
-  async function toggle(profile: AvailableAgent, autoSelectEnabled: boolean) {
+  async function toggle(profile: PromptProfile, enabled: boolean) {
     setActionError(null);
     try {
-      await updateAutoSelect.mutateAsync({
-        id: profile.id,
-        auto_select_enabled: autoSelectEnabled,
-      });
+      await update.mutateAsync({ id: profile.id, enabled });
+      if (!enabled && profile.id === selectedProfileId) onSelectedProfileRemoved();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Couldn't update profile");
     }
@@ -170,7 +149,7 @@ function ManageProfilesDialog({
     setActionError(null);
     try {
       await archive.mutateAsync(deleteTarget.id);
-      if (deleteTarget.id === selectedAgentId) onSelectedProfileRemoved();
+      if (deleteTarget.id === selectedProfileId) onSelectedProfileRemoved();
       setDeleteTarget(null);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Couldn't delete profile");
@@ -181,13 +160,13 @@ function ManageProfilesDialog({
     if (!editTarget) return;
     setActionError(null);
     try {
-      const updated = await edit.mutateAsync({
+      const updated = await update.mutateAsync({
         id: editTarget.id,
         name: input.name,
-        description: input.description,
-        instructions: input.instructions,
+        description: input.description ?? null,
+        instructions: input.instructions ?? "",
       });
-      if (editTarget.id === selectedAgentId) onSelectProfile(updated);
+      if (editTarget.id === selectedProfileId && updated.enabled) onSelectProfile(updated);
       setEditTarget(null);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Couldn't edit profile");
@@ -197,21 +176,24 @@ function ManageProfilesDialog({
   async function addProfile(input: AgentBundleInput) {
     setActionError(null);
     try {
-      const bundle = await buildAgentBundle(input);
-      const profile = await create.mutateAsync(bundle);
+      const profile = await create.mutateAsync({
+        name: input.name,
+        description: input.description ?? null,
+        instructions: input.instructions ?? "",
+        enabled: true,
+      });
       onSelectProfile(profile);
+      setCreateOpen(false);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Couldn't add profile");
     }
   }
 
-  const pendingId = updateAutoSelect.isPending
-    ? updateAutoSelect.variables?.id
+  const pendingId = update.isPending
+    ? update.variables?.id
     : archive.isPending
       ? archive.variables
-      : edit.isPending
-        ? edit.variables?.id
-        : undefined;
+      : undefined;
 
   return (
     <>
@@ -228,7 +210,7 @@ function ManageProfilesDialog({
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col sm:max-w-6xl"
+          className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col sm:max-w-4xl"
           data-testid="manage-profiles-dialog"
         >
           <DialogHeader>
@@ -284,28 +266,14 @@ function ManageProfilesDialog({
                   {rows.map((profile) => (
                     <div
                       key={profile.id}
-                      className="grid grid-cols-[minmax(12rem,2fr)_minmax(10rem,1fr)_minmax(10rem,1fr)_auto] items-center gap-4 p-4"
+                      className="grid grid-cols-[minmax(12rem,1fr)_auto] items-center gap-4 p-4"
                       data-testid={`manage-profile-row-${profile.id}`}
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate font-medium">{profile.display_name}</span>
-                          <Badge variant="outline">{profile.builtin ? "Built-in" : "Custom"}</Badge>
-                        </div>
+                        <span className="truncate font-medium">{profile.name}</span>
                         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                           {profile.description || "No description"}
                         </p>
-                      </div>
-                      <div className="text-sm">
-                        {profile.is_multi_agent
-                          ? `Multi-agent · ${profile.subagent_count ?? 0} sub-agents`
-                          : "Single agent"}
-                      </div>
-                      <div className="min-w-0 text-sm text-muted-foreground">
-                        <div className="truncate">
-                          Harness: {profile.default_harness || "Default"}
-                        </div>
-                        <div className="truncate">Model: {profile.default_model || "Default"}</div>
                       </div>
                       <div className="flex items-center gap-3">
                         {pendingId === profile.id && (
@@ -315,48 +283,35 @@ function ManageProfilesDialog({
                           />
                         )}
                         <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span>Auto Select</span>
+                          <span>Enabled</span>
                           <Switch
-                            checked={profile.auto_select_enabled === true}
-                            disabled={
-                              pendingId === profile.id ||
-                              (profile.auto_select_enabled === true && autoSelectCount === 1)
-                            }
+                            checked={profile.enabled}
+                            disabled={pendingId === profile.id}
                             onCheckedChange={(enabled) => void toggle(profile, enabled)}
-                            aria-label={`Auto Select ${profile.display_name}`}
-                            data-testid={`manage-profile-auto-select-${profile.id}`}
+                            aria-label={`Enabled ${profile.name}`}
+                            data-testid={`manage-profile-enabled-${profile.id}`}
                           />
                         </label>
-                        {!profile.builtin && (
-                          <>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setEditTarget(profile)}
-                              aria-label={`Edit ${profile.display_name}`}
-                              data-testid={`manage-profile-edit-${profile.id}`}
-                            >
-                              <PencilIcon className="size-4" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              disabled={managedProfiles.length === 1}
-                              title={
-                                managedProfiles.length === 1
-                                  ? "The last profile cannot be deleted"
-                                  : undefined
-                              }
-                              onClick={() => setDeleteTarget(profile)}
-                              aria-label={`Delete ${profile.display_name}`}
-                              data-testid={`manage-profile-delete-${profile.id}`}
-                            >
-                              <Trash2Icon className="size-4 text-destructive" />
-                            </Button>
-                          </>
-                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setEditTarget(profile)}
+                          aria-label={`Edit ${profile.name}`}
+                          data-testid={`manage-profile-edit-${profile.id}`}
+                        >
+                          <PencilIcon className="size-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(profile)}
+                          aria-label={`Delete ${profile.name}`}
+                          data-testid={`manage-profile-delete-${profile.id}`}
+                        >
+                          <Trash2Icon className="size-4 text-destructive" />
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -371,7 +326,7 @@ function ManageProfilesDialog({
           <DialogHeader>
             <DialogTitle>Delete profile?</DialogTitle>
             <DialogDescription>
-              {deleteTarget?.display_name} will be archived and removed from Profile selection.
+              {deleteTarget?.name} will be archived and removed from Profile selection.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -388,6 +343,7 @@ function ManageProfilesDialog({
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreate={(input) => void addProfile(input)}
+        showMcpServers={false}
         title="Add profile"
         submitLabel={create.isPending ? "Adding…" : "Add profile"}
       />
@@ -400,13 +356,13 @@ function ManageProfilesDialog({
             ? {
                 name: editTarget.name,
                 description: editTarget.description ?? undefined,
-                instructions: editTarget.instructions ?? undefined,
+                instructions: editTarget.instructions,
               }
             : undefined
         }
         showMcpServers={false}
         title="Edit profile"
-        submitLabel={edit.isPending ? "Saving…" : "Save changes"}
+        submitLabel={update.isPending ? "Saving…" : "Save changes"}
       />
     </>
   );

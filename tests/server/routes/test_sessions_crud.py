@@ -14,12 +14,12 @@ import httpx
 import pytest_asyncio
 
 from omnigent.db.utils import generate_agent_id
-from omnigent.profile_selection import PROMPT_PROFILE_LABEL_KEY
 from omnigent.server.routes import sessions as sessions_module
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
+from omnigent.stores.prompt_profile_store.sqlalchemy_store import SqlAlchemyPromptProfileStore
 
 
 @pytest_asyncio.fixture()
@@ -100,13 +100,12 @@ async def test_patch_prompt_profile_persists_for_omnigent_session(
     db_uri: str,
     session_id: str,
 ) -> None:
-    agent_store = SqlAlchemyAgentStore(db_uri)
-    profile_id = generate_agent_id()
-    agent_store.create(
+    profile_store = SqlAlchemyPromptProfileStore(db_uri)
+    profile_id = "12" * 16
+    profile_store.create(
         profile_id,
         name="focused",
-        bundle_location="test:///focused",
-        auto_select_enabled=True,
+        instructions="Focus on the selected task.",
     )
 
     with (
@@ -114,18 +113,14 @@ async def test_patch_prompt_profile_persists_for_omnigent_session(
             "omnigent.server.routes.sessions.routes_core._resolve_harness",
             return_value="openai-agents",
         ),
-        patch(
-            "omnigent.server.routes.sessions.routes_core.load_prompt_profile_instructions",
-            return_value="Focus on the selected task.",
-        ),
     ):
         response = await client.patch(
             f"/v1/sessions/{session_id}",
-            json={"profile_id": profile_id},
+            json={"prompt_profile": {"mode": "fixed", "profile_id": profile_id}},
         )
 
     assert response.status_code == 200
-    assert response.json()["labels"][PROMPT_PROFILE_LABEL_KEY] == profile_id
+    assert response.json()["prompt_profile"] == {"mode": "fixed", "profile_id": profile_id}
 
 
 async def test_patch_prompt_profile_accepts_per_turn_auto_select(
@@ -138,11 +133,11 @@ async def test_patch_prompt_profile_accepts_per_turn_auto_select(
     ):
         response = await client.patch(
             f"/v1/sessions/{session_id}",
-            json={"profile_id": "auto"},
+            json={"prompt_profile": {"mode": "auto"}},
         )
 
     assert response.status_code == 200
-    assert response.json()["labels"][PROMPT_PROFILE_LABEL_KEY] == "auto"
+    assert response.json()["prompt_profile"] == {"mode": "auto"}
 
 
 # ── DELETE /v1/sessions/{id} ────────────────────────────────────────

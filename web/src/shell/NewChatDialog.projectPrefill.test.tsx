@@ -47,6 +47,12 @@ vi.mock("@/hooks/useHosts", () => ({
   useInstallingHarnesses: vi.fn(() => new Set<string>()),
 }));
 vi.mock("@/hooks/useAvailableAgents", () => ({ useAvailableAgents: vi.fn() }));
+vi.mock("@/hooks/usePromptProfiles", () => ({
+  usePromptProfiles: () => ({ data: [] }),
+  useArchivePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/useHostFilesystem", () => ({
   useHostFilesystem: () => ({ data: undefined }),
   useCreateHostDirectory: () => ({ mutateAsync: vi.fn(), isPending: false }),

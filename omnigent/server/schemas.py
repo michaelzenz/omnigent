@@ -289,7 +289,6 @@ class AgentObject(BaseModel):
     terminals: list[str] = Field(default_factory=list)
     builtin: bool = False
     enabled: bool = True
-    auto_select_enabled: bool | None = None
     archived: bool = False
     is_multi_agent: bool = False
     subagent_count: int = 0
@@ -297,14 +296,8 @@ class AgentObject(BaseModel):
     default_model: str | None = None
 
 
-class AgentUpdateRequest(BaseModel):
-    """Profile-management update for a template agent."""
-
-    auto_select_enabled: bool
-
-
-class AgentProfileEditRequest(BaseModel):
-    """Editable prompt-profile fields; bundle capabilities remain unchanged."""
+class AgentEditRequest(BaseModel):
+    """Editable agent-bundle fields; bundle capabilities remain unchanged."""
 
     name: str = Field(min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=2000)
@@ -319,24 +312,82 @@ class AgentProfileEditRequest(BaseModel):
         return value
 
 
-class AgentAutoSelectRequest(BaseModel):
-    """User input used to choose an enabled profile."""
+class PromptProfileObject(BaseModel):
+    """API representation of a plain-text prompt profile."""
 
-    input: str = Field(min_length=1, max_length=20_000)
+    id: str
+    object: Literal["prompt_profile"] = "prompt_profile"
+    name: str
+    description: str | None = None
+    instructions: str
+    enabled: bool
+    archived: bool
+    created_at: int
+    updated_at: int | None = None
 
-    @field_validator("input")
+
+class PromptProfileCreateRequest(BaseModel):
+    """Fields accepted when creating a prompt profile."""
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str = Field(max_length=100_000)
+    enabled: bool = True
+
+    @field_validator("name")
     @classmethod
-    def validate_non_whitespace_input(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("input must not be blank")
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
         return value
 
 
-class AgentAutoSelectResponse(BaseModel):
-    """Selected profile returned by Auto Select."""
+class PromptProfilePatchRequest(BaseModel):
+    """Editable prompt profile fields."""
 
-    profile: AgentObject
-    reason: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str | None = Field(default=None, max_length=100_000)
+    enabled: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def reject_null_non_nullable_fields(self) -> PromptProfilePatchRequest:
+        for field in ("name", "instructions", "enabled"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} must not be null")
+        return self
+
+
+class PromptProfileAutoSelection(BaseModel):
+    """Select a prompt profile independently on every turn."""
+
+    mode: Literal["auto"]
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromptProfileFixedSelection(BaseModel):
+    """Pin a session to one prompt profile."""
+
+    mode: Literal["fixed"]
+    profile_id: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+
+PromptProfileSelection = Annotated[
+    PromptProfileAutoSelection | PromptProfileFixedSelection,
+    Field(discriminator="mode"),
+]
 
 
 # ── Session Policies ───────────────────────────────────────────
@@ -1459,6 +1510,7 @@ class SessionCreateRequest(BaseModel):
     cost_control_mode_override: str | None = None
     subagent_routing_override: str | None = None
     harness_override: str | None = None
+    prompt_profile: PromptProfileSelection | None = None
     smart_routing_message: str | None = None
 
     @model_validator(mode="after")
@@ -1964,6 +2016,7 @@ class SessionResponse(BaseModel):
     root_conversation_id: str | None = None
     llm_model: str | None = None
     harness: str | None = None
+    prompt_profile: PromptProfileSelection | None = None
     model_override: str | None = None
     cost_control_mode_override: str | None = None
     subagent_routing_override: str | None = None
@@ -2089,8 +2142,8 @@ class UpdateSessionRequest(BaseModel):
         owner-private, only the session owner may file it, and only into a
         project they own — the server verifies both. Independent of the
         legacy ``omni_project`` label, which is set via ``labels``.
-    :param profile_id: Durable prompt profile to apply on future Omnigent
-        harness turns. Omitted leaves the selection unchanged.
+    :param prompt_profile: Typed prompt-profile selection. Omitted leaves
+        selection unchanged; null clears it.
     """
 
     runner_id: str | None = None
@@ -2105,7 +2158,7 @@ class UpdateSessionRequest(BaseModel):
     terminal_launch_args: list[str] | None = None
     archived: bool | None = None
     project_id: str | None = None
-    profile_id: str | None = None
+    prompt_profile: PromptProfileSelection | None = None
     silent: bool = False
 
     model_config = ConfigDict(extra="forbid")
