@@ -12,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -41,6 +42,11 @@ import { userColor, userColorTint, userInitials } from "@/lib/userBadge";
 import { useNavigate, useParams } from "@/lib/routing";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
+import {
+  DEFAULT_STICKY_USER_MESSAGES,
+  readStickyUserMessagesEnabled,
+  subscribeStickyUserMessagesEnabled,
+} from "@/lib/stickyUserMessagesPreferences";
 import {
   Conversation,
   ConversationContent,
@@ -1786,6 +1792,11 @@ export function MainAgentSurface({
   wrapperLabel,
 }: MainAgentSurfaceProps) {
   const terminalFirst = useTerminalFirst();
+  const stickyUserMessagesEnabled = useSyncExternalStore(
+    subscribeStickyUserMessagesEnabled,
+    readStickyUserMessagesEnabled,
+    () => DEFAULT_STICKY_USER_MESSAGES,
+  );
   // The turn rail is a hover minimap with no mobile affordance (CSS-hidden
   // under `md`). Gate its MOUNT — not just its visibility — on the viewport so
   // mobile never mounts observers and history listeners for a rail it can't see.
@@ -1943,6 +1954,50 @@ export function MainAgentSurface({
   // ConversationScrollRefBridge so the pinned-but-unmasked JumpToTopButton can
   // read and drive the scroll.
   const [scroller, setScroller] = useState<ConversationScroller | null>(null);
+  const [stickyUserMessageId, setStickyUserMessageId] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const scrollEl = scroller?.el;
+    if (!scrollEl || !stickyUserMessagesEnabled) {
+      setStickyUserMessageId(null);
+      return;
+    }
+
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const rootStyles = window.getComputedStyle(document.documentElement);
+      const rootFontSize = Number.parseFloat(rootStyles.fontSize) || 16;
+      const safeTop = Number.parseFloat(rootStyles.getPropertyValue("--omnigent-inset-top")) || 0;
+      const roof = scrollEl.getBoundingClientRect().top + rootFontSize * 5 + safeTop;
+      const nextId = nearestCrossedUserMessageId(
+        Array.from(scrollEl.querySelectorAll<HTMLElement>("[data-user-message-id]"), (message) => ({
+          itemId: message.dataset.userMessageId,
+          top: message.getBoundingClientRect().top,
+        })),
+        roof,
+      );
+      setStickyUserMessageId((current) => (current === nextId ? current : nextId));
+    };
+    const schedule = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+
+    const resizeObserver = new ResizeObserver(schedule);
+    resizeObserver.observe(scrollEl);
+    for (const message of scrollEl.querySelectorAll<HTMLElement>("[data-user-message-id]")) {
+      resizeObserver.observe(message);
+    }
+    scrollEl.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    update();
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      scrollEl.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [scroller, stickyUserMessagesEnabled, streamBubbles]);
   // While the iOS edge-swipe is driving the sidebar drawer, make the transcript
   // ignore the finger so it doesn't scroll along with the drag. On iOS the page
   // is viewport-locked, so the transcript scrolls as an inner overflow:auto
@@ -2156,6 +2211,10 @@ export function MainAgentSurface({
                       <BubbleView
                         key={bubbleKey(bubble)}
                         bubble={bubble}
+                        isStickyUser={
+                          bubble.kind === "user" && bubble.itemId === stickyUserMessageId
+                        }
+                        stickyUserMessagesEnabled={stickyUserMessagesEnabled}
                         isLastAssistant={bubbleIndex === lastAssistantIndex}
                         showsWorking={showsWorking && bubbleIndex === lastAssistantIndex}
                       />
@@ -3068,6 +3127,18 @@ function scrollToUserTurnStart(itemId: string): void {
   message.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
+export function nearestCrossedUserMessageId(
+  messages: readonly { itemId?: string; top: number }[],
+  roof: number,
+): string | null {
+  let activeId: string | null = null;
+  for (const message of messages) {
+    if (message.top > roof + 1) break;
+    activeId = message.itemId ?? null;
+  }
+  return activeId;
+}
+
 /**
  * Playful labels the idle-but-busy indicator rotates through (one per
  * `ROTATE_MS`). Index 0 MUST stay "Working…": it's the label a fresh tick
@@ -3604,14 +3675,26 @@ function formatBubbleTimestamp(epochSeconds: number | undefined): string | null 
 export const BubbleView = memo(
   function BubbleView({
     bubble,
+    isStickyUser = false,
+    stickyUserMessagesEnabled = true,
     isLastAssistant = false,
     showsWorking = false,
   }: {
     bubble: Bubble;
+    isStickyUser?: boolean;
+    stickyUserMessagesEnabled?: boolean;
     isLastAssistant?: boolean;
     showsWorking?: boolean;
   }) {
-    if (bubble.kind === "user") return <UserBubble bubble={bubble} />;
+    if (bubble.kind === "user") {
+      return (
+        <UserBubble
+          bubble={bubble}
+          isSticky={isStickyUser && stickyUserMessagesEnabled}
+          stickyUserMessagesEnabled={stickyUserMessagesEnabled}
+        />
+      );
+    }
     if (bubble.kind === "compaction_loading") {
       return <CompactionLoadingIndicator />;
     }
@@ -3636,6 +3719,8 @@ export const BubbleView = memo(
     );
   },
   (prev, next) =>
+    (prev.isStickyUser ?? false) === (next.isStickyUser ?? false) &&
+    (prev.stickyUserMessagesEnabled ?? true) === (next.stickyUserMessagesEnabled ?? true) &&
     (prev.isLastAssistant ?? false) === (next.isLastAssistant ?? false) &&
     (prev.showsWorking ?? false) === (next.showsWorking ?? false) &&
     bubblesEqual(prev.bubble, next.bubble),
@@ -3687,7 +3772,15 @@ function useCopyMessage(getText: () => string): {
   return { isCopied, handleCopy };
 }
 
-function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
+function UserBubble({
+  bubble,
+  isSticky,
+  stickyUserMessagesEnabled,
+}: {
+  bubble: Extract<Bubble, { kind: "user" }>;
+  isSticky: boolean;
+  stickyUserMessagesEnabled: boolean;
+}) {
   const sessionId = useChatStore((s) => s.conversationId);
   const sessionHarness = useChatStore((s) => s.sessionHarness);
   const boundAgentId = useChatStore((s) => s.boundAgentId);
@@ -3695,12 +3788,21 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const canRewindSession = useContext(SessionRewindContext);
   const [editing, setEditing] = useState(false);
   const [editedText, setEditedText] = useState("");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const [rewinding, setRewinding] = useState(false);
   const [rewindError, setRewindError] = useState<string | null>(null);
   const [pointerOver, setPointerOver] = useState(false);
   const [keyboardFocus, setKeyboardFocus] = useState(false);
   const [suppressChromeUntilLeave, setSuppressChromeUntilLeave] = useState(false);
   const showTurnChrome = !suppressChromeUntilLeave && (pointerOver || keyboardFocus);
+  const sizeEditorToContent = useCallback((editor: HTMLTextAreaElement): void => {
+    editor.style.height = "auto";
+    editor.style.height = `${Math.min(Math.max(editor.scrollHeight, 96), window.innerHeight * 0.7)}px`;
+  }, []);
+  useLayoutEffect(() => {
+    if (!editing || !editorRef.current) return;
+    sizeEditorToContent(editorRef.current);
+  }, [editing, sizeEditorToContent]);
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
   // Plain-text path is the common case.
@@ -3766,11 +3868,28 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
     }
   };
 
+  const startEditing = (): void => {
+    if (!canEdit || !text) return;
+    setEditedText(text);
+    setRewindError(null);
+    setEditing(true);
+  };
+
   if (editing) {
     return (
-      <Message from="user" data-testid="message-bubble" data-role="user" className="max-w-[640px]">
+      <Message
+        from="user"
+        data-testid="message-bubble"
+        data-role="user"
+        data-user-message-id={bubble.itemId}
+        className={cn(
+          "max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))]",
+          isSticky &&
+            "sticky top-[calc(5rem+var(--omnigent-inset-top))] z-20 rounded-xl bg-background/95 shadow-sm backdrop-blur-md",
+        )}
+      >
         <form
-          className="ml-auto w-full max-w-[640px] rounded-xl border bg-muted p-3"
+          className="ml-auto w-full rounded-xl border bg-muted p-3"
           onSubmit={(event) => {
             event.preventDefault();
             void submitEdit();
@@ -3784,11 +3903,15 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
             </div>
           )}
           <textarea
+            ref={editorRef}
             autoFocus
             data-testid="rewind-message-editor"
             value={editedText}
             disabled={rewinding}
-            onChange={(event) => setEditedText(event.target.value)}
+            onChange={(event) => {
+              setEditedText(event.target.value);
+              sizeEditorToContent(event.currentTarget);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Escape" && !rewinding) setEditing(false);
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -3796,7 +3919,7 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
                 void submitEdit();
               }
             }}
-            className="min-h-24 w-full resize-y bg-transparent text-sm outline-none"
+            className="min-h-24 max-h-[70vh] w-full resize-y overflow-y-auto bg-transparent text-sm outline-none"
           />
           {rewindError && <p className="mt-2 text-xs text-destructive">{rewindError}</p>}
           <div className="mt-2 flex justify-end gap-2">
@@ -3846,6 +3969,7 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
       }}
       className={cn(
         "max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))] rounded-xl transition-[background-color,backdrop-filter]",
+        isSticky && "sticky top-[calc(5rem+var(--omnigent-inset-top))] z-20",
         showTurnChrome && "bg-background/95 shadow-sm backdrop-blur-md",
       )}
     >
@@ -3965,7 +4089,41 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
               without blank-line paragraph separators and expect their line
               breaks preserved. Empty text — e.g. an attachments-only message —
               renders nothing rather than an empty markdown block. */}
-            {text && <FilePathAwareMessageResponse breaks>{text}</FilePathAwareMessageResponse>}
+            {text && (
+              <div
+                data-testid="editable-user-message"
+                role={canEdit ? "button" : undefined}
+                tabIndex={canEdit ? 0 : undefined}
+                aria-label={canEdit ? "Edit sent message" : undefined}
+                className={cn(
+                  canEdit &&
+                    "relative cursor-text rounded-sm pr-5 focus-visible:outline-2 focus-visible:outline-ring",
+                )}
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("a, button")) return;
+                  startEditing();
+                }}
+                onKeyDown={(event) => {
+                  if (!canEdit || (event.key !== "Enter" && event.key !== " ")) return;
+                  event.preventDefault();
+                  startEditing();
+                }}
+              >
+                <div
+                  data-testid="user-message-text"
+                  className={cn(canEdit && stickyUserMessagesEnabled && "line-clamp-6")}
+                >
+                  <FilePathAwareMessageResponse breaks>{text}</FilePathAwareMessageResponse>
+                </div>
+                {canEdit && (
+                  <PencilIcon
+                    data-testid="sent-message-edit-icon"
+                    aria-hidden
+                    className="pointer-events-none absolute right-0 bottom-0 size-3 text-muted-foreground/70"
+                  />
+                )}
+              </div>
+            )}
           </MessageContent>
         </div>
         {/* Skip an empty row when there is neither a timestamp nor a copy
@@ -4000,19 +4158,6 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
             )}
             {text && (
               <MessageActions>
-                {canEdit && (
-                  <MessageAction
-                    tooltip="Edit and rewind"
-                    size="icon-xxs"
-                    onClick={() => {
-                      setEditedText(text);
-                      setRewindError(null);
-                      setEditing(true);
-                    }}
-                  >
-                    <PencilIcon size={14} />
-                  </MessageAction>
-                )}
                 <MessageAction tooltip="Copy" size="icon-xxs" onClick={handleCopy}>
                   {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                 </MessageAction>

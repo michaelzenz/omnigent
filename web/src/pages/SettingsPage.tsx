@@ -156,6 +156,12 @@ import {
   writeSendMessageShortcut,
 } from "@/lib/sendMessagePreferences";
 import {
+  DEFAULT_STICKY_USER_MESSAGES,
+  readStickyUserMessagesEnabled,
+  STICKY_USER_MESSAGES_STORAGE_KEY,
+  writeStickyUserMessagesEnabled,
+} from "@/lib/stickyUserMessagesPreferences";
+import {
   applyThemePalette,
   DEFAULT_PALETTE,
   isThemeSelection,
@@ -847,6 +853,35 @@ function HideUnconfiguredHarnessesControl() {
   );
 }
 
+function StickyUserMessagesControl() {
+  const [enabled, setEnabled] = useState(() => readStickyUserMessagesEnabled());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeStickyUserMessagesEnabled(next);
+  }, []);
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Sticky user messages
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Collapse sent messages to six lines and pin the nearest crossed turn at the top. Click to
+          edit remains available when this is off.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="sticky-user-messages-toggle"
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
+}
+
 function AppearanceSection() {
   // Embedded: the host owns light/dark, so the Mode and Color theme pickers
   // would be no-ops — hide them and say so (matching ThemeModeMenu). Terminal
@@ -871,6 +906,7 @@ function AppearanceSection() {
     writeWorkspacePanelDefault(WORKSPACE_PANEL_DEFAULT);
 
     writeHideUnconfiguredHarnesses(DEFAULT_HIDE_UNCONFIGURED_HARNESSES);
+    writeStickyUserMessagesEnabled(DEFAULT_STICKY_USER_MESSAGES);
 
     applyDesktopUiFontSize(UI_FONT_SIZE_DEFAULT);
     applyUiFontFamily(UI_FONT_FAMILY_DEFAULT);
@@ -894,6 +930,7 @@ function AppearanceSection() {
           "omnigent:custom-theme",
           "omnigent:default-workspace-panel",
           "omnigent:hide-unconfigured-harnesses",
+          STICKY_USER_MESSAGES_STORAGE_KEY,
         ]) {
           window.localStorage.removeItem(key);
         }
@@ -937,6 +974,8 @@ function AppearanceSection() {
         <WorkspacePanelDefaultControl />
 
         <HideUnconfiguredHarnessesControl />
+
+        <StickyUserMessagesControl />
 
         <UiFontSizeControl />
 

@@ -280,6 +280,19 @@ describe("SettingsPage", () => {
     expect(mocks.setTheme).toHaveBeenCalledWith("dark");
   });
 
+  it("toggles sticky user message presentation without disabling editing", () => {
+    renderPage("/settings/appearance");
+    const toggle = screen.getByTestId("sticky-user-messages-toggle");
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(/Click to edit remains available when this is off/),
+    ).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(localStorage.getItem("omnigent:sticky-user-messages")).toBe("false");
+  });
+
   it("renders the Terminal theme radiogroup with auto selected by default", () => {
     renderPage("/settings/appearance");
     expect(screen.getByRole("radiogroup", { name: "Terminal theme" })).toBeInTheDocument();
@@ -471,6 +484,7 @@ describe("SettingsPage", () => {
     });
     fireEvent.click(screen.getByTestId("workspace-panel-default-collapsed"));
     fireEvent.click(screen.getByTestId("hide-unconfigured-harnesses-toggle"));
+    fireEvent.click(screen.getByTestId("sticky-user-messages-toggle"));
     fireEvent.click(screen.getByTestId("ui-font-size-inc"));
     fireEvent.click(screen.getByTestId("ui-font-size-inc"));
     fireEvent.change(screen.getByTestId("ui-font-family-input") as HTMLInputElement, {
@@ -518,6 +532,10 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("hide-unconfigured-harnesses-toggle")).toHaveAttribute(
       "aria-checked",
       "false",
+    );
+    expect(screen.getByTestId("sticky-user-messages-toggle")).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
   });
 
