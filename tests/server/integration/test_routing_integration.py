@@ -26,6 +26,7 @@ from omnigent.server.routes._sessions.common import get_server_host_registry
 from omnigent.server.schemas import SessionEventInput
 from omnigent.server.smart_routing import RoutingResult
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.model_settings_store.sqlalchemy_store import SqlAlchemyModelSettingsStore
 from tests.server.helpers import (
     FakeCaps,
     FakeRoutingClient,
@@ -93,6 +94,73 @@ def _routing_decisions(conv_store: SqlAlchemyConversationStore, session_id: str)
         for item in conv_store.list_items(session_id).data
         if getattr(item, "type", None) == "routing_decision"
     ]
+
+
+@pytest.mark.parametrize(
+    ("cadence", "expected_calls"),
+    [("per_turn", 2), ("first_turn_only", 1)],
+)
+async def test_omnigent_routing_cadence_controls_follow_up_turns(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    cadence: str,
+    expected_calls: int,
+) -> None:
+    agent = await create_test_agent(
+        client,
+        name=f"routing-cadence-{cadence}",
+        executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
+    )
+    created = await client.post(
+        "/v1/sessions",
+        json={"agent_id": agent["id"], "cost_control_mode_override": "on"},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    settings_store = SqlAlchemyModelSettingsStore(db_uri)
+    settings_store.update(
+        smart_routing_cadence=cadence,
+        update_smart_routing_cadence=True,
+    )
+    router = FakeRoutingClient(
+        RoutingResult(model=GPT_MODEL, rationale="turn fit", harness="openai-agents")
+    )
+    body = SessionEventInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": [{"type": "input_text", "text": "route this turn"}],
+            "execution_context": {
+                "profile": "general-agent",
+                "harness": "omnigent",
+                "model": None,
+            },
+        },
+    )
+
+    with patch("omnigent.runtime._globals._caps", new=FakeCaps(routing_client=router)):
+        async with echo_runner_client() as runner_client:
+            for _ in range(2):
+                conv = conv_store.get_conversation(session_id)
+                assert conv is not None
+                await orchestration_module._forward_event_to_runner(
+                    session_id,
+                    conv,
+                    body,
+                    conv_store,
+                    runner_client,
+                    model_settings_store=settings_store,
+                )
+
+    assert len(router.calls) == expected_calls
+    assert len(_routing_decisions(conv_store, session_id)) == expected_calls
+    messages = [
+        item
+        for item in conv_store.list_items(session_id).data
+        if getattr(item, "type", None) == "message"
+    ]
+    assert [message.data.execution_context.model for message in messages] == [GPT_MODEL, GPT_MODEL]
 
 
 # ── 1. Child spawn: the router wins over ``args.model`` ─────────────

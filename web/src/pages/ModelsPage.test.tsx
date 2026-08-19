@@ -32,6 +32,9 @@ describe("ModelsPage", () => {
         ],
         omnigentModels: ["databricks-glm-5-2"],
         policyModel: null,
+        smartRoutingDecisionModel: "databricks-gpt-5-4",
+        smartRoutingPrompt: "",
+        smartRoutingCadence: "per_turn",
         error: null,
       },
       isLoading: false,
@@ -41,7 +44,11 @@ describe("ModelsPage", () => {
     } as never);
 
     render(<ModelsPage />);
+    expect(
+      screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+    ).toEqual(["Smart Routing", "Omnigent harness"]);
     expect(screen.getAllByRole("switch").map((item) => item.getAttribute("aria-label"))).toEqual([
+      "Route every Omnigent turn",
       "Offer GLM 5 2 in Omnigent",
       "Offer GPT 5 4 in Omnigent",
     ]);
@@ -59,6 +66,9 @@ describe("ModelsPage", () => {
         models: [],
         omnigentModels: [],
         policyModel: null,
+        smartRoutingDecisionModel: "databricks-gpt-5-6-luna",
+        smartRoutingPrompt: "",
+        smartRoutingCadence: "per_turn",
         error: null,
       },
       isLoading: false,
@@ -70,5 +80,39 @@ describe("ModelsPage", () => {
     expect(
       screen.getByText("Connect to a Databricks workspace to discover and configure models."),
     ).toBeInTheDocument();
+  });
+
+  it("persists Smart Routing cadence and custom guidance", () => {
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: true,
+        profile: "ai-devtools-prod",
+        models: [{ id: "databricks-gpt-5-6-luna", displayName: "GPT 5.6 Luna" }],
+        omnigentModels: [],
+        policyModel: null,
+        smartRoutingDecisionModel: "databricks-gpt-5-6-luna",
+        smartRoutingPrompt: "",
+        smartRoutingCadence: "per_turn",
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<ModelsPage />);
+    expect(screen.getByText(/Global routing settings for the Omnigent harness only/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Route every Omnigent turn" }));
+    expect(mutate).toHaveBeenCalledWith({ smartRoutingCadence: "first_turn_only" });
+
+    fireEvent.change(screen.getByTestId("smart-routing-prompt"), {
+      target: { value: "Prefer low-latency models." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save guidance" }));
+    expect(mutate).toHaveBeenCalledWith({
+      smartRoutingPrompt: "Prefer low-latency models.",
+    });
   });
 });

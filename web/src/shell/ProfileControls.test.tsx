@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/hooks/useProfiles", () => ({
   useProfiles: () => ({ data: mocks.rows, isLoading: false, isError: false }),
-  useUpdateProfileEnabled: () => ({
+  useUpdateProfileAutoSelect: () => ({
     mutateAsync: mocks.update,
     isPending: mocks.updatePending,
     variables: mocks.updateVariables,
@@ -56,6 +56,7 @@ function profile(overrides: Partial<AvailableAgent> = {}): AvailableAgent {
     skills: [],
     builtin: false,
     enabled: true,
+    auto_select_enabled: true,
     archived: false,
     is_multi_agent: false,
     subagent_count: 0,
@@ -120,7 +121,7 @@ describe("ProfileControls", () => {
 
   it("toggles and deletes custom profiles from the management board", async () => {
     mocks.rows = [profile(), profile({ id: "ag_peer", name: "peer", display_name: "Peer" })];
-    mocks.update.mockResolvedValue(profile({ enabled: false }));
+    mocks.update.mockResolvedValue(profile({ auto_select_enabled: false }));
     mocks.archive.mockResolvedValue(undefined);
     const onSelect = vi.fn();
     render(
@@ -136,11 +137,14 @@ describe("ProfileControls", () => {
 
     fireEvent.click(screen.getByTestId("new-chat-landing-profile-gear"));
     expect(screen.getByRole("heading", { name: "Manage profiles" })).toBeTruthy();
-    fireEvent.click(screen.getByTestId("manage-profile-enabled-ag_profile"));
+    fireEvent.click(screen.getByTestId("manage-profile-auto-select-ag_profile"));
     await waitFor(() =>
-      expect(mocks.update).toHaveBeenCalledWith({ id: "ag_profile", enabled: false }),
+      expect(mocks.update).toHaveBeenCalledWith({
+        id: "ag_profile",
+        auto_select_enabled: false,
+      }),
     );
-    expect(onSelect).toHaveBeenCalledWith("auto");
+    expect(onSelect).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("manage-profile-delete-ag_profile"));
     expect(screen.getByTestId("manage-profile-delete-confirm")).toBeTruthy();
@@ -162,7 +166,7 @@ describe("ProfileControls", () => {
     );
 
     fireEvent.click(screen.getByTestId("new-chat-landing-profile-gear"));
-    expect(screen.getByTestId("manage-profile-enabled-ag_profile")).toBeDisabled();
+    expect(screen.getByTestId("manage-profile-auto-select-ag_profile")).toBeDisabled();
     expect(screen.getByTestId("manage-profile-delete-ag_profile")).toBeDisabled();
   });
 

@@ -1598,6 +1598,7 @@ def create_app(
     app.state.host_registry = host_registry
     app.state.host_store = host_store
     app.state.agent_store = agent_store
+    app.state.model_settings_store = model_settings_store
     app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
     app.state.feature_flags = resolved_feature_flags

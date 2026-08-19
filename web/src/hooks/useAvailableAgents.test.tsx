@@ -90,6 +90,29 @@ describe("useAvailableAgents", () => {
     expect(urls).toContain(SCAN_URL);
   });
 
+  it("preserves profile Auto Select metadata from the catalog", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "ag_profile",
+            name: "research",
+            harness: "omnigent",
+            auto_select_enabled: true,
+          },
+        ],
+        has_more: false,
+      }),
+      [SCAN_URL]: EMPTY_SCAN,
+    });
+
+    const { result } = renderHook(() => useAvailableAgents(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.[0]?.auto_select_enabled).toBe(true);
+  });
+
   it("paginates built-ins so defaults pushed past fork rows are still listed", async () => {
     routeFetch({
       [BUILTINS_URL]: mockResponse({

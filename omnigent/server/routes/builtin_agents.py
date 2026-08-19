@@ -55,6 +55,7 @@ from omnigent.stores.artifact_store import ArtifactStore
 
 _logger = logging.getLogger(__name__)
 
+
 def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
     """
     Convert a runtime Agent entity to an API-layer AgentObject.
@@ -145,6 +146,7 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         # upload supersede the latter.
         builtin=agent.session_id is None and agent.id == builtin_agent_id(agent.name),
         enabled=agent.enabled,
+        auto_select_enabled=agent.auto_select_enabled,
         archived=agent.archived,
         is_multi_agent=is_multi_agent,
         subagent_count=subagent_count,
@@ -248,6 +250,7 @@ def create_builtin_agents_router(
                 spec.name,
                 location,
                 spec.description,
+                auto_select_enabled=True,
             )
         except IntegrityError as exc:
             await asyncio.to_thread(artifact_store.delete, location)
@@ -278,9 +281,9 @@ def create_builtin_agents_router(
         existing = await asyncio.to_thread(agent_store.get, agent_id)
         if existing is None or existing.session_id is not None:
             raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
-        if existing.archived and body.enabled:
-            raise OmnigentError("Archived profiles cannot be enabled.", code=ErrorCode.CONFLICT)
-        if not body.enabled and is_prompt_profile(existing):
+        if not is_prompt_profile(existing) or existing.archived:
+            raise OmnigentError("Profile not found", code=ErrorCode.NOT_FOUND)
+        if not body.auto_select_enabled:
             enabled_profiles = await asyncio.to_thread(
                 list_prompt_profiles,
                 agent_store,
@@ -291,7 +294,11 @@ def create_builtin_agents_router(
                     "The last enabled profile cannot be disabled.",
                     code=ErrorCode.CONFLICT,
                 )
-        updated = await asyncio.to_thread(agent_store.set_enabled, agent_id, body.enabled)
+        updated = await asyncio.to_thread(
+            agent_store.set_auto_select_enabled,
+            agent_id,
+            body.auto_select_enabled,
+        )
         if updated is None:
             raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
         return _to_agent_object(updated, agent_cache)

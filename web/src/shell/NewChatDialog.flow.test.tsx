@@ -166,7 +166,12 @@ function setAgents(agents: AvailableAgent[]): void {
     candidate.name !== "omnigent" && !candidate.name.endsWith("-native-ui");
   const normalized = agents.map((candidate) =>
     isProfile(candidate)
-      ? { ...candidate, builtin: candidate.builtin ?? true, enabled: candidate.enabled ?? true }
+      ? {
+          ...candidate,
+          builtin: candidate.builtin ?? true,
+          enabled: candidate.enabled ?? true,
+          auto_select_enabled: candidate.auto_select_enabled ?? true,
+        }
       : candidate,
   );
   const data =

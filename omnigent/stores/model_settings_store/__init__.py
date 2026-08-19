@@ -8,10 +8,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ModelSettings:
-    """Configured harness models and policy-checking model."""
+    """Configured deployment-wide model and routing settings."""
 
     harness_models: dict[str, list[str]]
     policy_model: str | None
+    smart_routing_decision_model: str | None
+    smart_routing_prompt: str | None
+    smart_routing_cadence: str
 
 
 class ModelSettingsStore(ABC):
@@ -32,6 +35,12 @@ class ModelSettingsStore(ABC):
         enabled_models: list[str] | None = None,
         policy_model: str | None = None,
         update_policy_model: bool = False,
+        smart_routing_decision_model: str | None = None,
+        update_smart_routing_decision_model: bool = False,
+        smart_routing_prompt: str | None = None,
+        update_smart_routing_prompt: bool = False,
+        smart_routing_cadence: str | None = None,
+        update_smart_routing_cadence: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         """Update supplied fields and return the resulting settings."""

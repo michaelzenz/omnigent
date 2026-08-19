@@ -98,9 +98,7 @@ def test_profile_state_filters_and_archives(agent_store: SqlAlchemyAgentStore) -
     assert disabled is not None
     assert disabled.enabled is False
     assert agent.id not in {row.id for row in agent_store.list(limit=100).data}
-    assert agent.id in {
-        row.id for row in agent_store.list(limit=100, include_disabled=True).data
-    }
+    assert agent.id in {row.id for row in agent_store.list(limit=100, include_disabled=True).data}
 
     archived = agent_store.archive(agent.id)
     assert archived is not None
@@ -327,6 +325,27 @@ def test_create_agent_has_version_1(agent_store: SqlAlchemyAgentStore) -> None:
     )
     assert agent.version == 1
     assert agent.updated_at is None
+
+
+def test_profile_auto_select_flag_is_explicit(agent_store: SqlAlchemyAgentStore) -> None:
+    profile = agent_store.create(
+        agent_id="4c1917f10e098e91d3e2fe6bd30104ef",
+        name="profile",
+        bundle_location="ag_profile/hash",
+        auto_select_enabled=True,
+    )
+    ordinary = agent_store.create(
+        agent_id="5c1917f10e098e91d3e2fe6bd30104ef",
+        name="ordinary",
+        bundle_location="ag_ordinary/hash",
+    )
+
+    assert profile.auto_select_enabled is True
+    assert ordinary.auto_select_enabled is None
+    updated = agent_store.set_auto_select_enabled(profile.id, False)
+    assert updated is not None
+    assert updated.auto_select_enabled is False
+    assert agent_store.set_auto_select_enabled(ordinary.id, True) is None
 
 
 # ── get_names tests ───────────────────────────────────────────────

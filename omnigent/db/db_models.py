@@ -294,6 +294,9 @@ class SqlAgent(OmnigentBase):
     # Hidden from the public GET /v1/agents catalog so they don't clutter the
     # New Chat picker; lookups by id/name are unaffected.
     is_role: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # NULL means this agent is not a prompt profile. Profiles store whether
+    # Auto Select may choose them.
+    auto_select_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
@@ -1276,7 +1279,7 @@ class SqlPolicy(OmnigentBase):
 
 
 class SqlModelSettings(OmnigentBase):
-    """Deployment-wide model picker and policy-model settings."""
+    """Deployment-wide model and routing settings."""
 
     __tablename__ = "model_settings"
 
@@ -1288,10 +1291,31 @@ class SqlModelSettings(OmnigentBase):
     )
     harness_models: Mapped[str] = mapped_column(Text)
     policy_model: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    smart_routing_decision_model: Mapped[str | None] = mapped_column(
+        String(300),
+        nullable=True,
+        server_default="databricks-gpt-5-6-luna",
+    )
+    smart_routing_prompt: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        server_default="",
+    )
+    smart_routing_cadence: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="per_turn",
+    )
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    __table_args__ = (CheckConstraint("id = 1", name="ck_model_settings_singleton"),)
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_model_settings_singleton"),
+        CheckConstraint(
+            "smart_routing_cadence IN ('per_turn', 'first_turn_only')",
+            name="ck_model_settings_smart_routing_cadence",
+        ),
+    )
 
 
 class SqlHost(OmnigentBase):

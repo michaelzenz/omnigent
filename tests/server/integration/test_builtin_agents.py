@@ -62,6 +62,7 @@ def _register_builtin_agent(
     name: str,
     bundle: bytes,
     description: str | None = None,
+    auto_select_enabled: bool | None = None,
 ) -> None:
     """Store a bundle and register a built-in (``session_id IS NULL``)
     agent pointing at it, mirroring the server's startup seeding.
@@ -77,7 +78,13 @@ def _register_builtin_agent(
     """
     bundle_key = f"{agent_id}/{hashlib.sha256(bundle).hexdigest()}"
     artifact_store.put(bundle_key, bundle)
-    agent_store.create(agent_id, name, bundle_key, description=description)
+    agent_store.create(
+        agent_id,
+        name,
+        bundle_key,
+        description=description,
+        auto_select_enabled=auto_select_enabled,
+    )
 
 
 @pytest.fixture()
@@ -499,22 +506,25 @@ async def test_catalog_description_prefers_stored_row_over_spec(
     assert entry["description"] == "Curated catalog label."
 
 
-async def test_disabled_profiles_only_appear_in_management_listing(
+async def test_auto_select_disabled_profiles_remain_manually_selectable(
     agent_store: SqlAlchemyAgentStore,
     agents_client: httpx.AsyncClient,
 ) -> None:
-    agent = agent_store.create("aa" * 16, "toggle-me", "aa/bundle")
-    agent_store.create("ab" * 16, "keep-enabled", "ab/bundle")
+    agent = agent_store.create("aa" * 16, "toggle-me", "aa/bundle", auto_select_enabled=True)
+    agent_store.create("ab" * 16, "keep-enabled", "ab/bundle", auto_select_enabled=True)
 
-    patched = await agents_client.patch(f"/v1/agents/{agent.id}", json={"enabled": False})
+    patched = await agents_client.patch(
+        f"/v1/agents/{agent.id}", json={"auto_select_enabled": False}
+    )
     assert patched.status_code == 200, patched.text
-    assert patched.json()["enabled"] is False
+    assert patched.json()["auto_select_enabled"] is False
 
     visible = await agents_client.get("/v1/agents")
-    assert agent.id not in {row["id"] for row in visible.json()["data"]}
+    assert agent.id in {row["id"] for row in visible.json()["data"]}
     managed = await agents_client.get("/v1/agents?include_disabled=true")
     row = next(row for row in managed.json()["data"] if row["id"] == agent.id)
-    assert row["enabled"] is False
+    assert row["enabled"] is True
+    assert row["auto_select_enabled"] is False
     assert row["archived"] is False
 
 
@@ -535,8 +545,8 @@ async def test_custom_delete_archives_profile(
     agent_store: SqlAlchemyAgentStore,
     agents_client: httpx.AsyncClient,
 ) -> None:
-    agent = agent_store.create("bb" * 16, "custom", "custom/bundle")
-    agent_store.create("bc" * 16, "remaining", "remaining/bundle")
+    agent = agent_store.create("bb" * 16, "custom", "custom/bundle", auto_select_enabled=True)
+    agent_store.create("bc" * 16, "remaining", "remaining/bundle", auto_select_enabled=True)
 
     response = await agents_client.delete(f"/v1/agents/{agent.id}")
 
@@ -551,7 +561,7 @@ async def test_last_custom_profile_cannot_be_deleted(
     agent_store: SqlAlchemyAgentStore,
     agents_client: httpx.AsyncClient,
 ) -> None:
-    agent = agent_store.create("bd" * 16, "only-profile", "only/bundle")
+    agent = agent_store.create("bd" * 16, "only-profile", "only/bundle", auto_select_enabled=True)
 
     response = await agents_client.delete(f"/v1/agents/{agent.id}")
 
@@ -667,11 +677,18 @@ async def test_auto_select_uses_only_enabled_profiles_and_returns_metadata(
             description="Delegates work",
             sub_agents=[{"name": "worker"}],
         ),
+        auto_select_enabled=True,
     )
-    disabled = agent_store.create("dd" * 16, "disabled", "disabled/bundle")
-    agent_store.set_enabled(disabled.id, False)
+    agent_store.create(
+        "dd" * 16,
+        "disabled",
+        "disabled/bundle",
+        auto_select_enabled=False,
+    )
     agent_store.create("ee" * 16, "role-only", "role/bundle", is_role=True)
-    archived = agent_store.create("ff" * 16, "archived", "archived/bundle")
+    archived = agent_store.create(
+        "ff" * 16, "archived", "archived/bundle", auto_select_enabled=True
+    )
     agent_store.archive(archived.id)
     agent_store.create("11" * 16, "claude-native-ui", "native/bundle")
     agent_store.create("22" * 16, "kimi", "hidden/bundle")
@@ -708,7 +725,7 @@ async def test_auto_select_rejects_unknown_llm_selection(
     agents_client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent_store.create("12" * 16, "candidate", "candidate/bundle")
+    agent_store.create("12" * 16, "candidate", "candidate/bundle", auto_select_enabled=True)
     fake = _FakeAutoSelectLLM("not-a-candidate")
     monkeypatch.setattr(
         "omnigent.profile_selection.get_caps",
@@ -733,7 +750,7 @@ async def test_auto_select_rejects_malformed_llm_output(
     agents_client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent_store.create("23" * 16, "candidate", "candidate/bundle")
+    agent_store.create("23" * 16, "candidate", "candidate/bundle", auto_select_enabled=True)
     monkeypatch.setattr(
         "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
@@ -757,7 +774,7 @@ async def test_auto_select_unavailable_without_server_ai(
     agents_client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent_store.create("34" * 16, "candidate", "candidate/bundle")
+    agent_store.create("34" * 16, "candidate", "candidate/bundle", auto_select_enabled=True)
     monkeypatch.setattr(
         "omnigent.profile_selection.get_caps",
         lambda: SimpleNamespace(llm=None),

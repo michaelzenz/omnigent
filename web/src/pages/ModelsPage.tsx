@@ -1,10 +1,142 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useAdminModelSettings, useUpdateAdminModelSettings } from "@/hooks/useModelSettings";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  type AdminModelSettings,
+  useAdminModelSettings,
+  useUpdateAdminModelSettings,
+} from "@/hooks/useModelSettings";
+
+const ROUTING_CONFIG_FALLBACK = "__routing_config_fallback__";
+
+function SmartRoutingSettings({
+  data,
+  update,
+}: {
+  data: AdminModelSettings;
+  update: ReturnType<typeof useUpdateAdminModelSettings>;
+}) {
+  const [prompt, setPrompt] = useState(data.smartRoutingPrompt ?? "");
+
+  useEffect(() => {
+    setPrompt(data.smartRoutingPrompt ?? "");
+  }, [data.smartRoutingPrompt]);
+
+  const configuredDecisionModel = data.smartRoutingDecisionModel;
+  const decisionModels =
+    configuredDecisionModel && !data.models.some((model) => model.id === configuredDecisionModel)
+      ? [{ id: configuredDecisionModel, displayName: configuredDecisionModel }, ...data.models]
+      : data.models;
+  const promptChanged = prompt !== (data.smartRoutingPrompt ?? "");
+
+  return (
+    <section className="rounded-lg border border-border bg-background">
+      <div className="border-b border-border p-4">
+        <h2 className="text-ui font-medium">Smart Routing</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Global routing settings for the Omnigent harness only. They do not change native Claude or
+          Codex sessions.
+        </p>
+      </div>
+      <div className="space-y-5 p-4">
+        <div>
+          <label className="text-ui font-medium" htmlFor="smart-routing-decision-model">
+            Decision model
+          </label>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Model used to choose the best model for each routed request.
+          </p>
+          <Select
+            value={configuredDecisionModel ?? ROUTING_CONFIG_FALLBACK}
+            disabled={update.isPending}
+            onValueChange={(value) =>
+              update.mutate({
+                smartRoutingDecisionModel: value === ROUTING_CONFIG_FALLBACK ? null : value,
+              })
+            }
+          >
+            <SelectTrigger
+              id="smart-routing-decision-model"
+              className="mt-2 max-w-xl"
+              data-testid="smart-routing-decision-model"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ROUTING_CONFIG_FALLBACK}>Use routing config fallback</SelectItem>
+              {decisionModels.map((model) => (
+                <SelectItem key={model.id} value={model.id}>
+                  {model.displayName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-ui font-medium">Route every turn</div>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              When off, Smart Routing chooses a model only for the first turn.
+            </p>
+          </div>
+          <Switch
+            data-testid="smart-routing-per-turn"
+            aria-label="Route every Omnigent turn"
+            checked={data.smartRoutingCadence === "per_turn"}
+            disabled={update.isPending}
+            onCheckedChange={(checked) =>
+              update.mutate({
+                smartRoutingCadence: checked ? "per_turn" : "first_turn_only",
+              })
+            }
+          />
+        </div>
+
+        <div>
+          <label className="text-ui font-medium" htmlFor="smart-routing-prompt">
+            Routing guidance
+          </label>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Added after the user request. Leave empty to balance capability, latency, and cost.
+          </p>
+          <Textarea
+            id="smart-routing-prompt"
+            data-testid="smart-routing-prompt"
+            className="mt-2 min-h-32 max-w-3xl"
+            maxLength={20_000}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Optional guidance for the routing decision…"
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <Button
+              size="sm"
+              disabled={!promptChanged || update.isPending}
+              onClick={() => update.mutate({ smartRoutingPrompt: prompt })}
+            >
+              Save guidance
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {prompt.length.toLocaleString()} / 20,000
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function ModelsPage() {
   const settings = useAdminModelSettings();
@@ -48,12 +180,14 @@ export function ModelsPage() {
         </Button>
       </div>
 
+      {data && <SmartRoutingSettings data={data} update={update} />}
+
       {settings.isLoading ? (
-        <p className="text-ui text-muted-foreground">Loading models…</p>
+        <p className="mt-6 text-ui text-muted-foreground">Loading models…</p>
       ) : !data?.databricksConnected ? (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-4 py-3"
+          className="mt-6 flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-4 py-3"
         >
           <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div>
@@ -65,7 +199,7 @@ export function ModelsPage() {
           </div>
         </div>
       ) : (
-        <section className="rounded-lg border border-border bg-background">
+        <section className="mt-6 rounded-lg border border-border bg-background">
           <div className="border-b border-border p-4">
             <h2 className="text-ui font-medium">Omnigent harness</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">

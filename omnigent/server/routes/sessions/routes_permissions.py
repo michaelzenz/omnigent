@@ -467,6 +467,7 @@ def _to_agent_object(agent: Agent, cache: AgentCache | None) -> AgentObject:
         skills=skills,
         terminals=terminals,
         enabled=agent.enabled,
+        auto_select_enabled=agent.auto_select_enabled,
         archived=agent.archived,
         is_multi_agent=is_multi_agent,
         subagent_count=subagent_count,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Request
@@ -32,6 +32,35 @@ class UpdateModelSettingsRequest(BaseModel):
 
     omnigent_models: list[str] | None = Field(default=None, max_length=500)
     policy_model: str | None = Field(default=None, max_length=300)
+    smart_routing_decision_model: str | None = Field(default=None, max_length=300)
+    smart_routing_prompt: str | None = Field(default=None, max_length=20_000)
+    smart_routing_cadence: Literal["per_turn", "first_turn_only"] = "per_turn"
+
+
+class AdminModelSettingsResponse(BaseModel):
+    """Admin model settings and available Databricks models."""
+
+    object: Literal["model_settings"]
+    databricks_connected: bool
+    profile: str | None
+    models: list[dict[str, Any]]
+    omnigent_models: list[str]
+    policy_model: str | None
+    smart_routing_decision_model: str | None
+    smart_routing_prompt: str | None
+    smart_routing_cadence: Literal["per_turn", "first_turn_only"]
+    error: str | None
+
+
+class UpdatedModelSettingsResponse(BaseModel):
+    """Persisted model settings returned by PATCH."""
+
+    object: Literal["model_settings"]
+    omnigent_models: list[str]
+    policy_model: str | None
+    smart_routing_decision_model: str | None
+    smart_routing_prompt: str | None
+    smart_routing_cadence: Literal["per_turn", "first_turn_only"]
 
 
 def _databricks_profile(config: dict[str, Any]) -> str | None:
@@ -100,10 +129,7 @@ def configured_omnigent_model_options(
     """Return the configured public picker rows for the Omnigent harness."""
     model_ids = model_settings_store.get().harness_models.get(OMNIGENT_HARNESS, [])
     refresh_omnigent_model_catalog(model_ids)
-    return [
-        _model_option(model_id)
-        for model_id in model_ids
-    ]
+    return [_model_option(model_id) for model_id in model_ids]
 
 
 def _model_option(model_id: str) -> dict[str, Any]:
@@ -185,7 +211,10 @@ def create_model_settings_router(
             ),
         }
 
-    @router.get("/admin/model-settings")
+    @router.get(
+        "/admin/model-settings",
+        response_model=AdminModelSettingsResponse,
+    )
     async def get_model_settings(request: Request) -> dict[str, Any]:
         await _require_admin(request, auth_provider, permission_store)
         settings = await asyncio.to_thread(model_settings_store.get)
@@ -199,6 +228,9 @@ def create_model_settings_router(
                 "models": [],
                 "omnigent_models": enabled,
                 "policy_model": settings.policy_model,
+                "smart_routing_decision_model": settings.smart_routing_decision_model,
+                "smart_routing_prompt": settings.smart_routing_prompt,
+                "smart_routing_cadence": settings.smart_routing_cadence,
                 "error": None,
             }
         try:
@@ -215,6 +247,9 @@ def create_model_settings_router(
                 "models": [],
                 "omnigent_models": enabled,
                 "policy_model": settings.policy_model,
+                "smart_routing_decision_model": settings.smart_routing_decision_model,
+                "smart_routing_prompt": settings.smart_routing_prompt,
+                "smart_routing_cadence": settings.smart_routing_cadence,
                 "error": str(exc),
             }
         return {
@@ -224,10 +259,16 @@ def create_model_settings_router(
             "models": [_model_option(model.id) for model in models],
             "omnigent_models": enabled,
             "policy_model": settings.policy_model,
+            "smart_routing_decision_model": settings.smart_routing_decision_model,
+            "smart_routing_prompt": settings.smart_routing_prompt,
+            "smart_routing_cadence": settings.smart_routing_cadence,
             "error": None,
         }
 
-    @router.patch("/admin/model-settings")
+    @router.patch(
+        "/admin/model-settings",
+        response_model=UpdatedModelSettingsResponse,
+    )
     async def update_model_settings(
         request: Request,
         body: UpdateModelSettingsRequest,
@@ -235,12 +276,21 @@ def create_model_settings_router(
         await _require_admin(request, auth_provider, permission_store)
         update_models = "omnigent_models" in body.model_fields_set
         update_policy_model = "policy_model" in body.model_fields_set
+        update_decision_model = "smart_routing_decision_model" in body.model_fields_set
+        update_prompt = "smart_routing_prompt" in body.model_fields_set
+        update_cadence = "smart_routing_cadence" in body.model_fields_set
         settings = await asyncio.to_thread(
             model_settings_store.update,
             harness=OMNIGENT_HARNESS if update_models else None,
             enabled_models=(body.omnigent_models or []) if update_models else None,
             policy_model=body.policy_model or None,
             update_policy_model=update_policy_model,
+            smart_routing_decision_model=body.smart_routing_decision_model or None,
+            update_smart_routing_decision_model=update_decision_model,
+            smart_routing_prompt=body.smart_routing_prompt,
+            update_smart_routing_prompt=update_prompt,
+            smart_routing_cadence=body.smart_routing_cadence,
+            update_smart_routing_cadence=update_cadence,
             updated_by=get_user_id(request, auth_provider),
         )
         if update_policy_model:
@@ -249,6 +299,9 @@ def create_model_settings_router(
             "object": "model_settings",
             "omnigent_models": settings.harness_models.get(OMNIGENT_HARNESS, []),
             "policy_model": settings.policy_model,
+            "smart_routing_decision_model": settings.smart_routing_decision_model,
+            "smart_routing_prompt": settings.smart_routing_prompt,
+            "smart_routing_cadence": settings.smart_routing_cadence,
         }
 
     return router

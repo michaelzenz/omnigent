@@ -18,6 +18,7 @@ interface AgentWire {
   skills?: { name: string; description: string }[];
   builtin?: boolean;
   enabled?: boolean;
+  auto_select_enabled?: boolean | null;
   archived?: boolean;
   is_multi_agent?: boolean;
   subagent_count?: number;
@@ -37,6 +38,7 @@ function mapAgent(agent: AgentWire): AvailableAgent {
     skills: agent.skills ?? [],
     builtin: agent.builtin ?? false,
     enabled: agent.enabled ?? true,
+    auto_select_enabled: agent.auto_select_enabled ?? null,
     archived: agent.archived ?? false,
     is_multi_agent: agent.is_multi_agent ?? false,
     subagent_count: agent.subagent_count ?? 0,
@@ -71,14 +73,14 @@ async function fetchProfiles(): Promise<AvailableAgent[]> {
   return rows.map(mapAgent);
 }
 
-async function updateProfileEnabled(input: {
+async function updateProfileAutoSelect(input: {
   id: string;
-  enabled: boolean;
+  auto_select_enabled: boolean;
 }): Promise<AvailableAgent> {
   const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(input.id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled: input.enabled }),
+    body: JSON.stringify({ auto_select_enabled: input.auto_select_enabled }),
   });
   if (!response.ok) throw await profileApiError(response, "Couldn't update profile");
   return mapAgent((await response.json()) as AgentWire);
@@ -140,19 +142,14 @@ export function useProfiles(options: { enabled?: boolean } = {}) {
   });
 }
 
-export function useUpdateProfileEnabled() {
+export function useUpdateProfileAutoSelect() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: updateProfileEnabled,
+    mutationFn: updateProfileAutoSelect,
     onSuccess: async (updated) => {
       queryClient.setQueryData<AvailableAgent[]>(["profiles", "include-disabled"], (current) =>
         current?.map((profile) => (profile.id === updated.id ? updated : profile)),
       );
-      if (!updated.enabled) {
-        queryClient.setQueryData<AvailableAgent[]>(["available-agents"], (current) =>
-          current?.filter((agent) => agent.id !== updated.id),
-        );
-      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["profiles"] }),
         queryClient.invalidateQueries({ queryKey: ["available-agents"] }),

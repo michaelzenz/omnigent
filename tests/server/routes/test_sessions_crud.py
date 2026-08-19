@@ -102,7 +102,12 @@ async def test_patch_prompt_profile_persists_for_omnigent_session(
 ) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     profile_id = generate_agent_id()
-    agent_store.create(profile_id, name="focused", bundle_location="test:///focused")
+    agent_store.create(
+        profile_id,
+        name="focused",
+        bundle_location="test:///focused",
+        auto_select_enabled=True,
+    )
 
     with (
         patch(

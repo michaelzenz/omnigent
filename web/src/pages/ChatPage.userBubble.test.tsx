@@ -314,7 +314,7 @@ describe("UserBubble execution summary", () => {
         createdAtS: 1_700_000_000,
         executionContext: {
           profile: "research",
-          harness: "openai-agents",
+          harness: "omnigent",
           model: "databricks-gpt-5-5",
         },
       }),
@@ -322,7 +322,7 @@ describe("UserBubble execution summary", () => {
 
     const summary = screen.getByTestId("message-execution-summary");
     const timestamp = screen.getByTestId("message-timestamp");
-    expect(summary.textContent).toBe("Profile: Research · openai-agents / databricks-gpt-5-5");
+    expect(summary.textContent).toBe("Profile: Research · omnigent / databricks-gpt-5-5");
     expect(summary.parentElement).toBe(timestamp.parentElement);
     expect(summary.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
       0,

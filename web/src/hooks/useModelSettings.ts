@@ -14,6 +14,9 @@ export interface AdminModelSettings {
   models: ModelOption[];
   omnigentModels: string[];
   policyModel: string | null;
+  smartRoutingDecisionModel: string | null;
+  smartRoutingPrompt: string | null;
+  smartRoutingCadence: "per_turn" | "first_turn_only";
   error: string | null;
 }
 
@@ -34,6 +37,9 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     models: WireModelOption[];
     omnigent_models: string[];
     policy_model: string | null;
+    smart_routing_decision_model: string | null;
+    smart_routing_prompt: string | null;
+    smart_routing_cadence: "per_turn" | "first_turn_only";
     error: string | null;
   };
   return {
@@ -45,6 +51,9 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     })),
     omnigentModels: body.omnigent_models,
     policyModel: body.policy_model,
+    smartRoutingDecisionModel: body.smart_routing_decision_model,
+    smartRoutingPrompt: body.smart_routing_prompt,
+    smartRoutingCadence: body.smart_routing_cadence,
     error: body.error,
   };
 }
@@ -81,13 +90,28 @@ export function useAdminModelSettings(enabled = true) {
 export function useUpdateAdminModelSettings() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (patch: { omnigentModels?: string[]; policyModel?: string | null }) => {
+    mutationFn: async (patch: {
+      omnigentModels?: string[];
+      policyModel?: string | null;
+      smartRoutingDecisionModel?: string | null;
+      smartRoutingPrompt?: string | null;
+      smartRoutingCadence?: "per_turn" | "first_turn_only";
+    }) => {
       const response = await authenticatedFetch("/v1/admin/model-settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(patch.omnigentModels !== undefined ? { omnigent_models: patch.omnigentModels } : {}),
           ...(patch.policyModel !== undefined ? { policy_model: patch.policyModel } : {}),
+          ...(patch.smartRoutingDecisionModel !== undefined
+            ? { smart_routing_decision_model: patch.smartRoutingDecisionModel }
+            : {}),
+          ...(patch.smartRoutingPrompt !== undefined
+            ? { smart_routing_prompt: patch.smartRoutingPrompt }
+            : {}),
+          ...(patch.smartRoutingCadence !== undefined
+            ? { smart_routing_cadence: patch.smartRoutingCadence }
+            : {}),
         }),
       });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);

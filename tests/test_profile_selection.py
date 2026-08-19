@@ -8,6 +8,8 @@ from omnigent.errors import OmnigentError
 from omnigent.profile_selection import (
     apply_prompt_profile,
     auto_select_prompt_profile,
+    is_prompt_profile,
+    list_prompt_profiles,
     load_prompt_profile_instructions,
 )
 from omnigent.spec.types import AgentSpec
@@ -38,6 +40,7 @@ def _profile(**overrides: object) -> Agent:
         "created_at": 1,
         "name": "focused",
         "bundle_location": "profiles/focused",
+        "auto_select_enabled": True,
     }
     values.update(overrides)
     return Agent(**values)  # type: ignore[arg-type]
@@ -68,6 +71,23 @@ def test_apply_prompt_profile_changes_only_omnigent_instructions() -> None:
     assert updated.name == original.name
     assert updated.description == original.description
     assert apply_prompt_profile(original, "claude-sdk", "Ignored") is original
+
+
+def test_non_profile_agents_are_not_prompt_profiles() -> None:
+    assert is_prompt_profile(_profile(auto_select_enabled=None)) is False
+
+
+def test_profile_list_filters_by_auto_select_flag() -> None:
+    profile = _profile()
+    ordinary_agent = _profile(id="ag_agent", name="ordinary", auto_select_enabled=None)
+    disabled = _profile(id="ag_disabled", name="disabled", auto_select_enabled=False)
+
+    class Store:
+        def list(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(data=[profile, ordinary_agent, disabled], has_more=False)
+
+    assert list_prompt_profiles(Store(), include_disabled=False) == [profile]  # type: ignore[arg-type]
+    assert list_prompt_profiles(Store(), include_disabled=True) == [profile, disabled]  # type: ignore[arg-type]
 
 
 async def test_auto_select_runs_again_for_each_turn(monkeypatch: pytest.MonkeyPatch) -> None:

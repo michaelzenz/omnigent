@@ -13,6 +13,7 @@ swap in a different implementation via ``RuntimeCaps``.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -41,6 +42,30 @@ if TYPE_CHECKING:
     from omnigent.reasoning_effort import ModelEffortCaps
 
 _logger = logging.getLogger(__name__)
+
+DEFAULT_SMART_ROUTING_PROMPT = (
+    "Choose the best available model for this request, balancing capability, latency, and cost."
+)
+
+
+@dataclass(frozen=True)
+class _RoutingRequestOverrides:
+    """Per-call settings shared by external and local routing backends."""
+
+    decision_model: str | None = None
+    prompt: str | None = None
+
+
+_routing_request_overrides: contextvars.ContextVar[_RoutingRequestOverrides | None] = (
+    contextvars.ContextVar("omnigent_routing_request_overrides", default=None)
+)
+
+
+def compose_smart_routing_prompt(user_message: str, custom_prompt: str | None) -> str:
+    """Combine the user request with deployment-wide routing guidance."""
+    guidance = (custom_prompt or "").strip() or DEFAULT_SMART_ROUTING_PROMPT
+    return f"User request:\n{user_message}\n\nRouting guidance:\n{guidance}"
+
 
 # Custom-method path (Google API convention) appended to the external
 # router's base URL, e.g. ``<base_url>/routes:select``.
@@ -104,6 +129,7 @@ _HARNESS_FAMILY: dict[str, str] = {
     "pi": "pi",
     "codex": "gpt",
     "codex-native": "gpt",
+    "omnigent": "gpt",
     "openai-agents": "gpt",
     "openai-agents-sdk": "gpt",
     "agents_sdk": "gpt",
@@ -572,10 +598,12 @@ class LLMRoutingClient:
 
         flat = _flatten_models(available_models)
         rubric = _build_rubric(available_models)
+        request_overrides = _routing_request_overrides.get() or _RoutingRequestOverrides()
+        task_prompt = request_overrides.prompt or message
         _logger.info(
             "LLMRoutingClient: available_models=%s prompt_chars=%d",
             dict(available_models),
-            len(message),
+            len(task_prompt),
         )
         self.last_error = None
         try:
@@ -588,7 +616,7 @@ class LLMRoutingClient:
                     input=[
                         {
                             "role": "user",
-                            "content": [{"type": "input_text", "text": message[:4000]}],
+                            "content": [{"type": "input_text", "text": task_prompt[:4000]}],
                         }
                     ],
                     text={
@@ -600,6 +628,11 @@ class LLMRoutingClient:
                         }
                     },
                     timeout=ROUTING_REQUEST_TIMEOUT_S,
+                    **(
+                        {"model": request_overrides.decision_model}
+                        if request_overrides.decision_model
+                        else {}
+                    ),
                 ),
                 timeout=ROUTING_REQUEST_TIMEOUT_S,
             )
@@ -1808,6 +1841,8 @@ class ExternalRoutingClient:
 
         from omnigent.api.routing.v1 import routing_pb2 as pb
 
+        request_overrides = _routing_request_overrides.get() or _RoutingRequestOverrides()
+        task_prompt = request_overrides.prompt or message
         if self.permanently_unavailable:
             # The account has no routing API; skip the call rather than spend a
             # round trip per turn to be told so again.
@@ -1821,13 +1856,14 @@ class ExternalRoutingClient:
             return None
         options = [pb.RouteOption(model=s.model, harness=s.harness) for s in specs]
         selector = pb.RouteSelector(router_name=self._router_name)
-        if self._selection_model:
+        selection_model = request_overrides.decision_model or self._selection_model
+        if selection_model:
             # The router makes its own extraction call; ``config.model`` pins
             # the model it uses so a deployment can name one it can query.
-            json_format.ParseDict({"model": self._selection_model}, selector.config)
+            json_format.ParseDict({"model": selection_model}, selector.config)
         request = pb.SelectRouteRequest(
             route_options=options,
-            task=pb.Task(prompt=message[:4000]),
+            task=pb.Task(prompt=task_prompt[:4000]),
             route_selector=selector,
         )
         # snake_case wire format — the router uses the proto field names.
@@ -1837,14 +1873,14 @@ class ExternalRoutingClient:
             self._url,
             self._router_name,
             [s.model for s in specs],
-            len(message),
+            len(task_prompt),
         )
         # The body carries the user's prompt, so it stays at DEBUG and the
         # prompt itself is replaced with its length.
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(
                 "ExternalRoutingClient: request body=%s",
-                {**body, "task": {"prompt": f"<{len(message)} chars>"}},
+                {**body, "task": {"prompt": f"<{len(task_prompt)} chars>"}},
             )
         # Resolve auth per call (SDK token refresh is a blocking HTTP call, so
         # run it off the event loop) — keeps a long-lived server from sending a
@@ -2250,6 +2286,8 @@ async def route_turn(
     catalog: Sequence[str] | None = None,
     gateway_backed: bool = True,
     allow_static_fallback: bool = True,
+    decision_model: str | None = None,
+    smart_routing_prompt: str | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Pick the best model for a turn via the deployment's routing backends.
 
@@ -2270,6 +2308,11 @@ async def route_turn(
         may supply candidates. Callers pass ``gateway_backed``: that table is
         all ``databricks-*`` ids, so off the gateway it would route the turn
         onto a model the pane cannot switch to. ``False`` declines instead.
+    :param decision_model: Optional per-call model used by the routing backend
+        itself. ``None`` preserves the deployment's YAML routing fallback.
+    :param smart_routing_prompt: Optional deployment-wide routing guidance.
+        Passing an empty string uses :data:`DEFAULT_SMART_ROUTING_PROMPT`;
+        ``None`` preserves the existing router input.
     """
     try:
         from omnigent.runtime._globals import _caps
@@ -2354,9 +2397,23 @@ async def route_turn(
 
     _prep_s = time.monotonic() - _prep_started
     _route_started = time.monotonic()
-    call = await route_with_fallback(
-        backends, user_message, available, gateway_backed=gateway_backed
+    request_prompt = (
+        compose_smart_routing_prompt(user_message, smart_routing_prompt)
+        if smart_routing_prompt is not None
+        else None
     )
+    override_token = _routing_request_overrides.set(
+        _RoutingRequestOverrides(
+            decision_model=decision_model,
+            prompt=request_prompt,
+        )
+    )
+    try:
+        call = await route_with_fallback(
+            backends, user_message, available, gateway_backed=gateway_backed
+        )
+    finally:
+        _routing_request_overrides.reset(override_token)
     _logger.info(
         "smart_routing: session=%s prep=%.3fs router=%.3fs catalog_fetch=%s candidates=%d",
         session_id,

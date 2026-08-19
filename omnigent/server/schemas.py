@@ -289,6 +289,7 @@ class AgentObject(BaseModel):
     terminals: list[str] = Field(default_factory=list)
     builtin: bool = False
     enabled: bool = True
+    auto_select_enabled: bool | None = None
     archived: bool = False
     is_multi_agent: bool = False
     subagent_count: int = 0
@@ -299,7 +300,7 @@ class AgentObject(BaseModel):
 class AgentUpdateRequest(BaseModel):
     """Profile-management update for a template agent."""
 
-    enabled: bool
+    auto_select_enabled: bool
 
 
 class AgentProfileEditRequest(BaseModel):

@@ -33,6 +33,7 @@ export interface AvailableAgent {
   // user-registered template (builtin === false).
   builtin?: boolean;
   enabled?: boolean;
+  auto_select_enabled?: boolean | null;
   archived?: boolean;
   is_multi_agent?: boolean;
   subagent_count?: number;
@@ -102,6 +103,7 @@ interface BuiltinAgentWire {
   // older servers, where every catalog row degrades to a protected entry.
   builtin?: boolean;
   enabled?: boolean;
+  auto_select_enabled?: boolean | null;
   archived?: boolean;
   is_multi_agent?: boolean;
   subagent_count?: number;
@@ -158,6 +160,9 @@ async function fetchBuiltinAgents(): Promise<AvailableAgent[]> {
     // undefined as "protected" (same as true), so omission is safe.
     ...(a.builtin !== undefined ? { builtin: a.builtin } : {}),
     ...(a.enabled !== undefined ? { enabled: a.enabled } : {}),
+    ...(a.auto_select_enabled !== undefined
+      ? { auto_select_enabled: a.auto_select_enabled }
+      : {}),
     ...(a.archived !== undefined ? { archived: a.archived } : {}),
     ...(a.is_multi_agent !== undefined ? { is_multi_agent: a.is_multi_agent } : {}),
     ...(a.subagent_count !== undefined ? { subagent_count: a.subagent_count } : {}),

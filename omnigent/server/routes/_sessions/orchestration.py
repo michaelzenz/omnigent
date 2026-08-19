@@ -339,6 +339,7 @@ from omnigent.stores.conversation_store import (
 )
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.host_store import Host, HostStore
+from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedEvent
@@ -4574,6 +4575,7 @@ async def _forward_event_to_runner(
     agent_version: int | None = None,
     created_by: str | None = None,
     host_store: HostStore | None = None,
+    model_settings_store: ModelSettingsStore | None = None,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
 ) -> str:
@@ -4616,17 +4618,6 @@ async def _forward_event_to_runner(
     import uuid
 
     turn_id = f"turn_{uuid.uuid4().hex}"
-    item = _build_new_item(body, turn_id, created_by=created_by)
-    persisted_items = await asyncio.to_thread(
-        conversation_store.append,
-        session_id,
-        [item],
-    )
-    await _seed_missing_title_from_user_message(
-        conv,
-        item,
-        conversation_store,
-    )
     # Don't publish status="running" or input.consumed here —
     # wait until after the forward to the runner succeeds.
     # Publishing early causes the REPL to start its streaming
@@ -4692,11 +4683,6 @@ async def _forward_event_to_runner(
         # load on every turn for agents without MCP servers.
         "has_mcp_servers": has_mcp_servers,
         "agent_version": agent_version,
-        # Id of the item just persisted for this turn. On a cold runner
-        # cache the runner reloads history (which includes this item in
-        # PRE-resolution form) and drops it by id, appending its own
-        # resolved copy — id-based dedup, not a role/content guess.
-        "persisted_item_id": persisted_items[0].id,
     }
     if profile_instructions is not None:
         runner_body["profile_instructions"] = profile_instructions
@@ -4834,6 +4820,25 @@ async def _forward_event_to_runner(
     _routing_enabled = (
         conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
     ) or _parent_routing_on
+    _harness = _resolve_harness(conv)
+    _omnigent_routing_settings = None
+    if (
+        model_settings_store is not None
+        and _harness in {"omnigent", "openai-agents"}
+        and conv.parent_conversation_id is None
+    ):
+        try:
+            _omnigent_routing_settings = await asyncio.to_thread(model_settings_store.get)
+        except (OSError, RuntimeError, ValueError):
+            _logger.warning(
+                "smart_routing: failed to read global model settings for session=%s",
+                session_id,
+                exc_info=True,
+            )
+    _omnigent_per_turn = (
+        _omnigent_routing_settings is not None
+        and _omnigent_routing_settings.smart_routing_cadence == "per_turn"
+    )
     _routed_model: str | None = None
     _routed_harness: str | None = None
     _verdict: dict[str, Any] | None = None
@@ -4871,7 +4876,11 @@ async def _forward_event_to_runner(
         # model) — don't re-run the router for the same message.
         and not _auto_resolved_this_turn
         and not _child_routed_before
-        and (effective_runner_override is None or conv.parent_conversation_id is not None)
+        and (
+            effective_runner_override is None
+            or conv.parent_conversation_id is not None
+            or _omnigent_per_turn
+        )
     )
     if _should_route:
         _user_text = _extract_user_text_for_routing(body)
@@ -4965,7 +4974,6 @@ async def _forward_event_to_runner(
                 # Top-level sessions: model-only routing (harness already fixed by spec).
                 from omnigent.server.smart_routing import route_turn_or_decline
 
-                _harness = _resolve_harness(conv)
                 # A turn cannot change harness, so only this session's own
                 # family has to be gateway-backed for the workspace router.
                 _turn_backed = _gateway_backed(
@@ -4983,6 +4991,16 @@ async def _forward_event_to_runner(
                     catalog=await _native_turn_catalog(session_id, conv, runner_client),
                     gateway_backed=_turn_backed,
                     allow_static_fallback=_turn_backed,
+                    decision_model=(
+                        _omnigent_routing_settings.smart_routing_decision_model
+                        if _omnigent_routing_settings is not None
+                        else None
+                    ),
+                    smart_routing_prompt=(
+                        _omnigent_routing_settings.smart_routing_prompt or ""
+                        if _omnigent_routing_settings is not None
+                        else None
+                    ),
                 )
                 if _turn_route_err is not None:
                     # Not routed, and visibly so — the turn runs on the
@@ -5025,6 +5043,34 @@ async def _forward_event_to_runner(
     _effective_harness = _routed_harness or conv.harness_override
     if _effective_harness is not None and _effective_harness != "auto":
         runner_body["harness_override"] = _effective_harness
+
+    # Routing is now resolved, so persist the model that will actually run in
+    # the user bubble's durable execution summary.
+    _execution_context = body.data.get("execution_context")
+    if isinstance(_execution_context, dict):
+        _execution_context = dict(_execution_context)
+        if effective_runner_override is not None:
+            _execution_context["model"] = effective_runner_override
+        body.data["execution_context"] = _execution_context
+        forwarded_data["execution_context"] = _execution_context
+        runner_body["execution_context"] = _execution_context
+
+    # Keep invariant I1 (persist before forwarding), while delaying the append
+    # until routing has supplied the turn's effective model.
+    item = _build_new_item(body, turn_id, created_by=created_by)
+    persisted_items = await asyncio.to_thread(
+        conversation_store.append,
+        session_id,
+        [item],
+    )
+    await _seed_missing_title_from_user_message(
+        conv,
+        item,
+        conversation_store,
+    )
+    # On a cold runner cache, history already includes this item. The runner
+    # drops it by id before appending its resolved copy.
+    runner_body["persisted_item_id"] = persisted_items[0].id
 
     # The runner's sessions-native POST returns 202 immediately
     # and starts the turn as a background task. No streaming
@@ -5268,6 +5314,7 @@ async def _dispatch_session_event_to_runner_impl(
     runner_router: RunnerRouter | None = None,
     native_terminal_ready: bool = False,
     host_store: HostStore | None = None,
+    model_settings_store: ModelSettingsStore | None = None,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
 ) -> _SessionEventDispatchResult:
@@ -5569,6 +5616,7 @@ async def _dispatch_session_event_to_runner_impl(
         agent_version=agent_version,
         created_by=created_by,
         host_store=host_store,
+        model_settings_store=model_settings_store,
         profile_instructions=profile_instructions,
         memory_instructions=memory_instructions,
     )

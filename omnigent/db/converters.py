@@ -29,6 +29,7 @@ def sql_agent_to_entity(row: SqlAgent, session_id: str | None = None) -> Agent:
         updated_at=row.updated_at,
         session_id=None if row.kind == AGENT_KIND["template"] else session_id,
         is_role=row.is_role,
+        auto_select_enabled=row.auto_select_enabled,
         enabled=row.enabled,
         archived=row.archived,
     )

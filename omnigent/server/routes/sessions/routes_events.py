@@ -1597,9 +1597,7 @@ def register_events_routes(
             and _resolved_harness == PROMPT_PROFILE_HARNESS
         ):
             _stored_profile = (
-                agent_store.get(_profile_id)
-                if _profile_id != PROMPT_PROFILE_AUTO_VALUE
-                else None
+                agent_store.get(_profile_id) if _profile_id != PROMPT_PROFILE_AUTO_VALUE else None
             )
             if _stored_profile is None or not is_prompt_profile(_stored_profile):
                 _stored_profile = await auto_select_prompt_profile(
@@ -1617,7 +1615,11 @@ def register_events_routes(
         if body.type == "message" and body.data.get("role") == "user":
             body.data["execution_context"] = {
                 "profile": _selected_profile_name,
-                "harness": _resolved_harness,
+                "harness": (
+                    "omnigent"
+                    if _resolved_harness in {"omnigent", PROMPT_PROFILE_HARNESS}
+                    else _resolved_harness
+                ),
                 "model": body.model_override or conv.model_override or _spec_model,
             }
         pending_background_title = prepare_background_session_title(
@@ -1689,6 +1691,9 @@ def register_events_routes(
             # Read only for the gateway-backing check that decides which router
             # serves this turn; absent, routing keeps its default posture.
             host_store=getattr(request.app.state, "host_store", None),
+            # Global Omnigent routing settings are read for every user turn so
+            # admin updates apply without restarting the server.
+            model_settings_store=getattr(request.app.state, "model_settings_store", None),
         )
         if pending_background_title is not None:
             pending_background_title.schedule()

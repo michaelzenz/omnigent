@@ -26,7 +26,13 @@ def _decode(row: SqlModelSettings) -> ModelSettings:
         if not all(isinstance(model, str) for model in models):
             raise ValueError("model_settings.harness_models contains invalid model ids")
         harness_models[harness] = list(models)
-    return ModelSettings(harness_models=harness_models, policy_model=row.policy_model)
+    return ModelSettings(
+        harness_models=harness_models,
+        policy_model=row.policy_model,
+        smart_routing_decision_model=row.smart_routing_decision_model,
+        smart_routing_prompt=row.smart_routing_prompt,
+        smart_routing_cadence=row.smart_routing_cadence,
+    )
 
 
 class SqlAlchemyModelSettingsStore(ModelSettingsStore):
@@ -54,15 +60,19 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
         enabled_models: list[str] | None = None,
         policy_model: str | None = None,
         update_policy_model: bool = False,
+        smart_routing_decision_model: str | None = None,
+        update_smart_routing_decision_model: bool = False,
+        smart_routing_prompt: str | None = None,
+        update_smart_routing_prompt: bool = False,
+        smart_routing_cadence: str | None = None,
+        update_smart_routing_cadence: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         if (harness is None) != (enabled_models is None):
             raise ValueError("harness and enabled_models must be updated together")
         with self._session("update") as session:
             row = session.execute(
-                select(SqlModelSettings)
-                .where(SqlModelSettings.id == 1)
-                .with_for_update()
+                select(SqlModelSettings).where(SqlModelSettings.id == 1).with_for_update()
             ).scalar_one_or_none()
             if row is None:
                 raise RuntimeError("global model settings row is missing")
@@ -73,6 +83,14 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
                 row.harness_models = json.dumps(harness_models, separators=(",", ":"))
             if update_policy_model:
                 row.policy_model = policy_model
+            if update_smart_routing_decision_model:
+                row.smart_routing_decision_model = smart_routing_decision_model
+            if update_smart_routing_prompt:
+                row.smart_routing_prompt = smart_routing_prompt
+            if update_smart_routing_cadence:
+                if smart_routing_cadence not in {"per_turn", "first_turn_only"}:
+                    raise ValueError("invalid smart routing cadence")
+                row.smart_routing_cadence = smart_routing_cadence
             row.updated_at = now_epoch()
             row.updated_by = updated_by
             return _decode(row)

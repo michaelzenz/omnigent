@@ -688,7 +688,12 @@ function mockAgents(agents: AvailableAgent[]) {
   const hasProfile = agents.some(isProfile);
   const withProfileMetadata = agents.map((agent) =>
     isProfile(agent)
-      ? { ...agent, builtin: agent.builtin ?? true, enabled: agent.enabled ?? true }
+      ? {
+          ...agent,
+          builtin: agent.builtin ?? true,
+          enabled: agent.enabled ?? true,
+          auto_select_enabled: agent.auto_select_enabled ?? true,
+        }
       : agent,
   );
   useAvailableAgentsMock.mockReturnValue({
@@ -1182,6 +1187,34 @@ describe("NewChatLandingScreen", () => {
     closeMenu();
     selectAgent("ag_native");
     expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
+  });
+
+  it("lists only profiles enabled for Auto Select", () => {
+    mockAgents([
+      {
+        id: "ag_enabled",
+        name: "enabled-profile",
+        display_name: "Enabled profile",
+        description: null,
+        harness: "omnigent",
+        skills: [],
+        auto_select_enabled: true,
+      },
+      {
+        id: "ag_disabled",
+        name: "disabled-profile",
+        display_name: "Disabled profile",
+        description: null,
+        harness: "omnigent",
+        skills: [],
+        auto_select_enabled: false,
+      },
+    ]);
+    renderLanding();
+
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    expect(screen.getByTestId("new-chat-landing-profile-ag_enabled")).toBeTruthy();
+    expect(screen.queryByTestId("new-chat-landing-profile-ag_disabled")).toBeNull();
   });
 
   it("uses coordinator wording for multi-agent profile overrides", () => {
@@ -3437,6 +3470,28 @@ describe("NewChatLandingScreen smart routing", () => {
       expect(screen.getByRole("option", { name: siblingOption })).toBeTruthy();
     },
   );
+
+  it("offers per-turn Smart Routing in an Omnigent profile gear model picker", () => {
+    mockAgents([
+      {
+        id: "ag_software",
+        name: "software-agent-databricks",
+        display_name: "Software-agent-databricks",
+        description: null,
+        harness: "omnigent",
+        skills: [],
+      },
+    ]);
+    renderLanding({
+      smart_routing_enabled: true,
+      smart_routing_sources: { external: false, oss: true },
+    });
+
+    openAgentConfig("ag_software");
+    openSelect("new-chat-landing-config-model");
+    expect(screen.getByRole("option", { name: "Smart Routing" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "GPT 5.6 Luna" })).toBeTruthy();
+  });
 
   // No Model row at all: a non-routable harness has nothing to offer even with
   // the flag on, and its own knob row is untouched. (Codex always has a row —

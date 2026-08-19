@@ -14,7 +14,7 @@ import {
   useCreateProfile,
   useEditProfile,
   useProfiles,
-  useUpdateProfileEnabled,
+  useUpdateProfileAutoSelect,
 } from "@/hooks/useProfiles";
 import { buildAgentBundle, type AgentBundleInput } from "@/lib/agentBundle";
 import { isNativeCodingAgent } from "@/lib/nativeCodingAgents";
@@ -127,7 +127,7 @@ function ManageProfilesDialog({
   const [deleteTarget, setDeleteTarget] = useState<AvailableAgent | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const profilesQuery = useProfiles({ enabled: open });
-  const updateEnabled = useUpdateProfileEnabled();
+  const updateAutoSelect = useUpdateProfileAutoSelect();
   const archive = useArchiveProfile();
   const create = useCreateProfile();
   const edit = useEditProfile();
@@ -136,7 +136,7 @@ function ManageProfilesDialog({
     () =>
       (profilesQuery.data ?? []).filter(
         (profile) =>
-          !profile.archived && profile.name !== "omnigent" && !isNativeCodingAgent(profile),
+          profile.auto_select_enabled != null && !profile.archived && !isNativeCodingAgent(profile),
       ),
     [profilesQuery.data],
   );
@@ -149,13 +149,17 @@ function ManageProfilesDialog({
         profile.description?.toLocaleLowerCase().includes(query),
     );
   }, [managedProfiles, search]);
-  const enabledCount = managedProfiles.filter((profile) => profile.enabled !== false).length;
+  const autoSelectCount = managedProfiles.filter(
+    (profile) => profile.auto_select_enabled === true,
+  ).length;
 
-  async function toggle(profile: AvailableAgent, enabled: boolean) {
+  async function toggle(profile: AvailableAgent, autoSelectEnabled: boolean) {
     setActionError(null);
     try {
-      await updateEnabled.mutateAsync({ id: profile.id, enabled });
-      if (!enabled && profile.id === selectedAgentId) onSelectedProfileRemoved();
+      await updateAutoSelect.mutateAsync({
+        id: profile.id,
+        auto_select_enabled: autoSelectEnabled,
+      });
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Couldn't update profile");
     }
@@ -201,8 +205,8 @@ function ManageProfilesDialog({
     }
   }
 
-  const pendingId = updateEnabled.isPending
-    ? updateEnabled.variables?.id
+  const pendingId = updateAutoSelect.isPending
+    ? updateAutoSelect.variables?.id
     : archive.isPending
       ? archive.variables
       : edit.isPending
@@ -310,16 +314,19 @@ function ManageProfilesDialog({
                             data-testid={`manage-profile-pending-${profile.id}`}
                           />
                         )}
-                        <Switch
-                          checked={profile.enabled !== false}
-                          disabled={
-                            pendingId === profile.id ||
-                            (profile.enabled !== false && enabledCount === 1)
-                          }
-                          onCheckedChange={(enabled) => void toggle(profile, enabled)}
-                          aria-label={`Enable ${profile.display_name}`}
-                          data-testid={`manage-profile-enabled-${profile.id}`}
-                        />
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span>Auto Select</span>
+                          <Switch
+                            checked={profile.auto_select_enabled === true}
+                            disabled={
+                              pendingId === profile.id ||
+                              (profile.auto_select_enabled === true && autoSelectCount === 1)
+                            }
+                            onCheckedChange={(enabled) => void toggle(profile, enabled)}
+                            aria-label={`Auto Select ${profile.display_name}`}
+                            data-testid={`manage-profile-auto-select-${profile.id}`}
+                          />
+                        </label>
                         {!profile.builtin && (
                           <>
                             <Button

@@ -206,6 +206,7 @@ import { PROMPT_PROFILE_AUTO_VALUE, PROMPT_PROFILE_LABEL_KEY } from "@/lib/profi
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
 // --harness kimi` use) — the picker offers only the native TUI (`kimi-native-ui`).
 const NEW_SESSION_HIDDEN_AGENTS = new Set(["nessie", "kimi", "kimi-code"]);
+const OMNIGENT_ROUTABLE_HARNESSES = new Set([SDK_HARNESS, "omnigent"]);
 
 // Short picker-row blurbs — the spec descriptions are long paragraphs that
 // truncate badly in the dropdown; other dialogs keep the server values.
@@ -1646,11 +1647,9 @@ function HarnessConfigModal({
               description={isMultiAgentProfile ? "Root executor LLM" : "Underlying LLM"}
             >
               <RoutingModelSelect
-                value={draftModel || MODEL_SELECT_DEFAULT}
-                onValueChange={(value) =>
-                  setDraftModel(value === MODEL_SELECT_DEFAULT ? "" : value)
-                }
-                offerSmartRouting={false}
+                value={modelValue}
+                onValueChange={onModelChange}
+                offerSmartRouting={smartRoutingEligible}
                 testId="new-chat-landing-config-model"
                 models={sdkModelSelectOptions}
                 defaultLabel="Default (GLM 5.2)"
@@ -2001,7 +2000,7 @@ export function NewChatLandingScreen() {
     () =>
       agentEntries.filter(
         (agent) =>
-          agent.builtin !== undefined &&
+          agent.auto_select_enabled === true &&
           agent.enabled !== false &&
           agent.archived !== true &&
           agent.name !== "omnigent",
@@ -2751,6 +2750,8 @@ export function NewChatLandingScreen() {
   const selectedAgentUsesSdk =
     selectedAgent?.harness === SDK_HARNESS ||
     profiles.some((profile) => profile.id === selectedAgent?.id);
+  const selectedAgentUsesOmnigentHarness =
+    selectedAgent?.harness != null && OMNIGENT_ROUTABLE_HARNESSES.has(selectedAgent.harness);
   const hideUnconfiguredHarnesses = useMemo(() => readHideUnconfiguredHarnesses(), []);
   // The selected native harness, used to persist/seed its option knobs (mode /
   // model / effort), which are harness-specific. null for non-native agents,
@@ -2762,23 +2763,25 @@ export function NewChatLandingScreen() {
   // Selection stays allowed — the host re-checks at launch and the create
   // call surfaces a specific error if the harness really can't run.
   const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
-  // Smart Routing as a Model choice is offered on the two native harnesses
-  // whose running CLI accepts a per-turn model switch (the server injects
-  // ``/model`` when cost_control_mode_override is "on"). Everything else routes
-  // via the fully-auto harness instead, which picks harness + model up front.
+  // Smart Routing as a Model choice is offered on the Omnigent harness and the
+  // two native harnesses whose running CLI accepts a model switch.
   // Each family gates on its OWN source: the external router's apply layer
   // rewrites the model through the workspace AI gateway, so a host whose Claude
   // Code runs off something else falls back to the built-in judge for that
   // family instead of losing the row — and loses it only when neither router
   // can answer.
+  const smartRoutingHarness = selectedAgentUsesOmnigentHarness
+    ? SDK_HARNESS
+    : selectedNativeHarness;
   const smartRoutingEligible =
     smartRoutingEnabled &&
-    selectedNativeHarness !== null &&
-    SMART_ROUTING_ARMS.some((harness) => harness === selectedNativeHarness) &&
+    smartRoutingHarness !== null &&
+    (smartRoutingHarness === SDK_HARNESS ||
+      SMART_ROUTING_ARMS.some((harness) => harness === smartRoutingHarness)) &&
     smartRoutingSourceFor({
       externalConfigured: externalRoutingConfigured,
       ossConfigured: ossRoutingConfigured,
-      gatewayBacked: hostBacksHarnessWithGateway(harnessWarningHost, selectedNativeHarness),
+      gatewayBacked: hostBacksHarnessWithGateway(harnessWarningHost, smartRoutingHarness),
     }) !== null;
   // Top-level Smart Routing (the "Harnesses" row, no bundle agent): the router
   // picks native Claude Code or Codex per task. It rides a placeholder wrapper
