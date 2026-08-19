@@ -203,6 +203,20 @@ describe("UserBubble copy button", () => {
     expect(screen.getByRole("button", { name: "Copy" })).toHaveAttribute("data-size", "icon-xxs");
   });
 
+  it("shows the full-row background and actions only while hovered", () => {
+    renderBubble(userBubble("hover me"));
+    const bubble = screen.getByTestId("message-bubble");
+    const actions = screen.getByTestId("user-message-actions");
+
+    expect(bubble).not.toHaveClass("bg-background/95");
+    expect(actions).toHaveClass("md:opacity-0");
+    fireEvent.pointerEnter(bubble);
+    expect(bubble).toHaveClass("bg-background/95", "backdrop-blur-md");
+    expect(actions).toHaveClass("md:opacity-100");
+    fireEvent.pointerLeave(bubble);
+    expect(bubble).not.toHaveClass("bg-background/95");
+  });
+
   it("copies the message text to the clipboard when clicked", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -257,6 +271,22 @@ describe("UserBubble copy button", () => {
       window.removeEventListener("omnigent:toast", onToast);
       window.matchMedia = real;
     }
+  });
+
+  it("jumps to the message start and clears hover chrome", () => {
+    renderBubble(userBubble("jump me"));
+    const bubble = screen.getByTestId("message-bubble");
+    const scrollIntoView = vi.fn();
+    bubble.scrollIntoView = scrollIntoView;
+    fireEvent.pointerEnter(bubble);
+
+    const jump = screen.getByRole("button", { name: "Jump to turn start" });
+    jump.focus();
+    fireEvent.click(jump);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    expect(bubble).not.toHaveClass("bg-background/95");
+    expect(document.activeElement).not.toBe(jump);
   });
 
   it("does not render a copy button for an attachments-only message (no text)", () => {

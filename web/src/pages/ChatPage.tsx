@@ -16,6 +16,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpIcon,
+  ArrowUpToLineIcon,
   BotIcon,
   CheckIcon,
   AlertTriangleIcon,
@@ -3056,6 +3057,17 @@ function bubbleKey(bubble: Bubble): string {
   return `assistant:${bubble.stableId}`;
 }
 
+function scrollToUserTurnStart(itemId: string): void {
+  const message = Array.from(document.querySelectorAll<HTMLElement>("[data-user-message-id]")).find(
+    (element) => element.dataset.userMessageId === itemId,
+  );
+  if (!message) {
+    console.warn(`scrollToUserTurnStart: no message for itemId=${itemId}`);
+    return;
+  }
+  message.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
 /**
  * Playful labels the idle-but-busy indicator rotates through (one per
  * `ROTATE_MS`). Index 0 MUST stay "Working…": it's the label a fresh tick
@@ -3685,6 +3697,10 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const [editedText, setEditedText] = useState("");
   const [rewinding, setRewinding] = useState(false);
   const [rewindError, setRewindError] = useState<string | null>(null);
+  const [pointerOver, setPointerOver] = useState(false);
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
+  const [suppressChromeUntilLeave, setSuppressChromeUntilLeave] = useState(false);
+  const showTurnChrome = !suppressChromeUntilLeave && (pointerOver || keyboardFocus);
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
   // Plain-text path is the common case.
@@ -3813,7 +3829,25 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
       data-testid="message-bubble"
       data-role="user"
       data-user-message-id={bubble.itemId}
-      className="max-w-[640px]"
+      onPointerEnter={() => setPointerOver(true)}
+      onPointerLeave={() => {
+        setPointerOver(false);
+        setSuppressChromeUntilLeave(false);
+      }}
+      onFocusCapture={(event) => {
+        if ((event.target as HTMLElement).matches(":focus-visible")) {
+          setKeyboardFocus(true);
+        }
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setKeyboardFocus(false);
+        }
+      }}
+      className={cn(
+        "max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))] rounded-xl transition-[background-color,backdrop-filter]",
+        showTurnChrome && "bg-background/95 shadow-sm backdrop-blur-md",
+      )}
     >
       <div className="ml-auto flex w-fit max-w-full flex-col items-end">
         {/* w-fit + ml-auto shrink-wrap the row so the author avatar sits
@@ -3939,7 +3973,14 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
             desktop. py-1 matches the design prototype's 24px action row;
             the timestamp rides inside it instead of adding a new row. */}
         {(executionSummary || ts || text) && (
-          <div className="flex items-center justify-end gap-3 py-1 opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+          <div
+            data-testid="user-message-actions"
+            className={cn(
+              "flex items-center justify-end gap-3 py-1 opacity-40 transition-opacity",
+              "md:pointer-events-none md:opacity-0",
+              showTurnChrome && "md:pointer-events-auto md:opacity-100",
+            )}
+          >
             {executionSummary && (
               <span
                 className="max-w-[420px] truncate select-none text-[11px] leading-4 text-foreground/56"
@@ -3974,6 +4015,19 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
                 )}
                 <MessageAction tooltip="Copy" size="icon-xxs" onClick={handleCopy}>
                   {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                </MessageAction>
+                <MessageAction
+                  tooltip="Jump to turn start"
+                  size="icon-xxs"
+                  onClick={(event) => {
+                    event.currentTarget.blur();
+                    setPointerOver(false);
+                    setKeyboardFocus(false);
+                    setSuppressChromeUntilLeave(true);
+                    scrollToUserTurnStart(bubble.itemId);
+                  }}
+                >
+                  <ArrowUpToLineIcon size={14} />
                 </MessageAction>
               </MessageActions>
             )}
