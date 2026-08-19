@@ -28,6 +28,7 @@ from omnigent.host.frames import (
 from omnigent.host.frames import (
     WORKSPACE_MISSING_ERROR_CODE as _WORKSPACE_MISSING_ERROR_CODE,
 )
+from omnigent.memory import compose_memory
 from omnigent.profile_selection import (
     PROMPT_PROFILE_AUTO_VALUE,
     PROMPT_PROFILE_HARNESS,
@@ -214,6 +215,7 @@ from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.host_store import host_is_live
+from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import SessionDeletedEvent as _TelSessionDeletedEvent
@@ -222,6 +224,33 @@ from omnigent.telemetry.installation_id import get_installation_id as _get_insta
 from omnigent.tools.client_specified import parse_client_side_tool_specs
 
 _rewinding_sessions: set[str] = set()
+
+
+async def _compose_turn_memory(
+    memory_store: MemoryStore | None,
+    *,
+    user_id: str | None,
+    resolved_harness: str | None,
+    event_type: str,
+    role: Any,
+    max_tokens: int,
+    model: str | None,
+) -> str | None:
+    """Fetch and render memory only for OpenAI Agents user turns."""
+    if (
+        memory_store is None
+        or event_type != "message"
+        or role != "user"
+        or resolved_harness != PROMPT_PROFILE_HARNESS
+    ):
+        return None
+    categories = await asyncio.to_thread(memory_store.list, user_id=user_id)
+    effective_max_tokens = await asyncio.to_thread(
+        memory_store.get_max_tokens,
+        user_id=user_id,
+        default=max_tokens,
+    )
+    return compose_memory(categories, effective_max_tokens, model=model)
 
 
 def register_events_routes(
@@ -240,6 +269,8 @@ def register_events_routes(
     host_registry: HostRegistry | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
     runner_tunnel_tokens: frozenset[str] | None = None,
+    memory_store: MemoryStore | None = None,
+    memory_max_tokens: int = 20_000,
 ) -> None:
     """Register the events, stream, and delete routes on router."""
 
@@ -1521,6 +1552,7 @@ def register_events_routes(
         # where the bundle is extracted from disk for the first time.
         _has_mcp_servers = False
         _profile_instructions: str | None = None
+        _memory_instructions: str | None = None
         _loaded_spec: Any | None = None
         if _agent is not None and agent_cache is not None and _agent.bundle_location:
             try:
@@ -1541,6 +1573,20 @@ def register_events_routes(
             conv,
             agent_store=agent_store,
             agent_cache=agent_cache,
+        )
+        _spec_model = None
+        if _loaded_spec is not None:
+            _spec_model = _loaded_spec.executor.model or (
+                _loaded_spec.llm.model if _loaded_spec.llm is not None else None
+            )
+        _memory_instructions = await _compose_turn_memory(
+            memory_store,
+            user_id=created_by,
+            resolved_harness=_resolved_harness,
+            event_type=body.type,
+            role=body.data.get("role"),
+            max_tokens=memory_max_tokens,
+            model=body.model_override or conv.model_override or _spec_model,
         )
         _selected_profile_name = _agent.name if _agent is not None else None
         _profile_id = conv.labels.get(PROMPT_PROFILE_LABEL_KEY, PROMPT_PROFILE_AUTO_VALUE)
@@ -1569,11 +1615,6 @@ def register_events_routes(
                 require_selectable=False,
             )
         if body.type == "message" and body.data.get("role") == "user":
-            _spec_model = None
-            if _loaded_spec is not None:
-                _spec_model = _loaded_spec.executor.model or (
-                    _loaded_spec.llm.model if _loaded_spec.llm is not None else None
-                )
             body.data["execution_context"] = {
                 "profile": _selected_profile_name,
                 "harness": _resolved_harness,
@@ -1644,6 +1685,7 @@ def register_events_routes(
             runner_router=runner_router,
             native_terminal_ready=native_terminal_ready,
             profile_instructions=_profile_instructions,
+            memory_instructions=_memory_instructions,
             # Read only for the gateway-backing check that decides which router
             # serves this turn; absent, routing keeps its default posture.
             host_store=getattr(request.app.state, "host_store", None),

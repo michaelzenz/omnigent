@@ -24,6 +24,8 @@ User-id-bearing columns rewritten (the full set as of this schema):
 - ``comments.created_by``
 - ``policies.created_by``
 - ``hosts.user_id`` (unique-constraint part)
+- ``memory_categories.user_id``
+- ``memory_settings.user_id`` (primary-key part)
 
 Ordering within a mapping is load-bearing: the new ``users`` row is
 created first (so FK-bearing children can point at it), children are
@@ -45,6 +47,8 @@ from omnigent.db.db_models import (
     SqlAccountToken,
     SqlComment,
     SqlHost,
+    SqlMemoryCategory,
+    SqlMemorySettings,
     SqlPolicy,
     SqlSessionPermission,
     SqlUser,
@@ -245,6 +249,35 @@ def remap_identities(
                     ),
                 )
                 report._bump(SqlAccountToken.__tablename__, result.rowcount or 0)
+
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    update(SqlMemoryCategory)
+                    .where(
+                        SqlMemoryCategory.workspace_id == current_workspace_id(),
+                        SqlMemoryCategory.user_id == old_id,
+                    )
+                    .values(user_id=new_id)
+                ),
+            )
+            report._bump(SqlMemoryCategory.__tablename__, result.rowcount or 0)
+
+            old_memory_settings = session.get(
+                SqlMemorySettings,
+                (current_workspace_id(), old_id),
+            )
+            if old_memory_settings is not None:
+                new_memory_settings = session.get(
+                    SqlMemorySettings,
+                    (current_workspace_id(), new_id),
+                )
+                if new_memory_settings is None:
+                    old_memory_settings.user_id = new_id
+                else:
+                    session.delete(old_memory_settings)
+                report._bump(SqlMemorySettings.__tablename__)
+                session.flush()
 
             # ── hosts.user_id is a unique-constraint part (user_id, name); a
             # collision with an existing (new, name) host would violate the

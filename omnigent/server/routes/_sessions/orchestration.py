@@ -4575,6 +4575,7 @@ async def _forward_event_to_runner(
     created_by: str | None = None,
     host_store: HostStore | None = None,
     profile_instructions: str | None = None,
+    memory_instructions: str | None = None,
 ) -> str:
     """
     Persist a user event and forward it to the runner.
@@ -4699,6 +4700,8 @@ async def _forward_event_to_runner(
     }
     if profile_instructions is not None:
         runner_body["profile_instructions"] = profile_instructions
+    if memory_instructions is not None:
+        runner_body["memory_instructions"] = memory_instructions
     # Persist the turn-initiating actor so /policies/evaluate and MCP
     # tools/call can read it back on any server replica.  Skip system-driven
     # forwards (sub-agent results, parent-wake carry created_by=None) — they
@@ -5266,6 +5269,7 @@ async def _dispatch_session_event_to_runner_impl(
     native_terminal_ready: bool = False,
     host_store: HostStore | None = None,
     profile_instructions: str | None = None,
+    memory_instructions: str | None = None,
 ) -> _SessionEventDispatchResult:
     """
     Forward an item-event to the runner with harness-aware dispatch.
@@ -5566,6 +5570,7 @@ async def _dispatch_session_event_to_runner_impl(
         created_by=created_by,
         host_store=host_store,
         profile_instructions=profile_instructions,
+        memory_instructions=memory_instructions,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
 

@@ -11,6 +11,10 @@ vi.mock("@/shell/glossaries/SkillsTab", () => ({
   SkillsTab: () => <div data-testid="glossaries-skills-tab" />,
 }));
 
+vi.mock("@/shell/glossaries/MemoryTab", () => ({
+  MemoryTab: () => <div data-testid="glossaries-memory-tab" />,
+}));
+
 describe("GlossariesPage", () => {
   it("renders glossaries shell with roles tab by default", () => {
     render(
@@ -31,5 +35,22 @@ describe("GlossariesPage", () => {
     );
     expect(screen.getByRole("tab", { name: "Skills" })).toBeInTheDocument();
     expect(screen.getByTestId("glossaries-skills-tab")).toBeInTheDocument();
+  });
+
+  it("renders the memory tab immediately after skills when tab=memory", () => {
+    render(
+      <MemoryRouter initialEntries={["/glossaries?tab=memory"]}>
+        <GlossariesPage />
+      </MemoryRouter>,
+    );
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Roles",
+      "Pollers",
+      "Timers",
+      "Skills",
+      "Memory",
+    ]);
+    expect(screen.getByTestId("glossaries-memory-tab")).toBeInTheDocument();
   });
 });

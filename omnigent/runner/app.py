@@ -11989,7 +11989,15 @@ def create_runner_app(
                 harness_name,
                 profile_instructions if isinstance(profile_instructions, str) else None,
             )
-            instructions = build_instructions(prompt_spec, None, [])
+            memory_instructions = msg_body.get("memory_instructions")
+            instructions = build_instructions(
+                prompt_spec,
+                None,
+                [],
+                memory_instructions=(
+                    memory_instructions if isinstance(memory_instructions, str) else None
+                ),
+            )
 
         ctx = TurnDispatch(
             agent_id=_dispatched_agent_id,

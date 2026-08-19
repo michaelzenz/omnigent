@@ -4522,3 +4522,61 @@ class UpdateProjectRequest(BaseModel):
         if len(trimmed) > 100:
             raise ValueError("name must be at most 100 characters")
         return trimmed
+
+
+class CreateMemoryCategoryRequest(BaseModel):
+    """Request body for ``POST /v1/memory/categories``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    content: str = ""
+    display_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be empty")
+        if len(value) > 100:
+            raise ValueError("name must be at most 100 characters")
+        return value
+
+
+class UpdateMemoryCategoryRequest(BaseModel):
+    """Request body for ``PATCH /v1/memory/categories/{id}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    content: str | None = None
+    display_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be empty")
+        if len(value) > 100:
+            raise ValueError("name must be at most 100 characters")
+        return value
+
+
+class ReorderMemoryCategoriesRequest(BaseModel):
+    """Request body for ``PUT /v1/memory/order``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ordered_ids: list[str]
+
+
+class UpdateMemorySettingsRequest(BaseModel):
+    """Request body for ``PATCH /v1/memory/settings``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_tokens: int = Field(ge=1, le=1_000_000)

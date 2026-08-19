@@ -32,6 +32,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.device_grant import DeviceGrant
 from omnigent.entities.file import StoredFile
+from omnigent.entities.memory import MemoryCategory
 from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
@@ -83,6 +84,7 @@ __all__ = [
     "FyiCluster",
     "ItemData",
     "LoadedAgent",
+    "MemoryCategory",
     "MessageData",
     "NativeToolData",
     "NewConversationItem",

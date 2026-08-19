@@ -108,6 +108,24 @@ def test_framework_instructions_append_after_custom_prompts() -> None:
     assert result == "Agent prompt\n\nRequest prompt\n\nFramework prompt"
 
 
+def test_memory_is_after_effective_prompt_and_before_framework() -> None:
+    spec = cast(AgentSpec, SimpleNamespace(instructions="Profile prompt", skills=[]))
+
+    result = build_instructions(
+        spec,
+        None,
+        [],
+        memory_instructions="<omnigent_memory>remember</omnigent_memory>",
+        framework_instructions=("Framework prompt",),
+    )
+
+    assert result == (
+        "Profile prompt\n\n"
+        "<omnigent_memory>remember</omnigent_memory>\n\n"
+        "Framework prompt"
+    )
+
+
 def test_empty_framework_instructions_do_not_change_default() -> None:
     spec = cast(AgentSpec, SimpleNamespace(instructions=None, skills=[]))
 

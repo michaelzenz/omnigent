@@ -68,6 +68,7 @@ from omnigent.server.routes.default_policies import create_default_policies_rout
 from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
+from omnigent.server.routes.memory import create_memory_router
 from omnigent.server.routes.model_settings import (
     configured_omnigent_model_options,
     create_model_settings_router,
@@ -107,6 +108,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
@@ -939,6 +941,7 @@ def create_app(
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
+    memory_store: MemoryStore | None = None,
     task_store: TaskStore | None = None,
     task_event_store: TaskEventStore | None = None,
     task_item_store: TaskItemStore | None = None,
@@ -1086,6 +1089,9 @@ def create_app(
         raise ValueError("auth_provider is required when permission_store is provided")
 
     resolved_feature_flags = feature_flags or resolve_feature_flags()
+    from omnigent.memory import DEFAULT_MEMORY_MAX_TOKENS
+
+    memory_max_tokens = DEFAULT_MEMORY_MAX_TOKENS
 
     # First-boot admin bootstrap for the accounts auth provider.
     # Runs before any route is mounted so the login page is never
@@ -2443,6 +2449,8 @@ def create_app(
             # Validates target-project ownership when PATCH /v1/sessions/{id}
             # files a session into a project (owner-private membership).
             project_store=project_store,
+            memory_store=memory_store,
+            memory_max_tokens=memory_max_tokens,
             background_title_coordinator=background_title_coordinator,
         ),
         prefix="/v1",
@@ -2725,6 +2733,17 @@ def create_app(
             ),
             prefix="/v1",
             tags=["projects"],
+        )
+
+    if memory_store is not None:
+        app.include_router(
+            create_memory_router(
+                memory_store=memory_store,
+                auth_provider=auth_provider,
+                max_tokens=memory_max_tokens,
+            ),
+            prefix="/v1",
+            tags=["memory"],
         )
 
     # ── Tunnel lifecycle callbacks (Step 8.5 crash recovery) ───

@@ -46,6 +46,7 @@ def build_instructions(
     per_request_instructions: str | None,
     tool_schemas: list[dict[str, Any]],
     *,
+    memory_instructions: str | None = None,
     framework_instructions: Sequence[str] = (),
 ) -> str:
     """
@@ -62,8 +63,10 @@ def build_instructions(
     :param tool_schemas: OpenAI-format tool schemas (used
         only for future skill-awareness hinting; currently
         not included in the instructions body).
+    :param memory_instructions: Server-rendered persistent user memory,
+        appended after the effective agent/profile prompt.
     :param framework_instructions: Framework-owned additive instructions
-        for this turn, appended after user-authored agent/request instructions.
+        for this turn, appended last.
     :returns: The assembled instructions string.
     """
     parts: list[str] = []
@@ -86,6 +89,9 @@ def build_instructions(
         for skill in spec.skills:
             skill_lines.append(f"- {skill.name}: {skill.description}")
         parts.append("\n".join(skill_lines))
+
+    if memory_instructions:
+        parts.append(memory_instructions)
 
     base_instructions = "\n\n".join(parts) if parts else "You are a helpful assistant."
     return (

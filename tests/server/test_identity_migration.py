@@ -23,6 +23,8 @@ from omnigent.db.db_models import (
     SqlAccountToken,
     SqlComment,
     SqlHost,
+    SqlMemoryCategory,
+    SqlMemorySettings,
     SqlPolicy,
 )
 from omnigent.db.enum_codecs import (
@@ -158,6 +160,24 @@ def test_remap_repoints_comments_policies_tokens_hosts(db_uri: str) -> None:
                 updated_at=1,
             )
         )
+        s.add(
+            SqlMemoryCategory(
+                id="b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+                user_id="alice",
+                name="Preferences",
+                display_order=0,
+                content="Keep answers concise.",
+                token_count=4,
+                created_at=1,
+            )
+        )
+        s.add(
+            SqlMemorySettings(
+                user_id="alice",
+                max_tokens=12_000,
+                updated_at=1,
+            )
+        )
         s.commit()
 
     remap_identities(engine, {"alice": "alice@example.com"}, dry_run=False)
@@ -177,6 +197,10 @@ def test_remap_repoints_comments_policies_tokens_hosts(db_uri: str) -> None:
         assert s.get(SqlAccountToken, (0, "tok_1")).created_by == "alice@example.com"
         host_owners = s.execute(select(SqlHost.user_id)).scalars().all()
         assert host_owners == ["alice@example.com"]
+        memory = s.get(SqlMemoryCategory, (0, "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"))
+        assert memory is not None and memory.user_id == "alice@example.com"
+        memory_settings = s.get(SqlMemorySettings, (0, "alice@example.com"))
+        assert memory_settings is not None and memory_settings.max_tokens == 12_000
 
 
 def test_dry_run_mutates_nothing_but_reports(db_uri: str) -> None:

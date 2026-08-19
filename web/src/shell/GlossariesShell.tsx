@@ -4,8 +4,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RolesTab } from "./glossaries/RolesTab";
 import { ScriptPluginsBoard } from "./glossaries/ScriptPluginsBoard";
 import { SkillsTab } from "./glossaries/SkillsTab";
+import { MemoryTab } from "./glossaries/MemoryTab";
 
-const TAB_IDS = ["roles", "pollers", "timers", "skills"] as const;
+const TAB_IDS = ["roles", "pollers", "timers", "skills", "memory"] as const;
 type GlossariesTabId = (typeof TAB_IDS)[number];
 
 function parseTab(raw: string | null): GlossariesTabId {
@@ -40,6 +41,7 @@ export function GlossariesShell() {
             <TabsTrigger value="pollers">Pollers</TabsTrigger>
             <TabsTrigger value="timers">Timers</TabsTrigger>
             <TabsTrigger value="skills">Skills</TabsTrigger>
+            <TabsTrigger value="memory">Memory</TabsTrigger>
           </TabsList>
           <TabsContent value="roles" className="mt-4">
             <RolesTab />
@@ -52,6 +54,9 @@ export function GlossariesShell() {
           </TabsContent>
           <TabsContent value="skills" className="mt-4">
             <SkillsTab />
+          </TabsContent>
+          <TabsContent value="memory" className="mt-4">
+            <MemoryTab />
           </TabsContent>
         </Tabs>
       </div>

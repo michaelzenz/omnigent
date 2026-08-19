@@ -749,6 +749,57 @@ class SqlProject(OmnigentBase):
     )
 
 
+class SqlMemoryCategory(OmnigentBase):
+    """One persistent owner-private memory document."""
+
+    __tablename__ = "memory_categories"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(CompressedText, nullable=False, default="")
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_memory_categories_user_order",
+            "workspace_id",
+            "user_id",
+            "display_order",
+            "id",
+        ),
+    )
+
+
+class SqlMemorySettings(OmnigentBase):
+    """Per-user configuration for persistent memory."""
+
+    __tablename__ = "memory_settings"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    # Empty string is the single-user scope. Keeping this non-null makes it a
+    # portable composite primary key across SQLite and PostgreSQL.
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.
