@@ -5,7 +5,7 @@ import { useConversations } from "@/hooks/useConversations";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
 import { useSidebarToggleHotkeys } from "@/hooks/useSidebarToggleHotkeys";
-import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
+import { useCommandPaletteHotkey, useSearchHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useIsEmbedded } from "@/lib/embedded";
 import { AgentInfoContent, agentHasInfo } from "@/components/AgentInfo";
 import { useIdleNotifications } from "@/hooks/useIdleNotifications";
@@ -1126,6 +1126,7 @@ export function AppShell() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const isEmbedded = useIsEmbedded();
   useCommandPaletteHotkey(() => setCommandPaletteOpen((prev) => !prev), !isEmbedded);
+  useSearchHotkey(() => setCommandPaletteOpen(true), !isEmbedded);
 
   // Mobile back button: close the open file and return to the files/changes
   // list. On mobile the tab strip is hidden, so a "back" should fully drop the

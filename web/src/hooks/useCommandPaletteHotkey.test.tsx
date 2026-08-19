@@ -1,7 +1,12 @@
 import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isCommandPaletteHotkey, useCommandPaletteHotkey } from "./useCommandPaletteHotkey";
+import {
+  isCommandPaletteHotkey,
+  isSearchHotkey,
+  useCommandPaletteHotkey,
+  useSearchHotkey,
+} from "./useCommandPaletteHotkey";
 
 afterEach(() => {
   cleanup();
@@ -104,5 +109,27 @@ describe("useCommandPaletteHotkey", () => {
     press({ key: "k", metaKey: true });
 
     expect(onToggle).not.toHaveBeenCalled();
+  });
+});
+
+describe("app search hotkey", () => {
+  it("matches Cmd/Ctrl+Shift+F only", () => {
+    expect(
+      isSearchHotkey(new KeyboardEvent("keydown", { key: "f", metaKey: true, shiftKey: true })),
+    ).toBe(true);
+    expect(
+      isSearchHotkey(new KeyboardEvent("keydown", { key: "F", ctrlKey: true, shiftKey: true })),
+    ).toBe(true);
+    expect(isSearchHotkey(new KeyboardEvent("keydown", { key: "f", metaKey: true }))).toBe(false);
+  });
+
+  it("opens search and prevents the browser default", () => {
+    const onOpen = vi.fn();
+    renderHook(() => useSearchHotkey(onOpen));
+
+    const event = press({ key: "f", metaKey: true, shiftKey: true });
+
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
   });
 });

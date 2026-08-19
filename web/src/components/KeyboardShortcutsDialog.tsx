@@ -68,6 +68,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "General",
     items: [
       { label: "Open command palette", keys: [MOD_KEY, "K"] },
+      { label: "Open chat search", keys: [MOD_KEY, SHIFT, "F"] },
       { label: "Show keyboard shortcuts", keys: [MOD_KEY, "/"] },
     ],
   },

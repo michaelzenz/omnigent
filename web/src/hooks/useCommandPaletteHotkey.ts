@@ -26,6 +26,13 @@ export function isCommandPaletteHotkey(e: globalThis.KeyboardEvent): boolean {
   return e.key === "k" || e.key === "K";
 }
 
+/** True for Cmd/Ctrl+Shift+F, the app-wide chat-search opener. */
+export function isSearchHotkey(e: globalThis.KeyboardEvent): boolean {
+  if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return false;
+  if (e.getModifierState("AltGraph")) return false;
+  return e.key === "f" || e.key === "F";
+}
+
 /** Does focus sit inside a surface that owns ⌘K (xterm / Monaco)? */
 function focusOwnsHotkey(): boolean {
   const el = document.activeElement;
@@ -56,6 +63,24 @@ export function useCommandPaletteHotkey(onToggle: () => void, enabled = true): v
       // Claim the chord: preventDefault drops the browser default (Ctrl+K
       // focuses the address bar). stopPropagation mirrors the sibling hotkey
       // hooks; no other listener binds ⌘K, so it's belt-and-suspenders.
+      e.preventDefault();
+      e.stopPropagation();
+      latest.current();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [enabled]);
+}
+
+/** Bind Cmd/Ctrl+Shift+F to open the command palette's search input. */
+export function useSearchHotkey(onOpen: () => void, enabled = true): void {
+  const latest = useRef(onOpen);
+  latest.current = onOpen;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const handler = (e: globalThis.KeyboardEvent): void => {
+      if (e.repeat || !isSearchHotkey(e) || focusOwnsHotkey()) return;
       e.preventDefault();
       e.stopPropagation();
       latest.current();

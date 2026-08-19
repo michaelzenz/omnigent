@@ -48,6 +48,10 @@ const InboxPage = withPageView(
   "inbox",
   lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage }))),
 );
+const SearchPage = withPageView(
+  "search",
+  lazy(() => import("@/pages/SearchPage").then((m) => ({ default: m.SearchPage }))),
+);
 const TasksPage = withPageView(
   "tasks",
   lazy(() => import("@/pages/TasksPage").then((m) => ({ default: m.TasksPage }))),
@@ -159,6 +163,7 @@ function App({ basename }: AppProps = {}) {
           <Route path={prefix || "/"} element={<ChatPage />} />
           <Route path={`${prefix}/c/:conversationId`} element={<ChatPage />} />
           <Route path={`${prefix}/inbox`} element={<InboxPage />} />
+          <Route path={`${prefix}/search`} element={<SearchPage />} />
           <Route path={`${prefix}/tasks`} element={<TasksPage />} />
           <Route path={`${prefix}/puppy-garden`} element={<PuppyGardenPage />} />
           <Route path={`${prefix}/glossaries`} element={<GlossariesPage />} />

@@ -1003,16 +1003,16 @@ def build_search_snippet(
     text: str,
     query: str,
     *,
-    context: int = 60,
-    max_len: int = 160,
+    context: int = 280,
+    max_len: int = 600,
 ) -> str | None:
     """
     Build a short excerpt of ``text`` centered on the first ``query`` match.
 
-    Powers the session-search preview: the sidebar/palette matches on chat
-    content, so a hit is often invisible in the session title. This returns
-    the matching span plus a little surrounding context, with ``…`` marking
-    elided ends, so the UI can show *where* a session matched.
+    Powers session-search previews: compact consumers truncate this to one line,
+    while the full search page wraps it across several lines. This returns the
+    matching span plus surrounding context, with ``…`` marking elided ends, so
+    the UI can show *where* a session matched.
 
     Matching is case-insensitive substring (mirrors the ``LIKE`` filter that
     selected the row). Whitespace in ``text`` is collapsed first so a match

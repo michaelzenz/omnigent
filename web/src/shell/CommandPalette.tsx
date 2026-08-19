@@ -17,10 +17,11 @@
 // groups react to the same input.
 
 import type React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClockIcon,
   InboxIcon,
+  Maximize2Icon,
   type LucideIcon,
   PanelLeftIcon,
   PanelRightIcon,
@@ -38,6 +39,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { InputGroupButton } from "@/components/ui/input-group";
 import { conversationDisplayLabel, getConversationAgentType } from "./sidebarNav";
 
 export interface CommandPaletteProps {
@@ -66,7 +68,7 @@ const SEARCH_DEBOUNCE_MS = 300;
     so a search hit is visible in the title / content snippet. Returns the raw
     text unchanged when the query is empty or doesn't occur (e.g. the snippet
     matched a stemmed form). */
-function HighlightedText({ text, query }: { text: string; query: string }): React.ReactNode {
+export function HighlightedText({ text, query }: { text: string; query: string }): React.ReactNode {
   const q = query.trim();
   if (!q) return text;
   // Escape regex metacharacters so a query like "a.b" matches literally.
@@ -103,6 +105,7 @@ export function CommandPalette({
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const explicitlySelectedRef = useRef(false);
 
   // Reset the query when the palette closes so it reopens clean.
   useEffect(() => {
@@ -118,6 +121,16 @@ export function CommandPalette({
   }, [query]);
 
   const close = (): void => onOpenChange(false);
+  const openFullSearch = (): void => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    close();
+    navigate(`/search?q=${encodeURIComponent(trimmed)}`);
+  };
+  const updateQuery = (next: string): void => {
+    explicitlySelectedRef.current = false;
+    setQuery(next);
+  };
 
   const actions = useMemo<ActionCommand[]>(
     () => [
@@ -226,12 +239,37 @@ export function CommandPalette({
         {/* shouldFilter=false: the server filters sessions and we filter actions
             (see file header). vimBindings=false: keep Ctrl+K/J from doubling as
             list-nav on Win/Linux, where Ctrl+K is also the opener. */}
-        <Command shouldFilter={false} vimBindings={false} label="Command palette">
+        <Command
+          shouldFilter={false}
+          vimBindings={false}
+          label="Command palette"
+          onKeyDownCapture={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              explicitlySelectedRef.current = true;
+              return;
+            }
+            if (event.key !== "Enter" || !query.trim() || explicitlySelectedRef.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            openFullSearch();
+          }}
+        >
           <CommandInput
             value={query}
-            onValueChange={setQuery}
+            onValueChange={updateQuery}
             placeholder="Search sessions or run a command"
             data-testid="command-palette-input"
+            endAdornment={
+              <InputGroupButton
+                aria-label="Expand search"
+                title="Show all search results"
+                size="icon-xs"
+                disabled={!query.trim()}
+                onClick={openFullSearch}
+              >
+                <Maximize2Icon />
+              </InputGroupButton>
+            }
           />
           <CommandList>
             <CommandEmpty>
@@ -247,6 +285,9 @@ export function CommandPalette({
                     key={s.id}
                     value={s.id}
                     onSelect={() => goToSession(s.id)}
+                    onMouseEnter={() => {
+                      explicitlySelectedRef.current = true;
+                    }}
                     className="items-start pl-6"
                   >
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -271,7 +312,14 @@ export function CommandPalette({
                 {filteredActions.map((a) => {
                   const Icon = a.icon;
                   return (
-                    <CommandItem key={a.id} value={`action:${a.id}`} onSelect={() => runAction(a)}>
+                    <CommandItem
+                      key={a.id}
+                      value={`action:${a.id}`}
+                      onSelect={() => runAction(a)}
+                      onMouseEnter={() => {
+                        explicitlySelectedRef.current = true;
+                      }}
+                    >
                       <Icon />
                       <span className="flex-1 truncate text-left">{a.label}</span>
                     </CommandItem>

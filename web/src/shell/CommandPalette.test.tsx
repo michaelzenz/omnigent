@@ -215,6 +215,57 @@ describe("CommandPalette — input", () => {
 
     expect(screen.getByPlaceholderText("Search sessions or run a command")).toBeTruthy();
   });
+
+  it("opens the full search page when Enter is pressed without an explicit selection", () => {
+    setSessions([conv("c1", "Deploy notes")]);
+    const onOpenChange = vi.fn();
+    renderPalette({ onOpenChange });
+    const input = screen.getByTestId("command-palette-input");
+
+    fireEvent.change(input, { target: { value: "deploy" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(navigate).toHaveBeenCalledWith("/search?q=deploy");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("opens the full search page from the expand button", () => {
+    renderPalette();
+    fireEvent.change(screen.getByTestId("command-palette-input"), {
+      target: { value: "deployment errors" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand search" }));
+
+    expect(navigate).toHaveBeenCalledWith("/search?q=deployment%20errors");
+  });
+
+  it("opens an explicitly hovered result instead of the full search page", () => {
+    setSessions([conv("c1", "Deploy notes")]);
+    renderPalette();
+    const input = screen.getByTestId("command-palette-input");
+    fireEvent.change(input, { target: { value: "deploy" } });
+    const item = screen.getByText("Deploy notes").closest("[data-slot=command-item]");
+
+    fireEvent.mouseEnter(item!);
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(navigate).toHaveBeenCalledWith("/c/c1");
+    expect(navigate).not.toHaveBeenCalledWith("/search?q=deploy");
+  });
+
+  it("opens a keyboard-selected result instead of the full search page", () => {
+    setSessions([conv("c1", "Deploy notes")]);
+    renderPalette();
+    const input = screen.getByTestId("command-palette-input");
+    fireEvent.change(input, { target: { value: "deploy" } });
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(navigate).toHaveBeenCalledWith("/c/c1");
+    expect(navigate).not.toHaveBeenCalledWith("/search?q=deploy");
+  });
 });
 
 describe("CommandPalette — actions", () => {
