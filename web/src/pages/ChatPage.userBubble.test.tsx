@@ -284,7 +284,10 @@ describe("UserBubble copy button", () => {
   it("jumps to the message start and clears hover chrome", () => {
     renderBubble(userBubble("jump me"));
     const bubble = screen.getByTestId("message-bubble");
-    const scrollIntoView = vi.fn();
+    bubble.style.position = "sticky";
+    const scrollIntoView = vi.fn(() => {
+      expect(bubble.style.position).toBe("static");
+    });
     bubble.scrollIntoView = scrollIntoView;
     fireEvent.pointerEnter(bubble);
 

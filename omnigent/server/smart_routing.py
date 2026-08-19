@@ -636,7 +636,17 @@ class LLMRoutingClient:
                 ),
                 timeout=ROUTING_REQUEST_TIMEOUT_S,
             )
-            text = response.output[0].content[0].text
+            text = next(
+                (
+                    candidate
+                    for output in response.output
+                    for content in getattr(output, "content", ())
+                    if isinstance((candidate := getattr(content, "text", None)), str) and candidate
+                ),
+                None,
+            )
+            if text is None:
+                raise ValueError("routing judge returned no text output")
             # The verdict can echo prompt text in its rationale, so keep it off
             # INFO; the chosen model is logged by the caller either way.
             _logger.debug("LLMRoutingClient: raw response: %s", text[:500])

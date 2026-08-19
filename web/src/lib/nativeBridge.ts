@@ -183,6 +183,10 @@ interface ElectronDesktopApi extends NativeShellApi {
     bounds?: unknown,
     opts?: { force?: boolean; agent?: boolean },
   ) => Promise<{ ok: boolean; created?: boolean; error?: string }>;
+  /** Attach one conversation's browser view, or detach every view with null. */
+  browserSetActive?: (
+    conversationId: string | null,
+  ) => Promise<{ ok: boolean; error?: string }>;
   /**
    * Hide/show the active embedded browser view while a DOM overlay is open.
    * The native view paints above the renderer, so this is how overlays
@@ -389,6 +393,11 @@ export function updateBridge(): ElectronUpdateBridge | undefined {
  */
 export function supportsBrowser(): boolean {
   return typeof electronApi()?.browserOpenOrNavigate === "function";
+}
+
+/** Stop the native browser view from painting above the web application. */
+export function detachActiveBrowserView(): void {
+  void electronApi()?.browserSetActive?.(null);
 }
 
 /**

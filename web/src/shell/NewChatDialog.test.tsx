@@ -3709,6 +3709,32 @@ describe("NewChatLandingScreen smart routing", () => {
     );
   });
 
+  it("preselects Smart Routing on a later Omnigent session", () => {
+    mockAgents([
+      {
+        id: "ag_omnigent",
+        name: "omnigent",
+        display_name: "Omnigent",
+        description: null,
+        harness: "openai-agents",
+        skills: [],
+      },
+    ]);
+    renderLanding({ smart_routing_enabled: true });
+    openAgentConfig("ag_omnigent");
+    pickSelectOption("new-chat-landing-config-model", "Smart Routing");
+    saveConfig();
+    expect(
+      JSON.parse(localStorage.getItem(HARNESS_OPTIONS_KEY) ?? "{}")["openai-agents"],
+    ).toMatchObject({ routing: "on" });
+
+    remountLanding({ smart_routing_enabled: true });
+    openAgentConfig("ag_omnigent");
+    expect(screen.getByTestId("new-chat-landing-config-model").textContent).toContain(
+      "Smart Routing",
+    );
+  });
+
   it("remembers Codex's routing pick without touching Claude Code's", () => {
     renderLanding({ smart_routing_enabled: true });
     openAgentConfig("a2");

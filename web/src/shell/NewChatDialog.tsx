@@ -1469,6 +1469,9 @@ function HarnessConfigModal({
   const isCodex = entryHarness === "codex-native";
   const isSdk =
     agent.harness === SDK_HARNESS || (!isNativeCodingAgent(agent) && agent.name !== "omnigent");
+  const routingPreferenceHarness =
+    entryHarness ??
+    (agent.harness != null && OMNIGENT_ROUTABLE_HARNESSES.has(agent.harness) ? SDK_HARNESS : null);
   const isMultiAgentProfile = agent.is_multi_agent === true;
   const modelOptions = isCodex ? codexModelOptions : claudeModelOptions;
   const modelsLoading = isCodex ? codexModelsLoading : claudeModelsLoading;
@@ -1612,8 +1615,8 @@ function HarnessConfigModal({
         setPickedModel("");
         setPickedEffort("");
       }
-      if (entryHarness)
-        writeHarnessOption(entryHarness, {
+      if (routingPreferenceHarness)
+        writeHarnessOption(routingPreferenceHarness, {
           routing: draftRouting === "on" ? "on" : "off",
           ...(draftRouting === "on" ? { model: "", effort: "" } : {}),
         });
@@ -3005,12 +3008,12 @@ export function NewChatLandingScreen() {
   // including one between two agents on the same harness. Fully-auto owns the
   // switch itself (the router always routes), so it's left alone.
   useEffect(() => {
-    if (!selectedNativeHarness || autoRoutingSelected) return;
-    const storedRouting = readHarnessOptions(selectedNativeHarness).routing;
+    if (!smartRoutingHarness || autoRoutingSelected) return;
+    const storedRouting = readHarnessOptions(smartRoutingHarness).routing;
     if (storedRouting === undefined) return;
     setCostControlMode(smartRoutingEligible && storedRouting === "on" ? "on" : null);
   }, [
-    selectedNativeHarness,
+    smartRoutingHarness,
     smartRoutingEligible,
     effectiveAgentId,
     autoRoutingSelected,

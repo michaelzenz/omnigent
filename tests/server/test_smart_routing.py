@@ -46,10 +46,15 @@ class _FakeMessageOutput:
 
 
 @dataclass
+class _FakeToolOutput:
+    type: str = "tool_output"
+
+
+@dataclass
 class _FakeResponse:
     """Minimal stub matching omnigent.llms.types.Response."""
 
-    output: list[_FakeMessageOutput]
+    output: list[Any]
 
 
 class _FakeLLMClient:
@@ -595,6 +600,31 @@ async def test_route_turn_uses_default_guidance_when_custom_prompt_is_empty() ->
 
     task_text = captured["input"][0]["content"][0]["text"]
     assert "balancing capability, latency, and cost" in task_text
+
+
+@pytest.mark.asyncio
+async def test_local_judge_skips_tool_outputs_before_the_verdict_message() -> None:
+    models = ["databricks-gpt-5-6-luna"]
+    verdict = {
+        "harness": "openai-agents",
+        "model": models[0],
+        "rationale": "simple task",
+    }
+
+    class _ToolThenMessageLLM:
+        async def create(self, **_kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(
+                output=[
+                    _FakeToolOutput(),
+                    _FakeMessageOutput(content=[_FakeOutputText(text=json.dumps(verdict))]),
+                ]
+            )
+
+    client = LLMRoutingClient(_ToolThenMessageLLM())
+    result = await client.route("hello", {"openai-agents": models})
+
+    assert result is not None
+    assert result.model == models[0]
 
 
 @pytest.mark.asyncio

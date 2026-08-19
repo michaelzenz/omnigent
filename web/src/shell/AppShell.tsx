@@ -15,6 +15,7 @@ import { useIOSViewportLock } from "@/hooks/useIOSViewportLock";
 import { readFilesPanelPreferences, writeFilesPanelPreferences } from "@/lib/filesPanelPreferences";
 import { derivePermissionLevel, isOwnerLevel } from "@/lib/permissionsApi";
 import {
+  detachActiveBrowserView,
   isAndroidShell,
   isIOSShell,
   isMacElectronShell,
@@ -634,6 +635,15 @@ export function AppShell() {
   // only mounts while its tab is selected) so it's listening before the first
   // browser_navigate. No-op outside Electron / with no conversation.
   useBrowserAgentRelay(conversationId);
+
+  // A native browser view paints above React. Clear it at the route boundary
+  // even if BrowserPane's own cleanup was skipped during a session switch.
+  useEffect(
+    () => () => {
+      detachActiveBrowserView();
+    },
+    [conversationId],
+  );
 
   // Clear a stale browser-view suppression left by a renderer reload/crash: the
   // main-process flag persists but this renderer's overlay count reset to 0, so

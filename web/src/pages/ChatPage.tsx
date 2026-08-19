@@ -3097,15 +3097,24 @@ function bubbleKey(bubble: Bubble): string {
   return `assistant:${bubble.stableId}`;
 }
 
-function scrollToUserTurnStart(itemId: string): void {
-  const message = Array.from(document.querySelectorAll<HTMLElement>("[data-user-message-id]")).find(
-    (element) => element.dataset.userMessageId === itemId,
-  );
+function scrollToUserTurnStart(message: HTMLElement | null): void {
   if (!message) {
-    console.warn(`scrollToUserTurnStart: no message for itemId=${itemId}`);
+    console.warn("scrollToUserTurnStart: clicked action has no message ancestor");
     return;
   }
+  // A sticky element's painted box remains at the roof even when its normal
+  // flow position is far above it, so browsers may consider it already visible
+  // and turn scrollIntoView into a no-op. Resolve the destination from its
+  // normal position, then restore sticky behavior after the scroll starts.
+  const inlinePosition = message.style.position;
+  const sticky = window.getComputedStyle(message).position === "sticky";
+  if (sticky) message.style.position = "static";
   message.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (sticky) {
+    requestAnimationFrame(() => {
+      message.style.position = inlinePosition;
+    });
+  }
 }
 
 export function nearestCrossedUserMessageId(
@@ -4146,11 +4155,13 @@ function UserBubble({
                   tooltip="Jump to turn start"
                   size="icon-xxs"
                   onClick={(event) => {
+                    const message =
+                      event.currentTarget.closest<HTMLElement>("[data-user-message-id]");
                     event.currentTarget.blur();
                     setPointerOver(false);
                     setKeyboardFocus(false);
                     setSuppressChromeUntilLeave(true);
-                    scrollToUserTurnStart(bubble.itemId);
+                    scrollToUserTurnStart(message);
                   }}
                 >
                   <ArrowUpToLineIcon size={14} />
