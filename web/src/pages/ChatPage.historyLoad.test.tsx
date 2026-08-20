@@ -1014,6 +1014,33 @@ describe("JumpToTopButton", () => {
     expect(pill().className).toContain("pointer-events-none");
   });
 
+  it("can jump to the last message instead of loading older history", () => {
+    const { container, scroll, scroller } = makeScroller({
+      scrollTop: 300,
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+    const metrics = scroll as unknown as { scrollTop: number };
+
+    render(
+      <JumpToTopButton
+        containerEl={container}
+        scroller={scroller}
+        hasMoreHistory
+        mode="jump-to-last-message"
+      />,
+    );
+    act(() => {
+      fireEvent.mouseMove(container, { clientY: 10 });
+    });
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('button[aria-label="Jump to the last message"]')!,
+    );
+
+    expect(metrics.scrollTop).toBe(600);
+    expect(scroller.state).toEqual({ isAtBottom: true, escapedFromLock: false });
+  });
+
   it("releases the bottom-lock, pages in all history, then scrolls to the top", async () => {
     const { container, scroller, scroll } = makeScroller({
       scrollTop: 500,

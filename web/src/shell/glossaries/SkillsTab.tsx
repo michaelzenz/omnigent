@@ -31,7 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
   useDeleteSkillEverywhere,
-  useSaveSkillVariantContent,
+  useSaveSkillVariantFiles,
   useSkillRoots,
   useSkillTree,
   useSyncSkills,
@@ -274,14 +274,14 @@ function SkillRootsDialog({
 
 export function SkillsTab() {
   const skills = useSyncedSkills();
-  const save = useSaveSkillVariantContent();
+  const save = useSaveSkillVariantFiles();
   const sync = useSyncSkills();
   const deleteSkill = useDeleteSkillEverywhere();
   const [search, setSearch] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [selectedVariantHash, setSelectedVariantHash] = useState<string | null>(null);
   const [compareVariantHash, setCompareVariantHash] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -330,7 +330,11 @@ export function SkillsTab() {
     compareOccurrence?.hostId ?? null,
     compareOccurrence?.harness ?? null,
   );
-  const skillFile = tree.data?.find((file) => file.path === "SKILL.md");
+  const editableDraftSnapshot = JSON.stringify(
+    Object.fromEntries(
+      (tree.data ?? []).filter((file) => !file.binary).map((file) => [file.path, file.content]),
+    ),
+  );
   const comparedFiles = useMemo(() => {
     const selectedFiles = new Map((tree.data ?? []).map((file) => [file.path, file]));
     const baselineFiles = new Map((compareTree.data ?? []).map((file) => [file.path, file]));
@@ -351,19 +355,28 @@ export function SkillsTab() {
       );
   }, [compareTree.data, tree.data]);
   useEffect(() => {
-    if (skillFile) setDraft(skillFile.content);
-  }, [skillFile, selectedVariant?.contentSha256, selected?.name]);
+    setDrafts(JSON.parse(editableDraftSnapshot) as Record<string, string>);
+  }, [editableDraftSnapshot, selectedVariant?.contentSha256, selected?.name]);
 
   async function handleSave() {
     if (!selected || !selectedVariant) return;
     setMessage(null);
+    const files = Object.fromEntries(
+      (tree.data ?? [])
+        .filter((file) => !file.binary && drafts[file.path] !== file.content)
+        .map((file) => [file.path, drafts[file.path] ?? file.content]),
+    );
+    if (Object.keys(files).length === 0) {
+      setMessage("No changes to save.");
+      return;
+    }
     try {
       await save.mutateAsync({
         name: selected.name,
         contentSha256: selectedVariant.contentSha256,
-        content: draft,
+        files,
       });
-      setMessage("Saved every occurrence in the selected variant.");
+      setMessage("Saved edited files in every occurrence of the selected variant.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Save failed");
     }
@@ -547,11 +560,9 @@ export function SkillsTab() {
                           <SkillVariantDiff
                             original={baseline?.content ?? ""}
                             modified={
-                              path === "SKILL.md"
-                                ? selectedFile
-                                  ? draft
-                                  : ""
-                                : (selectedFile?.content ?? "")
+                              selectedFile
+                                ? (drafts[selectedFile.path] ?? selectedFile.content)
+                                : ""
                             }
                             originalLabel={`Variant ${
                               selected.variants.indexOf(compareVariant) + 1
@@ -584,10 +595,15 @@ export function SkillsTab() {
                         </Badge>
                       )}
                     </div>
-                    {file.path === "SKILL.md" ? (
+                    {!file.binary ? (
                       <Textarea
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
+                        value={drafts[file.path] ?? file.content}
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [file.path]: event.target.value,
+                          }))
+                        }
                         disabled={!selectedOccurrence || tree.isLoading}
                         className="min-h-[32rem] resize-none rounded-none border-0 bg-white font-mono text-xs text-slate-950 focus-visible:ring-0"
                         spellCheck={false}

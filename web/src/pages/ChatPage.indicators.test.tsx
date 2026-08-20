@@ -321,4 +321,19 @@ describe("BubbleView dispatch", () => {
       "Compacting conversation…",
     );
   });
+
+  it("hides the entire routing notice when notices are disabled", () => {
+    const routingBubble: Bubble = {
+      kind: "routing_decision",
+      itemId: "route_1",
+      model: "gpt-5-6-luna",
+      applied: true,
+      rationale: "Selected for this task.",
+    };
+    const { container } = render(
+      <BubbleView bubble={routingBubble} routingNoticesEnabled={false} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
 });

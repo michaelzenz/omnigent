@@ -157,8 +157,9 @@ vi.mock("@/hooks/useSkills", () => ({
     data:
       hostId === "host-a"
         ? [
-            { path: "SKILL.md", content: "---\nname: demo\n---\n", binary: false },
+            { path: "skill.md", content: "---\nname: demo\n---\n", binary: false },
             { path: "references/a.md", content: "reference", binary: false },
+            { path: "assets/image.bin", content: "Binary file (sha256: abc)", binary: true },
           ]
         : hostId === "host-b"
           ? [
@@ -194,7 +195,7 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
-  useSaveSkillVariantContent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveSkillVariantFiles: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSyncSkills: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSkillEverywhere: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
@@ -204,7 +205,8 @@ describe("SkillsTab", () => {
     render(<SkillsTab />);
     expect(screen.getByText("Not synced")).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByText("demo")).toHaveLength(2));
-    expect(document.querySelector("textarea")).toBeInTheDocument();
+    expect(document.querySelectorAll("textarea")).toHaveLength(2);
+    expect(screen.getByText("Binary file (sha256: abc)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show demo variants" }));
     expect(screen.getByText("Claude · Variant 1")).toBeInTheDocument();
     expect(screen.getByText("Codex · Variant Missing")).toBeInTheDocument();

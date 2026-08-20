@@ -17,6 +17,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpIcon,
+  ArrowDownIcon,
   ArrowUpToLineIcon,
   BotIcon,
   CheckIcon,
@@ -47,6 +48,17 @@ import {
   readStickyUserMessagesEnabled,
   subscribeStickyUserMessagesEnabled,
 } from "@/lib/stickyUserMessagesPreferences";
+import {
+  DEFAULT_CHAT_TOP_BUTTON_MODE,
+  readChatTopButtonMode,
+  subscribeChatTopButtonMode,
+  type ChatTopButtonMode,
+} from "@/lib/chatTopButtonPreferences";
+import {
+  DEFAULT_ROUTING_NOTICES_ENABLED,
+  readRoutingNoticesEnabled,
+  subscribeRoutingNoticesEnabled,
+} from "@/lib/routingNoticePreferences";
 import {
   Conversation,
   ConversationContent,
@@ -1778,6 +1790,16 @@ export function MainAgentSurface({
     readStickyUserMessagesEnabled,
     () => DEFAULT_STICKY_USER_MESSAGES,
   );
+  const chatTopButtonMode = useSyncExternalStore(
+    subscribeChatTopButtonMode,
+    readChatTopButtonMode,
+    () => DEFAULT_CHAT_TOP_BUTTON_MODE,
+  );
+  const routingNoticesEnabled = useSyncExternalStore(
+    subscribeRoutingNoticesEnabled,
+    readRoutingNoticesEnabled,
+    () => DEFAULT_ROUTING_NOTICES_ENABLED,
+  );
   // The turn rail is a hover minimap with no mobile affordance (CSS-hidden
   // under `md`). Gate its MOUNT — not just its visibility — on the viewport so
   // mobile never mounts observers and history listeners for a rail it can't see.
@@ -2197,6 +2219,7 @@ export function MainAgentSurface({
                           bubble.kind === "user" && bubble.itemId === stickyUserMessageId
                         }
                         stickyUserMessagesEnabled={stickyUserMessagesEnabled}
+                        routingNoticesEnabled={routingNoticesEnabled}
                         isLastAssistant={bubbleIndex === lastAssistantIndex}
                         showsWorking={showsWorking && bubbleIndex === lastAssistantIndex}
                       />
@@ -2271,11 +2294,14 @@ export function MainAgentSurface({
             scrolls to the first message. Rendered here (a wrapper sibling of
             Conversation) rather than inside it so it escapes the chat-scroll-fade
             mask and can sit right at the fade border. */}
-            <JumpToTopButton
-              containerEl={containerEl}
-              scroller={scroller}
-              hasMoreHistory={hasMoreHistory}
-            />
+            {chatTopButtonMode !== "off" && (
+              <JumpToTopButton
+                containerEl={containerEl}
+                scroller={scroller}
+                hasMoreHistory={hasMoreHistory}
+                mode={chatTopButtonMode}
+              />
+            )}
             {/* Too-many-tabs warning: floats as a rounded card just below the
             header, a sibling of Conversation for the same reason as
             JumpToTopButton — outside the chat-scroll-fade mask. */}
@@ -2502,11 +2528,7 @@ function ScrollToBottomOnSend({ nonce }: { nonce: number }) {
 }
 
 /** Prevent the final streaming resize from pulling a reader back to the end. */
-export function ReleaseBottomLockOnResponseEnd({
-  status,
-}: {
-  status: "idle" | "streaming";
-}) {
+export function ReleaseBottomLockOnResponseEnd({ status }: { status: "idle" | "streaming" }) {
   const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
     scrollRef?: React.RefObject<HTMLElement>;
     state: { isAtBottom: boolean; escapedFromLock: boolean };
@@ -2945,12 +2967,15 @@ export function JumpToTopButton({
   containerEl,
   scroller,
   hasMoreHistory,
+  mode = "jump-to-top",
 }: {
   containerEl: HTMLElement | null;
   scroller: ConversationScroller | null;
   hasMoreHistory: boolean;
+  mode?: Exclude<ChatTopButtonMode, "off">;
 }) {
   const [atTop, setAtTop] = useState(true);
+  const [atBottom, setAtBottom] = useState(true);
   const [hovering, setHovering] = useState(false);
   const [jumping, setJumping] = useState(false);
   // Reveal the pill while the user is scrolling up, then fade it back out once
@@ -2994,6 +3019,8 @@ export function JumpToTopButton({
       const top = scrollEl.scrollTop;
       const next = top <= 1;
       setAtTop((prev) => (prev === next ? prev : next));
+      const nextBottom = scrollEl.scrollHeight - scrollEl.clientHeight - top <= 1;
+      setAtBottom((prev) => (prev === nextBottom ? prev : nextBottom));
       // Upward scroll (and not already pinned to the top): show the pill and
       // (re)arm the idle timer that fades it out once scrolling settles.
       if (top < lastTop - 1 && top > 1) {
@@ -3013,7 +3040,7 @@ export function JumpToTopButton({
 
   // Somewhere to go: older pages exist, or we're scrolled down within the
   // loaded window. At the very first message there's nothing to jump to.
-  const canJump = hasMoreHistory || !atTop;
+  const canJump = mode === "jump-to-top" ? hasMoreHistory || !atTop : !atBottom;
   const visible = jumping || ((hovering || scrolledUp) && canJump);
 
   const jumpToTop = useCallback(async () => {
@@ -3069,6 +3096,18 @@ export function JumpToTopButton({
     }
   }, [scroller]);
 
+  const jumpToLastMessage = useCallback(() => {
+    if (!scroller) return;
+    const { el, state } = scroller;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    state.isAtBottom = true;
+    state.escapedFromLock = false;
+  }, [scroller]);
+
+  const jumpLabel = mode === "jump-to-top" ? "Jump to top" : "Jump to last message";
+  const accessibleLabel =
+    mode === "jump-to-top" ? "Jump to the first message" : "Jump to the last message";
+
   return (
     <div
       // top 50px centers the pill on the chat-scroll-fade border (the mask ramps
@@ -3087,8 +3126,11 @@ export function JumpToTopButton({
         variant="outline"
         size="sm"
         disabled={jumping}
-        onClick={() => void jumpToTop()}
-        aria-label="Jump to the first message"
+        onClick={() => {
+          if (mode === "jump-to-top") void jumpToTop();
+          else jumpToLastMessage();
+        }}
+        aria-label={accessibleLabel}
         // When hidden (opacity-0 / pointer-events-none) keep the button out of
         // the tab order and the accessibility tree so it can't take focus or be
         // announced while invisible.
@@ -3109,10 +3151,12 @@ export function JumpToTopButton({
       >
         {jumping ? (
           <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
-        ) : (
+        ) : mode === "jump-to-top" ? (
           <ArrowUpIcon className="size-3.5" aria-hidden />
+        ) : (
+          <ArrowDownIcon className="size-3.5" aria-hidden />
         )}
-        {jumping ? "Loading history…" : "Jump to top"}
+        {jumping ? "Loading history…" : jumpLabel}
       </Button>
     </div>
   );
@@ -3150,10 +3194,7 @@ function animateScrollTop(element: HTMLElement, targetTop: number): void {
   if (priorFrame !== undefined) cancelAnimationFrame(priorFrame);
   const startTop = element.scrollTop;
   const distance = targetTop - startTop;
-  if (
-    Math.abs(distance) < 1 ||
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-  ) {
+  if (Math.abs(distance) < 1 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
     element.scrollTop = targetTop;
     turnJumpFrames.delete(element);
     return;
@@ -3756,12 +3797,14 @@ export const BubbleView = memo(
     bubble,
     isStickyUser = false,
     stickyUserMessagesEnabled = true,
+    routingNoticesEnabled = true,
     isLastAssistant = false,
     showsWorking = false,
   }: {
     bubble: Bubble;
     isStickyUser?: boolean;
     stickyUserMessagesEnabled?: boolean;
+    routingNoticesEnabled?: boolean;
     isLastAssistant?: boolean;
     showsWorking?: boolean;
   }) {
@@ -3779,6 +3822,7 @@ export const BubbleView = memo(
     }
     if (bubble.kind === "compaction") return <CompactionMarker />;
     if (bubble.kind === "routing_decision") {
+      if (!routingNoticesEnabled) return null;
       return (
         <RoutingDecisionCard
           model={bubble.model}
@@ -3800,6 +3844,7 @@ export const BubbleView = memo(
   (prev, next) =>
     (prev.isStickyUser ?? false) === (next.isStickyUser ?? false) &&
     (prev.stickyUserMessagesEnabled ?? true) === (next.stickyUserMessagesEnabled ?? true) &&
+    (prev.routingNoticesEnabled ?? true) === (next.routingNoticesEnabled ?? true) &&
     (prev.isLastAssistant ?? false) === (next.isLastAssistant ?? false) &&
     (prev.showsWorking ?? false) === (next.showsWorking ?? false) &&
     bubblesEqual(prev.bubble, next.bubble),

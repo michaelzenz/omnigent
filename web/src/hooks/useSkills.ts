@@ -204,17 +204,17 @@ async function fetchSkillTree(
   return ((await response.json()) as { files: SkillTreeFile[] }).files;
 }
 
-async function saveSkillVariantContent(
+async function saveSkillVariantFiles(
   name: string,
   contentSha256: string,
-  content: string,
+  files: Record<string, string>,
 ): Promise<void> {
   const response = await authenticatedFetch(
-    `/v1/skills/${encodeURIComponent(name)}/variants/${encodeURIComponent(contentSha256)}/content`,
+    `/v1/skills/${encodeURIComponent(name)}/variants/${encodeURIComponent(contentSha256)}/files`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ files }),
     },
   );
   if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
@@ -307,18 +307,18 @@ export function useSyncSkills() {
   });
 }
 
-export function useSaveSkillVariantContent() {
+export function useSaveSkillVariantFiles() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       name,
       contentSha256,
-      content,
+      files,
     }: {
       name: string;
       contentSha256: string;
-      content: string;
-    }) => saveSkillVariantContent(name, contentSha256, content),
+      files: Record<string, string>;
+    }) => saveSkillVariantFiles(name, contentSha256, files),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
     },

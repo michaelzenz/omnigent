@@ -64,6 +64,10 @@ class SkillVariantWriteRequest(BaseModel):
     content: str
 
 
+class SkillVariantFilesWriteRequest(BaseModel):
+    files: dict[str, str]
+
+
 class SkillHarnessSettingRequest(BaseModel):
     enabled: bool
 
@@ -488,7 +492,12 @@ def create_skills_router(
                 content = f"Binary file (sha256: {hashlib.sha256(raw).hexdigest()})"
                 binary = True
             files.append({"path": path, "content": content, "binary": binary})
-        files.sort(key=lambda file: (file["path"] != "SKILL.md", file["path"]))
+        files.sort(
+            key=lambda file: (
+                file["path"].lower() != "skill.md",
+                file["path"].lower(),
+            )
+        )
         return {
             "host_id": host_id,
             "name": skill_name,
@@ -543,6 +552,54 @@ def create_skills_router(
                     }
                 )
         return {"object": "skill_variant_write_result", "results": results}
+
+    @router.put("/skills/{skill_name}/variants/{content_sha256}/files")
+    async def write_skill_variant_files(
+        request: Request,
+        skill_name: str,
+        content_sha256: str,
+        body: SkillVariantFilesWriteRequest,
+    ) -> dict[str, Any]:
+        """Write edited text files to every occurrence in one variant."""
+        owner = _owner_id(request, auth_provider)
+        occurrences = [
+            (host.host_id, entry)
+            for host in owner_hosts(owner)
+            for entry in host_registry.skill_inventory(host.host_id) or []
+            if entry["name"] == skill_name
+            and entry["content_sha256"] == content_sha256
+        ]
+        if not occurrences:
+            raise HTTPException(status_code=404, detail="Skill variant not found.")
+        results = []
+        for host_id, entry in occurrences:
+            try:
+                await host_skill_request(
+                    host_id,
+                    "skill.files.write",
+                    {
+                        "name": skill_name,
+                        "rel_home_path": entry["rel_home_path"],
+                        "files": body.files,
+                    },
+                )
+                results.append(
+                    {
+                        "host_id": host_id,
+                        "harness": entry["harness"],
+                        "status": "saved",
+                    }
+                )
+            except HTTPException as exc:
+                results.append(
+                    {
+                        "host_id": host_id,
+                        "harness": entry["harness"],
+                        "status": "failed",
+                        "error": str(exc.detail),
+                    }
+                )
+        return {"object": "skill_variant_files_write_result", "results": results}
 
     @router.put("/skills/{skill_name}/content")
     async def write_skill(

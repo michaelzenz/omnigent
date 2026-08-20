@@ -162,6 +162,19 @@ import {
   writeStickyUserMessagesEnabled,
 } from "@/lib/stickyUserMessagesPreferences";
 import {
+  DEFAULT_ROUTING_NOTICES_ENABLED,
+  readRoutingNoticesEnabled,
+  ROUTING_NOTICES_STORAGE_KEY,
+  writeRoutingNoticesEnabled,
+} from "@/lib/routingNoticePreferences";
+import {
+  CHAT_TOP_BUTTON_STORAGE_KEY,
+  type ChatTopButtonMode,
+  DEFAULT_CHAT_TOP_BUTTON_MODE,
+  readChatTopButtonMode,
+  writeChatTopButtonMode,
+} from "@/lib/chatTopButtonPreferences";
+import {
   applyThemePalette,
   DEFAULT_PALETTE,
   isThemeSelection,
@@ -882,6 +895,95 @@ function StickyUserMessagesControl() {
   );
 }
 
+function RoutingNoticesControl() {
+  const [enabled, setEnabled] = useState(() => readRoutingNoticesEnabled());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeRoutingNoticesEnabled(next);
+  }, []);
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Smart routing notices
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Show the selected model and routing reason in the chat.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="routing-notices-toggle"
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
+}
+
+function ChatTopButtonControl() {
+  const [mode, setMode] = useState<ChatTopButtonMode>(() => readChatTopButtonMode());
+  const labelId = useId();
+  const select = useCallback((next: ChatTopButtonMode) => {
+    setMode(next);
+    writeChatTopButtonMode(next);
+  }, []);
+  const options: readonly {
+    value: ChatTopButtonMode;
+    label: string;
+    testId: string;
+  }[] = [
+    { value: "jump-to-top", label: "Top", testId: "chat-top-button-jump-to-top" },
+    {
+      value: "jump-to-last-message",
+      label: "Last",
+      testId: "chat-top-button-jump-to-last-message",
+    },
+    { value: "off", label: "Off", testId: "chat-top-button-off" },
+  ];
+  return (
+    <div className="flex items-center justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Top chat button
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Choose what the floating button at the top of a chat does.
+        </span>
+      </div>
+      <div
+        role="radiogroup"
+        aria-labelledby={labelId}
+        className="inline-flex shrink-0 rounded-md border border-border bg-muted/40 p-0.5"
+      >
+        {options.map((option) => {
+          const selected = mode === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              data-testid={option.testId}
+              onClick={() => select(option.value)}
+              className={cn(
+                "rounded px-2 py-1 text-xs font-medium transition-colors",
+                selected
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AppearanceSection() {
   // Embedded: the host owns light/dark, so the Mode and Color theme pickers
   // would be no-ops — hide them and say so (matching ThemeModeMenu). Terminal
@@ -907,6 +1009,8 @@ function AppearanceSection() {
 
     writeHideUnconfiguredHarnesses(DEFAULT_HIDE_UNCONFIGURED_HARNESSES);
     writeStickyUserMessagesEnabled(DEFAULT_STICKY_USER_MESSAGES);
+    writeRoutingNoticesEnabled(DEFAULT_ROUTING_NOTICES_ENABLED);
+    writeChatTopButtonMode(DEFAULT_CHAT_TOP_BUTTON_MODE);
 
     applyDesktopUiFontSize(UI_FONT_SIZE_DEFAULT);
     applyUiFontFamily(UI_FONT_FAMILY_DEFAULT);
@@ -931,6 +1035,8 @@ function AppearanceSection() {
           "omnigent:default-workspace-panel",
           "omnigent:hide-unconfigured-harnesses",
           STICKY_USER_MESSAGES_STORAGE_KEY,
+          ROUTING_NOTICES_STORAGE_KEY,
+          CHAT_TOP_BUTTON_STORAGE_KEY,
         ]) {
           window.localStorage.removeItem(key);
         }
@@ -976,6 +1082,10 @@ function AppearanceSection() {
         <HideUnconfiguredHarnessesControl />
 
         <StickyUserMessagesControl />
+
+        <RoutingNoticesControl />
+
+        <ChatTopButtonControl />
 
         <UiFontSizeControl />
 

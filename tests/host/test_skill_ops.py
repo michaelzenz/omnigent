@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from omnigent.host.skill_ops import handle_skill_fs_op, skill_inventory_wire
 
 
@@ -42,6 +44,42 @@ def test_host_discovers_and_edits_its_own_skills(tmp_path: Path, monkeypatch) ->
     )
     assert skill.joinpath("SKILL.md").read_text(encoding="utf-8") == updated
     assert result["inventory"][0]["content_sha256"] != original_hash
+
+
+def test_host_edits_any_text_file_but_rejects_binary_files(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    skill = _skill(home, "demo")
+    reference = skill / "references" / "tables.md"
+    reference.parent.mkdir()
+    reference.write_text("old", encoding="utf-8")
+    binary = skill / "image.bin"
+    binary.write_bytes(b"\xff\xfe")
+    monkeypatch.setenv("HOME", str(home))
+
+    handle_skill_fs_op(
+        "skill.files.write",
+        {
+            "name": "demo",
+            "rel_home_path": ".claude/skills/demo",
+            "files": {
+                "SKILL.md": "---\nname: demo\ndescription: Demo\n---\n\nupdated\n",
+                "references/tables.md": "new",
+            },
+        },
+    )
+
+    assert "updated" in skill.joinpath("SKILL.md").read_text(encoding="utf-8")
+    assert reference.read_text(encoding="utf-8") == "new"
+    with pytest.raises(ValueError, match="binary"):
+        handle_skill_fs_op(
+            "skill.files.write",
+            {
+                "name": "demo",
+                "rel_home_path": ".claude/skills/demo",
+                "files": {"image.bin": "not binary anymore"},
+            },
+        )
 
 
 def test_host_reports_search_roots_per_harness(tmp_path: Path, monkeypatch) -> None:

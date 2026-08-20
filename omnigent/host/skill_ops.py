@@ -116,6 +116,42 @@ def _inventory_payload(home: Path) -> dict[str, Any]:
     return {"inventory": skill_inventory_wire(home)}
 
 
+def _editable_skill_file(skill_dir: Path, raw_path: str) -> Path:
+    rel = PurePosixPath(raw_path)
+    if rel.is_absolute() or not rel.parts or ".." in rel.parts:
+        raise ValueError("invalid skill file path")
+    candidate = skill_dir / Path(*rel.parts)
+    if candidate.is_symlink():
+        raise ValueError("skill symlinks cannot be edited")
+    path = candidate.resolve()
+    path.relative_to(skill_dir.resolve())
+    if not path.is_file():
+        raise FileNotFoundError("skill file does not exist")
+    try:
+        path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("binary skill files cannot be edited") from exc
+    return path
+
+
+def _write_skill_files(skill_dir: Path, files: dict[str, str]) -> None:
+    destinations = {
+        _editable_skill_file(skill_dir, raw_path): content
+        for raw_path, content in files.items()
+    }
+    temporary: list[tuple[Path, Path]] = []
+    try:
+        for destination, content in destinations.items():
+            temp = destination.with_name(f".{destination.name}.omnigent.tmp")
+            temp.write_text(content, encoding="utf-8")
+            temporary.append((temp, destination))
+        for temp, destination in temporary:
+            temp.replace(destination)
+    finally:
+        for temp, _destination in temporary:
+            temp.unlink(missing_ok=True)
+
+
 def _write_tree(skill_dir: Path, files: dict[str, str]) -> None:
     skill_dir.parent.mkdir(parents=True, exist_ok=True)
     temp = Path(tempfile.mkdtemp(prefix=f".{skill_dir.name}-", dir=skill_dir.parent))
@@ -183,6 +219,14 @@ def handle_skill_fs_op(op: str, params: dict[str, Any]) -> dict[str, Any]:
         temp = destination.with_suffix(".md.tmp")
         temp.write_text(content, encoding="utf-8")
         temp.replace(destination)
+        return _inventory_payload(home)
+    if op == "skill.files.write":
+        files = params.get("files")
+        if not isinstance(files, dict) or not all(
+            isinstance(path, str) and isinstance(content, str) for path, content in files.items()
+        ):
+            raise ValueError("skill file write requires a string file map")
+        _write_skill_files(skill_dir, files)
         return _inventory_payload(home)
     if op == "skill.export":
         files = {
