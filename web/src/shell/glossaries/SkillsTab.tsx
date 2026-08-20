@@ -291,8 +291,11 @@ export function SkillsTab() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRevision = useRef(0);
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
+  const selectedHashRef = useRef<string | null>(null);
   const selectedOccurrenceRef = useRef<string | null>(null);
   const selectedSkillNameRef = useRef<string | null>(null);
+  const draftSelectionRef = useRef<string | null>(null);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -336,6 +339,7 @@ export function SkillsTab() {
     selectedOccurrenceRef.current = nextVariant?.occurrences[0]
       ? `${nextVariant.occurrences[0].hostId}\0${nextVariant.occurrences[0].harness}`
       : null;
+    selectedHashRef.current = nextVariant?.contentSha256 ?? null;
     setSelectedVariantHash(nextVariant?.contentSha256 ?? firstVariantHash);
     setCompareVariantHash(null);
   }, [firstVariantHash, selected?.name, selected?.variants]);
@@ -358,6 +362,9 @@ export function SkillsTab() {
       (tree.data ?? []).filter((file) => !file.binary).map((file) => [file.path, file.content]),
     ),
   );
+  const draftSelection = selectedOccurrence
+    ? `${selected?.name}\0${selectedOccurrence.hostId}\0${selectedOccurrence.harness}\0${selectedOccurrence.relHomePath}`
+    : null;
   const comparedFiles = useMemo(() => {
     const selectedFiles = new Map((tree.data ?? []).map((file) => [file.path, file]));
     const baselineFiles = new Map((compareTree.data ?? []).map((file) => [file.path, file]));
@@ -378,9 +385,13 @@ export function SkillsTab() {
       );
   }, [compareTree.data, tree.data]);
   useEffect(() => {
-    setDrafts(JSON.parse(editableDraftSnapshot) as Record<string, string>);
-    setSaveStatus("Saved");
-  }, [editableDraftSnapshot, selectedVariant?.contentSha256, selected?.name]);
+    const selectionChanged = draftSelectionRef.current !== draftSelection;
+    draftSelectionRef.current = draftSelection;
+    if (selectionChanged || saveStatus === "Saved") {
+      setDrafts(JSON.parse(editableDraftSnapshot) as Record<string, string>);
+      setSaveStatus("Saved");
+    }
+  }, [draftSelection, editableDraftSnapshot, saveStatus]);
   useEffect(
     () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -405,15 +416,23 @@ export function SkillsTab() {
       return;
     }
     const targetName = selected.name;
-    const targetHash = selectedVariant.contentSha256;
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
       setSaveStatus("Saving");
-      void save
-        .mutateAsync({
-          name: targetName,
-          contentSha256: targetHash,
-          files,
+      saveChain.current = saveChain.current
+        .catch(() => undefined)
+        .then(() =>
+          save.mutateAsync({
+            name: targetName,
+            contentSha256: selectedHashRef.current ?? selectedVariant.contentSha256,
+            files,
+          }),
+        )
+        .then((result) => {
+          if (result.contentSha256) {
+            selectedHashRef.current = result.contentSha256;
+            setSelectedVariantHash(result.contentSha256);
+          }
         })
         .then(() => {
           if (saveRevision.current === revision) setSaveStatus("Saved");
@@ -536,6 +555,7 @@ export function SkillsTab() {
                   selectedOccurrenceRef.current = occurrence
                     ? `${occurrence.hostId}\0${occurrence.harness}`
                     : null;
+                  selectedHashRef.current = value;
                   setSelectedVariantHash(value);
                 }}
               >
@@ -672,7 +692,7 @@ export function SkillsTab() {
                       <Textarea
                         value={drafts[file.path] ?? file.content}
                         onChange={(event) => scheduleSave(file.path, event.target.value)}
-                        disabled={!selectedOccurrence || tree.isLoading || saveStatus === "Saving"}
+                        disabled={!selectedOccurrence || tree.isLoading}
                         className="min-h-[32rem] resize-none rounded-none border-0 bg-white font-mono text-xs text-slate-950 focus-visible:ring-0"
                         spellCheck={false}
                       />

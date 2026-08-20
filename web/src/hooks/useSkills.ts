@@ -219,7 +219,7 @@ async function saveSkillVariantFiles(
   name: string,
   contentSha256: string,
   files: Record<string, string>,
-): Promise<void> {
+): Promise<{ contentSha256: string | null }> {
   const response = await authenticatedFetch(
     `/v1/skills/${encodeURIComponent(name)}/variants/${encodeURIComponent(contentSha256)}/files`,
     {
@@ -229,6 +229,15 @@ async function saveSkillVariantFiles(
     },
   );
   if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+  const body = (await response.json()) as {
+    content_sha256: string | null;
+    results: { status: string; error?: string }[];
+  };
+  const failed = body.results.filter((result) => result.status === "failed");
+  if (failed.length > 0) {
+    throw new Error(failed[0]?.error || `${failed.length} skill occurrence(s) failed to save.`);
+  }
+  return { contentSha256: body.content_sha256 };
 }
 
 async function syncSkill(name: string, sourceHostId: string, sourceHarness: string): Promise<void> {
@@ -338,8 +347,37 @@ export function useSaveSkillVariantFiles() {
       contentSha256: string;
       files: Record<string, string>;
     }) => saveSkillVariantFiles(name, contentSha256, files),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    onSuccess: (result, variables) => {
+      const nextHash = result.contentSha256;
+      if (nextHash) {
+        queryClient.setQueryData<AggregatedSkill[]>(SKILLS_KEY, (current) =>
+          current?.map((skill) => {
+            if (skill.name !== variables.name) return skill;
+            const variants = skill.variants.map((variant) =>
+              variant.contentSha256 === variables.contentSha256
+                ? {
+                    ...variant,
+                    contentSha256: nextHash,
+                    occurrences: variant.occurrences.map((occurrence) => ({
+                      ...occurrence,
+                      contentSha256: nextHash,
+                    })),
+                  }
+                : variant,
+            );
+            return { ...skill, variants };
+          }),
+        );
+      }
+      queryClient.setQueriesData<SkillTreeFile[]>(
+        { queryKey: [...SKILLS_KEY, "tree", variables.name] },
+        (current) =>
+          current?.map((file) =>
+            Object.hasOwn(variables.files, file.path)
+              ? { ...file, content: variables.files[file.path] as string }
+              : file,
+          ),
+      );
     },
   });
 }

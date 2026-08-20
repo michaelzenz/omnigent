@@ -258,10 +258,11 @@ describe("SkillsTab", () => {
 
   it("autosaves edited skill files", async () => {
     vi.useFakeTimers();
-    saveSkillFiles.mockResolvedValue(undefined);
+    saveSkillFiles.mockResolvedValue({ contentSha256: "updated-hash" });
     render(<SkillsTab />);
     const editor = document.querySelector("textarea");
     expect(editor).not.toBeNull();
+    editor?.focus();
 
     fireEvent.change(editor as HTMLTextAreaElement, {
       target: { value: "---\nname: demo\n---\nupdated\n" },
@@ -274,6 +275,7 @@ describe("SkillsTab", () => {
       contentSha256: "aaa",
       files: { "skill.md": "---\nname: demo\n---\nupdated\n" },
     });
+    expect(document.activeElement).toBe(editor);
     vi.useRealTimers();
   });
 });

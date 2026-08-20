@@ -609,9 +609,10 @@ def create_skills_router(
         if not occurrences:
             raise HTTPException(status_code=404, detail="Skill variant not found.")
         results = []
+        updated_hashes: set[str] = set()
         for host_id, entry in occurrences:
             try:
-                await host_skill_request(
+                payload = await host_skill_request(
                     host_id,
                     "skill.files.write",
                     {
@@ -620,6 +621,21 @@ def create_skills_router(
                         "files": body.files,
                     },
                 )
+                inventory = payload.get("inventory")
+                if isinstance(inventory, list):
+                    updated = next(
+                        (
+                            item
+                            for item in inventory
+                            if isinstance(item, dict)
+                            and item.get("name") == skill_name
+                            and item.get("harness") == entry["harness"]
+                            and item.get("rel_home_path") == entry["rel_home_path"]
+                        ),
+                        None,
+                    )
+                    if updated is not None and isinstance(updated.get("content_sha256"), str):
+                        updated_hashes.add(updated["content_sha256"])
                 results.append(
                     {
                         "host_id": host_id,
@@ -636,7 +652,11 @@ def create_skills_router(
                         "error": str(exc.detail),
                     }
                 )
-        return {"object": "skill_variant_files_write_result", "results": results}
+        return {
+            "object": "skill_variant_files_write_result",
+            "results": results,
+            "content_sha256": next(iter(updated_hashes)) if len(updated_hashes) == 1 else None,
+        }
 
     @router.put("/skills/{skill_name}/content")
     async def write_skill(
