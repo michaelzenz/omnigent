@@ -27,6 +27,8 @@ from omnigent.server.schemas import SessionEventInput
 from omnigent.server.smart_routing import RoutingResult
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.model_settings_store.sqlalchemy_store import SqlAlchemyModelSettingsStore
+from omnigent.stores.prompt_profile_store.sqlalchemy_store import SqlAlchemyPromptProfileStore
+from omnigent.turn_selection import OmnigentTurnSelection
 from tests.server.helpers import (
     FakeCaps,
     FakeRoutingClient,
@@ -170,6 +172,156 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
         if getattr(item, "type", None) == "message"
     ]
     assert [message.data.execution_context.model for message in messages] == [GPT_MODEL, GPT_MODEL]
+
+
+async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    agent = await create_test_agent(
+        client,
+        name="joint-turn-selection",
+        executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
+    )
+    created = await client.post(
+        "/v1/sessions",
+        json={"agent_id": agent["id"], "cost_control_mode_override": "on"},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    conv = conv_store.update_conversation(
+        session_id,
+        prompt_profile_mode="auto",
+        _update_prompt_profile=True,
+    )
+    assert conv is not None
+    profile_store = SqlAlchemyPromptProfileStore(db_uri)
+    profile = profile_store.create("ab" * 16, "Focused", "Stay focused.")
+    settings_store = SqlAlchemyModelSettingsStore(db_uri)
+    settings_store.update(
+        harness="openai-agents",
+        enabled_models=[GPT_MODEL, GLM_MODEL],
+        smart_routing_cadence="per_turn",
+        update_smart_routing_cadence=True,
+    )
+    external_router = FakeRoutingClient(
+        RoutingResult(model=GLM_MODEL, rationale="old second call", harness="openai-agents")
+    )
+    selector = AsyncMock(
+        return_value=OmnigentTurnSelection(
+            profile=profile,
+            model=GPT_MODEL,
+            model_verdict={
+                "model": GPT_MODEL,
+                "rationale": "Joint choice.",
+                "router_source": "oss-llm",
+            },
+        )
+    )
+    body = SessionEventInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": [{"type": "input_text", "text": "route and profile this turn"}],
+            "execution_context": {
+                "profile": "joint-turn-selection",
+                "harness": "omnigent",
+                "model": None,
+            },
+        },
+    )
+
+    with (
+        patch("omnigent.runtime._globals._caps", new=FakeCaps(routing_client=external_router)),
+        patch("omnigent.turn_selection.select_omnigent_turn", new=selector),
+    ):
+        async with echo_runner_client() as runner_client:
+            await orchestration_module._forward_event_to_runner(
+                session_id,
+                conv,
+                body,
+                conv_store,
+                runner_client,
+                model_settings_store=settings_store,
+                prompt_profile_store=profile_store,
+            )
+
+    assert selector.await_count == 1
+    assert external_router.calls == []
+    selection_kwargs = selector.await_args.kwargs
+    assert selection_kwargs["model_candidates"] == [GPT_MODEL, GLM_MODEL]
+    messages = [
+        item
+        for item in conv_store.list_items(session_id).data
+        if getattr(item, "type", None) == "message"
+    ]
+    assert len(messages) == 1
+    assert messages[0].data.execution_context.profile == profile.name
+    assert messages[0].data.execution_context.model == GPT_MODEL
+    decisions = _routing_decisions(conv_store, session_id)
+    assert len(decisions) == 1
+    assert decisions[0].data.model == GPT_MODEL
+
+
+async def test_omnigent_profile_auto_selection_works_without_model_auto(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    agent = await create_test_agent(
+        client,
+        name="profile-only-turn-selection",
+        executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
+    )
+    created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    conv = conv_store.update_conversation(
+        session_id,
+        prompt_profile_mode="auto",
+        _update_prompt_profile=True,
+    )
+    assert conv is not None
+    profile_store = SqlAlchemyPromptProfileStore(db_uri)
+    profile = profile_store.create("cd" * 16, "Profile only", "Use this profile.")
+    selector = AsyncMock(return_value=OmnigentTurnSelection(profile=profile))
+    body = SessionEventInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": [{"type": "input_text", "text": "select only a profile"}],
+            "execution_context": {
+                "profile": "profile-only-turn-selection",
+                "harness": "omnigent",
+                "model": None,
+            },
+        },
+    )
+
+    with patch("omnigent.turn_selection.select_omnigent_turn", new=selector):
+        async with echo_runner_client() as runner_client:
+            await orchestration_module._forward_event_to_runner(
+                session_id,
+                conv,
+                body,
+                conv_store,
+                runner_client,
+                prompt_profile_store=profile_store,
+            )
+
+    selector.assert_awaited_once_with(
+        "select only a profile",
+        profile_store,
+    )
+    message = next(
+        item
+        for item in conv_store.list_items(session_id).data
+        if getattr(item, "type", None) == "message"
+    )
+    assert message.data.execution_context.profile == profile.name
+    assert message.data.execution_context.model is None
+    assert _routing_decisions(conv_store, session_id) == []
 
 
 # ── 1. Child spawn: the router wins over ``args.model`` ─────────────

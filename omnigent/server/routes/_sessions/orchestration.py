@@ -4586,6 +4586,7 @@ async def _forward_event_to_runner(
     created_by: str | None = None,
     host_store: HostStore | None = None,
     model_settings_store: ModelSettingsStore | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
 ) -> str:
@@ -4621,6 +4622,8 @@ async def _forward_event_to_runner(
     :param host_store: Host registrations, read only to learn whether this
         session's harness is AI-Gateway-backed (which router may route it).
         ``None`` reads as unknown, which counts as backed.
+    :param prompt_profile_store: Prompt profiles available to Omnigent's
+        per-turn auto selector.
     :param profile_instructions: Omnigent-only system prompt selected for
         this session, replacing the bound agent's instructions for this turn.
     :returns: The store-assigned id of the persisted item.
@@ -4831,6 +4834,29 @@ async def _forward_event_to_runner(
         conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
     ) or _parent_routing_on
     _harness = _resolve_harness(conv)
+    _profile_auto = (
+        body.type == "message"
+        and body.data.get("role") == "user"
+        and _harness in {"omnigent", "openai-agents"}
+        and conv.prompt_profile_mode == "auto"
+    )
+    _profile_selected_this_turn = False
+    if _profile_auto and prompt_profile_store is None:
+        raise OmnigentError(
+            "Prompt profile selection is unavailable",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+
+    def _apply_auto_profile(profile: Any) -> None:
+        runner_body["profile_instructions"] = profile.instructions
+        execution_context = body.data.get("execution_context")
+        if isinstance(execution_context, dict):
+            execution_context = dict(execution_context)
+            execution_context["profile"] = profile.name
+            body.data["execution_context"] = execution_context
+            forwarded_data["execution_context"] = execution_context
+            runner_body["execution_context"] = execution_context
+
     _omnigent_routing_settings = None
     if (
         model_settings_store is not None
@@ -4981,8 +5007,15 @@ async def _forward_event_to_runner(
                     _routed_model, _verdict = _unavailable_routing_card(_route_err)
                     _route_failed = True
             else:
-                # Top-level sessions: model-only routing (harness already fixed by spec).
-                from omnigent.server.smart_routing import route_turn_or_decline
+                # Top-level Omnigent sessions select every automatic dimension
+                # in one judge call. A fixed profile keeps model-only routing
+                # on the deployment's normal backend chain.
+                from omnigent.server.smart_routing import (
+                    harness_bars_model,
+                    infer_models,
+                    models_in_family,
+                    route_turn_or_decline,
+                )
 
                 # A turn cannot change harness, so only this session's own
                 # family has to be gateway-backed for the workspace router.
@@ -4997,29 +5030,56 @@ async def _forward_event_to_runner(
                     _turn_catalog = list(
                         _omnigent_routing_settings.harness_models.get("openai-agents", [])
                     )
-                # ``_or_decline``: a routing outage returns an error string
-                # rather than raising. Raised here it became a 500 on the
-                # events POST, so a router that was merely down cost the user
-                # a message that had already been persisted.
-                _routed_model, _verdict, _turn_route_err = await route_turn_or_decline(
-                    _harness,
-                    _user_text,
-                    session_id=session_id,
-                    runner_client=runner_client,
-                    catalog=_turn_catalog,
-                    gateway_backed=_turn_backed,
-                    allow_static_fallback=_turn_backed,
-                    decision_model=(
-                        _omnigent_routing_settings.smart_routing_decision_model
-                        if _omnigent_routing_settings is not None
-                        else None
-                    ),
-                    smart_routing_prompt=(
-                        _omnigent_routing_settings.smart_routing_prompt or ""
-                        if _omnigent_routing_settings is not None
-                        else None
-                    ),
+                _decision_model = (
+                    _omnigent_routing_settings.smart_routing_decision_model
+                    if _omnigent_routing_settings is not None
+                    else None
                 )
+                _routing_prompt = (
+                    _omnigent_routing_settings.smart_routing_prompt or ""
+                    if _omnigent_routing_settings is not None
+                    else None
+                )
+                _turn_route_err: str | None = None
+                if _profile_auto:
+                    from omnigent.turn_selection import select_omnigent_turn
+
+                    assert prompt_profile_store is not None
+                    _joint_catalog = _turn_catalog
+                    if _joint_catalog is None and _turn_backed:
+                        _joint_catalog = infer_models(_harness)
+                    _joint_candidates = [
+                        model
+                        for model in models_in_family(_harness, _joint_catalog or ())
+                        if not harness_bars_model(_harness, model)
+                    ]
+                    _selection = await select_omnigent_turn(
+                        _user_text,
+                        prompt_profile_store,
+                        model_candidates=_joint_candidates,
+                        decision_model=_decision_model,
+                        smart_routing_prompt=_routing_prompt,
+                    )
+                    _apply_auto_profile(_selection.profile)
+                    _profile_selected_this_turn = True
+                    _routed_model = _selection.model
+                    _verdict = _selection.model_verdict
+                else:
+                    # ``_or_decline``: a routing outage returns an error string
+                    # rather than raising. Raised here it became a 500 on the
+                    # events POST, so a router that was merely down cost the user
+                    # a message that had already been persisted.
+                    _routed_model, _verdict, _turn_route_err = await route_turn_or_decline(
+                        _harness,
+                        _user_text,
+                        session_id=session_id,
+                        runner_client=runner_client,
+                        catalog=_turn_catalog,
+                        gateway_backed=_turn_backed,
+                        allow_static_fallback=_turn_backed,
+                        decision_model=_decision_model,
+                        smart_routing_prompt=_routing_prompt,
+                    )
                 if _turn_route_err is not None:
                     # Not routed, and visibly so — the turn runs on the
                     # session's own model with the reason on its card.
@@ -5051,6 +5111,15 @@ async def _forward_event_to_runner(
                                 session_id,
                                 exc_info=True,
                             )
+    if _profile_auto and not _profile_selected_this_turn:
+        from omnigent.turn_selection import select_omnigent_turn
+
+        assert prompt_profile_store is not None
+        _profile_selection = await select_omnigent_turn(
+            _extract_user_text_for_routing(body) or "",
+            prompt_profile_store,
+        )
+        _apply_auto_profile(_profile_selection.profile)
     # ────────────────────────────────────────────────────────────────
     if effective_runner_override is not None:
         runner_body["model_override"] = effective_runner_override
@@ -5333,6 +5402,7 @@ async def _dispatch_session_event_to_runner_impl(
     native_terminal_ready: bool = False,
     host_store: HostStore | None = None,
     model_settings_store: ModelSettingsStore | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
 ) -> _SessionEventDispatchResult:
@@ -5635,6 +5705,7 @@ async def _dispatch_session_event_to_runner_impl(
         created_by=created_by,
         host_store=host_store,
         model_settings_store=model_settings_store,
+        prompt_profile_store=prompt_profile_store,
         profile_instructions=profile_instructions,
         memory_instructions=memory_instructions,
     )

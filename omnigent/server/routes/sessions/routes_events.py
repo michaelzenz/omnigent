@@ -31,7 +31,6 @@ from omnigent.host.frames import (
 from omnigent.memory import compose_memory
 from omnigent.profile_selection import (
     PROMPT_PROFILE_HARNESS,
-    auto_select_prompt_profile,
     load_prompt_profile_instructions,
 )
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
@@ -1598,12 +1597,7 @@ def register_events_routes(
                     "Prompt profile selection is unavailable",
                     code=ErrorCode.INTERNAL_ERROR,
                 )
-            if conv.prompt_profile_mode == "auto":
-                _stored_profile = await auto_select_prompt_profile(
-                    background_title_prompt(body) or "",
-                    prompt_profile_store,
-                )
-            else:
+            if conv.prompt_profile_mode == "fixed":
                 assert conv.prompt_profile_id is not None
                 _stored_profile = await asyncio.to_thread(
                     prompt_profile_store.get,
@@ -1614,13 +1608,13 @@ def register_events_routes(
                         f"Profile not found or unavailable: {conv.prompt_profile_id!r}",
                         code=ErrorCode.NOT_FOUND,
                     )
-            _selected_profile_name = _stored_profile.name
-            _profile_instructions = await asyncio.to_thread(
-                load_prompt_profile_instructions,
-                _stored_profile.id,
-                prompt_profile_store,
-                require_selectable=False,
-            )
+                _selected_profile_name = _stored_profile.name
+                _profile_instructions = await asyncio.to_thread(
+                    load_prompt_profile_instructions,
+                    _stored_profile.id,
+                    prompt_profile_store,
+                    require_selectable=False,
+                )
         if body.type == "message" and body.data.get("role") == "user":
             body.data["execution_context"] = {
                 "profile": _selected_profile_name,
@@ -1703,6 +1697,7 @@ def register_events_routes(
             # Global Omnigent routing settings are read for every user turn so
             # admin updates apply without restarting the server.
             model_settings_store=getattr(request.app.state, "model_settings_store", None),
+            prompt_profile_store=prompt_profile_store,
         )
         if pending_background_title is not None:
             pending_background_title.schedule()
