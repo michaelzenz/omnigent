@@ -21,11 +21,10 @@ import { useHosts, type Host } from "@/hooks/useHosts";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
 import type { SecretaryProfile } from "@/lib/agentTasksApi";
 import { resetAgentRoleSession } from "@/lib/agentTasksApi";
-import { EMPTY_SDK_MODEL_OPTIONS } from "@/lib/sdkModels";
 import { WorkspacePathField } from "@/shell/WorkspacePathField";
 import { RoleHarnessPicker } from "./RoleHarnessPicker";
-import { SDK_HARNESS } from "./roleProfileOptions";
-import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
+import { OPENAI_AGENTS_ADAPTER } from "./roleProfileOptions";
+import { useAdminModelSettings } from "@/hooks/useModelSettings";
 
 export const ROLE_PROFILE_SAVE_DEBOUNCE_MS = 2000;
 const PROMPT_SAVE_DEBOUNCE_MS = 1500;
@@ -75,7 +74,7 @@ interface RoleDefaultsFormProps {
 }
 
 export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
-  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
+  const adapterModelOptions = useAdminModelSettings().data?.models ?? [];
   const { data: profile, isLoading, error } = useAgentRoleProfile(roleId);
   const { data: hosts = [] } = useHosts();
   const { data: agents = [] } = useAvailableAgents();
@@ -283,7 +282,7 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
           />
         </div>
 
-        {draft.harness === SDK_HARNESS ? (
+        {draft.harness === OPENAI_AGENTS_ADAPTER ? (
           <div className="space-y-1.5 sm:col-span-2" data-testid={`glossary-role-model-${roleId}`}>
             <span className="text-xs text-muted-foreground">Model</span>
             <Select
@@ -297,12 +296,12 @@ export function RoleDefaultsForm({ roleId }: RoleDefaultsFormProps) {
                 <SelectValue placeholder="Select model" />
               </SelectTrigger>
               <SelectContent>
-                {sdkModelOptions.map((option) => (
+                {adapterModelOptions.map((option) => (
                   <SelectItem key={option.id} value={option.id}>
                     {option.displayName}
                   </SelectItem>
                 ))}
-                {draft.model && !sdkModelOptions.some((option) => option.id === draft.model) ? (
+                {draft.model && !adapterModelOptions.some((option) => option.id === draft.model) ? (
                   <SelectItem value={draft.model}>{draft.model}</SelectItem>
                 ) : null}
               </SelectContent>

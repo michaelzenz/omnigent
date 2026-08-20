@@ -11992,9 +11992,7 @@ def create_runner_app(
                     memory_instructions if isinstance(memory_instructions, str) else None
                 ),
                 effective_instructions=(
-                    profile_instructions
-                    if harness_name == "openai-agents" and isinstance(profile_instructions, str)
-                    else None
+                    profile_instructions if isinstance(profile_instructions, str) else None
                 ),
             )
 

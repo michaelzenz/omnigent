@@ -11,10 +11,11 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME
 from omnigent.model_catalog import ModelEntry, model_family_token
-from omnigent.omnigent_model_catalog import (
-    get_omnigent_model_metadata,
-    refresh_omnigent_model_catalog,
+from omnigent.omniharness_model_catalog import (
+    get_omniharness_model_metadata,
+    refresh_omniharness_model_catalog,
 )
 from omnigent.runtime import get_caps
 from omnigent.runtime.credentials.databricks import resolve_databricks_workspace
@@ -24,13 +25,11 @@ from omnigent.spec.types import LLMConfig
 from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 
-OMNIGENT_HARNESS = "openai-agents"
-
 
 class UpdateModelSettingsRequest(BaseModel):
     """Fields an admin may update independently."""
 
-    omnigent_models: list[str] | None = Field(default=None, max_length=500)
+    omniharness_models: list[str] | None = Field(default=None, max_length=500)
     policy_model: str | None = Field(default=None, max_length=300)
     smart_routing_decision_model: str | None = Field(default=None, max_length=300)
     smart_routing_prompt: str | None = Field(default=None, max_length=20_000)
@@ -45,7 +44,7 @@ class AdminModelSettingsResponse(BaseModel):
     databricks_connected: bool
     profile: str | None
     models: list[dict[str, Any]]
-    omnigent_models: list[str]
+    omniharness_models: list[str]
     policy_model: str | None
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
@@ -58,7 +57,7 @@ class UpdatedModelSettingsResponse(BaseModel):
     """Persisted model settings returned by PATCH."""
 
     object: Literal["model_settings"]
-    omnigent_models: list[str]
+    omniharness_models: list[str]
     policy_model: str | None
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
@@ -126,18 +125,18 @@ def _display_name(model_id: str) -> str:
     return re.sub(r"\b(\d+) (\d+)\b", r"\1.\2", label, count=1)
 
 
-def configured_omnigent_model_options(
+def configured_omniharness_model_options(
     model_settings_store: ModelSettingsStore,
 ) -> list[dict[str, Any]]:
-    """Return the configured public picker rows for the Omnigent harness."""
-    model_ids = model_settings_store.get().harness_models.get(OMNIGENT_HARNESS, [])
-    refresh_omnigent_model_catalog(model_ids)
+    """Return the configured public picker rows for OmniHarness."""
+    model_ids = model_settings_store.get().harness_models.get(OMNIHARNESS_AGENT_NAME, [])
+    refresh_omniharness_model_catalog(model_ids)
     return [_model_option(model_id) for model_id in model_ids]
 
 
 def _model_option(model_id: str) -> dict[str, Any]:
     """Serialize one model with Omnigent-owned runtime metadata."""
-    metadata = get_omnigent_model_metadata(model_id)
+    metadata = get_omniharness_model_metadata(model_id)
     return {
         "id": model_id,
         "display_name": _display_name(model_id),
@@ -207,9 +206,9 @@ def create_model_settings_router(
         require_user(request, auth_provider)
         return {
             "object": "list",
-            "harness": OMNIGENT_HARNESS,
+            "harness": OMNIHARNESS_AGENT_NAME,
             "data": await asyncio.to_thread(
-                configured_omnigent_model_options,
+                configured_omniharness_model_options,
                 model_settings_store,
             ),
         }
@@ -221,7 +220,7 @@ def create_model_settings_router(
     async def get_model_settings(request: Request) -> dict[str, Any]:
         await _require_admin(request, auth_provider, permission_store)
         settings = await asyncio.to_thread(model_settings_store.get)
-        enabled = settings.harness_models.get(OMNIGENT_HARNESS, [])
+        enabled = settings.harness_models.get(OMNIHARNESS_AGENT_NAME, [])
         profile = _databricks_profile(config)
         if profile is None:
             return {
@@ -229,7 +228,7 @@ def create_model_settings_router(
                 "databricks_connected": False,
                 "profile": None,
                 "models": [],
-                "omnigent_models": enabled,
+                "omniharness_models": enabled,
                 "policy_model": settings.policy_model,
                 "smart_routing_decision_model": settings.smart_routing_decision_model,
                 "smart_routing_prompt": settings.smart_routing_prompt,
@@ -240,7 +239,7 @@ def create_model_settings_router(
         try:
             models = await asyncio.to_thread(_serving_models, profile)
             await asyncio.to_thread(
-                refresh_omnigent_model_catalog,
+                refresh_omniharness_model_catalog,
                 [model.id for model in models],
             )
         except (OSError, ValueError, httpx.HTTPError) as exc:
@@ -249,7 +248,7 @@ def create_model_settings_router(
                 "databricks_connected": False,
                 "profile": profile,
                 "models": [],
-                "omnigent_models": enabled,
+                "omniharness_models": enabled,
                 "policy_model": settings.policy_model,
                 "smart_routing_decision_model": settings.smart_routing_decision_model,
                 "smart_routing_prompt": settings.smart_routing_prompt,
@@ -262,7 +261,7 @@ def create_model_settings_router(
             "databricks_connected": True,
             "profile": profile,
             "models": [_model_option(model.id) for model in models],
-            "omnigent_models": enabled,
+            "omniharness_models": enabled,
             "policy_model": settings.policy_model,
             "smart_routing_decision_model": settings.smart_routing_decision_model,
             "smart_routing_prompt": settings.smart_routing_prompt,
@@ -280,7 +279,7 @@ def create_model_settings_router(
         body: UpdateModelSettingsRequest,
     ) -> dict[str, Any]:
         await _require_admin(request, auth_provider, permission_store)
-        update_models = "omnigent_models" in body.model_fields_set
+        update_models = "omniharness_models" in body.model_fields_set
         update_policy_model = "policy_model" in body.model_fields_set
         update_decision_model = "smart_routing_decision_model" in body.model_fields_set
         update_prompt = "smart_routing_prompt" in body.model_fields_set
@@ -296,8 +295,8 @@ def create_model_settings_router(
         )
         settings = await asyncio.to_thread(
             model_settings_store.update,
-            harness=OMNIGENT_HARNESS if update_models else None,
-            enabled_models=(body.omnigent_models or []) if update_models else None,
+            harness=OMNIHARNESS_AGENT_NAME if update_models else None,
+            enabled_models=(body.omniharness_models or []) if update_models else None,
             policy_model=body.policy_model or None,
             update_policy_model=update_policy_model,
             smart_routing_decision_model=body.smart_routing_decision_model or None,
@@ -313,7 +312,7 @@ def create_model_settings_router(
             _set_runtime_policy_model(settings.policy_model, _databricks_profile(config))
         return {
             "object": "model_settings",
-            "omnigent_models": settings.harness_models.get(OMNIGENT_HARNESS, []),
+            "omniharness_models": settings.harness_models.get(OMNIHARNESS_AGENT_NAME, []),
             "policy_model": settings.policy_model,
             "smart_routing_decision_model": settings.smart_routing_decision_model,
             "smart_routing_prompt": settings.smart_routing_prompt,

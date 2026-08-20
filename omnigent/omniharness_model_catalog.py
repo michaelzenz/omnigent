@@ -1,4 +1,4 @@
-"""In-memory metadata catalog for models driven by the Omnigent harness."""
+"""In-memory metadata catalog for models offered by OmniHarness."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class _LiteLLM(Protocol):
 
 
 @dataclass(frozen=True)
-class OmnigentModelMetadata:
+class OmniHarnessModelMetadata:
     """Runtime facts used only by the Omnigent/OpenAI Agents harness."""
 
     model_id: str
@@ -38,7 +38,7 @@ class OmnigentModelMetadata:
 
 
 _lock = threading.RLock()
-_snapshot: dict[str, OmnigentModelMetadata] = {}
+_snapshot: dict[str, OmniHarnessModelMetadata] = {}
 
 
 def _aliases(model: str) -> set[str]:
@@ -69,9 +69,7 @@ def _litellm_pricing(model: str) -> ModelPricing | None:
             continue
         input_price = info.get("input_cost_per_token") if info else None
         output_price = info.get("output_cost_per_token") if info else None
-        if not isinstance(input_price, (int, float)) or not isinstance(
-            output_price, (int, float)
-        ):
+        if not isinstance(input_price, (int, float)) or not isinstance(output_price, (int, float)):
             continue
         cache_read = info.get("cache_read_input_token_cost")
         cache_write = info.get("cache_creation_input_token_cost")
@@ -168,7 +166,7 @@ def _litellm_metadata(model: str) -> ModelMetadata:
     )
 
 
-def _resolve(model: str) -> OmnigentModelMetadata:
+def _resolve(model: str) -> OmniHarnessModelMetadata:
     window, window_source = lookup_model_context_window(model)
     estimated = window is None
     if window is None:
@@ -180,12 +178,10 @@ def _resolve(model: str) -> OmnigentModelMetadata:
     catalog_metadata = _catalog_metadata(model)
     litellm_metadata = _litellm_metadata(model)
     supported = catalog_metadata.supported_capabilities | (
-        litellm_metadata.supported_capabilities
-        - catalog_metadata.unsupported_capabilities
+        litellm_metadata.supported_capabilities - catalog_metadata.unsupported_capabilities
     )
     unsupported = catalog_metadata.unsupported_capabilities | (
-        litellm_metadata.unsupported_capabilities
-        - catalog_metadata.supported_capabilities
+        litellm_metadata.unsupported_capabilities - catalog_metadata.supported_capabilities
     )
     metadata = ModelMetadata(
         supported_capabilities=supported,
@@ -206,7 +202,7 @@ def _resolve(model: str) -> OmnigentModelMetadata:
         if pricing is not None:
             pricing_source = "litellm"
 
-    return OmnigentModelMetadata(
+    return OmniHarnessModelMetadata(
         model_id=model,
         context_window=window,
         context_window_source=window_source or "estimate",
@@ -217,9 +213,9 @@ def _resolve(model: str) -> OmnigentModelMetadata:
     )
 
 
-def refresh_omnigent_model_catalog(model_ids: Iterable[str]) -> None:
+def refresh_omniharness_model_catalog(model_ids: Iterable[str]) -> None:
     """Atomically refresh metadata for every model returned by discovery."""
-    refreshed: dict[str, OmnigentModelMetadata] = {}
+    refreshed: dict[str, OmniHarnessModelMetadata] = {}
     for model_id in dict.fromkeys(model_ids):
         metadata = _resolve(model_id)
         for alias in _aliases(model_id):
@@ -229,7 +225,7 @@ def refresh_omnigent_model_catalog(model_ids: Iterable[str]) -> None:
         _snapshot.update(refreshed)
 
 
-def get_omnigent_model_metadata(model: str) -> OmnigentModelMetadata:
+def get_omniharness_model_metadata(model: str) -> OmniHarnessModelMetadata:
     """Return cached metadata, resolving and retaining a cache miss."""
     with _lock:
         for alias in _aliases(model):
@@ -243,7 +239,7 @@ def get_omnigent_model_metadata(model: str) -> OmnigentModelMetadata:
     return metadata
 
 
-def find_omnigent_model_metadata(model: str) -> OmnigentModelMetadata | None:
+def find_omniharness_model_metadata(model: str) -> OmniHarnessModelMetadata | None:
     """Return cached Omnigent metadata without claiming an unrelated model."""
     with _lock:
         for alias in _aliases(model):
@@ -253,11 +249,11 @@ def find_omnigent_model_metadata(model: str) -> OmnigentModelMetadata | None:
     return None
 
 
-def get_omnigent_context_window(model: str) -> int:
-    """Return the effective Omnigent harness context window."""
-    return get_omnigent_model_metadata(model).context_window
+def get_omniharness_context_window(model: str) -> int:
+    """Return the effective OmniHarness context window."""
+    return get_omniharness_model_metadata(model).context_window
 
 
-def get_omnigent_model_pricing(model: str) -> ModelPricing | None:
-    """Return known Omnigent harness pricing, or ``None`` when unknown."""
-    return get_omnigent_model_metadata(model).pricing
+def get_omniharness_model_pricing(model: str) -> ModelPricing | None:
+    """Return known OmniHarness pricing, or ``None`` when unknown."""
+    return get_omniharness_model_metadata(model).pricing

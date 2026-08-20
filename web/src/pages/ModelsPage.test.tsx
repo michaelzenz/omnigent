@@ -30,7 +30,7 @@ describe("ModelsPage", () => {
           { id: "databricks-gpt-5-4", displayName: "GPT 5 4" },
           { id: "databricks-glm-5-2", displayName: "GLM 5 2" },
         ],
-        omnigentModels: ["databricks-glm-5-2"],
+        omniharnessModels: ["databricks-glm-5-2"],
         policyModel: null,
         smartRoutingDecisionModel: "databricks-gpt-5-4",
         smartRoutingPrompt: "",
@@ -46,7 +46,7 @@ describe("ModelsPage", () => {
     render(<ModelsPage />);
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
-    ).toEqual(["Smart Routing", "Omnigent harness"]);
+    ).toEqual(["Smart Routing", "OmniHarness"]);
     expect(screen.getAllByRole("switch").map((item) => item.getAttribute("aria-label"))).toEqual([
       "Route every Omnigent turn",
       "Offer GLM 5 2 in Omnigent",
@@ -54,7 +54,7 @@ describe("ModelsPage", () => {
     ]);
     fireEvent.click(screen.getByRole("switch", { name: "Offer GPT 5 4 in Omnigent" }));
     expect(mutate).toHaveBeenCalledWith({
-      omnigentModels: ["databricks-glm-5-2", "databricks-gpt-5-4"],
+      omniharnessModels: ["databricks-glm-5-2", "databricks-gpt-5-4"],
     });
   });
 
@@ -64,7 +64,7 @@ describe("ModelsPage", () => {
         databricksConnected: false,
         profile: null,
         models: [],
-        omnigentModels: [],
+        omniharnessModels: [],
         policyModel: null,
         smartRoutingDecisionModel: "databricks-gpt-5-6-luna",
         smartRoutingPrompt: "",
@@ -88,7 +88,7 @@ describe("ModelsPage", () => {
         databricksConnected: true,
         profile: "ai-devtools-prod",
         models: [{ id: "databricks-gpt-5-6-luna", displayName: "GPT 5.6 Luna" }],
-        omnigentModels: [],
+        omniharnessModels: [],
         policyModel: null,
         smartRoutingDecisionModel: "databricks-gpt-5-6-luna",
         smartRoutingPrompt: "",
@@ -102,7 +102,7 @@ describe("ModelsPage", () => {
     } as never);
 
     render(<ModelsPage />);
-    expect(screen.getByText(/Global routing settings for the Omnigent harness only/)).toBeVisible();
+    expect(screen.getByText(/Global routing settings for OmniHarness only/)).toBeVisible();
 
     fireEvent.click(screen.getByRole("switch", { name: "Route every Omnigent turn" }));
     expect(mutate).toHaveBeenCalledWith({ smartRoutingCadence: "first_turn_only" });

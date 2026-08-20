@@ -1,17 +1,17 @@
-"""Tests for Omnigent's runtime model metadata snapshot."""
+"""Tests for OmniHarness's runtime model metadata snapshot."""
 
 from __future__ import annotations
 
 import pytest
 
-from omnigent import omnigent_model_catalog as catalog
+from omnigent import omniharness_model_catalog as catalog
 from omnigent.llms.context_window import ModelPricing
 from omnigent.model_metadata import ModelCapability, ModelMetadata
 
 
 @pytest.fixture(autouse=True)
 def _clear_catalog() -> None:
-    catalog.refresh_omnigent_model_catalog([])
+    catalog.refresh_omniharness_model_catalog([])
 
 
 def test_unknown_databricks_model_uses_flagged_one_million_fallback(
@@ -23,7 +23,7 @@ def test_unknown_databricks_model_uses_flagged_one_million_fallback(
     monkeypatch.setattr(catalog, "_catalog_metadata", lambda _model: ModelMetadata())
     monkeypatch.setattr(catalog, "_litellm_metadata", lambda _model: ModelMetadata())
 
-    metadata = catalog.get_omnigent_model_metadata("databricks-kimi-k3")
+    metadata = catalog.get_omniharness_model_metadata("databricks-kimi-k3")
 
     assert metadata.context_window == 1_000_000
     assert metadata.context_window_is_estimate is True
@@ -51,12 +51,12 @@ def test_refresh_keeps_verified_metadata_and_aliases(
     )
     monkeypatch.setattr(catalog, "_litellm_metadata", lambda _model: ModelMetadata())
 
-    catalog.refresh_omnigent_model_catalog(["databricks-glm-5-2"])
+    catalog.refresh_omniharness_model_catalog(["databricks-glm-5-2"])
 
-    metadata = catalog.get_omnigent_model_metadata("databricks/databricks-glm-5-2")
+    metadata = catalog.get_omniharness_model_metadata("databricks/databricks-glm-5-2")
     assert metadata.context_window == 262_144
     assert metadata.context_window_is_estimate is False
     assert metadata.metadata.max_output_tokens == 32_768
     assert metadata.metadata.supports(ModelCapability.TOOL_USE) is True
     assert metadata.pricing is pricing
-    assert catalog.find_omnigent_model_metadata("databricks-glm-5-2") is metadata
+    assert catalog.find_omniharness_model_metadata("databricks-glm-5-2") is metadata

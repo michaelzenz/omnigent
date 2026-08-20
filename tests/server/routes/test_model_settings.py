@@ -16,7 +16,7 @@ class FakeModelSettingsStore(ModelSettingsStore):
         super().__init__("memory")
         self.settings = ModelSettings(
             harness_models={
-                "openai-agents": [
+                "omniharness": [
                     "databricks-gpt-5-6-luna",
                     "databricks-glm-5-2",
                     "databricks-kimi-k3",
@@ -123,7 +123,7 @@ async def test_model_settings_routes_discover_and_persist(
         updated = await client.patch(
             "/v1/admin/model-settings",
             json={
-                "omnigent_models": ["databricks-gpt-5-4"],
+                "omniharness_models": ["databricks-gpt-5-4"],
                 "policy_model": "databricks-gpt-5-4",
                 "smart_routing_decision_model": "databricks-glm-5-2",
                 "smart_routing_prompt": "Choose the best configured model.",
@@ -149,7 +149,7 @@ async def test_model_settings_routes_discover_and_persist(
         options = await client.get("/v1/model-options")
         assert [model["id"] for model in options.json()["data"]] == ["databricks-gpt-5-4"]
 
-    assert store.get().harness_models["openai-agents"] == ["databricks-gpt-5-4"]
+    assert store.get().harness_models["omniharness"] == ["databricks-gpt-5-4"]
     assert store.get().policy_model == "databricks-gpt-5-4"
     assert store.get().smart_routing_decision_model is None
     assert store.get().smart_routing_prompt == "Choose the best configured model."

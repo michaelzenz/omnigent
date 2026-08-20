@@ -171,7 +171,7 @@ describe("StatisticsPage", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "Omnigent statistics" })).toBeInTheDocument();
-    expect(screen.getByText(/Omnigent harness only/)).toBeInTheDocument();
+    expect(screen.getByText(/OmniHarness only/)).toBeInTheDocument();
     expect(screen.getByTestId("statistics-model-section")).toBeInTheDocument();
     expect(screen.getByTestId("statistics-purpose-section")).toBeInTheDocument();
     expect(screen.getByTestId("statistics-workload-section")).toBeInTheDocument();

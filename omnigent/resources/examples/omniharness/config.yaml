@@ -1,0 +1,11 @@
+spec_version: 1
+name: omniharness
+description: A profile-driven OmniHarness target.
+
+executor:
+  type: omnigent
+  config:
+    harness: openai-agents
+    model: databricks-glm-5-2
+
+prompt: ""

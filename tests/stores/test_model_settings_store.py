@@ -7,7 +7,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
     store = SqlAlchemyModelSettingsStore(db_uri)
 
     settings = store.get()
-    assert settings.harness_models["openai-agents"] == [
+    assert settings.harness_models["omniharness"] == [
         "databricks-gpt-5-6-luna",
         "databricks-glm-5-2",
         "databricks-kimi-k3",
@@ -19,7 +19,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
     assert settings.workload_classification_enabled is False
 
     updated = store.update(
-        harness="openai-agents",
+        harness="omniharness",
         enabled_models=["databricks-kimi-k3", "databricks-kimi-k3"],
         policy_model="databricks-glm-5-2",
         update_policy_model=True,
@@ -32,7 +32,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
         updated_by="admin",
     )
 
-    assert updated.harness_models["openai-agents"] == ["databricks-kimi-k3"]
+    assert updated.harness_models["omniharness"] == ["databricks-kimi-k3"]
     assert updated.policy_model == "databricks-glm-5-2"
     assert updated.smart_routing_decision_model == "databricks-gpt-5-6-luna"
     assert updated.smart_routing_prompt == "Choose the best model."

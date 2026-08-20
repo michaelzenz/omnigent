@@ -2778,9 +2778,9 @@ async def compact_conversation_now(
         content_cache={},
         conversation_id=conversation_id,
     )
-    from omnigent.omnigent_model_catalog import get_omnigent_context_window
+    from omnigent.omniharness_model_catalog import get_omniharness_context_window
 
-    context_window = get_omnigent_context_window(effective_llm_config.model)
+    context_window = get_omniharness_context_window(effective_llm_config.model)
     result = await compact(
         messages,
         history,

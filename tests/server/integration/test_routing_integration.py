@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from omnigent.omniharness_turn_selection import OmniHarnessTurnSelection
 from omnigent.runner import subagent_routing
 from omnigent.runner.subagent_routing import (
     AUTO_HARNESS_LABEL_KEY,
@@ -28,7 +29,6 @@ from omnigent.server.smart_routing import RoutingResult
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.model_settings_store.sqlalchemy_store import SqlAlchemyModelSettingsStore
 from omnigent.stores.prompt_profile_store.sqlalchemy_store import SqlAlchemyPromptProfileStore
-from omnigent.turn_selection import OmnigentTurnSelection
 from tests.server.helpers import (
     FakeCaps,
     FakeRoutingClient,
@@ -110,19 +110,21 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
 ) -> None:
     agent = await create_test_agent(
         client,
-        name=f"routing-cadence-{cadence}",
+        name="omniharness",
         executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
     )
+    assert agent["name"] == "omniharness"
     created = await client.post(
         "/v1/sessions",
         json={"agent_id": agent["id"], "cost_control_mode_override": "on"},
     )
     assert created.status_code == 201, created.text
+    assert created.json()["agent_name"] == "omniharness"
     session_id = created.json()["id"]
     conv_store = SqlAlchemyConversationStore(db_uri)
     settings_store = SqlAlchemyModelSettingsStore(db_uri)
     settings_store.update(
-        harness="openai-agents",
+        harness="omniharness",
         enabled_models=[GPT_MODEL, GLM_MODEL],
         smart_routing_cadence=cadence,
         update_smart_routing_cadence=True,
@@ -137,7 +139,7 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
             "content": [{"type": "input_text", "text": "route this turn"}],
             "execution_context": {
                 "profile": "general-agent",
-                "harness": "omnigent",
+                "harness": "omniharness",
                 "model": None,
             },
         },
@@ -154,7 +156,9 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
                     body,
                     conv_store,
                     runner_client,
+                    agent_name="omniharness",
                     model_settings_store=settings_store,
+                    uses_omniharness=True,
                 )
 
     assert len(router.calls) == expected_calls
@@ -164,12 +168,16 @@ async def test_omnigent_routing_cadence_controls_follow_up_turns(
     decisions = _routing_decisions(conv_store, session_id)
     assert len(decisions) == expected_calls
     assert [decision.data.harness for decision in decisions] == [
-        "omnigent" for _ in range(expected_calls)
+        "omniharness" for _ in range(expected_calls)
     ]
     messages = [
         item
         for item in conv_store.list_items(session_id).data
         if getattr(item, "type", None) == "message"
+    ]
+    assert [message.data.execution_context.harness for message in messages] == [
+        "omniharness",
+        "omniharness",
     ]
     assert [message.data.execution_context.model for message in messages] == [GPT_MODEL, GPT_MODEL]
 
@@ -180,9 +188,10 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
 ) -> None:
     agent = await create_test_agent(
         client,
-        name="joint-turn-selection",
+        name="omniharness",
         executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
     )
+    assert agent["name"] == "omniharness"
     created = await client.post(
         "/v1/sessions",
         json={"agent_id": agent["id"], "cost_control_mode_override": "on"},
@@ -200,7 +209,7 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
     profile = profile_store.create("ab" * 16, "Focused", "Stay focused.")
     settings_store = SqlAlchemyModelSettingsStore(db_uri)
     settings_store.update(
-        harness="openai-agents",
+        harness="omniharness",
         enabled_models=[GPT_MODEL, GLM_MODEL],
         smart_routing_cadence="per_turn",
         update_smart_routing_cadence=True,
@@ -209,7 +218,7 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
         RoutingResult(model=GLM_MODEL, rationale="old second call", harness="openai-agents")
     )
     selector = AsyncMock(
-        return_value=OmnigentTurnSelection(
+        return_value=OmniHarnessTurnSelection(
             profile=profile,
             model=GPT_MODEL,
             model_verdict={
@@ -226,7 +235,7 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
             "content": [{"type": "input_text", "text": "route and profile this turn"}],
             "execution_context": {
                 "profile": "joint-turn-selection",
-                "harness": "omnigent",
+                "harness": "omniharness",
                 "model": None,
             },
         },
@@ -234,7 +243,10 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
 
     with (
         patch("omnigent.runtime._globals._caps", new=FakeCaps(routing_client=external_router)),
-        patch("omnigent.turn_selection.select_omnigent_turn", new=selector),
+        patch(
+            "omnigent.omniharness_turn_selection.select_omniharness_turn",
+            new=selector,
+        ),
     ):
         async with echo_runner_client() as runner_client:
             await orchestration_module._forward_event_to_runner(
@@ -243,8 +255,10 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
                 body,
                 conv_store,
                 runner_client,
+                agent_name="omniharness",
                 model_settings_store=settings_store,
                 prompt_profile_store=profile_store,
+                uses_omniharness=True,
             )
 
     assert selector.await_count == 1
@@ -270,9 +284,10 @@ async def test_omnigent_profile_auto_selection_works_without_model_auto(
 ) -> None:
     agent = await create_test_agent(
         client,
-        name="profile-only-turn-selection",
+        name="omniharness",
         executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
     )
+    assert agent["name"] == "omniharness"
     created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
     assert created.status_code == 201, created.text
     session_id = created.json()["id"]
@@ -285,7 +300,7 @@ async def test_omnigent_profile_auto_selection_works_without_model_auto(
     assert conv is not None
     profile_store = SqlAlchemyPromptProfileStore(db_uri)
     profile = profile_store.create("cd" * 16, "Profile only", "Use this profile.")
-    selector = AsyncMock(return_value=OmnigentTurnSelection(profile=profile))
+    selector = AsyncMock(return_value=OmniHarnessTurnSelection(profile=profile))
     body = SessionEventInput(
         type="message",
         data={
@@ -293,13 +308,16 @@ async def test_omnigent_profile_auto_selection_works_without_model_auto(
             "content": [{"type": "input_text", "text": "select only a profile"}],
             "execution_context": {
                 "profile": "profile-only-turn-selection",
-                "harness": "omnigent",
+                "harness": "omniharness",
                 "model": None,
             },
         },
     )
 
-    with patch("omnigent.turn_selection.select_omnigent_turn", new=selector):
+    with patch(
+        "omnigent.omniharness_turn_selection.select_omniharness_turn",
+        new=selector,
+    ):
         async with echo_runner_client() as runner_client:
             await orchestration_module._forward_event_to_runner(
                 session_id,
@@ -307,7 +325,9 @@ async def test_omnigent_profile_auto_selection_works_without_model_auto(
                 body,
                 conv_store,
                 runner_client,
+                agent_name="omniharness",
                 prompt_profile_store=profile_store,
+                uses_omniharness=True,
             )
 
     selector.assert_awaited_once_with(

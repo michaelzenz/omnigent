@@ -38,8 +38,9 @@ from omnigent.entities import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import conversation_uses_omniharness
 from omnigent.model_override import validate_model_override
-from omnigent.profile_selection import PROMPT_PROFILE_HARNESS, load_prompt_profile_instructions
+from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.reasoning_effort import (
     EFFORT_CLEAR_VALUES,
     EFFORT_VALUES,
@@ -1792,19 +1793,14 @@ def register_core_routes(
         prompt_profile_id: str | None = None
         update_prompt_profile = "prompt_profile" in body.model_fields_set
         if update_prompt_profile and body.prompt_profile is not None:
-            if agent_cache is None or prompt_profile_store is None:
+            if prompt_profile_store is None:
                 raise OmnigentError(
                     "Profile selection is unavailable",
                     code=ErrorCode.INTERNAL_ERROR,
                 )
-            harness = _resolve_harness(
-                conv,
-                agent_store=agent_store,
-                agent_cache=agent_cache,
-            )
-            if harness != PROMPT_PROFILE_HARNESS:
+            if not conversation_uses_omniharness(conv, agent_store):
                 raise OmnigentError(
-                    "Profiles can only be changed on Omnigent harness sessions",
+                    "Profiles can only be changed on OmniHarness sessions",
                     code=ErrorCode.INVALID_INPUT,
                 )
             prompt_profile_mode = body.prompt_profile.mode

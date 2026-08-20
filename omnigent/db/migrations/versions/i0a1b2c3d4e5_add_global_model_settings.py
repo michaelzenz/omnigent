@@ -19,7 +19,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _DEFAULT_HARNESS_MODELS = {
-    "openai-agents": [
+    "omniharness": [
         "databricks-gpt-5-6-luna",
         "databricks-glm-5-2",
         "databricks-kimi-k3",
@@ -43,9 +43,7 @@ def upgrade() -> None:
             "INSERT INTO model_settings "
             "(id, harness_models, policy_model, updated_at, updated_by) "
             "VALUES (1, :harness_models, NULL, NULL, NULL)"
-        ).bindparams(
-            harness_models=json.dumps(_DEFAULT_HARNESS_MODELS, separators=(",", ":"))
-        )
+        ).bindparams(harness_models=json.dumps(_DEFAULT_HARNESS_MODELS, separators=(",", ":")))
     )
 
 

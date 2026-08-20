@@ -629,9 +629,9 @@ describe("NewChatLandingScreen create flow", () => {
     } as unknown as Response);
     setAgents([
       agent({
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         harness: "openai-agents",
         skills: [],
       }),
@@ -644,7 +644,7 @@ describe("NewChatLandingScreen create flow", () => {
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
     // Profiles only replace instructions. Their skills must not change the
-    // base Omnigent agent's capabilities or first-message dispatch.
+    // OmniHarness capabilities or first-message dispatch.
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
         text: "/review-pr 123 focus on auth",
@@ -1647,12 +1647,12 @@ describe("NewChatLandingScreen create flow", () => {
     expect(body.prompt_profile).toBeNull();
   });
 
-  it("launches a prompt-only profile on the Omnigent base agent", async () => {
+  it("launches a prompt-only profile on OmniHarness", async () => {
     setAgents([
       agent({
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         harness: "openai-agents",
         default_harness: "openai-agents",
         default_model: "databricks-glm-5-2",
@@ -1676,7 +1676,7 @@ describe("NewChatLandingScreen create flow", () => {
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(body.agent_id).toBe("ag_omnigent");
+    expect(body.agent_id).toBe("ag_omniharness");
     expect(body.prompt_profile).toEqual({
       mode: "fixed",
       profile_id: "profile_general",
@@ -1687,9 +1687,9 @@ describe("NewChatLandingScreen create flow", () => {
 
   it("persists Auto Select for per-turn server selection", async () => {
     const base = agent({
-      id: "ag_omnigent",
-      name: "omnigent",
-      display_name: "Omnigent",
+      id: "ag_omniharness",
+      name: "omniharness",
+      display_name: "OmniHarness",
       harness: "openai-agents",
       builtin: true,
       enabled: true,
@@ -1717,7 +1717,7 @@ describe("NewChatLandingScreen create flow", () => {
     expect(sessionCall).toBeTruthy();
     if (!sessionCall) throw new Error("Expected a session create call");
     const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
-    expect(body.agent_id).toBe("ag_omnigent");
+    expect(body.agent_id).toBe("ag_omniharness");
     expect(body.prompt_profile).toEqual({ mode: "auto" });
   });
 });

@@ -229,8 +229,12 @@ import { GoalControl, GoalStatusPill, useGoalState, type Goal } from "@/componen
 import { copyText } from "@/lib/clipboard";
 import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
-import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS, type SdkModelOption } from "@/lib/sdkModels";
+import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
+import {
+  EMPTY_OMNIHARNESS_MODEL_OPTIONS,
+  OMNIHARNESS_AGENT_NAME,
+  type OmniHarnessModelOption,
+} from "@/lib/omniharnessModels";
 import { usePromptProfiles } from "@/hooks/usePromptProfiles";
 import { ProfileControls, type ProfileSelection } from "@/shell/ProfileControls";
 import { updateSession } from "@/lib/sessionsApi";
@@ -243,9 +247,9 @@ const ATTACHED_RE = /\[Attached(?: file)?:\s*([^\]]*)\]\s*/g;
 type ServerInfoValue = ServerInfo | "loading";
 
 export function supportsSessionProfileSelection(
-  session: Pick<Session, "harness" | "parentSessionId"> | null | undefined,
+  session: Pick<Session, "agentName" | "parentSessionId"> | null | undefined,
 ): boolean {
-  return session?.parentSessionId == null && session?.harness === SDK_HARNESS;
+  return session?.parentSessionId == null && session?.agentName === OMNIHARNESS_AGENT_NAME;
 }
 
 /**
@@ -1043,7 +1047,7 @@ export function ChatPage() {
   // excluded: their CLI bakes the model at launch and can't per-turn route, so
   // Smart Routing is meaningless there.
   const serverInfo = useServerInfo();
-  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
+  const sdkModelOptions = useOmniHarnessModelOptions().data ?? EMPTY_OMNIHARNESS_MODEL_OPTIONS;
   const costRoutingEligible = isCostRoutingEligible(serverInfo, activeSession);
   // Sub-agent routing is a separate knob with a different gate: a native CLI
   // can't per-turn route itself, but the sub-agents it spawns are routed per
@@ -1624,8 +1628,8 @@ interface MainAgentSurfaceProps {
   modelPickerKind: NativeModelPickerKind | null;
   /** Runner-owned model picker rows for native sessions. */
   codexModelOptions: readonly NativeModelOption[];
-  /** Admin-selected model picker rows for the Omnigent SDK harness. */
-  sdkModelOptions: readonly SdkModelOption[];
+  /** Admin-selected model picker rows for OmniHarness. */
+  sdkModelOptions: readonly OmniHarnessModelOption[];
   /** Omnigent prompt-profile selector shown beside composer configuration. */
   profileControls?: ReactNode;
   /** Show the Codex Plan-mode toggle. */
@@ -1636,7 +1640,7 @@ interface MainAgentSurfaceProps {
   showClaudeGoalControl?: boolean;
   /** Show Polly's Codex command-backed Goal control. */
   showPollyCodexGoalControl?: boolean;
-  /** Session passes `isCostRoutingSession` (polly orchestrator, not a child). */
+  /** Session passes `isCostRoutingSession` (top-level OmniHarness only). */
   costRoutingEligible: boolean;
   /** Session passes `isSubagentRoutingSession` (top-level, native Claude/Codex or non-native). */
   subagentRoutingEligible: boolean;
@@ -4492,8 +4496,8 @@ interface ComposerProps {
   modelPickerKind: NativeModelPickerKind | null;
   /** Runner-owned model picker rows for native sessions. */
   codexModelOptions: readonly NativeModelOption[];
-  /** Admin-selected model picker rows for the Omnigent SDK harness. */
-  sdkModelOptions?: readonly SdkModelOption[];
+  /** Admin-selected model picker rows for OmniHarness. */
+  sdkModelOptions?: readonly OmniHarnessModelOption[];
   /** Omnigent prompt-profile selector. */
   profileControls?: ReactNode;
   /** Show the Codex Plan-mode toggle. */
@@ -4545,7 +4549,7 @@ interface ComposerProps {
    * its bound host is offline and reconnectable.
    */
   onShowReconnectHelp?: () => void;
-  /** Session passes `isCostRoutingSession` (polly orchestrator, not a child); see that predicate. */
+  /** Session passes `isCostRoutingSession` (top-level OmniHarness only); see that predicate. */
   costRoutingEligible?: boolean;
   /**
    * Session passes `isSubagentRoutingSession` — a top-level session that gets
@@ -4819,7 +4823,6 @@ function ComposerStatusLine({
   const conversationId = useChatStore((s) => s.conversationId);
   const contextWindow = useChatStore((s) => s.contextWindow);
   const contextWindowIsEstimate = useChatStore((s) => s.contextWindowIsEstimate);
-  const sessionHarness = useChatStore((s) => s.sessionHarness);
   const tokensUsed = useChatStore((s) => s.tokensUsed);
   const codexPlanMode = useChatStore((s) => s.codexPlanMode);
   // Seeded from the session snapshot on bind (chatStore.sessionBindingPatch),
@@ -4892,7 +4895,7 @@ function ComposerStatusLine({
           <ContextRing
             contextWindow={contextWindow}
             tokensUsed={tokensUsed}
-            estimated={contextWindowIsEstimate && sessionHarness === SDK_HARNESS}
+            estimated={contextWindowIsEstimate && session?.agentName === OMNIHARNESS_AGENT_NAME}
           />
         )}
       </div>
@@ -4994,7 +4997,7 @@ export function Composer({
   showModels,
   modelPickerKind,
   codexModelOptions,
-  sdkModelOptions = EMPTY_SDK_MODEL_OPTIONS,
+  sdkModelOptions = EMPTY_OMNIHARNESS_MODEL_OPTIONS,
   profileControls,
   showCodexPlanMode,
   showGoalControl = false,
@@ -6546,6 +6549,7 @@ export function modelPickerKindForConv(
     | {
         labels?: Record<string, string | null> | null;
         harness?: string | null;
+        agentName?: string | null;
       }
     | null
     | undefined,
@@ -6574,7 +6578,7 @@ export function modelPickerKindForConv(
       // model_select handler, so the picker surfaces that as the live model.
       return "pi";
     default:
-      return conv?.harness === SDK_HARNESS ? "sdk" : null;
+      return conv?.agentName === OMNIHARNESS_AGENT_NAME ? "sdk" : null;
   }
 }
 
@@ -6583,6 +6587,7 @@ export function shouldShowModelPicker(
     | {
         labels?: Record<string, string | null> | null;
         harness?: string | null;
+        agentName?: string | null;
       }
     | null
     | undefined,
@@ -6708,7 +6713,7 @@ function SessionConfigModal({
   effortLevels: readonly string[];
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
-  sdkModelOptions: readonly SdkModelOption[];
+  sdkModelOptions: readonly OmniHarnessModelOption[];
   costRoutingEligible: boolean;
   subagentRoutingEligible: boolean;
 }) {
@@ -7033,7 +7038,7 @@ function ComposerConfigGear({
   effortLevels: readonly string[];
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
-  sdkModelOptions: readonly SdkModelOption[];
+  sdkModelOptions: readonly OmniHarnessModelOption[];
   costRoutingEligible: boolean;
   subagentRoutingEligible: boolean;
   disabled: boolean;
@@ -7147,7 +7152,7 @@ function useSessionConfigSummary({
   showEffort: boolean;
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
-  sdkModelOptions: readonly SdkModelOption[];
+  sdkModelOptions: readonly OmniHarnessModelOption[];
   costRoutingEligible: boolean;
 }): { label: string; value: string }[] {
   const selectedEffort = useSessionEffort();
@@ -7206,7 +7211,7 @@ function useSessionEffort(): string | null {
 function useResolvedComposerModel(
   modelPickerKind: NativeModelPickerKind | null,
   codexModelOptions: readonly NativeModelOption[],
-  sdkModelOptions: readonly SdkModelOption[] = EMPTY_SDK_MODEL_OPTIONS,
+  sdkModelOptions: readonly OmniHarnessModelOption[] = EMPTY_OMNIHARNESS_MODEL_OPTIONS,
 ) {
   const selectedModel = useChatStore((s) => s.selectedModel);
   const sessionModelOverride = useChatStore((s) => s.sessionModelOverride);
@@ -7315,7 +7320,7 @@ function ComposerSdkModelQuickSelect({
 }: {
   costRoutingEligible: boolean;
   disabled: boolean;
-  sdkModelOptions: readonly SdkModelOption[];
+  sdkModelOptions: readonly OmniHarnessModelOption[];
 }) {
   const [pending, setPending] = useState(false);
   const modelOverride = useChatStore((s) => s.sessionModelOverride);
@@ -7410,7 +7415,7 @@ function ComposerModelEffortLabel({
   showEffort: boolean;
   modelPickerKind: NativeModelPickerKind | null;
   codexModelOptions: readonly NativeModelOption[];
-  sdkModelOptions: readonly SdkModelOption[];
+  sdkModelOptions: readonly OmniHarnessModelOption[];
   costRoutingEligible: boolean;
   harnessLabel: string | null;
   disabled: boolean;

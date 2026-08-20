@@ -30,12 +30,12 @@ class _MemoryStore:
 
 
 @pytest.mark.asyncio
-async def test_memory_injected_only_for_openai_agents_user_turn() -> None:
+async def test_memory_injected_only_for_omniharness_user_turn() -> None:
     store = _MemoryStore()
     rendered = await _compose_turn_memory(
         store,  # type: ignore[arg-type]
         user_id="alice",
-        resolved_harness="openai-agents",
+        uses_omniharness=True,
         event_type="message",
         role="user",
         max_tokens=100,
@@ -44,12 +44,12 @@ async def test_memory_injected_only_for_openai_agents_user_turn() -> None:
     assert rendered is not None and "<omnigent_memory>" in rendered
     assert store.users == ["alice"]
 
-    for harness, role in (("codex", "user"), ("openai-agents", "assistant")):
+    for uses_omniharness, role in ((False, "user"), (True, "assistant")):
         assert (
             await _compose_turn_memory(
                 store,  # type: ignore[arg-type]
                 user_id="alice",
-                resolved_harness=harness,
+                uses_omniharness=uses_omniharness,
                 event_type="message",
                 role=role,
                 max_tokens=100,

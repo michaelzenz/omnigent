@@ -63,6 +63,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import is_omniharness_spec
 from omnigent.harness_plugins import (
     NativeCodingAgent,
 )
@@ -6119,13 +6120,12 @@ async def _emit_server_routing_decision(
     raw_model = verdict.get("raw_model")
     # Which router answered, so the chip can mark an AI-Gateway-routed decision.
     router_source = verdict.get("router_source")
-    display_harness = "omnigent" if harness in {"omnigent", "openai-agents"} else harness
     item_data: dict[str, Any] = {
         "model": model,
         "applied": bool(applied),
         "rationale": rationale if isinstance(rationale, str) else "",
         "scope": scope,
-        "harness": display_harness,
+        "harness": harness,
         "decision_id": resolved_decision_id,
         "raw_model": raw_model if isinstance(raw_model, str) and raw_model else None,
         "attempted_override": attempted_override,
@@ -7000,17 +7000,14 @@ def _build_policy_engine_from_spec_impl(
         server_llm=caps.llm,
         host_connection=host_connection,
     )
-    if conversation is not None and _resolve_harness(conversation) in {
-        "omnigent",
-        "openai-agents",
-    }:
+    if conversation is not None and is_omniharness_spec(spec):
         llm_client = getattr(engine, "_llm_client", None)
         if llm_client is not None:
-            from omnigent.usage_ledger import record_omnigent_usage, response_usage
+            from omnigent.usage_ledger import record_omniharness_usage, response_usage
 
             def _record_policy_usage(response: object, model: str) -> None:
                 try:
-                    record_omnigent_usage(
+                    record_omniharness_usage(
                         conversation_store,
                         session_id=session_id,
                         turn_id=None,

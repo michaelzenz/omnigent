@@ -8,9 +8,9 @@ import {
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { Host } from "@/hooks/useHosts";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
-import { configuredHarnessesForHost, SDK_HARNESS } from "./roleProfileOptions";
+import { configuredHarnessesForHost, OPENAI_AGENTS_ADAPTER } from "./roleProfileOptions";
 
-const SDK_HARNESS_DISPLAY_NAME = "Omnigent";
+const OPENAI_AGENTS_ADAPTER_DISPLAY_NAME = "OpenAI Agents SDK";
 
 export interface RoleHarnessPickerProps {
   host: Host | null;
@@ -33,13 +33,13 @@ function modelForHarness(agent: AvailableAgent | undefined, pickedModel: string)
 // a native CLI and so has no catalog agent that passes isNativeCodingAgent.
 // Gives the picker a row to select/label so it stops falling back to the
 // first native agent (Claude Code) when the stored harness is the SDK one.
-function sdkHarnessAgent(): AvailableAgent {
+function openAIAgentsAdapter(): AvailableAgent {
   return {
-    id: SDK_HARNESS,
-    name: SDK_HARNESS,
-    display_name: SDK_HARNESS_DISPLAY_NAME,
+    id: OPENAI_AGENTS_ADAPTER,
+    name: OPENAI_AGENTS_ADAPTER,
+    display_name: OPENAI_AGENTS_ADAPTER_DISPLAY_NAME,
     description: null,
-    harness: SDK_HARNESS,
+    harness: OPENAI_AGENTS_ADAPTER,
     skills: [],
   };
 }
@@ -65,8 +65,11 @@ export function RoleHarnessPicker({
     // The SDK harness is a first-class option but not a native CLI; ensure it
     // has a row even when no catalog agent carrying it survives the native
     // filter (it usually does — task-broker etc. — but be resilient).
-    if (allowed.has(SDK_HARNESS) && !native.some((a) => a.harness === SDK_HARNESS)) {
-      native.unshift(sdkHarnessAgent());
+    if (
+      allowed.has(OPENAI_AGENTS_ADAPTER) &&
+      !native.some((a) => a.harness === OPENAI_AGENTS_ADAPTER)
+    ) {
+      native.unshift(openAIAgentsAdapter());
     }
     return native;
   }, [host, agents, harness]);
@@ -90,7 +93,8 @@ export function RoleHarnessPicker({
       // The SDK harness is not a native CLI and has no permissionMode
       // capability, but it does take a model — preserve the current pick
       // (or the stored model) instead of clearing it like the native CLIs.
-      const nextModel = nextHarness === SDK_HARNESS ? model || "" : modelForHarness(agent, model);
+      const nextModel =
+        nextHarness === OPENAI_AGENTS_ADAPTER ? model || "" : modelForHarness(agent, model);
       onChange({
         harness: nextHarness,
         model: nextModel,

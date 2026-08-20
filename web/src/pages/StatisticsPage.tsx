@@ -565,7 +565,7 @@ export function StatisticsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Omnigent statistics</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Monthly cost and token consumption for the Omnigent harness only.
+            Monthly cost and token consumption for OmniHarness only.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -644,7 +644,7 @@ export function StatisticsPage() {
               <BarChart3Icon className="size-6 text-muted-foreground" />
               <h2 className="mt-3 text-base font-medium">No Omnigent activity this month</h2>
               <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                Statistics will appear after the Omnigent harness completes model calls.
+                Statistics will appear after OmniHarness completes model calls.
               </p>
             </div>
           )}

@@ -1,4 +1,4 @@
-"""Shared Omnigent per-request usage recording helpers."""
+"""Shared OmniHarness per-request usage recording helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from omnigent.llms.context_window import ModelPricing, compute_llm_cost
-from omnigent.omnigent_model_catalog import get_omnigent_model_metadata
+from omnigent.omniharness_model_catalog import get_omniharness_model_metadata
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores import ConversationStore
 
@@ -63,7 +63,7 @@ def _price_snapshot(pricing: ModelPricing | None) -> dict[str, float | None]:
     }
 
 
-def record_omnigent_usage(
+def record_omniharness_usage(
     conversation_store: ConversationStore,
     *,
     session_id: str,
@@ -77,7 +77,7 @@ def record_omnigent_usage(
     """Append one ledger row without modifying legacy usage rollups."""
     try:
         owner = conversation_store.get_session_owner(session_id) or RESERVED_USER_LOCAL
-        metadata = get_omnigent_model_metadata(model) if model else None
+        metadata = get_omniharness_model_metadata(model) if model else None
         service_pricing = metadata.pricing if metadata else None
         override = (
             conversation_store.get_model_pricing_override(owner, model)
@@ -128,7 +128,7 @@ def record_omnigent_usage(
         )
     except (OSError, RuntimeError, ValueError, NotImplementedError):
         _logger.warning(
-            "Omnigent usage ledger write failed for session=%s purpose=%s",
+            "OmniHarness usage ledger write failed for session=%s purpose=%s",
             session_id,
             purpose,
             exc_info=True,
@@ -137,6 +137,6 @@ def record_omnigent_usage(
 
 __all__ = [
     "canonical_purpose",
-    "record_omnigent_usage",
+    "record_omniharness_usage",
     "response_usage",
 ]

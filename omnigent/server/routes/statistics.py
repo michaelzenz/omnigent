@@ -1,4 +1,4 @@
-"""Monthly, user-scoped Omnigent request statistics."""
+"""Monthly, user-scoped OmniHarness request statistics."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 
 from omnigent.db.utils import now_epoch
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME
 from omnigent.llms.context_window import ModelPricing
-from omnigent.omnigent_model_catalog import get_omnigent_model_metadata
+from omnigent.omniharness_model_catalog import get_omniharness_model_metadata
 from omnigent.server.auth import RESERVED_USER_LOCAL, AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.stores import ConversationStore
@@ -40,7 +41,7 @@ class StatisticsBucket(BaseModel):
 
 
 class StatisticsPricing(BaseModel):
-    """Current enabled Omnigent model price, separate from historical snapshots."""
+    """Current OmniHarness model price, separate from historical snapshots."""
 
     model: str
     pricing_status: Literal["known", "unknown"]
@@ -205,11 +206,11 @@ def _pricing(
     if model_settings_store is None:
         return False, []
     settings = model_settings_store.get()
-    models = settings.harness_models.get("openai-agents", [])
+    models = settings.harness_models.get(OMNIHARNESS_AGENT_NAME, [])
     overrides = conversation_store.list_model_pricing_overrides(user_id, models)
     result: list[dict[str, Any]] = []
     for model in models:
-        metadata = get_omnigent_model_metadata(model)
+        metadata = get_omniharness_model_metadata(model)
         service = _price_values(metadata.pricing)
         override = overrides.get(model)
         custom = _custom_price_values(override)

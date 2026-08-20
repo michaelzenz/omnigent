@@ -2,9 +2,9 @@ import { harnessUnconfiguredOnHost, harnessWarningBadgeText } from "@/shell/NewC
 import type { Host } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { isNativeCodingAgent, nativeCodingAgentForAvailableAgent } from "@/lib/nativeCodingAgents";
-import { SDK_HARNESS } from "@/lib/sdkModels";
+import { OPENAI_AGENTS_ADAPTER } from "@/lib/omniharnessModels";
 
-export { SDK_HARNESS, type SdkModelOption } from "@/lib/sdkModels";
+export { OPENAI_AGENTS_ADAPTER } from "@/lib/omniharnessModels";
 
 export interface HarnessOption {
   harness: string;
@@ -13,9 +13,8 @@ export interface HarnessOption {
 
 // The in-process SDK harness is always available — no CLI binary, no host
 // config — so it's a first-class option in the role picker regardless of the
-// host's configured_harnesses map. Surfaced as "Omnigent" (the PuppyGarden
-// SDK executor path).
-const SDK_HARNESS_DISPLAY_NAME = "Omnigent";
+// host's configured_harnesses map.
+const OPENAI_AGENTS_ADAPTER_DISPLAY_NAME = "OpenAI Agents SDK";
 
 /** Harnesses configured on the selected host (same filter as New Chat). */
 export function configuredHarnessesForHost(
@@ -32,8 +31,11 @@ export function configuredHarnessesForHost(
 
   // The SDK harness is always available (in-process, no host setup), so list
   // it first regardless of the host's configured_harnesses map.
-  options.push({ harness: SDK_HARNESS, displayName: SDK_HARNESS_DISPLAY_NAME });
-  seen.add(SDK_HARNESS);
+  options.push({
+    harness: OPENAI_AGENTS_ADAPTER,
+    displayName: OPENAI_AGENTS_ADAPTER_DISPLAY_NAME,
+  });
+  seen.add(OPENAI_AGENTS_ADAPTER);
 
   for (const agent of agents) {
     if (!isNativeCodingAgent(agent) || !agent.harness) continue;

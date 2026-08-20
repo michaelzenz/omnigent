@@ -12,7 +12,7 @@ export interface AdminModelSettings {
   databricksConnected: boolean;
   profile: string | null;
   models: ModelOption[];
-  omnigentModels: string[];
+  omniharnessModels: string[];
   workloadClassificationEnabled?: boolean;
   policyModel: string | null;
   smartRoutingDecisionModel: string | null;
@@ -36,7 +36,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     databricks_connected: boolean;
     profile: string | null;
     models: WireModelOption[];
-    omnigent_models: string[];
+    omniharness_models: string[];
     workload_classification_enabled?: boolean;
     policy_model: string | null;
     smart_routing_decision_model: string | null;
@@ -51,7 +51,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
       id: model.id,
       displayName: model.display_name,
     })),
-    omnigentModels: body.omnigent_models,
+    omniharnessModels: body.omniharness_models,
     workloadClassificationEnabled: body.workload_classification_enabled === true,
     policyModel: body.policy_model,
     smartRoutingDecisionModel: body.smart_routing_decision_model,
@@ -61,13 +61,13 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
   };
 }
 
-export function useOmnigentModelOptions() {
+export function useOmniHarnessModelOptions() {
   const info = useServerInfo();
   const advertised = useMemo(
     () =>
-      info === "loading" || info.omnigent_model_options === undefined
+      info === "loading" || info.omniharness_model_options === undefined
         ? undefined
-        : info.omnigent_model_options.map((model) => ({
+        : info.omniharness_model_options.map((model) => ({
             id: model.id,
             displayName: model.display_name,
           })),
@@ -94,7 +94,7 @@ export function useUpdateAdminModelSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (patch: {
-      omnigentModels?: string[];
+      omniharnessModels?: string[];
       workloadClassificationEnabled?: boolean;
       policyModel?: string | null;
       smartRoutingDecisionModel?: string | null;
@@ -105,7 +105,9 @@ export function useUpdateAdminModelSettings() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...(patch.omnigentModels !== undefined ? { omnigent_models: patch.omnigentModels } : {}),
+          ...(patch.omniharnessModels !== undefined
+            ? { omniharness_models: patch.omniharnessModels }
+            : {}),
           ...(patch.workloadClassificationEnabled !== undefined
             ? { workload_classification_enabled: patch.workloadClassificationEnabled }
             : {}),
@@ -124,9 +126,9 @@ export function useUpdateAdminModelSettings() {
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     },
     onSuccess: async (_data, variables) => {
-      if (variables.omnigentModels !== undefined) {
+      if (variables.omniharnessModels !== undefined) {
         const admin = queryClient.getQueryData<AdminModelSettings>(ADMIN_KEY);
-        optionsOverride = variables.omnigentModels.map((id) => ({
+        optionsOverride = variables.omniharnessModels.map((id) => ({
           id,
           displayName: admin?.models.find((model) => model.id === id)?.displayName ?? id,
         }));

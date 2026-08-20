@@ -28,6 +28,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from omnigent._platform import resolve_repo_symlink
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME
 from omnigent.harness_plugins import (
     NativeHarnessProvider,
     native_provider_for_key,
@@ -70,7 +71,7 @@ from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.memory import create_memory_router
 from omnigent.server.routes.model_settings import (
-    configured_omnigent_model_options,
+    configured_omniharness_model_options,
     create_model_settings_router,
 )
 from omnigent.server.routes.policy_registry import create_policy_registry_router
@@ -194,19 +195,18 @@ _WEB_UI_API_FALLBACK_PREFIXES = frozenset({"api", "auth", "health", "v1", ".well
 WELL_KNOWN_MANIFEST_VERSION = 1
 _WEB_UI_GZIP_MINIMUM_SIZE = 1024
 _DEBBY_AGENT_NAME = "debby"
-_OMNIGENT_AGENT_NAME = "omnigent"
 _POLLY_AGENT_NAME = "polly"
 _UNMATCHED_ROUTE_TEMPLATE = "<unmatched>"
 _SESSION_PATH_RE = re.compile(r"/v1/sessions/([^/]+)")
-# Omnigent, polly, and debby's multi-file bundles are packaged under
+# OmniHarness, polly, and debby's multi-file bundles are packaged under
 # omnigent.resources.examples (see pyproject package-data), so they resolve
 # in both a repo checkout and an installed wheel. The presence check in each
 # seeder is a safety net.
 # resolve_repo_symlink dereferences the packaged symlink on a no-symlink
 # Windows checkout (where Git leaves it as a stub text file); a no-op elsewhere.
 _DEBBY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "debby")
-_OMNIGENT_BUNDLE_SOURCE = resolve_repo_symlink(
-    Path(_examples_resources.__file__).parent / "omnigent"
+_OMNIHARNESS_BUNDLE_SOURCE = resolve_repo_symlink(
+    Path(_examples_resources.__file__).parent / "omniharness"
 )
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")
 
@@ -519,7 +519,7 @@ def _ensure_default_agents(
     :param agent_cache: Cache for loaded agent specs.
     """
     _ensure_default_native_agents(agent_store, artifact_store, agent_cache)
-    _ensure_default_omnigent_agent(agent_store, artifact_store, agent_cache)
+    _ensure_default_omniharness_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_task_agents(agent_store, artifact_store, agent_cache)
@@ -715,32 +715,32 @@ def _ensure_default_task_agents(
         )
 
 
-def _ensure_default_omnigent_agent(
+def _ensure_default_omniharness_agent(
     agent_store: AgentStore,
     artifact_store: ArtifactStore,
     agent_cache: Any,
 ) -> None:
-    """Register or refresh the general-purpose OpenAI Agents SDK agent."""
+    """Register or refresh the profile-driven OmniHarness target."""
     import tempfile
 
     from omnigent.spec import materialize_bundle
 
-    if not (_OMNIGENT_BUNDLE_SOURCE / "config.yaml").is_file():
+    if not (_OMNIHARNESS_BUNDLE_SOURCE / "config.yaml").is_file():
         _logger.debug(
-            "omnigent bundle not found at %s; skipping seed",
-            _OMNIGENT_BUNDLE_SOURCE,
+            "omniharness bundle not found at %s; skipping seed",
+            _OMNIHARNESS_BUNDLE_SOURCE,
         )
         return
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        bundle_dir = materialize_bundle(_OMNIGENT_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
+        bundle_dir = materialize_bundle(_OMNIHARNESS_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
         bundle_bytes = _tar_gz_dir(bundle_dir)
 
     _ensure_builtin_agent(
         agent_store,
         artifact_store,
         agent_cache,
-        name=_OMNIGENT_AGENT_NAME,
+        name=OMNIHARNESS_AGENT_NAME,
         bundle_bytes=bundle_bytes,
     )
 
@@ -2370,8 +2370,8 @@ def create_app(
             "server_version": _server_version(),
             "smart_routing_enabled": smart_routing_enabled,
             "smart_routing_sources": smart_routing_sources,
-            "omnigent_model_options": (
-                configured_omnigent_model_options(model_settings_store)
+            "omniharness_model_options": (
+                configured_omniharness_model_options(model_settings_store)
                 if model_settings_store is not None
                 else []
             ),

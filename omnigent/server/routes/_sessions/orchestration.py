@@ -41,7 +41,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ElicitationDeclinedError, ErrorCode, OmnigentError
-from omnigent.harness_aliases import canonicalize_harness
+from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME, is_omniharness_agent
 from omnigent.harness_availability import (
     HARNESS_BINARY_MISSING,
     HARNESS_NEEDS_AUTH,
@@ -347,7 +347,7 @@ from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedE
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.telemetry.surface import classify_surface as _classify_surface
 
-_pending_omnigent_workloads: dict[str, tuple[str, str | None]] = {}
+_pending_omniharness_workloads: dict[str, tuple[str, str | None]] = {}
 
 
 async def _publish_and_wait_for_harness_elicitation(
@@ -1248,12 +1248,12 @@ def _accumulate_session_usage(
             priced = True
         else:
             from omnigent.llms.context_window import compute_llm_cost, fetch_model_pricing
-            from omnigent.omnigent_model_catalog import find_omnigent_model_metadata
+            from omnigent.omniharness_model_catalog import find_omniharness_model_metadata
 
-            omnigent_metadata = find_omnigent_model_metadata(llm_model)
+            omniharness_metadata = find_omniharness_model_metadata(llm_model)
             pricing = (
-                omnigent_metadata.pricing
-                if omnigent_metadata is not None
+                omniharness_metadata.pricing
+                if omniharness_metadata is not None
                 else fetch_model_pricing(llm_model)
             )
             priced = pricing is not None
@@ -1263,16 +1263,12 @@ def _accumulate_session_usage(
                 # prices them at their own (cheaper read / pricier write) rates.
                 cost_delta = compute_llm_cost(usage_obj, pricing)
 
-    pending_turn = _pending_omnigent_workloads.pop(session_id, None)
-    if (
-        pending_turn is not None
-        and conv is not None
-        and _resolve_harness(conv) in {"omnigent", "openai-agents"}
-    ):
+    pending_turn = _pending_omniharness_workloads.pop(session_id, None)
+    if pending_turn is not None and conv is not None:
         try:
-            from omnigent.usage_ledger import record_omnigent_usage
+            from omnigent.usage_ledger import record_omniharness_usage
 
-            record_omnigent_usage(
+            record_omniharness_usage(
                 conversation_store,
                 session_id=session_id,
                 turn_id=pending_turn[0],
@@ -4617,6 +4613,7 @@ async def _forward_event_to_runner(
     host_store: HostStore | None = None,
     model_settings_store: ModelSettingsStore | None = None,
     prompt_profile_store: PromptProfileStore | None = None,
+    uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
 ) -> str:
@@ -4652,9 +4649,9 @@ async def _forward_event_to_runner(
     :param host_store: Host registrations, read only to learn whether this
         session's harness is AI-Gateway-backed (which router may route it).
         ``None`` reads as unknown, which counts as backed.
-    :param prompt_profile_store: Prompt profiles available to Omnigent's
+    :param prompt_profile_store: Prompt profiles available to OmniHarness's
         per-turn auto selector.
-    :param profile_instructions: Omnigent-only system prompt selected for
+    :param profile_instructions: OmniHarness-only system prompt selected for
         this session, replacing the bound agent's instructions for this turn.
     :returns: The store-assigned id of the persisted item.
     """
@@ -4864,10 +4861,11 @@ async def _forward_event_to_runner(
         conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
     ) or _parent_routing_on
     _harness = _resolve_harness(conv)
+    _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None
     _profile_auto = (
         body.type == "message"
         and body.data.get("role") == "user"
-        and _harness in {"omnigent", "openai-agents"}
+        and _uses_omniharness
         and conv.prompt_profile_mode == "auto"
     )
     _profile_selected_this_turn = False
@@ -4887,27 +4885,23 @@ async def _forward_event_to_runner(
             forwarded_data["execution_context"] = execution_context
             runner_body["execution_context"] = execution_context
 
-    _omnigent_routing_settings = None
-    if (
-        model_settings_store is not None
-        and _harness in {"omnigent", "openai-agents"}
-        and conv.parent_conversation_id is None
-    ):
+    _omniharness_routing_settings = None
+    if model_settings_store is not None and _uses_omniharness:
         try:
-            _omnigent_routing_settings = await asyncio.to_thread(model_settings_store.get)
+            _omniharness_routing_settings = await asyncio.to_thread(model_settings_store.get)
         except (OSError, RuntimeError, ValueError):
             _logger.warning(
                 "smart_routing: failed to read global model settings for session=%s",
                 session_id,
                 exc_info=True,
             )
-    _omnigent_per_turn = (
-        _omnigent_routing_settings is not None
-        and _omnigent_routing_settings.smart_routing_cadence == "per_turn"
+    _omniharness_per_turn = (
+        _omniharness_routing_settings is not None
+        and _omniharness_routing_settings.smart_routing_cadence == "per_turn"
     )
     _classify_workload = bool(
-        _omnigent_routing_settings is not None
-        and getattr(_omnigent_routing_settings, "workload_classification_enabled", False)
+        _omniharness_routing_settings is not None
+        and getattr(_omniharness_routing_settings, "workload_classification_enabled", False)
     )
     _selected_workload: str | None = None
     _unified_selection_done = False
@@ -4951,7 +4945,7 @@ async def _forward_event_to_runner(
         and (
             effective_runner_override is None
             or conv.parent_conversation_id is not None
-            or _omnigent_per_turn
+            or _omniharness_per_turn
         )
     )
     if _should_route:
@@ -5043,7 +5037,7 @@ async def _forward_event_to_runner(
                     _routed_model, _verdict = _unavailable_routing_card(_route_err)
                     _route_failed = True
             else:
-                # Top-level Omnigent sessions select every automatic dimension
+                # Top-level OmniHarness sessions select every automatic dimension
                 # in one judge call. A fixed profile keeps model-only routing
                 # on the deployment's normal backend chain.
                 from omnigent.server.smart_routing import (
@@ -5059,29 +5053,31 @@ async def _forward_event_to_runner(
                     await _session_routing_host(conv, host_store), (_harness or "",)
                 )
                 _turn_catalog = await _native_turn_catalog(session_id, conv, runner_client)
-                if _omnigent_routing_settings is not None:
-                    # Omnigent's Models settings are the user's routing
+                if _omniharness_routing_settings is not None:
+                    # OmniHarness Models settings are the user's routing
                     # allowlist. The runner catalog is wider and must not
                     # re-enable models the user toggled off.
                     _turn_catalog = list(
-                        _omnigent_routing_settings.harness_models.get("openai-agents", [])
+                        _omniharness_routing_settings.harness_models.get(
+                            OMNIHARNESS_AGENT_NAME, []
+                        )
                     )
                 _decision_model = (
-                    _omnigent_routing_settings.smart_routing_decision_model
-                    if _omnigent_routing_settings is not None
+                    _omniharness_routing_settings.smart_routing_decision_model
+                    if _omniharness_routing_settings is not None
                     else None
                 )
                 _routing_prompt = (
-                    _omnigent_routing_settings.smart_routing_prompt or ""
-                    if _omnigent_routing_settings is not None
+                    _omniharness_routing_settings.smart_routing_prompt or ""
+                    if _omniharness_routing_settings is not None
                     else None
                 )
                 _turn_route_err: str | None = None
                 if _profile_auto or _classify_workload:
-                    from omnigent.turn_selection import select_omnigent_turn
+                    from omnigent.omniharness_turn_selection import select_omniharness_turn
                     from omnigent.usage_ledger import (
                         canonical_purpose,
-                        record_omnigent_usage,
+                        record_omniharness_usage,
                     )
 
                     if _profile_auto:
@@ -5094,7 +5090,7 @@ async def _forward_event_to_runner(
                         for model in models_in_family(_harness, _joint_catalog or ())
                         if not harness_bars_model(_harness, model)
                     ]
-                    _selection = await select_omnigent_turn(
+                    _selection = await select_omniharness_turn(
                         _user_text,
                         prompt_profile_store if _profile_auto else None,
                         select_profile=_profile_auto,
@@ -5110,7 +5106,7 @@ async def _forward_event_to_runner(
                     _verdict = _selection.model_verdict
                     _selected_workload = _selection.workload
                     _unified_selection_done = True
-                    record_omnigent_usage(
+                    record_omniharness_usage(
                         conversation_store,
                         session_id=session_id,
                         turn_id=turn_id,
@@ -5131,12 +5127,12 @@ async def _forward_event_to_runner(
                     # events POST, so a router that was merely down cost the user
                     # a message that had already been persisted.
                     from omnigent.usage_ledger import (
-                        record_omnigent_usage,
+                        record_omniharness_usage,
                         response_usage,
                     )
 
                     def _record_routing_usage(response: object, model: str | None) -> None:
-                        record_omnigent_usage(
+                        record_omniharness_usage(
                             conversation_store,
                             session_id=session_id,
                             turn_id=turn_id,
@@ -5192,33 +5188,33 @@ async def _forward_event_to_runner(
     if (_profile_auto and not _profile_selected_this_turn) or (
         _classify_workload and not _unified_selection_done
     ):
-        from omnigent.turn_selection import select_omnigent_turn
-        from omnigent.usage_ledger import canonical_purpose, record_omnigent_usage
+        from omnigent.omniharness_turn_selection import select_omniharness_turn
+        from omnigent.usage_ledger import canonical_purpose, record_omniharness_usage
 
         if _profile_auto:
             assert prompt_profile_store is not None
         try:
             if _profile_auto and not _classify_workload:
-                _profile_selection = await select_omnigent_turn(
+                _profile_selection = await select_omniharness_turn(
                     _extract_user_text_for_routing(body) or "",
                     prompt_profile_store,
                 )
             else:
-                _profile_selection = await select_omnigent_turn(
+                _profile_selection = await select_omniharness_turn(
                     _extract_user_text_for_routing(body) or "",
                     prompt_profile_store if _profile_auto else None,
                     select_profile=_profile_auto,
                     classify_workload=_classify_workload,
                     decision_model=(
-                        _omnigent_routing_settings.smart_routing_decision_model
-                        if _omnigent_routing_settings is not None
+                        _omniharness_routing_settings.smart_routing_decision_model
+                        if _omniharness_routing_settings is not None
                         else None
                     ),
                 )
             if _profile_selection.profile is not None:
                 _apply_auto_profile(_profile_selection.profile)
             _selected_workload = _profile_selection.workload
-            record_omnigent_usage(
+            record_omniharness_usage(
                 conversation_store,
                 session_id=session_id,
                 turn_id=turn_id,
@@ -5262,8 +5258,8 @@ async def _forward_event_to_runner(
         forwarded_data["execution_context"] = _execution_context
         runner_body["execution_context"] = _execution_context
 
-    if _harness in {"omnigent", "openai-agents"} and body.data.get("role") == "user":
-        _pending_omnigent_workloads[session_id] = (turn_id, _selected_workload)
+    if _uses_omniharness and body.data.get("role") == "user":
+        _pending_omniharness_workloads[session_id] = (turn_id, _selected_workload)
 
     # Keep invariant I1 (persist before forwarding), while delaying the append
     # until routing has supplied the turn's effective model.
@@ -5384,7 +5380,11 @@ async def _forward_event_to_runner(
                 _routed_model,
                 _verdict,
                 scope=_decision_scope,
-                harness=_routed_harness or _resolve_harness(conv),
+                harness=(
+                    OMNIHARNESS_AGENT_NAME
+                    if _uses_omniharness
+                    else (_routed_harness or _resolve_harness(conv))
+                ),
                 attempted_override=_overridden,
             )
             if not _route_failed:
@@ -5526,6 +5526,7 @@ async def _dispatch_session_event_to_runner_impl(
     host_store: HostStore | None = None,
     model_settings_store: ModelSettingsStore | None = None,
     prompt_profile_store: PromptProfileStore | None = None,
+    uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
 ) -> _SessionEventDispatchResult:
@@ -5829,6 +5830,7 @@ async def _dispatch_session_event_to_runner_impl(
         host_store=host_store,
         model_settings_store=model_settings_store,
         prompt_profile_store=prompt_profile_store,
+        uses_omniharness=uses_omniharness,
         profile_instructions=profile_instructions,
         memory_instructions=memory_instructions,
     )
@@ -7888,25 +7890,14 @@ async def _create_session_from_existing_agent(
     prompt_profile_mode: str | None = None
     prompt_profile_id: str | None = None
     if body.prompt_profile is not None:
-        if prompt_profile_store is None or agent_cache is None:
+        if prompt_profile_store is None:
             raise OmnigentError(
                 "Prompt profile selection is unavailable",
                 code=ErrorCode.INTERNAL_ERROR,
             )
-        loaded_agent = await asyncio.to_thread(
-            agent_cache.load,
-            agent.id,
-            agent.bundle_location,
-            expand_env=agent.session_id is None,
-        )
-        selected_harness = canonicalize_harness(
-            body.harness_override
-            or loaded_agent.spec.executor.config.get("harness")
-            or loaded_agent.spec.executor.type
-        )
-        if selected_harness != "openai-agents":
+        if not is_omniharness_agent(agent):
             raise OmnigentError(
-                "Prompt profiles can only be selected for Omnigent sessions",
+                "Prompt profiles can only be selected for OmniHarness sessions",
                 code=ErrorCode.INVALID_INPUT,
             )
         prompt_profile_mode = body.prompt_profile.mode
@@ -9502,12 +9493,7 @@ async def _get_session_snapshot(
                     # catalog fetch (blocking HTTP / CPU-bound litellm) inside
                     # the resolver, which would otherwise stall the single-worker
                     # event loop and serialize every concurrent snapshot.
-                    harness = _resolve_harness(
-                        conv,
-                        agent_store=agent_store,
-                        agent_cache=agent_cache,
-                    )
-                    if harness in {"openai-agents", "openai-agents-sdk", "agents_sdk"}:
+                    if is_omniharness_agent(agent):
                         effective_model = conv.model_override or llm_model
                         if (
                             spec.executor.context_window is not None
@@ -9515,12 +9501,12 @@ async def _get_session_snapshot(
                         ):
                             context_window = spec.executor.context_window
                         elif effective_model is not None:
-                            from omnigent.omnigent_model_catalog import (
-                                get_omnigent_model_metadata,
+                            from omnigent.omniharness_model_catalog import (
+                                get_omniharness_model_metadata,
                             )
 
                             metadata = await asyncio.to_thread(
-                                get_omnigent_model_metadata,
+                                get_omniharness_model_metadata,
                                 effective_model,
                             )
                             context_window = metadata.context_window

@@ -1,4 +1,4 @@
-"""Unified Omnigent prompt-profile and model selection for one user turn."""
+"""Unified OmniHarness prompt-profile and model selection for one user turn."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ _logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class OmnigentTurnSelection:
-    """Auto-selected dimensions for one Omnigent turn."""
+class OmniHarnessTurnSelection:
+    """Auto-selected dimensions for one OmniHarness turn."""
 
     profile: PromptProfile | None = None
     model: str | None = None
@@ -115,7 +115,7 @@ def _response_text(response: object) -> str:
     )
 
 
-async def select_omnigent_turn(
+async def select_omniharness_turn(
     user_input: str,
     prompt_profile_store: PromptProfileStore | None = None,
     *,
@@ -124,8 +124,8 @@ async def select_omnigent_turn(
     classify_workload: bool = False,
     decision_model: str | None = None,
     smart_routing_prompt: str | None = None,
-) -> OmnigentTurnSelection:
-    """Select every automatic Omnigent turn dimension in one model call."""
+) -> OmniHarnessTurnSelection:
+    """Select every automatic OmniHarness turn dimension in one model call."""
     server_llm = get_caps().llm
     if server_llm is None:
         raise OmnigentError(
@@ -193,7 +193,7 @@ async def select_omnigent_turn(
                 text={
                     "format": {
                         "type": "json_schema",
-                        "name": "omnigent_turn_selection",
+                        "name": "omniharness_turn_selection",
                         "strict": True,
                         "schema": schema,
                     }
@@ -205,7 +205,7 @@ async def select_omnigent_turn(
         )
         verdict = json.loads(_response_text(response))
     except Exception as exc:
-        _logger.warning("Omnigent turn selection AI call failed", exc_info=True)
+        _logger.warning("OmniHarness turn selection AI call failed", exc_info=True)
         raise OmnigentError(
             "Auto Select failed to query the server AI backend.",
             code=ErrorCode.CONFLICT,
@@ -227,7 +227,7 @@ async def select_omnigent_turn(
     model: str | None = verdict.get("model") if select_model else None
     if select_model and (not isinstance(model, str) or model not in candidates):
         _logger.info(
-            "Omnigent turn selection clamping unknown model %r to %s",
+            "OmniHarness turn selection clamping unknown model %r to %s",
             model,
             candidates[0],
         )
@@ -247,7 +247,7 @@ async def select_omnigent_turn(
         workload = "other"
     from omnigent.usage_ledger import response_usage
 
-    return OmnigentTurnSelection(
+    return OmniHarnessTurnSelection(
         profile=selected_profile,
         model=model,
         model_verdict=model_verdict,

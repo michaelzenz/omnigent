@@ -69,8 +69,8 @@ describe("shouldShowModelPicker", () => {
     expect(shouldShowModelPicker({ labels: { "omnigent.wrapper": "pi-native-ui" } })).toBe(true);
   });
 
-  it("shows the picker for SDK sessions that honor model_override", () => {
-    expect(shouldShowModelPicker({ labels: {}, harness: "openai-agents" })).toBe(true);
+  it("shows the picker for OmniHarness sessions that honor model_override", () => {
+    expect(shouldShowModelPicker({ labels: {}, agentName: "omniharness" })).toBe(true);
   });
 
   it("hides the picker for other wrappers and missing labels (fail closed)", () => {

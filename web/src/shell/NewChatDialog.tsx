@@ -93,7 +93,7 @@ import {
 import { setPendingInitialPrompt } from "@/store/chatStore";
 import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { useOmnigentModelOptions } from "@/hooks/useModelSettings";
+import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
 import { CliCommandBlock } from "./CliCommandBlock";
 import { WorkspacePicker, isNavigablePath } from "./WorkspacePicker";
 import {
@@ -133,7 +133,11 @@ import {
   type SmartRoutingUnavailableCause,
 } from "@/lib/smartRoutingAvailability";
 import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
-import { EMPTY_SDK_MODEL_OPTIONS, SDK_HARNESS } from "@/lib/sdkModels";
+import {
+  EMPTY_OMNIHARNESS_MODEL_OPTIONS,
+  OMNIHARNESS_AGENT_NAME,
+  OPENAI_AGENTS_ADAPTER,
+} from "@/lib/omniharnessModels";
 import { partitionAgentsByKind, sortAgentsForDisplay } from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
@@ -206,18 +210,17 @@ import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
 // --harness kimi` use) — the picker offers only the native TUI (`kimi-native-ui`).
 const NEW_SESSION_HIDDEN_AGENTS = new Set(["nessie", "kimi", "kimi-code"]);
-const OMNIGENT_ROUTABLE_HARNESSES = new Set([SDK_HARNESS, "omnigent"]);
 
 // Short picker-row blurbs — the spec descriptions are long paragraphs that
 // truncate badly in the dropdown; other dialogs keep the server values.
 const AGENT_PICKER_DESCRIPTIONS: Record<string, string> = {
-  omnigent: "OpenAI Agents SDK",
+  omniharness: "Profile-driven assistant",
   polly: "Multi-agent coding",
   debby: "Multi-agent debate",
 };
 
 export function isNewSessionHarnessAgent(agent: AvailableAgent): boolean {
-  return isNativeCodingAgent(agent) || (agent.name === "omnigent" && agent.harness === SDK_HARNESS);
+  return isNativeCodingAgent(agent) || agent.name === OMNIHARNESS_AGENT_NAME;
 }
 
 // Agents whose bundled skills render as always-visible pills under the
@@ -1105,7 +1108,7 @@ export function AgentHarnessPicker({
       if (!selected && hideUnconfigured && harnessUnconfiguredOnHost(a.harness, host)) continue;
       if (
         selected ||
-        a.harness === SDK_HARNESS ||
+        a.name === OMNIHARNESS_AGENT_NAME ||
         isFullySupportedNativeCodingAgent(a) ||
         isRecentHarness(a, recentHarnesses)
       ) {
@@ -1458,7 +1461,7 @@ function HarnessConfigModal({
   setCostControlMode: (mode: CostControlMode) => void;
 }) {
   const info = useServerInfo();
-  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
+  const sdkModelOptions = useOmniHarnessModelOptions().data ?? EMPTY_OMNIHARNESS_MODEL_OPTIONS;
   // Feature ON → single "needs setup" badge; OFF → per-reason original text.
   const collapsedBadge = isFeatureEnabled(info, "harness_install");
   const entryHarness = nativeCodingAgentForAvailableAgent(agent)?.harness ?? null;
@@ -1467,11 +1470,9 @@ function HarnessConfigModal({
   const hasCursor = nativeAgentHasCapability(agent, "cursorMode");
   const hasAgySkip = nativeAgentHasCapability(agent, "skipPermissions");
   const isCodex = entryHarness === "codex-native";
-  const isSdk =
-    agent.harness === SDK_HARNESS || (!isNativeCodingAgent(agent) && agent.name !== "omnigent");
-  const routingPreferenceHarness =
-    entryHarness ??
-    (agent.harness != null && OMNIGENT_ROUTABLE_HARNESSES.has(agent.harness) ? SDK_HARNESS : null);
+  const isOmniHarness = agent.name === OMNIHARNESS_AGENT_NAME;
+  const hasSdkModelControl = isOmniHarness || !isNativeCodingAgent(agent);
+  const routingPreferenceHarness = entryHarness ?? (isOmniHarness ? OMNIHARNESS_AGENT_NAME : null);
   const isMultiAgentProfile = agent.is_multi_agent === true;
   const modelOptions = isCodex ? codexModelOptions : claudeModelOptions;
   const modelsLoading = isCodex ? codexModelsLoading : claudeModelsLoading;
@@ -1596,9 +1597,11 @@ function HarnessConfigModal({
       // Picking the spec default clears the override so the session tracks it.
       setPickedHarness(draftHarness === brainDefault ? null : draftHarness, agent.id);
     }
-    if (isSdk) {
+    if (hasSdkModelControl) {
       setPickedModel(draftModel);
-      writeHarnessOption(SDK_HARNESS, { model: draftModel });
+      writeHarnessOption(isOmniHarness ? OMNIHARNESS_AGENT_NAME : (agent.harness ?? agent.name), {
+        model: draftModel,
+      });
     }
     // Smart Routing rides the Model dropdown on both routable harnesses
     // (Claude Code and Codex), so commit it outside the per-capability branches.
@@ -1644,7 +1647,7 @@ function HarnessConfigModal({
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-1">
-          {!autoRouting && isSdk && (
+          {!autoRouting && hasSdkModelControl && (
             <ConfigRow
               label={isMultiAgentProfile ? "Coordinator model" : "Model"}
               description={isMultiAgentProfile ? "Root executor LLM" : "Underlying LLM"}
@@ -1980,7 +1983,7 @@ export function NewChatLandingScreen() {
   );
 
   // Split the picker into "Harnesses" (native terminal CLIs plus the
-  // general-purpose in-process Omnigent harness) and
+  // profile-driven OmniHarness target) and
   // "Agents" (SDK / bundle agents like Polly & Debby plus any custom
   // user-registered agents). This is the isNativeCodingAgent split, NOT the
   // builtins/customs split: Polly & Debby are built-ins but belong under
@@ -1988,16 +1991,16 @@ export function NewChatLandingScreen() {
   const harnessEntries = useMemo(() => {
     const entries = agentList.filter((a) => isNewSessionHarnessAgent(a));
     return [
-      ...entries.filter((a) => a.harness === SDK_HARNESS),
-      ...entries.filter((a) => a.harness !== SDK_HARNESS),
+      ...entries.filter((a) => a.name === OMNIHARNESS_AGENT_NAME),
+      ...entries.filter((a) => a.name !== OMNIHARNESS_AGENT_NAME),
     ];
   }, [agentList]);
   const agentEntries = useMemo(
     () => agentList.filter((a) => !isNewSessionHarnessAgent(a)),
     [agentList],
   );
-  const omnigentBaseAgent = harnessEntries.find(
-    (agent) => agent.name === "omnigent" && agent.harness === SDK_HARNESS,
+  const omniharnessBaseAgent = harnessEntries.find(
+    (agent) => agent.name === OMNIHARNESS_AGENT_NAME,
   );
   // Surface element backing the iOS native server switcher overlay, which
   // the in-session view shows too — the picker stays reachable while starting
@@ -2074,7 +2077,7 @@ export function NewChatLandingScreen() {
   // config can actually serve a managed launch advertise it. "loading"
   // fails closed (option hidden) until the boot probe resolves.
   const info = useServerInfo();
-  const sdkModelOptions = useOmnigentModelOptions().data ?? EMPTY_SDK_MODEL_OPTIONS;
+  const sdkModelOptions = useOmniHarnessModelOptions().data ?? EMPTY_OMNIHARNESS_MODEL_OPTIONS;
   const managedSandboxesEnabled = info !== "loading" && info.managed_sandboxes_enabled;
   const smartRoutingEnabled = info !== "loading" && info.smart_routing_enabled;
   // Which router can answer a pick. The external AI-Gateway router only covers
@@ -2692,11 +2695,8 @@ export function NewChatLandingScreen() {
     () => agentList.find((agent) => agent.id === effectiveAgentId),
     [agentList, effectiveAgentId],
   );
-  const omnigentSelected = selectedAgent?.id === omnigentBaseAgent?.id;
-  const promptProfilesEnabled =
-    omnigentSelected &&
-    (pickedHarness ?? omnigentBaseAgent?.default_harness ?? omnigentBaseAgent?.harness) ===
-      SDK_HARNESS;
+  const omniharnessSelected = selectedAgent?.id === omniharnessBaseAgent?.id;
+  const promptProfilesEnabled = omniharnessSelected;
   const harnessPickerAgentId = effectiveAgentId;
   useEffect(() => {
     if (
@@ -2711,9 +2711,7 @@ export function NewChatLandingScreen() {
   const supportsApprovalMode = nativeAgentHasCapability(selectedAgent, "approvalMode");
   const supportsCursorMode = nativeAgentHasCapability(selectedAgent, "cursorMode");
   const supportsAgySkipPermissions = nativeAgentHasCapability(selectedAgent, "skipPermissions");
-  const selectedAgentUsesSdk = selectedAgent?.harness === SDK_HARNESS;
-  const selectedAgentUsesOmnigentHarness =
-    selectedAgent?.harness != null && OMNIGENT_ROUTABLE_HARNESSES.has(selectedAgent.harness);
+  const selectedAgentUsesOmniHarness = selectedAgent?.name === OMNIHARNESS_AGENT_NAME;
   const hideUnconfiguredHarnesses = useMemo(() => readHideUnconfiguredHarnesses(), []);
   // The selected native harness, used to persist/seed its option knobs (mode /
   // model / effort), which are harness-specific. null for non-native agents,
@@ -2725,20 +2723,23 @@ export function NewChatLandingScreen() {
   // Selection stays allowed — the host re-checks at launch and the create
   // call surfaces a specific error if the harness really can't run.
   const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
-  // Smart Routing as a Model choice is offered on the Omnigent harness and the
+  // Smart Routing as a Model choice is offered on OmniHarness and the
   // two native harnesses whose running CLI accepts a model switch.
   // Each family gates on its OWN source: the external router's apply layer
   // rewrites the model through the workspace AI gateway, so a host whose Claude
   // Code runs off something else falls back to the built-in judge for that
   // family instead of losing the row — and loses it only when neither router
   // can answer.
-  const smartRoutingHarness = selectedAgentUsesOmnigentHarness
-    ? SDK_HARNESS
+  const smartRoutingHarness = selectedAgentUsesOmniHarness
+    ? OPENAI_AGENTS_ADAPTER
     : selectedNativeHarness;
+  const smartRoutingPreferenceKey = selectedAgentUsesOmniHarness
+    ? OMNIHARNESS_AGENT_NAME
+    : smartRoutingHarness;
   const smartRoutingEligible =
     smartRoutingEnabled &&
     smartRoutingHarness !== null &&
-    (smartRoutingHarness === SDK_HARNESS ||
+    (selectedAgentUsesOmniHarness ||
       SMART_ROUTING_ARMS.some((harness) => harness === smartRoutingHarness)) &&
     smartRoutingSourceFor({
       externalConfigured: externalRoutingConfigured,
@@ -2758,7 +2759,7 @@ export function NewChatLandingScreen() {
     supportsApprovalMode ||
     supportsCursorMode ||
     supportsAgySkipPermissions ||
-    selectedAgentUsesSdk ||
+    selectedAgentUsesOmniHarness ||
     smartRoutingEligible ||
     (selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll);
   // Label/value pairs summarizing the selected agent's current run-config, for
@@ -2844,7 +2845,7 @@ export function NewChatLandingScreen() {
         AGY_NATIVE_SKIP_MODES.find((m) => m.value === agySkipMode)?.label ?? agySkipMode;
       return [{ label: "Permissions", value: skipValue }, ...routingRow];
     }
-    if (selectedAgentUsesSdk) {
+    if (selectedAgentUsesOmniHarness) {
       const modelValue =
         sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ??
         "Default (GLM 5.2)";
@@ -2883,7 +2884,7 @@ export function NewChatLandingScreen() {
     supportsApprovalMode,
     supportsCursorMode,
     supportsAgySkipPermissions,
-    selectedAgentUsesSdk,
+    selectedAgentUsesOmniHarness,
     selectedAgent,
     brainHarnessLabelsAll,
     routingOn,
@@ -2985,18 +2986,18 @@ export function NewChatLandingScreen() {
     // capability flags are derived from the same harness and stay omitted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNativeHarness, claudeModelOptions, codexModelOptions]);
-  // The SDK harness has no host-side model catalog, so seed its static model
+  // OmniHarness has no host-side model catalog, so seed its model
   // choices independently from the native harness options above.
   useEffect(() => {
-    if (!selectedAgentUsesSdk) return;
-    const storedModel = readHarnessOptions(SDK_HARNESS).model;
+    if (!selectedAgentUsesOmniHarness) return;
+    const storedModel = readHarnessOptions(OMNIHARNESS_AGENT_NAME).model;
     setPickedModel(
       storedModel != null && sdkModelOptions.some((model) => model.id === storedModel)
         ? storedModel
         : "",
     );
     setPickedEffort("");
-  }, [selectedAgentUsesSdk, effectiveAgentId, sdkModelOptions, setPickedModel]);
+  }, [selectedAgentUsesOmniHarness, effectiveAgentId, sdkModelOptions, setPickedModel]);
   // Smart Routing is remembered per harness alongside the mode/model
   // knobs, in its own effect because eligibility depends on the server flag
   // (which resolves after mount — this must reseed when it lands). A stored
@@ -3008,12 +3009,12 @@ export function NewChatLandingScreen() {
   // including one between two agents on the same harness. Fully-auto owns the
   // switch itself (the router always routes), so it's left alone.
   useEffect(() => {
-    if (!smartRoutingHarness || autoRoutingSelected) return;
-    const storedRouting = readHarnessOptions(smartRoutingHarness).routing;
+    if (!smartRoutingPreferenceKey || autoRoutingSelected) return;
+    const storedRouting = readHarnessOptions(smartRoutingPreferenceKey).routing;
     if (storedRouting === undefined) return;
     setCostControlMode(smartRoutingEligible && storedRouting === "on" ? "on" : null);
   }, [
-    smartRoutingHarness,
+    smartRoutingPreferenceKey,
     smartRoutingEligible,
     effectiveAgentId,
     autoRoutingSelected,
@@ -3583,9 +3584,9 @@ export function NewChatLandingScreen() {
   // persist via localStorage.
   const handleSelectAgent = (agent: AvailableAgent) => {
     setSmartRoutingDropped(null);
-    if (agent.id === omnigentBaseAgent?.id) {
-      setPickedAgentId(omnigentBaseAgent.id);
-      writeLastAgentId(omnigentBaseAgent.id);
+    if (agent.id === omniharnessBaseAgent?.id) {
+      setPickedAgentId(omniharnessBaseAgent.id);
+      writeLastAgentId(omniharnessBaseAgent.id);
       return;
     }
     if (agent.id !== effectiveAgentId) {
@@ -3855,7 +3856,7 @@ export function NewChatLandingScreen() {
               !routingOwnsModel &&
               (agentSupportsPermissionMode ||
                 nativeAgent?.harness === "codex-native" ||
-                selectedAgentUsesSdk) &&
+                selectedAgentUsesOmniHarness) &&
               pickedModel
                 ? pickedModel
                 : undefined,
@@ -4326,7 +4327,7 @@ export function NewChatLandingScreen() {
                 />
               </div>
               <div className="flex items-center gap-0.5 md:gap-2">
-                {promptProfilesEnabled && omnigentBaseAgent && (
+                {promptProfilesEnabled && omniharnessBaseAgent && (
                   <ProfileControls
                     profiles={profiles}
                     selection={profileSelection}

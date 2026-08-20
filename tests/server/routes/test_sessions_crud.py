@@ -33,6 +33,16 @@ async def session_id(db_uri: str) -> str:
     return conv.id
 
 
+@pytest_asyncio.fixture()
+async def omniharness_session_id(db_uri: str) -> str:
+    """Seed the built-in target identity used by profile-selection routes."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name="omniharness", bundle_location="test:///bundle")
+    return conv_store.create_conversation(agent_id=agent_id).id
+
+
 # ── GET /v1/sessions (list) ─────────────────────────────────────────
 
 
@@ -95,10 +105,10 @@ async def test_get_session_not_found(client: httpx.AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_patch_prompt_profile_persists_for_omnigent_session(
+async def test_patch_prompt_profile_persists_for_omniharness_session(
     client: httpx.AsyncClient,
     db_uri: str,
-    session_id: str,
+    omniharness_session_id: str,
 ) -> None:
     profile_store = SqlAlchemyPromptProfileStore(db_uri)
     profile_id = "12" * 16
@@ -108,16 +118,10 @@ async def test_patch_prompt_profile_persists_for_omnigent_session(
         instructions="Focus on the selected task.",
     )
 
-    with (
-        patch(
-            "omnigent.server.routes.sessions.routes_core._resolve_harness",
-            return_value="openai-agents",
-        ),
-    ):
-        response = await client.patch(
-            f"/v1/sessions/{session_id}",
-            json={"prompt_profile": {"mode": "fixed", "profile_id": profile_id}},
-        )
+    response = await client.patch(
+        f"/v1/sessions/{omniharness_session_id}",
+        json={"prompt_profile": {"mode": "fixed", "profile_id": profile_id}},
+    )
 
     assert response.status_code == 200
     assert response.json()["prompt_profile"] == {"mode": "fixed", "profile_id": profile_id}
@@ -125,19 +129,28 @@ async def test_patch_prompt_profile_persists_for_omnigent_session(
 
 async def test_patch_prompt_profile_accepts_per_turn_auto_select(
     client: httpx.AsyncClient,
-    session_id: str,
+    omniharness_session_id: str,
 ) -> None:
-    with patch(
-        "omnigent.server.routes.sessions.routes_core._resolve_harness",
-        return_value="openai-agents",
-    ):
-        response = await client.patch(
-            f"/v1/sessions/{session_id}",
-            json={"prompt_profile": {"mode": "auto"}},
-        )
+    response = await client.patch(
+        f"/v1/sessions/{omniharness_session_id}",
+        json={"prompt_profile": {"mode": "auto"}},
+    )
 
     assert response.status_code == 200
     assert response.json()["prompt_profile"] == {"mode": "auto"}
+
+
+async def test_patch_prompt_profile_rejects_non_omniharness_agent(
+    client: httpx.AsyncClient,
+    session_id: str,
+) -> None:
+    response = await client.patch(
+        f"/v1/sessions/{session_id}",
+        json={"prompt_profile": {"mode": "auto"}},
+    )
+
+    assert response.status_code == 400
+    assert "OmniHarness" in response.text
 
 
 # ── DELETE /v1/sessions/{id} ────────────────────────────────────────

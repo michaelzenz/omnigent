@@ -5,8 +5,6 @@ from __future__ import annotations
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores import PromptProfileStore
 
-PROMPT_PROFILE_HARNESS = "openai-agents"
-
 
 def load_prompt_profile_instructions(
     profile_id: str,

@@ -324,9 +324,9 @@ export function MemoryTab() {
       </div>
 
       <Alert>
-        <AlertTitle>Omnigent harness only</AlertTitle>
+        <AlertTitle>OmniHarness only</AlertTitle>
         <AlertDescription>
-          This memory is injected only into sessions using the Omnigent harness. Other harnesses are
+          This memory is injected only into sessions using OmniHarness. Other harnesses are
           unaffected.
         </AlertDescription>
       </Alert>

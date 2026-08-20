@@ -110,22 +110,22 @@ const CLAUDE_MODEL_OPTIONS = [
 ];
 
 describe("supportsSessionProfileSelection", () => {
-  it("supports only top-level Omnigent SDK sessions", () => {
+  it("supports only top-level OmniHarness sessions", () => {
     expect(
       supportsSessionProfileSelection({
-        harness: "openai-agents",
+        agentName: "omniharness",
         parentSessionId: null,
       }),
     ).toBe(true);
     expect(
       supportsSessionProfileSelection({
-        harness: "claude-sdk",
+        agentName: "polly",
         parentSessionId: null,
       }),
     ).toBe(false);
     expect(
       supportsSessionProfileSelection({
-        harness: "openai-agents",
+        agentName: "omniharness",
         parentSessionId: "conv_parent",
       }),
     ).toBe(false);

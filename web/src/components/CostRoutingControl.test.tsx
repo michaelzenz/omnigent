@@ -10,15 +10,15 @@ import {
 afterEach(cleanup);
 
 describe("isCostRoutingSession", () => {
-  it("matches any top-level session with an agent name", () => {
-    expect(isCostRoutingSession({ agentName: "polly", parentSessionId: null })).toBe(true);
-    expect(isCostRoutingSession({ agentName: "debby", parentSessionId: null })).toBe(true);
+  it("matches only top-level OmniHarness sessions", () => {
+    expect(isCostRoutingSession({ agentName: "omniharness", parentSessionId: null })).toBe(true);
+    expect(isCostRoutingSession({ agentName: "polly", parentSessionId: null })).toBe(false);
   });
 
   it("rejects a child session", () => {
-    expect(isCostRoutingSession({ agentName: "polly", parentSessionId: "conv_parent987" })).toBe(
-      false,
-    );
+    expect(
+      isCostRoutingSession({ agentName: "omniharness", parentSessionId: "conv_parent987" }),
+    ).toBe(false);
   });
 
   it("rejects a session with no agent name", () => {

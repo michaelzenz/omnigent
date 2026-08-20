@@ -131,7 +131,6 @@ _HARNESS_FAMILY: dict[str, str] = {
     "pi": "pi",
     "codex": "gpt",
     "codex-native": "gpt",
-    "omnigent": "gpt",
     "openai-agents": "gpt",
     "openai-agents-sdk": "gpt",
     "agents_sdk": "gpt",

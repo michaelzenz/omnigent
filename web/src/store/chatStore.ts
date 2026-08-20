@@ -436,7 +436,7 @@ export interface ConversationState {
    * model is not in litellm's registry.
    */
   contextWindow: number | null;
-  /** Whether contextWindow is the Omnigent harness's 1M fallback estimate. */
+  /** Whether contextWindow is OmniHarness's fallback estimate. */
   contextWindowIsEstimate: boolean;
   /**
    * Provider-reported input token count from the most recent

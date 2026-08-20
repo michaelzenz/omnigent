@@ -5,8 +5,8 @@ import pytest
 
 from omnigent.entities import PromptProfile
 from omnigent.errors import OmnigentError
+from omnigent.omniharness_turn_selection import select_omniharness_turn
 from omnigent.profile_selection import load_prompt_profile_instructions
-from omnigent.turn_selection import select_omnigent_turn
 from omnigent.usage_ledger import canonical_purpose
 
 
@@ -95,17 +95,17 @@ async def test_profile_only_auto_select_runs_again_for_each_turn(
 
     llm = LLM()
     monkeypatch.setattr(
-        "omnigent.turn_selection.get_caps",
+        "omnigent.omniharness_turn_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.turn_selection.build_server_llm_client",
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
         lambda _config: llm,
     )
 
     store = _Store([profile])
-    await select_omnigent_turn("first turn", store)  # type: ignore[arg-type]
-    await select_omnigent_turn("second turn", store)  # type: ignore[arg-type]
+    await select_omniharness_turn("first turn", store)  # type: ignore[arg-type]
+    await select_omniharness_turn("second turn", store)  # type: ignore[arg-type]
 
     assert llm.inputs == ["first turn", "second turn"]
     assert all(
@@ -145,15 +145,15 @@ async def test_joint_auto_select_uses_one_call_for_profile_and_model(
 
     llm = LLM()
     monkeypatch.setattr(
-        "omnigent.turn_selection.get_caps",
+        "omnigent.omniharness_turn_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.turn_selection.build_server_llm_client",
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
         lambda _config: llm,
     )
 
-    selection = await select_omnigent_turn(
+    selection = await select_omniharness_turn(
         "refactor this package",
         _Store([profile]),  # type: ignore[arg-type]
         model_candidates=["model-fast", "model-powerful"],
@@ -199,16 +199,16 @@ async def test_joint_auto_select_rejects_unknown_profile(
             )
 
     monkeypatch.setattr(
-        "omnigent.turn_selection.get_caps",
+        "omnigent.omniharness_turn_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.turn_selection.build_server_llm_client",
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
         lambda _config: LLM(),
     )
 
     with pytest.raises(OmnigentError, match="unknown profile"):
-        await select_omnigent_turn(
+        await select_omniharness_turn(
             "hello",
             _Store([_profile()]),  # type: ignore[arg-type]
             model_candidates=["model-fast"],
@@ -236,15 +236,15 @@ async def test_workload_only_selection_uses_one_call(
 
     llm = LLM()
     monkeypatch.setattr(
-        "omnigent.turn_selection.get_caps",
+        "omnigent.omniharness_turn_selection.get_caps",
         lambda: SimpleNamespace(llm=object()),
     )
     monkeypatch.setattr(
-        "omnigent.turn_selection.build_server_llm_client",
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
         lambda _config: llm,
     )
 
-    selection = await select_omnigent_turn(
+    selection = await select_omniharness_turn(
         "diagnose this failure",
         select_profile=False,
         classify_workload=True,

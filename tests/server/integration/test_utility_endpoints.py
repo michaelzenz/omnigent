@@ -89,7 +89,7 @@ async def test_info_returns_expected_fields(client: httpx.AsyncClient) -> None:
         "usage_page": False,
         "harness_install": False,
     }
-    model_options = data["omnigent_model_options"]
+    model_options = data["omniharness_model_options"]
     assert isinstance(model_options, list)
     for option in model_options:
         assert isinstance(option["id"], str)

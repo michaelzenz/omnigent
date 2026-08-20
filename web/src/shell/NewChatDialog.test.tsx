@@ -59,8 +59,8 @@ describe("isNewSessionHarnessAgent", () => {
     skills: [],
   });
 
-  it("classifies the packaged Omnigent OpenAI SDK agent as a harness", () => {
-    expect(isNewSessionHarnessAgent(agent("omnigent", "openai-agents"))).toBe(true);
+  it("classifies OmniHarness as a target without exposing its adapter", () => {
+    expect(isNewSessionHarnessAgent(agent("omniharness", "openai-agents"))).toBe(true);
     expect(isNewSessionHarnessAgent(agent("custom-sdk-agent", "openai-agents"))).toBe(false);
   });
 });
@@ -804,7 +804,7 @@ function renderLanding(infoOverrides: Partial<ServerInfo> = {}, route = "/") {
     // routing). Cases that exercise the built-in judge pass the field
     // explicitly.
     smart_routing_sources: { external: infoOverrides.smart_routing_enabled === true, oss: false },
-    omnigent_model_options: [
+    omniharness_model_options: [
       { id: "databricks-gpt-5-6-luna", display_name: "GPT 5.6 Luna" },
       { id: "databricks-glm-5-2", display_name: "GLM 5.2" },
       { id: "databricks-kimi-k3", display_name: "Kimi K3" },
@@ -1152,12 +1152,12 @@ describe("NewChatLandingScreen", () => {
     expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
   });
 
-  it("shows Profile only for the Omnigent target without changing that target", () => {
+  it("shows Profile only for OmniHarness without changing that target", () => {
     mockAgents([
       {
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         description: null,
         harness: "openai-agents",
         skills: [],
@@ -1173,13 +1173,13 @@ describe("NewChatLandingScreen", () => {
     ]);
     mockPromptProfiles([promptProfile()]);
     renderLanding();
-    selectAgent("ag_omnigent");
+    selectAgent("ag_omniharness");
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
     fireEvent.click(screen.getByTestId("new-chat-landing-profile-profile_research"));
     expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
       "Profile: Researcher",
     );
-    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("Omnigent");
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("OmniHarness");
     selectAgent("ag_native");
     expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
   });
@@ -1187,9 +1187,9 @@ describe("NewChatLandingScreen", () => {
   it("lists only enabled profiles returned by the selectable-profile hook", () => {
     mockAgents([
       {
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         description: null,
         harness: "openai-agents",
         skills: [],
@@ -1555,12 +1555,12 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByText("Read only")).toBeTruthy();
   });
 
-  it("configures and sends an Omnigent SDK model from the settings gear", async () => {
+  it("configures and sends an OmniHarness model from the settings gear", async () => {
     mockAgents([
       {
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         description: null,
         harness: "openai-agents",
         skills: [],
@@ -3457,14 +3457,14 @@ describe("NewChatLandingScreen smart routing", () => {
     },
   );
 
-  it("offers per-turn Smart Routing in an Omnigent profile gear model picker", () => {
+  it("offers per-turn Smart Routing in the OmniHarness gear model picker", () => {
     mockAgents([
       {
-        id: "ag_software",
-        name: "software-agent-databricks",
-        display_name: "Software-agent-databricks",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         description: null,
-        harness: "omnigent",
+        harness: "openai-agents",
         skills: [],
       },
     ]);
@@ -3473,7 +3473,7 @@ describe("NewChatLandingScreen smart routing", () => {
       smart_routing_sources: { external: false, oss: true },
     });
 
-    openAgentConfig("ag_software");
+    openAgentConfig("ag_omniharness");
     openSelect("new-chat-landing-config-model");
     expect(screen.getByRole("option", { name: "Smart Routing" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "GPT 5.6 Luna" })).toBeTruthy();
@@ -3709,27 +3709,27 @@ describe("NewChatLandingScreen smart routing", () => {
     );
   });
 
-  it("preselects Smart Routing on a later Omnigent session", () => {
+  it("preselects Smart Routing on a later OmniHarness session", () => {
     mockAgents([
       {
-        id: "ag_omnigent",
-        name: "omnigent",
-        display_name: "Omnigent",
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
         description: null,
         harness: "openai-agents",
         skills: [],
       },
     ]);
     renderLanding({ smart_routing_enabled: true });
-    openAgentConfig("ag_omnigent");
+    openAgentConfig("ag_omniharness");
     pickSelectOption("new-chat-landing-config-model", "Smart Routing");
     saveConfig();
     expect(
-      JSON.parse(localStorage.getItem(HARNESS_OPTIONS_KEY) ?? "{}")["openai-agents"],
+      JSON.parse(localStorage.getItem(HARNESS_OPTIONS_KEY) ?? "{}")["omniharness"],
     ).toMatchObject({ routing: "on" });
 
     remountLanding({ smart_routing_enabled: true });
-    openAgentConfig("ag_omnigent");
+    openAgentConfig("ag_omniharness");
     expect(screen.getByTestId("new-chat-landing-config-model").textContent).toContain(
       "Smart Routing",
     );

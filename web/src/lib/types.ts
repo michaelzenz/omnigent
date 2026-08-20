@@ -334,7 +334,7 @@ export interface Session {
   subagentRoutingOverride?: "on" | "off" | null;
   /** Model context window size in tokens as looked up server-side. */
   contextWindow?: number | null;
-  /** True when the Omnigent harness is using an unpublished fallback size. */
+  /** True when OmniHarness is using an unpublished fallback size. */
   contextWindowIsEstimate?: boolean;
   /**
    * Input token count from the most recently completed task's usage.

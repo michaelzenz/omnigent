@@ -22,6 +22,11 @@ from omnigent.entities.conversation import (
     parse_item_data,
 )
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import (
+    OMNIHARNESS_AGENT_NAME,
+    conversation_uses_omniharness,
+    is_omniharness_agent,
+)
 from omnigent.host.frames import (
     HARNESS_NOT_CONFIGURED_ERROR_CODE as _HARNESS_NOT_CONFIGURED_ERROR_CODE,
 )
@@ -29,10 +34,7 @@ from omnigent.host.frames import (
     WORKSPACE_MISSING_ERROR_CODE as _WORKSPACE_MISSING_ERROR_CODE,
 )
 from omnigent.memory import compose_memory
-from omnigent.profile_selection import (
-    PROMPT_PROFILE_HARNESS,
-    load_prompt_profile_instructions,
-)
+from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
 from omnigent.runtime import (
@@ -226,19 +228,14 @@ async def _compose_turn_memory(
     memory_store: MemoryStore | None,
     *,
     user_id: str | None,
-    resolved_harness: str | None,
+    uses_omniharness: bool,
     event_type: str,
     role: Any,
     max_tokens: int,
     model: str | None,
 ) -> str | None:
-    """Fetch and render memory only for OpenAI Agents user turns."""
-    if (
-        memory_store is None
-        or event_type != "message"
-        or role != "user"
-        or resolved_harness != PROMPT_PROFILE_HARNESS
-    ):
+    """Fetch and render memory only for OmniHarness user turns."""
+    if memory_store is None or event_type != "message" or role != "user" or not uses_omniharness:
         return None
     categories = await asyncio.to_thread(memory_store.list, user_id=user_id)
     effective_max_tokens = await asyncio.to_thread(
@@ -1571,6 +1568,7 @@ def register_events_routes(
             agent_store=agent_store,
             agent_cache=agent_cache,
         )
+        _uses_omniharness = is_omniharness_agent(_agent)
         _spec_model = None
         if _loaded_spec is not None:
             _spec_model = _loaded_spec.executor.model or (
@@ -1579,7 +1577,7 @@ def register_events_routes(
         _memory_instructions = await _compose_turn_memory(
             memory_store,
             user_id=created_by,
-            resolved_harness=_resolved_harness,
+            uses_omniharness=_uses_omniharness,
             event_type=body.type,
             role=body.data.get("role"),
             max_tokens=memory_max_tokens,
@@ -1589,7 +1587,7 @@ def register_events_routes(
         if (
             body.type == "message"
             and body.data.get("role") == "user"
-            and _resolved_harness == PROMPT_PROFILE_HARNESS
+            and _uses_omniharness
             and conv.prompt_profile_mode is not None
         ):
             if prompt_profile_store is None:
@@ -1618,11 +1616,7 @@ def register_events_routes(
         if body.type == "message" and body.data.get("role") == "user":
             body.data["execution_context"] = {
                 "profile": _selected_profile_name,
-                "harness": (
-                    "omnigent"
-                    if _resolved_harness in {"omnigent", PROMPT_PROFILE_HARNESS}
-                    else _resolved_harness
-                ),
+                "harness": OMNIHARNESS_AGENT_NAME if _uses_omniharness else _resolved_harness,
                 "model": body.model_override or conv.model_override or _spec_model,
             }
         pending_background_title = prepare_background_session_title(
@@ -1698,6 +1692,7 @@ def register_events_routes(
             # admin updates apply without restarting the server.
             model_settings_store=getattr(request.app.state, "model_settings_store", None),
             prompt_profile_store=prompt_profile_store,
+            uses_omniharness=_uses_omniharness,
         )
         if pending_background_title is not None:
             pending_background_title.schedule()
@@ -1740,16 +1735,9 @@ def register_events_routes(
             permission_store,
             conversation_store,
         )
-        if (
-            _resolve_harness(
-                conv,
-                agent_store=agent_store,
-                agent_cache=agent_cache,
-            )
-            != "openai-agents"
-        ):
+        if not conversation_uses_omniharness(conv, agent_store):
             raise OmnigentError(
-                "Rewind is currently supported only for Omnigent harness sessions.",
+                "Rewind is currently supported only for OmniHarness sessions.",
                 code=ErrorCode.INVALID_INPUT,
             )
 

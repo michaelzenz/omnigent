@@ -45,8 +45,8 @@ function SmartRoutingSettings({
       <div className="border-b border-border p-4">
         <h2 className="text-ui font-medium">Smart Routing</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Global routing settings for the Omnigent harness only. They do not change native Claude or
-          Codex sessions.
+          Global routing settings for OmniHarness only. They do not change native Claude or Codex
+          sessions.
         </p>
       </div>
       <div className="space-y-5 p-4">
@@ -143,7 +143,7 @@ export function ModelsPage() {
   const update = useUpdateAdminModelSettings();
   const [filter, setFilter] = useState("");
   const data = settings.data;
-  const selected = useMemo(() => new Set(data?.omnigentModels ?? []), [data?.omnigentModels]);
+  const selected = useMemo(() => new Set(data?.omniharnessModels ?? []), [data?.omniharnessModels]);
   const models = useMemo(() => {
     const query = filter.trim().toLowerCase();
     const filtered = query
@@ -162,7 +162,7 @@ export function ModelsPage() {
     const next = new Set(selected);
     if (enabled) next.add(modelId);
     else next.delete(modelId);
-    update.mutate({ omnigentModels: [...next] });
+    update.mutate({ omniharnessModels: [...next] });
   }
 
   return (
@@ -201,9 +201,9 @@ export function ModelsPage() {
       ) : (
         <section className="mt-6 rounded-lg border border-border bg-background">
           <div className="border-b border-border p-4">
-            <h2 className="text-ui font-medium">Omnigent harness</h2>
+            <h2 className="text-ui font-medium">OmniHarness</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Enabled models appear in new-session, chat, and role-profile model pickers.
+              Enabled models appear in OmniHarness new-session and chat model pickers.
               {data.profile ? ` Connected with profile ${data.profile}.` : ""}
             </p>
             <Input

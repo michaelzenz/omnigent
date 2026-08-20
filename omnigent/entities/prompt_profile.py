@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class PromptProfile:
-    """Workspace-scoped instructions selectable for Omnigent turns."""
+    """Workspace-scoped instructions selectable for OmniHarness turns."""
 
     id: str
     name: str

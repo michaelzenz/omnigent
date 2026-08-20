@@ -101,7 +101,7 @@ describe("MemoryTab", () => {
     expect(await screen.findByText("120% used")).toBeInTheDocument();
     expect(screen.getByText("120 tokens used")).toBeInTheDocument();
     expect(screen.getByText(/Overflow is truncated when memory is injected/)).toBeInTheDocument();
-    expect(screen.getByText("Omnigent harness only")).toBeInTheDocument();
+    expect(screen.getByText("OmniHarness only")).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
     expect(screen.getByTitle("Preferences: 70 injected tokens")).toBeInTheDocument();
     expect(screen.getByTitle("Work: 30 injected tokens")).toBeInTheDocument();

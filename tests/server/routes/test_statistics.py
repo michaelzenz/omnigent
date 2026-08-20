@@ -15,11 +15,11 @@ from omnigent.llms.context_window import ModelPricing
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.server.routes._sessions.orchestration import (
     _accumulate_session_usage,
-    _pending_omnigent_workloads,
+    _pending_omniharness_workloads,
 )
 from omnigent.server.routes.statistics import create_statistics_router
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.usage_ledger import record_omnigent_usage
+from omnigent.usage_ledger import record_omniharness_usage
 
 
 class _HeaderAuth:
@@ -30,7 +30,7 @@ class _HeaderAuth:
 class _ModelSettings:
     def __init__(self, models: list[str]) -> None:
         self._settings = SimpleNamespace(
-            harness_models={"openai-agents": models},
+            harness_models={"omniharness": models},
             workload_classification_enabled=True,
         )
 
@@ -200,14 +200,14 @@ def test_omnigent_completion_writes_one_ledger_row(
     pricing = ModelPricing(input_per_token=0.001, output_per_token=0.002)
     metadata = SimpleNamespace(pricing=pricing, pricing_source="mlflow")
     monkeypatch.setattr(
-        "omnigent.omnigent_model_catalog.find_omnigent_model_metadata",
+        "omnigent.omniharness_model_catalog.find_omniharness_model_metadata",
         lambda _model: metadata,
     )
     monkeypatch.setattr(
-        "omnigent.usage_ledger.get_omnigent_model_metadata",
+        "omnigent.usage_ledger.get_omniharness_model_metadata",
         lambda _model: metadata,
     )
-    _pending_omnigent_workloads[conv.id] = ("turn_abc", "code_review")
+    _pending_omniharness_workloads[conv.id] = ("turn_abc", "code_review")
 
     _accumulate_session_usage(
         {
@@ -244,7 +244,7 @@ def test_model_pricing_crud_is_user_scoped_and_reset_restores_service(
         cache_write_per_token=0.00000125,
     )
     monkeypatch.setattr(
-        "omnigent.server.routes.statistics.get_omnigent_model_metadata",
+        "omnigent.server.routes.statistics.get_omniharness_model_metadata",
         lambda _model: SimpleNamespace(pricing=service, pricing_source="mlflow"),
     )
     client = _statistics_client(store, ["model-a"])
@@ -317,7 +317,7 @@ def test_equal_custom_pricing_is_tolerance_safe(
     store = SqlAlchemyConversationStore(db_uri)
     service = ModelPricing(input_per_token=0.000001, output_per_token=0.000003)
     monkeypatch.setattr(
-        "omnigent.server.routes.statistics.get_omnigent_model_metadata",
+        "omnigent.server.routes.statistics.get_omniharness_model_metadata",
         lambda _model: SimpleNamespace(pricing=service, pricing_source="mlflow"),
     )
     client = _statistics_client(store, ["model-a"])
@@ -340,7 +340,7 @@ def test_unknown_service_remains_unknown_with_custom_pricing(
 ) -> None:
     store = SqlAlchemyConversationStore(db_uri)
     monkeypatch.setattr(
-        "omnigent.server.routes.statistics.get_omnigent_model_metadata",
+        "omnigent.server.routes.statistics.get_omniharness_model_metadata",
         lambda _model: SimpleNamespace(pricing=None, pricing_source=None),
     )
     client = _statistics_client(store, ["unknown-model"])
@@ -421,14 +421,14 @@ def test_future_ledger_rows_use_custom_pricing_without_changing_history(
     )
     monkeypatch.setattr(store, "get_session_owner", lambda _session_id: "alice")
     monkeypatch.setattr(
-        "omnigent.usage_ledger.get_omnigent_model_metadata",
+        "omnigent.usage_ledger.get_omniharness_model_metadata",
         lambda _model: SimpleNamespace(
             pricing=ModelPricing(input_per_token=0.000001, output_per_token=0.000003),
             pricing_source="mlflow",
         ),
     )
 
-    record_omnigent_usage(
+    record_omniharness_usage(
         store,
         session_id="1" * 32,
         turn_id="turn_new",
