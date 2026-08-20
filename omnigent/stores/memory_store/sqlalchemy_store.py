@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import cast
 
 from sqlalchemy import asc, select
 
@@ -10,7 +11,7 @@ from omnigent.db.db_models import SqlMemoryCategory, SqlMemorySettings, current_
 from omnigent.db.utils import get_or_create_engine, make_named_managed_session_maker, now_epoch
 from omnigent.entities.memory import MemoryCategory
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.memory import count_memory_tokens
+from omnigent.memory import MemoryProvider, count_memory_tokens
 from omnigent.stores.memory_store import DEFAULT_MEMORY_CATEGORY_NAMES, MemoryStore
 
 
@@ -180,3 +181,42 @@ class SqlAlchemyMemoryStore(MemoryStore):
                 row.max_tokens = max_tokens
                 row.updated_at = now_epoch()
             return row.max_tokens
+
+    def get_provider(
+        self,
+        *,
+        user_id: str | None,
+        default: MemoryProvider,
+    ) -> MemoryProvider:
+        with self._session("get_memory_provider") as session:
+            row = session.get(
+                SqlMemorySettings,
+                (current_workspace_id(), user_id or ""),
+            )
+            if row is None or row.provider not in {"omniharness", "claude", "agents"}:
+                return default
+            return cast(MemoryProvider, row.provider)
+
+    def set_provider(
+        self,
+        provider: MemoryProvider,
+        *,
+        user_id: str | None,
+        default_max_tokens: int,
+    ) -> MemoryProvider:
+        with self._session("upsert_memory_provider") as session:
+            key = (current_workspace_id(), user_id or "")
+            row = session.get(SqlMemorySettings, key)
+            if row is None:
+                row = SqlMemorySettings(
+                    workspace_id=key[0],
+                    user_id=key[1],
+                    max_tokens=default_max_tokens,
+                    provider=provider,
+                    updated_at=now_epoch(),
+                )
+                session.add(row)
+            else:
+                row.provider = provider
+                row.updated_at = now_epoch()
+            return provider

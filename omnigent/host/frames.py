@@ -121,6 +121,7 @@ class HostHelloFrame:
     skills: list[_JsonObject] | None = None
     skill_sync_harnesses: dict[str, bool] | None = None
     skill_search_roots: list[_JsonObject] | None = None
+    memory_files: list[_JsonObject] | None = None
 
 
 @dataclass
@@ -953,6 +954,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "skills": frame.skills,
                 "skill_sync_harnesses": frame.skill_sync_harnesses,
                 "skill_search_roots": frame.skill_search_roots,
+                "memory_files": frame.memory_files,
             }
         )
     if isinstance(frame, HostHarnessReadinessFrame):
@@ -1409,6 +1411,7 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
         skills=_optional_object_list(msg, "skills"),
         skill_sync_harnesses=optional_str_bool_map(msg, "skill_sync_harnesses"),
         skill_search_roots=_optional_object_list(msg, "skill_search_roots"),
+        memory_files=_optional_object_list(msg, "memory_files"),
     )
 
 

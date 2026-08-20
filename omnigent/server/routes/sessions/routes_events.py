@@ -33,7 +33,12 @@ from omnigent.host.frames import (
 from omnigent.host.frames import (
     WORKSPACE_MISSING_ERROR_CODE as _WORKSPACE_MISSING_ERROR_CODE,
 )
-from omnigent.memory import compose_memory
+from omnigent.memory import (
+    DEFAULT_MEMORY_PROVIDER,
+    MemoryProvider,
+    compose_file_memory,
+    compose_memory,
+)
 from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
@@ -81,6 +86,11 @@ from omnigent.server.routes._auth_helpers import (
     require_user as _require_user,
 )
 from omnigent.server.routes._errors import session_not_found as _session_not_found
+from omnigent.server.routes._host_filesystem import (
+    HostFsError,
+    HostFsUnavailableError,
+    read_workspace_from_host,
+)
 from omnigent.server.routes._sessions.common import (
     _ALLOWED_EVENT_TYPES,
     _APPROVAL_TYPE,
@@ -233,17 +243,76 @@ async def _compose_turn_memory(
     role: Any,
     max_tokens: int,
     model: str | None,
+    host_registry: HostRegistry | None = None,
+    host_id: str | None = None,
+    workspace: str | None = None,
 ) -> str | None:
     """Fetch and render memory only for OmniHarness user turns."""
     if memory_store is None or event_type != "message" or role != "user" or not uses_omniharness:
         return None
-    categories = await asyncio.to_thread(memory_store.list, user_id=user_id)
+    provider: MemoryProvider = await asyncio.to_thread(
+        memory_store.get_provider,
+        user_id=user_id,
+        default=DEFAULT_MEMORY_PROVIDER,
+    )
     effective_max_tokens = await asyncio.to_thread(
         memory_store.get_max_tokens,
         user_id=user_id,
         default=max_tokens,
     )
-    return compose_memory(categories, effective_max_tokens, model=model)
+    if provider == "omniharness":
+        categories = await asyncio.to_thread(memory_store.list, user_id=user_id)
+        return compose_memory(categories, effective_max_tokens, model=model)
+
+    documents: list[tuple[str, str]] = []
+    if host_registry is not None and host_id is not None:
+        connection = host_registry.get(host_id)
+        if connection is not None and connection.owner == user_id:
+            try:
+                payload = await read_workspace_from_host(
+                    host_registry=host_registry,
+                    host_conn=connection,
+                    op="memory.project.read",
+                    workspace=workspace or "",
+                    session_id="",
+                    params={"provider": provider},
+                )
+                global_file = payload.get("global_file")
+                if isinstance(global_file, dict) and isinstance(global_file.get("content"), str):
+                    documents.append(
+                        (
+                            f"~/{global_file.get('rel_home_path', '')}",
+                            global_file["content"],
+                        )
+                    )
+                    host_registry.record_memory_file(
+                        host_id,
+                        global_file,
+                        workspace_id=connection.workspace_id,
+                    )
+                project_files = payload.get("project_files")
+                if isinstance(project_files, list):
+                    documents.extend(
+                        (item["path"], item["content"])
+                        for item in project_files
+                        if isinstance(item, dict)
+                        and isinstance(item.get("path"), str)
+                        and isinstance(item.get("content"), str)
+                    )
+            except (HostFsError, HostFsUnavailableError):
+                _logger.warning(
+                    "Failed to read %s memory files for session host %s",
+                    provider,
+                    host_id,
+                    exc_info=True,
+                )
+        elif connection is not None:
+            _logger.warning(
+                "Skipped %s memory files for session host %s owned by another user",
+                provider,
+                host_id,
+            )
+    return compose_file_memory(provider, documents, effective_max_tokens, model=model)
 
 
 def register_events_routes(
@@ -1582,6 +1651,9 @@ def register_events_routes(
             role=body.data.get("role"),
             max_tokens=memory_max_tokens,
             model=body.model_override or conv.model_override or _spec_model,
+            host_registry=host_registry,
+            host_id=conv.host_id,
+            workspace=conv.workspace,
         )
         _selected_profile_name = _agent.name if _agent is not None else None
         if (

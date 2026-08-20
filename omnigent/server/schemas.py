@@ -4633,4 +4633,5 @@ class UpdateMemorySettingsRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_tokens: int = Field(ge=1, le=1_000_000)
+    max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    provider: Literal["omniharness", "claude", "agents"] | None = None

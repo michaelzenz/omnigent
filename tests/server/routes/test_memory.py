@@ -22,9 +22,14 @@ def test_memory_api_crud_and_usage(db_uri: str) -> None:
     initial = client.get("/v1/memory").json()
     assert len(initial["categories"]) == 4
     assert initial["max_tokens"] == 2
+    assert initial["provider"] == "omniharness"
 
-    settings = client.patch("/v1/memory/settings", json={"max_tokens": 3}).json()
+    settings = client.patch(
+        "/v1/memory/settings",
+        json={"max_tokens": 3, "provider": "agents"},
+    ).json()
     assert settings["max_tokens"] == 3
+    assert settings["provider"] == "agents"
 
     created = client.post(
         "/v1/memory/categories",
@@ -39,9 +44,12 @@ def test_memory_api_crud_and_usage(db_uri: str) -> None:
         f"/v1/memory/categories/{custom['id']}",
         json={"content": "short"},
     ).json()
-    assert next(
-        category for category in updated["categories"] if category["id"] == custom["id"]
-    )["content"] == "short"
+    assert (
+        next(category for category in updated["categories"] if category["id"] == custom["id"])[
+            "content"
+        ]
+        == "short"
+    )
 
     ordered_ids = [category["id"] for category in reversed(updated["categories"])]
     reordered = client.put("/v1/memory/order", json={"ordered_ids": ordered_ids}).json()

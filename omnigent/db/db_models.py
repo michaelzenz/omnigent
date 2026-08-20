@@ -831,6 +831,7 @@ class SqlMemorySettings(OmnigentBase):
     # portable composite primary key across SQLite and PostgreSQL.
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     max_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default="omniharness")
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 

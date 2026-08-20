@@ -548,3 +548,26 @@ def test_legacy_prefixed_id_resolves_to_bare_registration() -> None:
     # Deregistering by any spelling removes the entry.
     registry.deregister(prefixed)
     assert registry.get(bare) is None
+
+
+def test_memory_file_cache_is_workspace_scoped() -> None:
+    registry = HostRegistry()
+    registry.record_memory_file(
+        "host-a",
+        {"provider": "agents", "content": "workspace one"},
+        workspace_id=1,
+    )
+    registry.record_memory_file(
+        "host-a",
+        {"provider": "agents", "content": "workspace two"},
+        workspace_id=2,
+    )
+
+    assert registry.memory_file("host-a", "agents", workspace_id=1) == {
+        "provider": "agents",
+        "content": "workspace one",
+    }
+    assert registry.memory_file("host-a", "agents", workspace_id=2) == {
+        "provider": "agents",
+        "content": "workspace two",
+    }

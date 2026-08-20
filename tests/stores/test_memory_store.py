@@ -52,3 +52,10 @@ def test_memory_limit_is_owner_scoped(store: SqlAlchemyMemoryStore) -> None:
     assert store.set_max_tokens(12_000, user_id="alice") == 12_000
     assert store.get_max_tokens(user_id="alice", default=20_000) == 12_000
     assert store.get_max_tokens(user_id="bob", default=20_000) == 20_000
+
+
+def test_memory_provider_is_owner_scoped(store: SqlAlchemyMemoryStore) -> None:
+    assert store.get_provider(user_id="alice", default="omniharness") == "omniharness"
+    assert store.set_provider("agents", user_id="alice", default_max_tokens=20_000) == "agents"
+    assert store.get_provider(user_id="alice", default="omniharness") == "agents"
+    assert store.get_provider(user_id="bob", default="omniharness") == "omniharness"

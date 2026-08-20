@@ -15,11 +15,40 @@ export interface MemoryResponse {
   categories: MemoryCategory[];
   used_tokens: number;
   max_tokens: number;
+  provider: MemoryProvider;
   usage_percent: number;
   over_limit: boolean;
 }
 
 const MEMORY_KEY = ["memory"] as const;
+const MEMORY_FILES_KEY = ["memory-files"] as const;
+
+export type MemoryProvider = "omniharness" | "claude" | "agents";
+
+export interface MemoryFileHost {
+  host_id: string;
+  host_name: string;
+  online: boolean;
+  status: "present" | "missing" | "unknown";
+  content_sha256: string | null;
+  error: string | null;
+}
+
+export interface MemoryFileVariant {
+  content_sha256: string;
+  content: string;
+  token_count: number;
+  active_count: number;
+  hosts: MemoryFileHost[];
+}
+
+export interface MemoryFilesResponse {
+  provider: Exclude<MemoryProvider, "omniharness">;
+  rel_home_path: string;
+  variants: MemoryFileVariant[];
+  hosts: MemoryFileHost[];
+  sync_results?: { host_id: string; status: "updated" | "unchanged" | "offline" }[];
+}
 
 async function memoryRequest(path: string, init?: RequestInit): Promise<MemoryResponse> {
   const response = await authenticatedFetch(path, init);
@@ -91,11 +120,104 @@ export function useReorderMemoryCategories() {
 }
 
 export function useUpdateMemorySettings() {
-  return useMemoryMutation((maxTokens: number) =>
-    memoryRequest("/v1/memory/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ max_tokens: maxTokens }),
-    }),
+  return useMemoryMutation(
+    (
+      settings:
+        | number
+        | {
+            max_tokens?: number;
+            provider?: MemoryProvider;
+          },
+    ) =>
+      memoryRequest("/v1/memory/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(typeof settings === "number" ? { max_tokens: settings } : settings),
+      }),
+  );
+}
+
+async function memoryFilesRequest(
+  provider: Exclude<MemoryProvider, "omniharness">,
+  init?: RequestInit,
+): Promise<MemoryFilesResponse> {
+  const response = await authenticatedFetch(`/v1/memory/files/${provider}`, init);
+  if (!response.ok) {
+    throw new Error((await response.text()) || `${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as MemoryFilesResponse;
+}
+
+export function useMemoryFileVariants(provider: Exclude<MemoryProvider, "omniharness"> | null) {
+  return useQuery({
+    queryKey: [...MEMORY_FILES_KEY, provider],
+    queryFn: () => memoryFilesRequest(provider!),
+    enabled: provider !== null,
+  });
+}
+
+function useMemoryFilesMutation<
+  TVariables extends { provider: Exclude<MemoryProvider, "omniharness"> },
+>(mutationFn: (variables: TVariables) => Promise<MemoryFilesResponse>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (response) => {
+      queryClient.setQueryData([...MEMORY_FILES_KEY, response.provider], response);
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: [...MEMORY_FILES_KEY, variables.provider],
+      });
+    },
+  });
+}
+
+export function useUpdateMemoryFileVariant() {
+  return useMemoryFilesMutation(
+    ({
+      provider,
+      contentSha256,
+      content,
+    }: {
+      provider: Exclude<MemoryProvider, "omniharness">;
+      contentSha256: string;
+      content: string;
+    }) =>
+      authenticatedFetch(
+        `/v1/memory/files/${provider}/variants/${encodeURIComponent(contentSha256)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        },
+      ).then(async (response) => {
+        if (!response.ok) {
+          throw new Error((await response.text()) || `${response.status} ${response.statusText}`);
+        }
+        return (await response.json()) as MemoryFilesResponse;
+      }),
+  );
+}
+
+export function useSyncMemoryFileVariant() {
+  return useMemoryFilesMutation(
+    ({
+      provider,
+      sourceSha256,
+    }: {
+      provider: Exclude<MemoryProvider, "omniharness">;
+      sourceSha256: string;
+    }) =>
+      authenticatedFetch(`/v1/memory/files/${provider}/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_sha256: sourceSha256 }),
+      }).then(async (response) => {
+        if (!response.ok) {
+          throw new Error((await response.text()) || `${response.status} ${response.statusText}`);
+        }
+        return (await response.json()) as MemoryFilesResponse;
+      }),
   );
 }

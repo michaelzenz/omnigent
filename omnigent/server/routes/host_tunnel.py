@@ -334,6 +334,12 @@ def create_host_tunnel_router(
             host_registry.record_gateway_inference(host_id, frame.gateway_inference)
             if frame.skills is not None:
                 host_registry.record_skill_inventory(host_id, frame.skills)
+            for memory_file in frame.memory_files or []:
+                host_registry.record_memory_file(
+                    host_id,
+                    memory_file,
+                    workspace_id=conn.workspace_id,
+                )
             _logger.info(
                 "Host %s connected (version=%s, name=%s, runners=%s)",
                 host_id,

@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   reorder: vi.fn(),
   settings: vi.fn(),
+  fileUpdate: vi.fn(),
+  fileSync: vi.fn(),
+  memoryData: null as unknown,
 }));
 
 const memory = {
@@ -33,26 +36,78 @@ const memory = {
   ],
   used_tokens: 120,
   max_tokens: 100,
+  provider: "omniharness" as const,
   usage_percent: 120,
   over_limit: true,
 };
 
+const fileMemory = {
+  ...memory,
+  provider: "agents" as const,
+};
+
+const memoryFiles = {
+  provider: "agents" as const,
+  rel_home_path: "AGENTS.md",
+  variants: [
+    {
+      content_sha256: "aaa",
+      content: "Shared instructions",
+      token_count: 12,
+      active_count: 1,
+      hosts: [
+        {
+          host_id: "host-a",
+          host_name: "Laptop",
+          online: true,
+          status: "present" as const,
+          content_sha256: "aaa",
+          error: null,
+        },
+      ],
+    },
+    {
+      content_sha256: "missing",
+      content: "",
+      token_count: 0,
+      active_count: 1,
+      hosts: [
+        {
+          host_id: "host-b",
+          host_name: "Desktop",
+          online: true,
+          status: "missing" as const,
+          content_sha256: null,
+          error: null,
+        },
+      ],
+    },
+  ],
+  hosts: [],
+};
+
 vi.mock("@/hooks/useMemory", () => ({
-  useMemory: () => ({ data: memory, isLoading: false, isError: false }),
+  useMemory: () => ({ data: mocks.memoryData, isLoading: false, isError: false }),
   useCreateMemoryCategory: () => ({ mutateAsync: mocks.create, isPending: false }),
   useUpdateMemoryCategory: () => ({ mutateAsync: mocks.update, isPending: false }),
   useDeleteMemoryCategory: () => ({ mutateAsync: mocks.remove, isPending: false }),
   useReorderMemoryCategories: () => ({ mutateAsync: mocks.reorder, isPending: false }),
   useUpdateMemorySettings: () => ({ mutateAsync: mocks.settings, isPending: false }),
+  useMemoryFileVariants: () => ({ data: memoryFiles, isLoading: false, isError: false }),
+  useUpdateMemoryFileVariant: () => ({ mutateAsync: mocks.fileUpdate, isPending: false }),
+  useSyncMemoryFileVariant: () => ({ mutateAsync: mocks.fileSync, isPending: false }),
 }));
 
 describe("MemoryTab", () => {
   beforeEach(() => {
+    mocks.memoryData = memory;
     mocks.create.mockReset();
     mocks.update.mockReset();
     mocks.remove.mockReset();
     mocks.reorder.mockReset();
     mocks.settings.mockReset();
+    mocks.fileUpdate.mockReset();
+    mocks.fileSync.mockReset();
     mocks.create.mockResolvedValue(memory);
     mocks.update.mockResolvedValue(memory);
     mocks.remove.mockResolvedValue({
@@ -64,6 +119,8 @@ describe("MemoryTab", () => {
       categories: [...memory.categories].reverse(),
     });
     mocks.settings.mockResolvedValue(memory);
+    mocks.fileUpdate.mockResolvedValue(memoryFiles);
+    mocks.fileSync.mockResolvedValue(memoryFiles);
   });
 
   afterEach(() => {
@@ -138,5 +195,27 @@ describe("MemoryTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete Preferences" }));
     expect(confirm).toHaveBeenCalledWith('Delete non-empty category "Preferences"?');
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("preferences"));
+  });
+
+  it("edits only the selected host file variant", async () => {
+    vi.useFakeTimers();
+    mocks.memoryData = fileMemory;
+    render(<MemoryTab />);
+
+    expect(screen.getByText("Laptop")).toBeInTheDocument();
+    expect(screen.getByText("Desktop")).toBeInTheDocument();
+    expect(screen.getByText("Missing file")).toBeInTheDocument();
+    const editor = screen.getByRole("textbox", { name: "AGENTS.md global memory" });
+    fireEvent.change(editor, { target: { value: "Updated shared instructions" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_200);
+      await Promise.resolve();
+    });
+    expect(mocks.fileUpdate).toHaveBeenCalledWith({
+      provider: "agents",
+      contentSha256: "aaa",
+      content: "Updated shared instructions",
+    });
   });
 });

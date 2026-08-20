@@ -2768,6 +2768,8 @@ def create_app(
                 memory_store=memory_store,
                 auth_provider=auth_provider,
                 max_tokens=memory_max_tokens,
+                host_registry=host_registry,
+                host_store=host_store,
             ),
             prefix="/v1",
             tags=["memory"],

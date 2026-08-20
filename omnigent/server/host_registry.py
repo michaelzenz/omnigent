@@ -340,6 +340,7 @@ class HostRegistry:
         # server re-learns it from the reconnect handshake.
         self._gateway_inference: dict[str, dict[str, bool]] = {}
         self._skill_inventories: dict[str, list[dict[str, str]]] = {}
+        self._memory_file_inventories: dict[tuple[int, str], dict[str, dict[str, object]]] = {}
 
     def record_skill_inventory(self, host_id: str, skills: list[dict[str, object]]) -> None:
         """Replace the latest host-reported global skill inventory."""
@@ -357,6 +358,40 @@ class HostRegistry:
         with self._lock:
             inventory = self._skill_inventories.get(_canonical_host_id(host_id))
             return [dict(skill) for skill in inventory] if inventory is not None else None
+
+    def record_memory_file(
+        self,
+        host_id: str,
+        file_data: dict[str, object],
+        *,
+        workspace_id: int | None = None,
+    ) -> None:
+        """Cache one host's latest global memory file state."""
+        provider = file_data.get("provider")
+        if provider not in {"claude", "agents"}:
+            return
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            host_files = self._memory_file_inventories.setdefault(
+                (ws_id, _canonical_host_id(host_id)),
+                {},
+            )
+            host_files[str(provider)] = dict(file_data)
+
+    def memory_file(
+        self,
+        host_id: str,
+        provider: str,
+        *,
+        workspace_id: int | None = None,
+    ) -> dict[str, object] | None:
+        """Return the latest cached global memory file for one host."""
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            value = self._memory_file_inventories.get(
+                (ws_id, _canonical_host_id(host_id)), {}
+            ).get(provider)
+            return dict(value) if value is not None else None
 
     def register(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from omnigent.entities.memory import MemoryCategory
+from omnigent.memory import MemoryProvider
 
 DEFAULT_MEMORY_CATEGORY_NAMES = (
     "Abbreviations",
@@ -69,4 +70,25 @@ class MemoryStore(ABC):
     @abstractmethod
     def set_max_tokens(self, max_tokens: int, *, user_id: str | None) -> int:
         """Persist and return the owner's memory limit."""
+        ...
+
+    @abstractmethod
+    def get_provider(
+        self,
+        *,
+        user_id: str | None,
+        default: MemoryProvider,
+    ) -> MemoryProvider:
+        """Return the owner's selected global memory provider."""
+        ...
+
+    @abstractmethod
+    def set_provider(
+        self,
+        provider: MemoryProvider,
+        *,
+        user_id: str | None,
+        default_max_tokens: int,
+    ) -> MemoryProvider:
+        """Persist and return the owner's selected global memory provider."""
         ...

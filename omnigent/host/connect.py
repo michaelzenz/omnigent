@@ -2155,6 +2155,53 @@ class HostProcess:
         :returns: A result frame with the runner-shaped payload, or an
             error frame mirroring the status the runner would return.
         """
+        if frame.op.startswith("memory."):
+            try:
+                from omnigent.host.memory_ops import handle_memory_fs_op
+
+                payload = handle_memory_fs_op(
+                    frame.op,
+                    frame.params or {},
+                    workspace=frame.workspace,
+                )
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="ok",
+                    payload=payload,
+                )
+            except FileExistsError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=409,
+                    error_code="memory_file_conflict",
+                    error=str(exc),
+                )
+            except FileNotFoundError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=404,
+                    error_code="not_found",
+                    error=str(exc),
+                )
+            except ValueError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=400,
+                    error_code="invalid_request",
+                    error=str(exc),
+                )
+            except Exception as exc:
+                _logger.exception("host memory operation %r failed", frame.op)
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=500,
+                    error_code="memory_operation_failed",
+                    error=str(exc),
+                )
         if frame.op.startswith("skill."):
             try:
                 from omnigent.host.skill_ops import handle_skill_fs_op
@@ -2963,6 +3010,7 @@ class HostProcess:
             pass
         configured_harnesses = await asyncio.to_thread(configured_harness_map)
         gateway_inference = await asyncio.to_thread(gateway_inference_map)
+        from omnigent.host.memory_ops import global_memory_inventory_wire
         from omnigent.host.skill_ops import (
             skill_inventory_wire,
             skill_search_roots_wire,
@@ -2972,6 +3020,7 @@ class HostProcess:
         skills = await asyncio.to_thread(skill_inventory_wire)
         skill_sync_harnesses = await asyncio.to_thread(skill_sync_settings_wire)
         skill_search_roots = await asyncio.to_thread(skill_search_roots_wire)
+        memory_files = await asyncio.to_thread(global_memory_inventory_wire)
         hello = HostHelloFrame(
             version=VERSION,
             frame_protocol_version=1,
@@ -2987,6 +3036,7 @@ class HostProcess:
             skills=skills,
             skill_sync_harnesses=skill_sync_harnesses,
             skill_search_roots=skill_search_roots,
+            memory_files=memory_files,
         )
         await ws.send(encode_host_frame(hello))
         self._ws = ws
