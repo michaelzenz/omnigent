@@ -5,7 +5,7 @@ import { RoutingDecisionCard } from "./StatusBlocks";
 afterEach(cleanup);
 
 describe("RoutingDecisionCard — session-level auto-routing", () => {
-  it("applied verdict: shows model pill with tier and rationale", () => {
+  it("applied verdict: shows the model without exposing the rationale", () => {
     render(
       <RoutingDecisionCard
         model="databricks-claude-opus-4-8"
@@ -18,7 +18,7 @@ describe("RoutingDecisionCard — session-level auto-routing", () => {
     expect(card).toHaveTextContent("· applied");
     expect(card).toHaveTextContent("Session");
     expect(card).toHaveTextContent("opus");
-    expect(card).toHaveTextContent("Multi-file refactor needs deep reasoning.");
+    expect(card).not.toHaveTextContent("Multi-file refactor needs deep reasoning.");
     expect(card.getAttribute("data-applied")).toBe("true");
   });
 

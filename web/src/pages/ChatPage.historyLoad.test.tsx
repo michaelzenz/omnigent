@@ -8,6 +8,7 @@ import {
   JumpToTopButton,
   KeepBottomOnViewportResize,
   LatestTurnSpacer,
+  ReleaseBottomLockOnResponseEnd,
 } from "./ChatPage";
 
 const stickContext = vi.hoisted(() => ({
@@ -68,6 +69,42 @@ function setScrollMetrics(
     get: () => metrics.clientHeight ?? 0,
   });
 }
+
+describe("ReleaseBottomLockOnResponseEnd", () => {
+  it("keeps the reader's position when streaming settles", () => {
+    const scrollRoot = document.createElement("div");
+    const metrics = { scrollTop: 640, scrollHeight: 2400, clientHeight: 800 };
+    setScrollMetrics(scrollRoot, metrics);
+    stickContext.scrollRef.current = scrollRoot;
+    stickContext.state.isAtBottom = true;
+    stickContext.state.escapedFromLock = false;
+    const stopScroll = vi.fn();
+    stickContext.stopScroll = stopScroll;
+
+    const { rerender } = render(<ReleaseBottomLockOnResponseEnd status="streaming" />);
+    rerender(<ReleaseBottomLockOnResponseEnd status="idle" />);
+
+    expect(stopScroll).toHaveBeenCalledOnce();
+    expect(stickContext.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+    expect(metrics.scrollTop).toBe(640);
+  });
+
+  it("keeps the normal bottom lock when the reader is already at the end", () => {
+    const scrollRoot = document.createElement("div");
+    setScrollMetrics(scrollRoot, { scrollTop: 1600, scrollHeight: 2400, clientHeight: 800 });
+    stickContext.scrollRef.current = scrollRoot;
+    stickContext.state.isAtBottom = true;
+    stickContext.state.escapedFromLock = false;
+    const stopScroll = vi.fn();
+    stickContext.stopScroll = stopScroll;
+
+    const { rerender } = render(<ReleaseBottomLockOnResponseEnd status="streaming" />);
+    rerender(<ReleaseBottomLockOnResponseEnd status="idle" />);
+
+    expect(stopScroll).not.toHaveBeenCalled();
+    expect(stickContext.state).toEqual({ isAtBottom: true, escapedFromLock: false });
+  });
+});
 
 describe("KeepBottomOnViewportResize", () => {
   let resize: (() => void) | null;

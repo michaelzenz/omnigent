@@ -295,9 +295,51 @@ describe("UserBubble copy button", () => {
     jump.focus();
     fireEvent.click(jump);
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "auto" });
     expect(bubble).not.toHaveClass("bg-background/95");
     expect(document.activeElement).not.toBe(jump);
+  });
+
+  it("aligns a sticky message with its roof so the response remains visible", () => {
+    render(
+      <div data-testid="scroll-root" style={{ overflowY: "auto" }}>
+        <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
+          <BubbleView bubble={userBubble("jump me")} />
+        </FileViewerContext.Provider>
+      </div>,
+    );
+    const scroller = screen.getByTestId("scroll-root");
+    let scrollTop = 900;
+    Object.defineProperties(scroller, {
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+      scrollHeight: { configurable: true, get: () => 2000 },
+      clientHeight: { configurable: true, get: () => 500 },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+
+    const bubble = screen.getByTestId("message-bubble");
+    bubble.style.position = "sticky";
+    bubble.style.top = "80px";
+    vi.spyOn(bubble, "getBoundingClientRect").mockImplementation(
+      () => ({ top: bubble.style.position === "static" ? -300 : 80 }) as DOMRect,
+    );
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(performance.now() + 600);
+      return 1;
+    });
+
+    fireEvent.pointerEnter(bubble);
+    fireEvent.click(screen.getByRole("button", { name: "Jump to turn start" }));
+
+    expect(scrollTop).toBe(520);
+    expect(bubble.style.position).toBe("sticky");
+    vi.restoreAllMocks();
   });
 
   it("does not render a copy button for an attachments-only message (no text)", () => {

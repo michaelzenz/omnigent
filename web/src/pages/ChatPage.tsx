@@ -2156,6 +2156,7 @@ export function MainAgentSurface({
               >
                 {/* Scroll helpers — must live inside StickToBottom to access context. */}
                 <ScrollToBottomOnSend nonce={sendScrollNonce} />
+                <ReleaseBottomLockOnResponseEnd status={status} />
                 <KeepBottomOnViewportResize />
                 <ConversationScrollRefBridge onScroller={setScroller} />
                 <HistoryAutoLoader scrollElement={scroller?.el ?? null} />
@@ -2496,6 +2497,38 @@ function ScrollToBottomOnSend({ nonce }: { nonce: number }) {
     scrollToBottom("instant");
     requestAnimationFrame(() => scrollToBottom("instant"));
   }, [nonce, scrollToBottom]);
+
+  return null;
+}
+
+/** Prevent the final streaming resize from pulling a reader back to the end. */
+export function ReleaseBottomLockOnResponseEnd({
+  status,
+}: {
+  status: "idle" | "streaming";
+}) {
+  const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
+    scrollRef?: React.RefObject<HTMLElement>;
+    state: { isAtBottom: boolean; escapedFromLock: boolean };
+    stopScroll: () => void;
+  };
+  const previousStatusRef = useRef(status);
+
+  useLayoutEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    if (previousStatus !== "streaming" || status !== "idle") return;
+    const scrollElement = ctx.scrollRef?.current;
+    if (!scrollElement) return;
+    const scrollTop = scrollElement.scrollTop;
+    const physicallyAtBottom =
+      scrollElement.scrollHeight - scrollElement.clientHeight - scrollTop <= 1;
+    if (physicallyAtBottom) return;
+    ctx.stopScroll();
+    ctx.state.isAtBottom = false;
+    ctx.state.escapedFromLock = true;
+    scrollElement.scrollTop = scrollTop;
+  }, [ctx.scrollRef, ctx.state, ctx.stopScroll, status]);
 
   return null;
 }
@@ -3097,6 +3130,48 @@ function bubbleKey(bubble: Bubble): string {
   return `assistant:${bubble.stableId}`;
 }
 
+const TURN_JUMP_DURATION_MS = 600;
+const turnJumpFrames = new WeakMap<HTMLElement, number>();
+
+function scrollableAncestor(element: HTMLElement): HTMLElement | null {
+  let candidate = element.parentElement;
+  while (candidate) {
+    const overflowY = window.getComputedStyle(candidate).overflowY;
+    if (/(auto|scroll)/.test(overflowY) && candidate.scrollHeight > candidate.clientHeight) {
+      return candidate;
+    }
+    candidate = candidate.parentElement;
+  }
+  return null;
+}
+
+function animateScrollTop(element: HTMLElement, targetTop: number): void {
+  const priorFrame = turnJumpFrames.get(element);
+  if (priorFrame !== undefined) cancelAnimationFrame(priorFrame);
+  const startTop = element.scrollTop;
+  const distance = targetTop - startTop;
+  if (
+    Math.abs(distance) < 1 ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  ) {
+    element.scrollTop = targetTop;
+    turnJumpFrames.delete(element);
+    return;
+  }
+  const startedAt = performance.now();
+  const step = (now: number) => {
+    const progress = Math.min(1, (now - startedAt) / TURN_JUMP_DURATION_MS);
+    const eased = 1 - (1 - progress) ** 3;
+    element.scrollTop = startTop + distance * eased;
+    if (progress < 1) {
+      turnJumpFrames.set(element, requestAnimationFrame(step));
+    } else {
+      turnJumpFrames.delete(element);
+    }
+  };
+  turnJumpFrames.set(element, requestAnimationFrame(step));
+}
+
 function scrollToUserTurnStart(message: HTMLElement | null): void {
   if (!message) {
     console.warn("scrollToUserTurnStart: clicked action has no message ancestor");
@@ -3105,11 +3180,25 @@ function scrollToUserTurnStart(message: HTMLElement | null): void {
   // A sticky element's painted box remains at the roof even when its normal
   // flow position is far above it, so browsers may consider it already visible
   // and turn scrollIntoView into a no-op. Resolve the destination from its
-  // normal position, then restore sticky behavior after the scroll starts.
+  // normal position, align that position with the sticky roof, then restore
+  // sticky behavior after the scroll starts.
   const inlinePosition = message.style.position;
-  const sticky = window.getComputedStyle(message).position === "sticky";
+  const messageStyles = window.getComputedStyle(message);
+  const sticky = messageStyles.position === "sticky";
+  const stickyTop = sticky ? Number.parseFloat(messageStyles.top) || 0 : 0;
   if (sticky) message.style.position = "static";
-  message.scrollIntoView({ block: "start", behavior: "smooth" });
+  const scroller = scrollableAncestor(message);
+  if (scroller) {
+    const targetTop =
+      scroller.scrollTop +
+      message.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top -
+      stickyTop;
+    const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    animateScrollTop(scroller, Math.max(0, Math.min(targetTop, maxTop)));
+  } else {
+    message.scrollIntoView({ block: "start", behavior: "auto" });
+  }
   if (sticky) {
     requestAnimationFrame(() => {
       message.style.position = inlinePosition;

@@ -230,7 +230,7 @@ interface RoutingDecisionCardProps {
 /**
  * Collapsible card announcing smart routing's session-level
  * pick. Mirrors the SmartRoutingCard style: same container, model pill,
- * rationale, and expandable raw verdict JSON.
+ * and expandable raw verdict JSON.
  *
  * Shown in place of the muted chip when auto-routing fires at turn start
  * because the agent spec has no explicit model. When `agent` is provided
@@ -360,9 +360,6 @@ export function RoutingDecisionCard({
           {short}
         </span>
       </div>
-      {rationale.length > 0 && (
-        <p className="text-sm leading-snug text-muted-foreground">{rationale}</p>
-      )}
       <CollapsibleContent className="data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=open]:animate-in">
         <CodeBlock code={prettyOutput} language="json">
           <CodeBlockHeader>
