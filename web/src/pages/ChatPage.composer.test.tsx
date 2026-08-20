@@ -1875,9 +1875,11 @@ describe("Composer config gear", () => {
     expect(screen.getByTestId("composer-config-effort")).toBeTruthy();
   });
 
-  it("does not repeat the SDK model picker in settings", async () => {
+  it("includes the SDK model picker in settings", async () => {
+    const setModel = vi.fn().mockResolvedValue(undefined);
     useChatStore.setState({
       llmModel: "databricks-glm-5-2",
+      setModel,
     });
     renderWithTooltips(
       <Composer
@@ -1891,8 +1893,13 @@ describe("Composer config gear", () => {
 
     fireEvent.click(gear()!);
     await screen.findByTestId("composer-config-modal");
-    expect(screen.queryByTestId("composer-config-model")).toBeNull();
+    expect(screen.getByTestId("composer-config-model")).toHaveTextContent("GLM 5.2");
+    expect(screen.getByTestId("omniharness-system-prompt-edit")).toBeTruthy();
     expect(screen.getByTestId("composer-config-busy-send-mode")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("composer-config-model"));
+    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
+    fireEvent.click(screen.getByTestId("composer-config-save"));
+    await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
   });
 
   it("switches SDK models directly from the composer label", async () => {

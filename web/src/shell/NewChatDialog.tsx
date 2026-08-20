@@ -95,6 +95,7 @@ import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
 import { CliCommandBlock } from "./CliCommandBlock";
+import { OmniHarnessSystemPromptEditor } from "./OmniHarnessSystemPromptDialog";
 import { WorkspacePicker, isNavigablePath } from "./WorkspacePicker";
 import {
   initialPrefillState,
@@ -1420,6 +1421,7 @@ function HarnessConfigModal({
   pickedEffort,
   pickedHarness,
   costControlMode,
+  subagentRoutingMode,
   setPermissionMode,
   setApprovalMode,
   setCursorExecMode,
@@ -1429,6 +1431,7 @@ function HarnessConfigModal({
   setPickedEffort,
   setPickedHarness,
   setCostControlMode,
+  setSubagentRoutingMode,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1450,6 +1453,7 @@ function HarnessConfigModal({
   pickedEffort: string;
   pickedHarness: string | null;
   costControlMode: CostControlMode;
+  subagentRoutingMode: "on" | "off" | null;
   setPermissionMode: (mode: string) => void;
   setApprovalMode: (mode: string) => void;
   setCursorExecMode: (mode: string) => void;
@@ -1459,6 +1463,7 @@ function HarnessConfigModal({
   setPickedEffort: (effort: string) => void;
   setPickedHarness: (harness: string | null, agentId?: string) => void;
   setCostControlMode: (mode: CostControlMode) => void;
+  setSubagentRoutingMode: (mode: "on" | "off" | null) => void;
 }) {
   const info = useServerInfo();
   const sdkModelOptions = useOmniHarnessModelOptions().data ?? EMPTY_OMNIHARNESS_MODEL_OPTIONS;
@@ -1491,6 +1496,9 @@ function HarnessConfigModal({
   const [draftBypass, setDraftBypass] = useState(bypassSandbox);
   const [draftHarness, setDraftHarness] = useState<string | null>(pickedHarness);
   const [draftRouting, setDraftRouting] = useState<CostControlMode>(costControlMode);
+  const [draftSubagentRouting, setDraftSubagentRouting] = useState<"on" | "off" | null>(
+    subagentRoutingMode,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -1503,6 +1511,7 @@ function HarnessConfigModal({
     setDraftBypass(bypassSandbox);
     setDraftHarness(pickedHarness);
     setDraftRouting(costControlMode);
+    setDraftSubagentRouting(subagentRoutingMode);
     // Seed once per open from the current live values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -1624,6 +1633,9 @@ function HarnessConfigModal({
           ...(draftRouting === "on" ? { model: "", effort: "" } : {}),
         });
     }
+    if (isOmniHarness && smartRoutingEligible) {
+      setSubagentRoutingMode(draftSubagentRouting);
+    }
     onOpenChange(false);
   };
 
@@ -1661,6 +1673,36 @@ function HarnessConfigModal({
                 defaultLabel="Default (GLM 5.2)"
                 contentClassName="[&_[data-slot=select-item]]:pl-2.5"
               />
+            </ConfigRow>
+          )}
+
+          {!autoRouting && isOmniHarness && smartRoutingEligible && (
+            <ConfigRow
+              label="Subagent routing"
+              description="Model routing for subagents this session spawns"
+            >
+              <Select
+                value={draftSubagentRouting ?? (smartRoutingOn ? "on" : "off")}
+                onValueChange={(value) => setDraftSubagentRouting(value === "on" ? "on" : "off")}
+              >
+                <SelectTrigger
+                  className="w-full"
+                  data-testid="new-chat-landing-config-subagent-routing"
+                  aria-label="Subagent routing"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" align="start">
+                  <SelectItem value="on">Smart Routing</SelectItem>
+                  <SelectItem value="off">Default</SelectItem>
+                </SelectContent>
+              </Select>
+            </ConfigRow>
+          )}
+
+          {!autoRouting && isOmniHarness && (
+            <ConfigRow label="System prompt" description="Global OmniHarness base instructions">
+              <OmniHarnessSystemPromptEditor />
             </ConfigRow>
           )}
 
@@ -1954,6 +1996,7 @@ interface LandingDraft {
   pickedModel: string;
   pickedEffort: string;
   costControlMode: CostControlMode;
+  subagentRoutingMode: "on" | "off" | null;
 }
 
 let landingDraft: LandingDraft | null = null;
@@ -2284,6 +2327,9 @@ export function NewChatLandingScreen() {
   const [costControlMode, _setCostControlMode] = useState<CostControlMode>(
     () => landingDraft?.costControlMode ?? null,
   );
+  const [subagentRoutingMode, setSubagentRoutingMode] = useState<"on" | "off" | null>(
+    () => landingDraft?.subagentRoutingMode ?? null,
+  );
   // Model selection and smart routing are mutually exclusive: enabling
   // routing clears the explicit model pick, and picking a model turns
   // routing off.
@@ -2345,6 +2391,7 @@ export function NewChatLandingScreen() {
     pickedModel,
     pickedEffort,
     costControlMode,
+    subagentRoutingMode,
   };
   useEffect(() => {
     // Re-set on setup so StrictMode's setup→cleanup→setup double-invoke
@@ -2917,6 +2964,7 @@ export function NewChatLandingScreen() {
     if (prev === undefined || prev === effectiveAgentId) return;
     setBypassSandbox(false);
     setCostControlMode(null);
+    setSubagentRoutingMode(null);
   }, [effectiveAgentId, setCostControlMode]);
   // Seed the harness's knobs from the user's last picks when the selected
   // harness changes (including the first mount), so a returning user starts a
@@ -3868,6 +3916,7 @@ export function NewChatLandingScreen() {
                 ? pickedEffort
                 : undefined,
             cost_control_mode_override: costControlOverride,
+            subagent_routing_override: subagentRoutingMode ?? undefined,
             // Top-level Smart Routing sends the same "auto" sentinel the bundle
             // path does; the server tells them apart by the bound agent being a
             // native wrapper, and routes at create time (the terminal launches
@@ -4440,6 +4489,7 @@ export function NewChatLandingScreen() {
                     pickedEffort={pickedEffort}
                     pickedHarness={pickedHarness}
                     costControlMode={costControlMode}
+                    subagentRoutingMode={subagentRoutingMode}
                     setPermissionMode={setPermissionMode}
                     setApprovalMode={setApprovalMode}
                     setCursorExecMode={setCursorExecMode}
@@ -4449,6 +4499,7 @@ export function NewChatLandingScreen() {
                     setPickedEffort={setPickedEffort}
                     setPickedHarness={handleSetPickedHarness}
                     setCostControlMode={setCostControlMode}
+                    setSubagentRoutingMode={setSubagentRoutingMode}
                   />
                 )}
                 {/* Routing is not a standalone composer toggle — it folds into

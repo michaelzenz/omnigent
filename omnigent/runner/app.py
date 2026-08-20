@@ -11980,8 +11980,12 @@ def create_runner_app(
                 model_override=cast(str | None, msg_body.get("model_override")),
                 session_id=conv,
             )
-            from omnigent.runtime.prompt import build_instructions
+            from omnigent.runtime.prompt import (
+                build_instructions,
+                compose_omniharness_instructions,
+            )
 
+            omniharness_system_prompt = msg_body.get("omniharness_system_prompt")
             profile_instructions = msg_body.get("profile_instructions")
             memory_instructions = msg_body.get("memory_instructions")
             instructions = build_instructions(
@@ -11991,8 +11995,13 @@ def create_runner_app(
                 memory_instructions=(
                     memory_instructions if isinstance(memory_instructions, str) else None
                 ),
-                effective_instructions=(
-                    profile_instructions if isinstance(profile_instructions, str) else None
+                effective_instructions=compose_omniharness_instructions(
+                    (
+                        omniharness_system_prompt
+                        if isinstance(omniharness_system_prompt, str)
+                        else None
+                    ),
+                    profile_instructions if isinstance(profile_instructions, str) else None,
                 ),
             )
 

@@ -18,6 +18,15 @@ from omnigent.runtime.tool_result_replay import image_omitted_placeholder
 from omnigent.spec import AgentSpec
 
 
+def compose_omniharness_instructions(
+    system_prompt: str | None,
+    profile_instructions: str | None,
+) -> str | None:
+    """Compose the global OmniHarness prompt before the selected profile."""
+    parts = [part for part in (system_prompt, profile_instructions) if part]
+    return "\n\n".join(parts) if parts else None
+
+
 def append_framework_instructions(
     instructions: str | None,
     framework_instructions: Sequence[str],

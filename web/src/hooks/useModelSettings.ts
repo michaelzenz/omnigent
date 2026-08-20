@@ -28,6 +28,7 @@ interface WireModelOption {
 }
 
 const ADMIN_KEY = ["admin-model-settings"];
+const OMNIHARNESS_SETTINGS_KEY = ["omniharness-settings"];
 let optionsOverride: ModelOption[] | undefined;
 
 async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
@@ -82,6 +83,38 @@ export function useOmniHarnessModelOptions() {
     isError: false,
     error: null,
   };
+}
+
+export function useOmniHarnessSettings(enabled = true) {
+  return useQuery({
+    queryKey: OMNIHARNESS_SETTINGS_KEY,
+    queryFn: async () => {
+      const response = await authenticatedFetch("/v1/omniharness/settings");
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const body = (await response.json()) as { system_prompt: string };
+      return { systemPrompt: body.system_prompt };
+    },
+    staleTime: 30_000,
+    enabled,
+  });
+}
+
+export function useUpdateOmniHarnessSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ systemPrompt }: { systemPrompt: string }) => {
+      const response = await authenticatedFetch("/v1/omniharness/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_prompt: systemPrompt }),
+      });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return { systemPrompt };
+    },
+    onSuccess: (settings) => {
+      queryClient.setQueryData(OMNIHARNESS_SETTINGS_KEY, settings);
+    },
+  });
 }
 
 export function useAdminModelSettings(enabled = true) {

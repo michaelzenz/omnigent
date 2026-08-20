@@ -1555,7 +1555,7 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByText("Read only")).toBeTruthy();
   });
 
-  it("configures and sends an OmniHarness model from the settings gear", async () => {
+  it("configures and sends OmniHarness model and subagent routing from the settings gear", async () => {
     mockAgents([
       {
         id: "ag_omniharness",
@@ -1571,12 +1571,18 @@ describe("NewChatLandingScreen", () => {
       ok: true,
       json: async () => ({ id: "conv_new" }),
     } as unknown as Response);
-    renderLanding();
+    renderLanding({
+      smart_routing_enabled: true,
+      smart_routing_sources: { external: false, oss: true },
+    });
 
     expect(screen.getByTestId("new-chat-landing-config-gear")).toBeTruthy();
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    expect(screen.getByTestId("omniharness-system-prompt-edit")).toBeTruthy();
     openSelect("new-chat-landing-config-model");
     fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
+    openSelect("new-chat-landing-config-subagent-routing");
+    fireEvent.click(screen.getByRole("option", { name: "Smart Routing" }));
     saveConfig();
 
     fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
@@ -1587,6 +1593,7 @@ describe("NewChatLandingScreen", () => {
     const [, init] = authenticatedFetchMock.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
     expect(body.model_override).toBe("databricks-kimi-k3");
+    expect(body.subagent_routing_override).toBe("on");
   });
 
   it("sends the selected Codex launch model without changing Claude's remembered model", async () => {

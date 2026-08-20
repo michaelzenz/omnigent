@@ -37,6 +37,7 @@ def _decode(row: SqlModelSettings) -> ModelSettings:
         smart_routing_decision_model=row.smart_routing_decision_model,
         smart_routing_prompt=row.smart_routing_prompt,
         smart_routing_cadence=row.smart_routing_cadence,
+        omniharness_system_prompt=row.omniharness_system_prompt,
         workload_classification_enabled=row.workload_classification_enabled,
         workload_custom_categories=tuple(workload_categories),
     )
@@ -71,6 +72,8 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
         update_smart_routing_decision_model: bool = False,
         smart_routing_prompt: str | None = None,
         update_smart_routing_prompt: bool = False,
+        omniharness_system_prompt: str | None = None,
+        update_omniharness_system_prompt: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,
@@ -98,6 +101,8 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
                 row.smart_routing_decision_model = smart_routing_decision_model
             if update_smart_routing_prompt:
                 row.smart_routing_prompt = smart_routing_prompt
+            if update_omniharness_system_prompt:
+                row.omniharness_system_prompt = omniharness_system_prompt or ""
             if update_smart_routing_cadence:
                 if smart_routing_cadence not in {"per_turn", "first_turn_only"}:
                     raise ValueError("invalid smart routing cadence")

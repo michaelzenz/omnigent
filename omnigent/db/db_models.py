@@ -1339,6 +1339,11 @@ class SqlModelSettings(OmnigentBase):
         nullable=True,
         server_default="",
     )
+    omniharness_system_prompt: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="",
+    )
     smart_routing_cadence: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

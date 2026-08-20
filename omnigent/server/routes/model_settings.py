@@ -87,6 +87,19 @@ class UpdatedModelSettingsResponse(BaseModel):
     workload_custom_categories: list[str]
 
 
+class OmniHarnessSettingsResponse(BaseModel):
+    """User-facing editable OmniHarness settings."""
+
+    object: Literal["omniharness_settings"]
+    system_prompt: str
+
+
+class UpdateOmniHarnessSettingsRequest(BaseModel):
+    """Editable OmniHarness settings."""
+
+    system_prompt: str = Field(max_length=100_000)
+
+
 def _databricks_profile(config: dict[str, Any]) -> str | None:
     caps = get_caps()
     if caps.llm is not None and caps.llm.profile:
@@ -233,6 +246,38 @@ def create_model_settings_router(
                 configured_omniharness_model_options,
                 model_settings_store,
             ),
+        }
+
+    @router.get(
+        "/omniharness/settings",
+        response_model=OmniHarnessSettingsResponse,
+    )
+    async def get_omniharness_settings(request: Request) -> dict[str, Any]:
+        await _require_admin(request, auth_provider, permission_store)
+        settings = await asyncio.to_thread(model_settings_store.get)
+        return {
+            "object": "omniharness_settings",
+            "system_prompt": settings.omniharness_system_prompt,
+        }
+
+    @router.patch(
+        "/omniharness/settings",
+        response_model=OmniHarnessSettingsResponse,
+    )
+    async def update_omniharness_settings(
+        request: Request,
+        body: UpdateOmniHarnessSettingsRequest,
+    ) -> dict[str, Any]:
+        await _require_admin(request, auth_provider, permission_store)
+        settings = await asyncio.to_thread(
+            model_settings_store.update,
+            omniharness_system_prompt=body.system_prompt,
+            update_omniharness_system_prompt=True,
+            updated_by=get_user_id(request, auth_provider),
+        )
+        return {
+            "object": "omniharness_settings",
+            "system_prompt": settings.omniharness_system_prompt,
         }
 
     @router.get(

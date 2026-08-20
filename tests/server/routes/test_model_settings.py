@@ -42,6 +42,8 @@ class FakeModelSettingsStore(ModelSettingsStore):
         update_smart_routing_decision_model: bool = False,
         smart_routing_prompt: str | None = None,
         update_smart_routing_prompt: bool = False,
+        omniharness_system_prompt: str | None = None,
+        update_omniharness_system_prompt: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,
@@ -71,6 +73,11 @@ class FakeModelSettingsStore(ModelSettingsStore):
                 smart_routing_cadence
                 if update_smart_routing_cadence and smart_routing_cadence is not None
                 else self.settings.smart_routing_cadence
+            ),
+            omniharness_system_prompt=(
+                omniharness_system_prompt or ""
+                if update_omniharness_system_prompt
+                else self.settings.omniharness_system_prompt
             ),
             workload_classification_enabled=(
                 bool(workload_classification_enabled)
@@ -128,6 +135,15 @@ async def test_model_settings_routes_discover_and_persist(
         assert discovered.json()["workload_classification_enabled"] is False
         assert discovered.json()["workload_custom_categories"] == []
 
+        prompt = await client.get("/v1/omniharness/settings")
+        assert prompt.json()["system_prompt"] == ""
+        prompt = await client.patch(
+            "/v1/omniharness/settings",
+            json={"system_prompt": "Be concise."},
+        )
+        assert prompt.status_code == 200
+        assert prompt.json()["system_prompt"] == "Be concise."
+
         updated = await client.patch(
             "/v1/admin/model-settings",
             json={
@@ -166,6 +182,7 @@ async def test_model_settings_routes_discover_and_persist(
     assert store.get().smart_routing_cadence == "first_turn_only"
     assert store.get().workload_classification_enabled is True
     assert store.get().workload_custom_categories == ("research", "incident_response")
+    assert store.get().omniharness_system_prompt == "Be concise."
     assert caps.llm.model == "databricks-gpt-5-4"
 
 

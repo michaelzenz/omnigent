@@ -10,6 +10,7 @@ from omnigent.entities import ConversationItem, FunctionCallOutputData
 from omnigent.runtime.prompt import (
     append_framework_instructions,
     build_instructions,
+    compose_omniharness_instructions,
     history_to_input_items,
 )
 from omnigent.spec import AgentSpec
@@ -25,6 +26,14 @@ def _output_item(output: str) -> ConversationItem:
         type="function_call_output",
         data=FunctionCallOutputData(call_id="c1", output=output),
     )
+
+
+def test_omniharness_system_prompt_precedes_profile() -> None:
+    assert (
+        compose_omniharness_instructions("Global prompt", "Profile prompt")
+        == "Global prompt\n\nProfile prompt"
+    )
+    assert compose_omniharness_instructions("", None) is None
 
 
 def test_history_replay_strips_inline_base64_image() -> None:

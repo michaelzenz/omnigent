@@ -15,6 +15,7 @@ class ModelSettings:
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
     smart_routing_cadence: str
+    omniharness_system_prompt: str = ""
     workload_classification_enabled: bool = False
     workload_custom_categories: tuple[str, ...] = ()
 
@@ -41,6 +42,8 @@ class ModelSettingsStore(ABC):
         update_smart_routing_decision_model: bool = False,
         smart_routing_prompt: str | None = None,
         update_smart_routing_prompt: bool = False,
+        omniharness_system_prompt: str | None = None,
+        update_omniharness_system_prompt: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,

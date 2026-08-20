@@ -89,6 +89,7 @@ import { cn } from "@/lib/utils";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
+import { OmniHarnessSystemPromptEditor } from "@/shell/OmniHarnessSystemPromptDialog";
 import { attachmentKey, validateAttachments } from "@/lib/attachments";
 import { useSurfaceFrontmost } from "@/hooks/useNativeServerSwitcher";
 import {
@@ -1286,6 +1287,7 @@ export function ChatPage() {
   const capabilitySource = {
     labels: activeSession ? (activeSession.labels ?? {}) : (activeConv?.labels ?? {}),
     harness: activeSession?.harness ?? null,
+    agentName: activeSession?.agentName ?? activeConv?.agent_name ?? null,
   };
   const profileCatalog = profilesQuery.data ?? [];
   const activeProfileId =
@@ -6918,6 +6920,11 @@ function SessionConfigModal({
               />
             </ConfigRow>
           )}
+          {modelPickerKind === "sdk" && (
+            <ConfigRow label="System prompt" description="Global OmniHarness base instructions">
+              <OmniHarnessSystemPromptEditor />
+            </ConfigRow>
+          )}
           {showEffort && (
             <ConfigRow label="Effort" description="Reasoning depth vs. speed">
               <Select
@@ -7045,9 +7052,10 @@ function ComposerConfigGear({
   openNonce?: number;
 }) {
   const [open, setOpen] = useState(false);
-  // SDK models are selected directly from the composer label, so repeating
-  // that dropdown in the gear would expose two controls for the same setting.
-  const showModelSetting = showModels && modelPickerKind !== "sdk";
+  // Keep the gear's settings complete even when the composer also offers a
+  // model quick-select; new and existing OmniHarness sessions should expose
+  // the same model control.
+  const showModelSetting = showModels;
   const appliedOpenNonce = useRef(0);
   useEffect(() => {
     if (!openNonce || openNonce === appliedOpenNonce.current) return;

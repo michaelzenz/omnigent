@@ -4726,6 +4726,12 @@ async def _forward_event_to_runner(
     }
     if profile_instructions is not None:
         runner_body["profile_instructions"] = profile_instructions
+    if uses_omniharness and model_settings_store is not None:
+        _omniharness_settings = await asyncio.to_thread(model_settings_store.get)
+        if _omniharness_settings.omniharness_system_prompt:
+            runner_body["omniharness_system_prompt"] = (
+                _omniharness_settings.omniharness_system_prompt
+            )
     if memory_instructions is not None:
         runner_body["memory_instructions"] = memory_instructions
     # Persist the turn-initiating actor so /policies/evaluate and MCP
