@@ -184,6 +184,8 @@ def _write_tree(skill_dir: Path, files: dict[str, str]) -> None:
 def handle_skill_fs_op(op: str, params: dict[str, Any]) -> dict[str, Any]:
     """Execute a server-requested operation entirely on this host."""
     home = Path.home().resolve()
+    if op == "skill.inventory":
+        return _inventory_payload(home)
     if op == "skill.roots":
         return {
             "roots": skill_search_roots_wire(home),

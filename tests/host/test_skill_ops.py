@@ -46,6 +46,18 @@ def test_host_discovers_and_edits_its_own_skills(tmp_path: Path, monkeypatch) ->
     assert result["inventory"][0]["content_sha256"] != original_hash
 
 
+def test_host_inventory_operation_rescans_new_skills(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    assert handle_skill_fs_op("skill.inventory", {})["inventory"] == []
+
+    _skill(home, "new-skill")
+
+    inventory = handle_skill_fs_op("skill.inventory", {})["inventory"]
+    assert [entry["name"] for entry in inventory] == ["new-skill"]
+
+
 def test_host_edits_any_text_file_but_rejects_binary_files(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()

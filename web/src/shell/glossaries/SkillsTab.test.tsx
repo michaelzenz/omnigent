@@ -1,6 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillsTab } from "./SkillsTab";
+
+const { refreshSkills, refetchSkills, saveSkillFiles } = vi.hoisted(() => ({
+  refreshSkills: vi.fn(),
+  refetchSkills: vi.fn(),
+  saveSkillFiles: vi.fn(),
+}));
 
 vi.mock("@/hooks/useSkills", () => ({
   useSyncedSkills: () => ({
@@ -151,7 +157,11 @@ vi.mock("@/hooks/useSkills", () => ({
       },
     ],
     isLoading: false,
-    refetch: vi.fn(),
+    refetch: refetchSkills,
+  }),
+  useRefreshSkills: () => ({
+    mutateAsync: refreshSkills,
+    isPending: false,
   }),
   useSkillTree: (_name: string | null, hostId: string | null) => ({
     data:
@@ -195,12 +205,18 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
-  useSaveSkillVariantFiles: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveSkillVariantFiles: () => ({ mutateAsync: saveSkillFiles, isPending: false }),
   useSyncSkills: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSkillEverywhere: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 describe("SkillsTab", () => {
+  beforeEach(() => {
+    refreshSkills.mockReset();
+    refetchSkills.mockReset();
+    saveSkillFiles.mockReset();
+  });
+
   it("shows global sync state and the selected skill editor", async () => {
     render(<SkillsTab />);
     expect(screen.getByText("Not synced")).toBeInTheDocument();
@@ -217,6 +233,7 @@ describe("SkillsTab", () => {
     expect(screen.getByText("~/.claude/skills/demo")).toBeInTheDocument();
     expect(screen.queryByText("Edit occurrence")).toBeNull();
     expect(screen.getByRole("button", { name: "Sync to all" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Skill search settings" }));
     expect(screen.getByText("Skill search locations")).toBeInTheDocument();
     expect(screen.getByText("~/.claude/skills")).toBeInTheDocument();
@@ -226,5 +243,37 @@ describe("SkillsTab", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Include Claude in skill sync" })).toBeChecked();
     expect(screen.queryByRole("switch", { name: "Include Cursor in skill sync" })).toBeNull();
+  });
+
+  it("asks connected hosts to rescan before refetching skills", async () => {
+    refreshSkills.mockResolvedValue(undefined);
+    refetchSkills.mockResolvedValue(undefined);
+    render(<SkillsTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh skills from hosts" }));
+
+    await waitFor(() => expect(refreshSkills).toHaveBeenCalledOnce());
+    expect(refetchSkills).toHaveBeenCalledOnce();
+  });
+
+  it("autosaves edited skill files", async () => {
+    vi.useFakeTimers();
+    saveSkillFiles.mockResolvedValue(undefined);
+    render(<SkillsTab />);
+    const editor = document.querySelector("textarea");
+    expect(editor).not.toBeNull();
+
+    fireEvent.change(editor as HTMLTextAreaElement, {
+      target: { value: "---\nname: demo\n---\nupdated\n" },
+    });
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(700);
+
+    expect(saveSkillFiles).toHaveBeenCalledWith({
+      name: "demo",
+      contentSha256: "aaa",
+      files: { "skill.md": "---\nname: demo\n---\nupdated\n" },
+    });
+    vi.useRealTimers();
   });
 });

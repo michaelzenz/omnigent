@@ -159,6 +159,43 @@ def create_skills_router(
             )
         return {"object": "list", "data": data}
 
+    @router.post("/skills/refresh")
+    async def refresh_skills(request: Request) -> dict[str, Any]:
+        """Ask every connected owner host to rescan and report skills now."""
+        owner = _owner_id(request, auth_provider)
+
+        async def refresh_host(host) -> dict[str, Any]:
+            if host_registry.get(host.host_id) is None:
+                return {
+                    "host_id": host.host_id,
+                    "host_name": host.name,
+                    "status": "offline",
+                }
+            try:
+                payload = await host_skill_request(host.host_id, "skill.inventory", {})
+            except HTTPException as exc:
+                return {
+                    "host_id": host.host_id,
+                    "host_name": host.name,
+                    "status": "error",
+                    "error": exc.detail,
+                }
+            inventory = payload.get("inventory")
+            return {
+                "host_id": host.host_id,
+                "host_name": host.name,
+                "status": "refreshed",
+                "skill_count": len(inventory) if isinstance(inventory, list) else 0,
+            }
+
+        data = await asyncio.gather(*(refresh_host(host) for host in owner_hosts(owner)))
+        return {
+            "object": "skill_refresh",
+            "data": data,
+            "refreshed": sum(item["status"] == "refreshed" for item in data),
+            "failed": sum(item["status"] == "error" for item in data),
+        }
+
     @router.put("/skills/roots/{harness}")
     async def update_global_skill_harness_setting(
         request: Request,

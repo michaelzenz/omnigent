@@ -101,6 +101,47 @@ async def test_list_skills_returns_manifest(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_refresh_skills_requests_fresh_inventory_from_connected_host(
+    skills_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry, host_store = skills_app
+    monkeypatch.setattr(registry, "get", lambda _host_id: object())
+
+    async def fresh_inventory(**_kwargs):
+        return {
+            "inventory": [
+                {
+                    "name": "new-skill",
+                    "description": "New",
+                    "harness": "claude",
+                    "rel_home_path": ".claude/skills/new-skill",
+                    "content_sha256": "fresh",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.skills.read_workspace_from_host",
+        fresh_inventory,
+    )
+    app = FastAPI()
+    app.include_router(
+        create_skills_router(registry, host_store=host_store, auth_provider=None),
+        prefix="/v1",
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
+        response = await http_client.post("/v1/skills/refresh")
+
+    assert response.status_code == 200
+    assert response.json()["refreshed"] == 1
+    inventory = registry.skill_inventory(LOCAL_HOST_ID)
+    assert inventory is not None
+    assert [entry["name"] for entry in inventory] == ["new-skill"]
+
+
+@pytest.mark.asyncio
 async def test_existing_omnigent_copy_is_an_optional_variant(skills_app) -> None:
     registry, host_store = skills_app
     inventory = registry.skill_inventory(LOCAL_HOST_ID)

@@ -1,9 +1,8 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
   RefreshCwIcon,
-  SaveIcon,
   SettingsIcon,
   Trash2Icon,
   UploadIcon,
@@ -31,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
   useDeleteSkillEverywhere,
+  useRefreshSkills,
   useSaveSkillVariantFiles,
   useSkillRoots,
   useSkillTree,
@@ -45,6 +45,7 @@ import { cn } from "@/lib/utils";
 const SkillVariantDiff = lazy(() =>
   import("./SkillVariantDiff").then((module) => ({ default: module.SkillVariantDiff })),
 );
+const AUTOSAVE_DELAY_MS = 700;
 
 function harnessLabel(harness: string) {
   return harness.charAt(0).toUpperCase() + harness.slice(1);
@@ -274,6 +275,7 @@ function SkillRootsDialog({
 
 export function SkillsTab() {
   const skills = useSyncedSkills();
+  const refresh = useRefreshSkills();
   const save = useSaveSkillVariantFiles();
   const sync = useSyncSkills();
   const deleteSkill = useDeleteSkillEverywhere();
@@ -282,8 +284,15 @@ export function SkillsTab() {
   const [selectedVariantHash, setSelectedVariantHash] = useState<string | null>(null);
   const [compareVariantHash, setCompareVariantHash] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saveStatus, setSaveStatus] = useState<"Saved" | "Unsaved" | "Saving" | "Save failed">(
+    "Saved",
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveRevision = useRef(0);
+  const selectedOccurrenceRef = useRef<string | null>(null);
+  const selectedSkillNameRef = useRef<string | null>(null);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -313,9 +322,23 @@ export function SkillsTab() {
     if (!selectedName && filtered[0]) setSelectedName(filtered[0].name);
   }, [filtered, selectedName]);
   useEffect(() => {
-    setSelectedVariantHash(firstVariantHash);
+    const skillChanged = selectedSkillNameRef.current !== (selected?.name ?? null);
+    selectedSkillNameRef.current = selected?.name ?? null;
+    const trackedOccurrence = skillChanged ? null : selectedOccurrenceRef.current;
+    const trackedVariant = trackedOccurrence
+      ? selected?.variants.find((variant) =>
+          variant.occurrences.some(
+            (occurrence) => `${occurrence.hostId}\0${occurrence.harness}` === trackedOccurrence,
+          ),
+        )
+      : null;
+    const nextVariant = trackedVariant ?? selected?.variants[0] ?? null;
+    selectedOccurrenceRef.current = nextVariant?.occurrences[0]
+      ? `${nextVariant.occurrences[0].hostId}\0${nextVariant.occurrences[0].harness}`
+      : null;
+    setSelectedVariantHash(nextVariant?.contentSha256 ?? firstVariantHash);
     setCompareVariantHash(null);
-  }, [firstVariantHash, selected?.name]);
+  }, [firstVariantHash, selected?.name, selected?.variants]);
   useEffect(() => {
     setCompareVariantHash(null);
   }, [selectedVariantHash]);
@@ -356,30 +379,50 @@ export function SkillsTab() {
   }, [compareTree.data, tree.data]);
   useEffect(() => {
     setDrafts(JSON.parse(editableDraftSnapshot) as Record<string, string>);
+    setSaveStatus("Saved");
   }, [editableDraftSnapshot, selectedVariant?.contentSha256, selected?.name]);
+  useEffect(
+    () => () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    },
+    [],
+  );
 
-  async function handleSave() {
+  function scheduleSave(path: string, content: string) {
     if (!selected || !selectedVariant) return;
-    setMessage(null);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const revision = ++saveRevision.current;
+    const nextDrafts = { ...drafts, [path]: content };
+    setDrafts(nextDrafts);
+    setSaveStatus("Unsaved");
     const files = Object.fromEntries(
       (tree.data ?? [])
-        .filter((file) => !file.binary && drafts[file.path] !== file.content)
-        .map((file) => [file.path, drafts[file.path] ?? file.content]),
+        .filter((file) => !file.binary && nextDrafts[file.path] !== file.content)
+        .map((file) => [file.path, nextDrafts[file.path] ?? file.content]),
     );
     if (Object.keys(files).length === 0) {
-      setMessage("No changes to save.");
+      setSaveStatus("Saved");
       return;
     }
-    try {
-      await save.mutateAsync({
-        name: selected.name,
-        contentSha256: selectedVariant.contentSha256,
-        files,
-      });
-      setMessage("Saved edited files in every occurrence of the selected variant.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Save failed");
-    }
+    const targetName = selected.name;
+    const targetHash = selectedVariant.contentSha256;
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      setSaveStatus("Saving");
+      void save
+        .mutateAsync({
+          name: targetName,
+          contentSha256: targetHash,
+          files,
+        })
+        .then(() => {
+          if (saveRevision.current === revision) setSaveStatus("Saved");
+        })
+        .catch((error) => {
+          if (saveRevision.current === revision) setSaveStatus("Save failed");
+          setMessage(error instanceof Error ? error.message : "Save failed");
+        });
+    }, AUTOSAVE_DELAY_MS);
   }
 
   async function handleSync() {
@@ -402,6 +445,16 @@ export function SkillsTab() {
     if (!window.confirm(`Delete "${selected.name}" from every online host and harness?`)) return;
     await deleteSkill.mutateAsync(selected.name);
     setSelectedName(null);
+  }
+
+  async function handleRefresh() {
+    setMessage(null);
+    try {
+      await refresh.mutateAsync();
+      await skills.refetch();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Skill refresh failed");
+    }
   }
 
   return (
@@ -427,8 +480,15 @@ export function SkillsTab() {
               >
                 <SettingsIcon />
               </Button>
-              <Button variant="ghost" size="icon-sm" onClick={() => void skills.refetch()}>
-                <RefreshCwIcon />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Refresh skills from hosts"
+                title="Refresh skills from hosts"
+                disabled={refresh.isPending}
+                onClick={() => void handleRefresh()}
+              >
+                <RefreshCwIcon className={cn(refresh.isPending && "animate-spin")} />
               </Button>
             </div>
           </div>
@@ -467,7 +527,17 @@ export function SkillsTab() {
               </div>
               <Select
                 value={selectedVariant?.contentSha256 ?? ""}
-                onValueChange={setSelectedVariantHash}
+                disabled={saveStatus !== "Saved"}
+                onValueChange={(value) => {
+                  const variant = selected.variants.find(
+                    (candidate) => candidate.contentSha256 === value,
+                  );
+                  const occurrence = variant?.occurrences[0];
+                  selectedOccurrenceRef.current = occurrence
+                    ? `${occurrence.hostId}\0${occurrence.harness}`
+                    : null;
+                  setSelectedVariantHash(value);
+                }}
               >
                 <SelectTrigger className="w-36">
                   <SelectValue placeholder="Variant" />
@@ -501,14 +571,17 @@ export function SkillsTab() {
                     })}
                 </SelectContent>
               </Select>
-              <Button size="sm" onClick={() => void handleSave()} disabled={!selectedOccurrence}>
-                <SaveIcon /> Save
-              </Button>
+              <Badge
+                aria-live="polite"
+                variant={saveStatus === "Save failed" ? "destructive" : "outline"}
+              >
+                {saveStatus}
+              </Badge>
               <Button
                 size="sm"
                 variant="secondary"
                 onClick={() => void handleSync()}
-                disabled={!selectedOccurrence || sync.isPending}
+                disabled={!selectedOccurrence || sync.isPending || saveStatus !== "Saved"}
               >
                 <UploadIcon /> Sync to all
               </Button>
@@ -598,13 +671,8 @@ export function SkillsTab() {
                     {!file.binary ? (
                       <Textarea
                         value={drafts[file.path] ?? file.content}
-                        onChange={(event) =>
-                          setDrafts((current) => ({
-                            ...current,
-                            [file.path]: event.target.value,
-                          }))
-                        }
-                        disabled={!selectedOccurrence || tree.isLoading}
+                        onChange={(event) => scheduleSave(file.path, event.target.value)}
+                        disabled={!selectedOccurrence || tree.isLoading || saveStatus === "Saving"}
                         className="min-h-[32rem] resize-none rounded-none border-0 bg-white font-mono text-xs text-slate-950 focus-visible:ring-0"
                         spellCheck={false}
                       />

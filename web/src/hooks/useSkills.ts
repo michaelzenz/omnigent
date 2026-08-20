@@ -182,6 +182,17 @@ async function fetchSkillRoots(): Promise<HostSkillRoots[]> {
   }));
 }
 
+async function refreshSkillInventories(): Promise<void> {
+  const response = await authenticatedFetch("/v1/skills/refresh", { method: "POST" });
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+  const body = (await response.json()) as { failed?: number };
+  if ((body.failed ?? 0) > 0) {
+    throw new Error(
+      `${body.failed} connected host${body.failed === 1 ? "" : "s"} failed to refresh skills.`,
+    );
+  }
+}
+
 async function fetchSkillContent(name: string, hostId: string, harness: string): Promise<string> {
   const params = new URLSearchParams({ host_id: hostId, harness });
   const response = await authenticatedFetch(
@@ -241,6 +252,14 @@ export function useSyncedSkills() {
     queryKey: SKILLS_KEY,
     queryFn: fetchSkills,
     staleTime: 30_000,
+  });
+}
+
+export function useRefreshSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: refreshSkillInventories,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: SKILLS_KEY }),
   });
 }
 

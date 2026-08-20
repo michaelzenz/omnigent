@@ -1645,7 +1645,8 @@ def register_events_routes(
             )
         _memory_instructions = await _compose_turn_memory(
             memory_store,
-            user_id=created_by,
+            # The local sentinel is hidden from attribution but still owns memory rows.
+            user_id=user_id,
             uses_omniharness=_uses_omniharness,
             event_type=body.type,
             role=body.data.get("role"),
