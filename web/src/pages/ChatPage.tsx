@@ -4692,7 +4692,7 @@ function ContextRing({
           {estimated && <AlertTriangleIcon className="size-3.5 text-warning" aria-hidden="true" />}
         </span>
       </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-44 text-center text-sm">
+      <TooltipContent side="top" className="max-w-80 text-center text-sm">
         <p className="tabular-nums">{usedPct}% of context used.</p>
         <p className="tabular-nums text-muted-foreground">
           {tokensUsed.toLocaleString()} / {contextWindow.toLocaleString()} tokens

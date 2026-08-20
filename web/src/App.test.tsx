@@ -16,6 +16,9 @@ vi.mock("@/shell/AppShell", () => ({
 vi.mock("@/pages/ChatPage", () => ({ ChatPage: () => <div>chat page</div> }));
 vi.mock("@/pages/NotFoundPage", () => ({ NotFoundPage: () => <div>not found</div> }));
 vi.mock("@/pages/UsagePage", () => ({ UsagePage: () => <div>usage page</div> }));
+vi.mock("@/pages/StatisticsPage", () => ({
+  StatisticsPage: () => <div>statistics page</div>,
+}));
 
 import App from "./App";
 
@@ -43,6 +46,21 @@ describe("Usage release feature route", () => {
   it("registers /usage while the feature is on", async () => {
     renderUsageRoute(true);
     expect(await screen.findByText("usage page")).toBeInTheDocument();
+    expect(screen.queryByText("not found")).toBeNull();
+  });
+});
+
+describe("Statistics route", () => {
+  it("registers /statistics independently of the usage feature", async () => {
+    render(
+      <CapabilitiesProvider info={{ ...FALLBACK_SERVER_INFO, features: {} }}>
+        <MemoryRouter initialEntries={["/statistics"]}>
+          <App />
+        </MemoryRouter>
+      </CapabilitiesProvider>,
+    );
+
+    expect(await screen.findByText("statistics page")).toBeInTheDocument();
     expect(screen.queryByText("not found")).toBeNull();
   });
 });

@@ -14,6 +14,7 @@ import { CapabilitiesProvider } from "./lib/CapabilitiesContext";
 import { resolveIdentity } from "./lib/identity";
 import { initNativeInsets } from "./lib/nativeInsets";
 import { initBrowserTelemetry } from "./lib/telemetry";
+import { installChunkRecovery } from "./lib/chunkRecovery";
 import {
   applyDesktopUiFontSize,
   applyUiFontFamily,
@@ -26,6 +27,11 @@ import { initChatStore } from "./store/chatStore";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
 import "./index.css";
+
+// A running renderer can outlive a frontend deploy. If the user then opens a
+// lazy route whose old hashed chunk was replaced, reload onto the new manifest
+// instead of letting the rejected import blank the React tree.
+installChunkRecovery();
 
 // Start tracing before any request fires so fetch/XHR are patched in time
 // and a trace begins in the browser. No-op unless a collector endpoint is

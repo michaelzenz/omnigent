@@ -29,7 +29,7 @@ and :class:`PolicyResult` from here (or from the
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -386,6 +386,7 @@ class PolicyLLMClient:
     _connection: dict[str, str] | None
     _request_timeout: int
     _fallback_models: list[str] = field(default_factory=list)
+    _usage_recorder: Callable[[object, str], None] | None = None
 
     async def create(
         self,
@@ -435,14 +436,18 @@ class PolicyLLMClient:
         # An explicit model override opts out of the fallback chain —
         # honour exactly what the caller asked for.
         if "model" in kwargs:
-            return await create_response(
+            model = cast(str, kwargs.pop("model"))
+            response = await create_response(
                 input=input,
-                model=cast(str, kwargs.pop("model")),
+                model=model,
                 connection_params=connection_params,
                 timeout=timeout,
                 instructions=instructions,
                 **kwargs,
             )
+            if self._usage_recorder is not None:
+                self._usage_recorder(response, model)
+            return response
 
         candidates = [self._model, *self._fallback_models]
         last_exc: Exception | None = None
@@ -479,6 +484,8 @@ class PolicyLLMClient:
                     index + 1,
                     len(candidates),
                 )
+            if self._usage_recorder is not None:
+                self._usage_recorder(response, model)
             return response
         # Every candidate failed — surface the last error to the caller.
         # This is the fail-closed (DENY) path and, because candidates are

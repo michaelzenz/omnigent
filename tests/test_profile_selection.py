@@ -7,6 +7,7 @@ from omnigent.entities import PromptProfile
 from omnigent.errors import OmnigentError
 from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.turn_selection import select_omnigent_turn
+from omnigent.usage_ledger import canonical_purpose
 
 
 def _profile(**overrides: object) -> PromptProfile:
@@ -212,3 +213,58 @@ async def test_joint_auto_select_rejects_unknown_profile(
             _Store([_profile()]),  # type: ignore[arg-type]
             model_candidates=["model-fast"],
         )
+
+
+async def test_workload_only_selection_uses_one_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create(self, **_kwargs: object) -> SimpleNamespace:
+            self.calls += 1
+            return SimpleNamespace(
+                model="judge",
+                usage=SimpleNamespace(input_tokens=12, output_tokens=3),
+                output=[
+                    SimpleNamespace(
+                        content=[SimpleNamespace(text=json.dumps({"workload": "debug"}))]
+                    )
+                ],
+            )
+
+    llm = LLM()
+    monkeypatch.setattr(
+        "omnigent.turn_selection.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.turn_selection.build_server_llm_client",
+        lambda _config: llm,
+    )
+
+    selection = await select_omnigent_turn(
+        "diagnose this failure",
+        select_profile=False,
+        classify_workload=True,
+        decision_model="judge",
+    )
+
+    assert llm.calls == 1
+    assert selection.profile is None
+    assert selection.model is None
+    assert selection.workload == "debug"
+    assert selection.usage == {
+        "input_tokens": 12,
+        "output_tokens": 3,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+
+
+def test_combined_purpose_is_canonical() -> None:
+    assert (
+        canonical_purpose(["workload_classification", "smart_routing", "profile_selection"])
+        == "profile_selection+smart_routing+workload_classification"
+    )

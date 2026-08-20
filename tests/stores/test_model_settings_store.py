@@ -16,6 +16,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
     assert settings.smart_routing_decision_model == "databricks-gpt-5-6-luna"
     assert settings.smart_routing_prompt == ""
     assert settings.smart_routing_cadence == "per_turn"
+    assert settings.workload_classification_enabled is False
 
     updated = store.update(
         harness="openai-agents",
@@ -26,6 +27,8 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
         update_smart_routing_prompt=True,
         smart_routing_cadence="first_turn_only",
         update_smart_routing_cadence=True,
+        workload_classification_enabled=True,
+        update_workload_classification_enabled=True,
         updated_by="admin",
     )
 
@@ -34,6 +37,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
     assert updated.smart_routing_decision_model == "databricks-gpt-5-6-luna"
     assert updated.smart_routing_prompt == "Choose the best model."
     assert updated.smart_routing_cadence == "first_turn_only"
+    assert updated.workload_classification_enabled is True
     assert store.get() == updated
 
     cleared = store.update(

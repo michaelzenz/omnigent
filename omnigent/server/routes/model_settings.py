@@ -35,6 +35,7 @@ class UpdateModelSettingsRequest(BaseModel):
     smart_routing_decision_model: str | None = Field(default=None, max_length=300)
     smart_routing_prompt: str | None = Field(default=None, max_length=20_000)
     smart_routing_cadence: Literal["per_turn", "first_turn_only"] = "per_turn"
+    workload_classification_enabled: bool = False
 
 
 class AdminModelSettingsResponse(BaseModel):
@@ -49,6 +50,7 @@ class AdminModelSettingsResponse(BaseModel):
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
     smart_routing_cadence: Literal["per_turn", "first_turn_only"]
+    workload_classification_enabled: bool
     error: str | None
 
 
@@ -61,6 +63,7 @@ class UpdatedModelSettingsResponse(BaseModel):
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
     smart_routing_cadence: Literal["per_turn", "first_turn_only"]
+    workload_classification_enabled: bool
 
 
 def _databricks_profile(config: dict[str, Any]) -> str | None:
@@ -231,6 +234,7 @@ def create_model_settings_router(
                 "smart_routing_decision_model": settings.smart_routing_decision_model,
                 "smart_routing_prompt": settings.smart_routing_prompt,
                 "smart_routing_cadence": settings.smart_routing_cadence,
+                "workload_classification_enabled": settings.workload_classification_enabled,
                 "error": None,
             }
         try:
@@ -250,6 +254,7 @@ def create_model_settings_router(
                 "smart_routing_decision_model": settings.smart_routing_decision_model,
                 "smart_routing_prompt": settings.smart_routing_prompt,
                 "smart_routing_cadence": settings.smart_routing_cadence,
+                "workload_classification_enabled": settings.workload_classification_enabled,
                 "error": str(exc),
             }
         return {
@@ -262,6 +267,7 @@ def create_model_settings_router(
             "smart_routing_decision_model": settings.smart_routing_decision_model,
             "smart_routing_prompt": settings.smart_routing_prompt,
             "smart_routing_cadence": settings.smart_routing_cadence,
+            "workload_classification_enabled": settings.workload_classification_enabled,
             "error": None,
         }
 
@@ -279,6 +285,15 @@ def create_model_settings_router(
         update_decision_model = "smart_routing_decision_model" in body.model_fields_set
         update_prompt = "smart_routing_prompt" in body.model_fields_set
         update_cadence = "smart_routing_cadence" in body.model_fields_set
+        update_workload_classification = "workload_classification_enabled" in body.model_fields_set
+        workload_update = (
+            {
+                "workload_classification_enabled": body.workload_classification_enabled,
+                "update_workload_classification_enabled": True,
+            }
+            if update_workload_classification
+            else {}
+        )
         settings = await asyncio.to_thread(
             model_settings_store.update,
             harness=OMNIGENT_HARNESS if update_models else None,
@@ -292,6 +307,7 @@ def create_model_settings_router(
             smart_routing_cadence=body.smart_routing_cadence,
             update_smart_routing_cadence=update_cadence,
             updated_by=get_user_id(request, auth_provider),
+            **workload_update,
         )
         if update_policy_model:
             _set_runtime_policy_model(settings.policy_model, _databricks_profile(config))
@@ -302,6 +318,7 @@ def create_model_settings_router(
             "smart_routing_decision_model": settings.smart_routing_decision_model,
             "smart_routing_prompt": settings.smart_routing_prompt,
             "smart_routing_cadence": settings.smart_routing_cadence,
+            "workload_classification_enabled": settings.workload_classification_enabled,
         }
 
     return router

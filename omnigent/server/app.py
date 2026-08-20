@@ -93,6 +93,7 @@ from omnigent.server.routes.sessions import (
 from omnigent.server.routes.sharing import create_sharing_router
 from omnigent.server.routes.skills import create_skills_router
 from omnigent.server.routes.ssh_connections import create_ssh_connections_router
+from omnigent.server.routes.statistics import create_statistics_router
 from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
 from omnigent.server.routes.usage import create_usage_router
@@ -2485,6 +2486,15 @@ def create_app(
         ),
         prefix="/v1",
         tags=["usage"],
+    )
+    app.include_router(
+        create_statistics_router(
+            conversation_store,
+            model_settings_store=model_settings_store,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["statistics"],
     )
     # Read-only built-in agent discovery (designs/BUILTIN_AGENTS.md).
     # Successor to the removed GET /api/agents list; lists only

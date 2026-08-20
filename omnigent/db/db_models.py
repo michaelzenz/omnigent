@@ -1343,6 +1343,11 @@ class SqlModelSettings(OmnigentBase):
         nullable=False,
         server_default="per_turn",
     )
+    workload_classification_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
@@ -1552,6 +1557,94 @@ class SqlUserDailyCost(OmnigentBase):
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False)
     ask_approved_usd: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
     updated_at: Mapped[int] = mapped_column(Integer)
+
+
+class SqlUsageLedger(OmnigentBase):
+    """Immutable per-request Omnigent LLM usage and price snapshot."""
+
+    __tablename__ = "usage_ledger"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    day_utc: Mapped[str] = mapped_column(String(10), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    purpose: Mapped[str] = mapped_column(String(160), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    workload: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    cache_read_input_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
+    cache_creation_input_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
+    input_price_per_token: Mapped[float | None] = mapped_column(Float, nullable=True)
+    output_price_per_token: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cache_read_price_per_token: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cache_write_price_per_token: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pricing_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    priced: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+
+    __table_args__ = (
+        Index(
+            "ix_usage_ledger_user_month",
+            "workspace_id",
+            "user_id",
+            "day_utc",
+        ),
+        Index("ix_usage_ledger_session", "workspace_id", "session_id"),
+    )
+
+
+class SqlModelPricingOverride(OmnigentBase):
+    """User-scoped custom pricing for an Omnigent model."""
+
+    __tablename__ = "model_pricing_overrides"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    model: Mapped[str] = mapped_column(String(300), primary_key=True)
+    input_price_per_token: Mapped[float] = mapped_column(Float, nullable=False)
+    output_price_per_token: Mapped[float] = mapped_column(Float, nullable=False)
+    cache_read_price_per_token: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cache_write_price_per_token: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "input_price_per_token >= 0",
+            name="ck_model_pricing_overrides_input_nonnegative",
+        ),
+        CheckConstraint(
+            "output_price_per_token >= 0",
+            name="ck_model_pricing_overrides_output_nonnegative",
+        ),
+        CheckConstraint(
+            "cache_read_price_per_token IS NULL OR cache_read_price_per_token >= 0",
+            name="ck_model_pricing_overrides_cache_read_nonnegative",
+        ),
+        CheckConstraint(
+            "cache_write_price_per_token IS NULL OR cache_write_price_per_token >= 0",
+            name="ck_model_pricing_overrides_cache_write_nonnegative",
+        ),
+    )
 
 
 class SqlScheduledTask(OmnigentBase):

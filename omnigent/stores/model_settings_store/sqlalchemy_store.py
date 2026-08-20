@@ -32,6 +32,7 @@ def _decode(row: SqlModelSettings) -> ModelSettings:
         smart_routing_decision_model=row.smart_routing_decision_model,
         smart_routing_prompt=row.smart_routing_prompt,
         smart_routing_cadence=row.smart_routing_cadence,
+        workload_classification_enabled=bool(row.workload_classification_enabled),
     )
 
 
@@ -66,6 +67,8 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
         update_smart_routing_prompt: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
+        workload_classification_enabled: bool | None = None,
+        update_workload_classification_enabled: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         if (harness is None) != (enabled_models is None):
@@ -91,6 +94,10 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
                 if smart_routing_cadence not in {"per_turn", "first_turn_only"}:
                     raise ValueError("invalid smart routing cadence")
                 row.smart_routing_cadence = smart_routing_cadence
+            if update_workload_classification_enabled:
+                if workload_classification_enabled is None:
+                    raise ValueError("workload classification enabled must be a boolean")
+                row.workload_classification_enabled = workload_classification_enabled
             row.updated_at = now_epoch()
             row.updated_by = updated_by
             return _decode(row)

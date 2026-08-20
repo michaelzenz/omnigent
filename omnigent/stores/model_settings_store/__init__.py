@@ -15,6 +15,7 @@ class ModelSettings:
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
     smart_routing_cadence: str
+    workload_classification_enabled: bool = False
 
 
 class ModelSettingsStore(ABC):
@@ -41,6 +42,8 @@ class ModelSettingsStore(ABC):
         update_smart_routing_prompt: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
+        workload_classification_enabled: bool | None = None,
+        update_workload_classification_enabled: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         """Update supplied fields and return the resulting settings."""

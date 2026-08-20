@@ -60,6 +60,10 @@ const UsagePage = withPageView(
   "usage",
   lazy(() => import("@/pages/UsagePage").then((m) => ({ default: m.UsagePage }))),
 );
+const StatisticsPage = withPageView(
+  "statistics",
+  lazy(() => import("@/pages/StatisticsPage").then((m) => ({ default: m.StatisticsPage }))),
+);
 const PuppyGardenPage = lazy(() =>
   import("@/pages/PuppyGardenPage").then((m) => ({ default: m.PuppyGardenPage })),
 );
@@ -167,6 +171,7 @@ function App({ basename }: AppProps = {}) {
           <Route path={`${prefix}/tasks`} element={<TasksPage />} />
           <Route path={`${prefix}/puppy-garden`} element={<PuppyGardenPage />} />
           <Route path={`${prefix}/glossaries`} element={<GlossariesPage />} />
+          <Route path={`${prefix}/statistics`} element={<StatisticsPage />} />
           {isFeatureEnabled(info, "usage_page") && (
             <Route path={`${prefix}/usage`} element={<UsagePage />} />
           )}

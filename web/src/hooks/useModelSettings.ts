@@ -13,6 +13,7 @@ export interface AdminModelSettings {
   profile: string | null;
   models: ModelOption[];
   omnigentModels: string[];
+  workloadClassificationEnabled?: boolean;
   policyModel: string | null;
   smartRoutingDecisionModel: string | null;
   smartRoutingPrompt: string | null;
@@ -36,6 +37,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     profile: string | null;
     models: WireModelOption[];
     omnigent_models: string[];
+    workload_classification_enabled?: boolean;
     policy_model: string | null;
     smart_routing_decision_model: string | null;
     smart_routing_prompt: string | null;
@@ -50,6 +52,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
       displayName: model.display_name,
     })),
     omnigentModels: body.omnigent_models,
+    workloadClassificationEnabled: body.workload_classification_enabled === true,
     policyModel: body.policy_model,
     smartRoutingDecisionModel: body.smart_routing_decision_model,
     smartRoutingPrompt: body.smart_routing_prompt,
@@ -92,6 +95,7 @@ export function useUpdateAdminModelSettings() {
   return useMutation({
     mutationFn: async (patch: {
       omnigentModels?: string[];
+      workloadClassificationEnabled?: boolean;
       policyModel?: string | null;
       smartRoutingDecisionModel?: string | null;
       smartRoutingPrompt?: string | null;
@@ -102,6 +106,9 @@ export function useUpdateAdminModelSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(patch.omnigentModels !== undefined ? { omnigent_models: patch.omnigentModels } : {}),
+          ...(patch.workloadClassificationEnabled !== undefined
+            ? { workload_classification_enabled: patch.workloadClassificationEnabled }
+            : {}),
           ...(patch.policyModel !== undefined ? { policy_model: patch.policyModel } : {}),
           ...(patch.smartRoutingDecisionModel !== undefined
             ? { smart_routing_decision_model: patch.smartRoutingDecisionModel }

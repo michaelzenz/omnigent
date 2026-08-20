@@ -1063,6 +1063,53 @@ class ConversationStore(ABC):
         """
         ...
 
+    def record_usage_ledger(self, entry: dict[str, Any]) -> None:
+        """Append one immutable Omnigent model-request usage row."""
+        raise NotImplementedError
+
+    def list_usage_ledger_month(
+        self,
+        user_id: str,
+        month: str,
+    ) -> list[dict[str, Any]]:
+        """Return the caller's ledger rows for one UTC ``YYYY-MM`` month."""
+        raise NotImplementedError
+
+    def list_usage_ledger_months(self, user_id: str) -> list[str]:
+        """Return available UTC months for the caller, newest first."""
+        raise NotImplementedError
+
+    def get_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+    ) -> dict[str, Any] | None:
+        """Return one user-scoped model pricing override."""
+        del user_id, model
+        return None
+
+    def list_model_pricing_overrides(
+        self,
+        user_id: str,
+        models: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return user-scoped pricing overrides keyed by model."""
+        del user_id, models
+        return {}
+
+    def set_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+        pricing: dict[str, float | None],
+    ) -> dict[str, Any]:
+        """Create or replace one user-scoped model pricing override."""
+        raise NotImplementedError
+
+    def delete_model_pricing_override(self, user_id: str, model: str) -> bool:
+        """Delete one user-scoped model pricing override."""
+        raise NotImplementedError
+
     @abstractmethod
     def add_daily_cost(self, user_id: str, day_utc: str, delta_usd: float) -> None:
         """

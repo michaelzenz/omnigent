@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Protocol, cast
 
 from sqlalchemy import (
@@ -33,9 +36,11 @@ from omnigent.db.db_models import (
     SqlConversationItem,
     SqlConversationLabel,
     SqlConversationMetadata,
+    SqlModelPricingOverride,
     SqlPolicy,
     SqlProject,
     SqlSessionPermission,
+    SqlUsageLedger,
     SqlUserDailyCost,
     current_workspace_id,
     uuid_to_bytes,
@@ -96,6 +101,15 @@ from omnigent.stores.conversation_store import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def _next_month(month: str) -> str:
+    """Return the first UTC day following a ``YYYY-MM`` month."""
+    year, month_number = (int(part) for part in month.split("-", 1))
+    if month_number == 12:
+        return f"{year + 1:04d}-01-01"
+    return f"{year:04d}-{month_number + 1:02d}-01"
+
 
 # Server-side deadline (ms) for the content-search query in
 # ``list_conversations``. Session search matches ``LOWER(search_text) LIKE
@@ -1460,6 +1474,190 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .values(session_usage=json.dumps(current))
             )
             return current
+
+    def record_usage_ledger(self, entry: dict[str, Any]) -> None:
+        """Append one immutable model-request record with its price snapshot."""
+        occurred_at = int(entry.get("occurred_at") or now_epoch())
+        day_utc = datetime.fromtimestamp(occurred_at, tz=timezone.utc).date().isoformat()
+        with self._session("record_usage_ledger") as session:
+            session.add(
+                SqlUsageLedger(
+                    id=uuid.uuid4().hex,
+                    user_id=str(entry["user_id"]),
+                    occurred_at=occurred_at,
+                    day_utc=day_utc,
+                    session_id=entry.get("session_id"),
+                    turn_id=entry.get("turn_id"),
+                    purpose=str(entry["purpose"]),
+                    model=entry.get("model"),
+                    workload=entry.get("workload"),
+                    input_tokens=int(entry.get("input_tokens") or 0),
+                    output_tokens=int(entry.get("output_tokens") or 0),
+                    cache_read_input_tokens=int(entry.get("cache_read_input_tokens") or 0),
+                    cache_creation_input_tokens=int(entry.get("cache_creation_input_tokens") or 0),
+                    input_price_per_token=entry.get("input_price_per_token"),
+                    output_price_per_token=entry.get("output_price_per_token"),
+                    cache_read_price_per_token=entry.get("cache_read_price_per_token"),
+                    cache_write_price_per_token=entry.get("cache_write_price_per_token"),
+                    pricing_source=entry.get("pricing_source"),
+                    cost_usd=entry.get("cost_usd"),
+                    priced=bool(entry.get("priced")),
+                )
+            )
+
+    def list_usage_ledger_month(
+        self,
+        user_id: str,
+        month: str,
+    ) -> list[dict[str, Any]]:
+        """List user-scoped immutable records for one UTC month."""
+        with self._session("list_usage_ledger_month") as session:
+            rows = session.execute(
+                select(SqlUsageLedger)
+                .where(SqlUsageLedger.workspace_id == current_workspace_id())
+                .where(SqlUsageLedger.user_id == user_id)
+                .where(SqlUsageLedger.day_utc >= f"{month}-01")
+                .where(SqlUsageLedger.day_utc < _next_month(month))
+                .order_by(SqlUsageLedger.occurred_at.asc(), SqlUsageLedger.id.asc())
+            ).scalars()
+            return [
+                {
+                    column: getattr(row, column)
+                    for column in (
+                        "occurred_at",
+                        "day_utc",
+                        "session_id",
+                        "turn_id",
+                        "purpose",
+                        "model",
+                        "workload",
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_read_input_tokens",
+                        "cache_creation_input_tokens",
+                        "input_price_per_token",
+                        "output_price_per_token",
+                        "cache_read_price_per_token",
+                        "cache_write_price_per_token",
+                        "pricing_source",
+                        "cost_usd",
+                        "priced",
+                    )
+                }
+                for row in rows
+            ]
+
+    def list_usage_ledger_months(self, user_id: str) -> list[str]:
+        """List UTC months containing user-scoped ledger rows."""
+        with self._session("list_usage_ledger_months") as session:
+            month_expr = func.substr(SqlUsageLedger.day_utc, 1, 7)
+            rows = session.execute(
+                select(month_expr)
+                .where(SqlUsageLedger.workspace_id == current_workspace_id())
+                .where(SqlUsageLedger.user_id == user_id)
+                .distinct()
+                .order_by(month_expr.desc())
+            ).scalars()
+            return [str(month) for month in rows]
+
+    @staticmethod
+    def _pricing_override_dict(row: SqlModelPricingOverride) -> dict[str, Any]:
+        return {
+            "model": row.model,
+            "input_price_per_token": row.input_price_per_token,
+            "output_price_per_token": row.output_price_per_token,
+            "cache_read_price_per_token": row.cache_read_price_per_token,
+            "cache_write_price_per_token": row.cache_write_price_per_token,
+            "updated_at": row.updated_at,
+        }
+
+    def get_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+    ) -> dict[str, Any] | None:
+        """Return one override scoped by workspace and user."""
+        with self._session("get_model_pricing_override") as session:
+            row = session.get(
+                SqlModelPricingOverride,
+                {
+                    "workspace_id": current_workspace_id(),
+                    "user_id": user_id,
+                    "model": model,
+                },
+            )
+            return self._pricing_override_dict(row) if row is not None else None
+
+    def list_model_pricing_overrides(
+        self,
+        user_id: str,
+        models: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return overrides for enabled models without exposing other users."""
+        if not models:
+            return {}
+        with self._session("list_model_pricing_overrides") as session:
+            rows = session.scalars(
+                select(SqlModelPricingOverride).where(
+                    SqlModelPricingOverride.workspace_id == current_workspace_id(),
+                    SqlModelPricingOverride.user_id == user_id,
+                    SqlModelPricingOverride.model.in_(models),
+                )
+            )
+            return {row.model: self._pricing_override_dict(row) for row in rows}
+
+    def set_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+        pricing: dict[str, float | None],
+    ) -> dict[str, Any]:
+        """Create or replace one finite, nonnegative pricing override."""
+        if not model or len(model) > 300:
+            raise ValueError("model must contain 1 to 300 characters")
+        required = ("input_price_per_token", "output_price_per_token")
+        optional = ("cache_read_price_per_token", "cache_write_price_per_token")
+        values: dict[str, float | None] = {}
+        for field in (*required, *optional):
+            raw = pricing.get(field)
+            if raw is None and field in required:
+                raise ValueError(f"{field} is required")
+            if raw is None:
+                values[field] = None
+                continue
+            value = float(raw)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{field} must be finite and nonnegative")
+            values[field] = value
+
+        updated_at = now_epoch()
+        identity = {
+            "workspace_id": current_workspace_id(),
+            "user_id": user_id,
+            "model": model,
+        }
+        with self._session("set_model_pricing_override") as session:
+            row = session.get(SqlModelPricingOverride, identity)
+            if row is None:
+                row = SqlModelPricingOverride(**identity, **values, updated_at=updated_at)
+                session.add(row)
+            else:
+                for field, value in values.items():
+                    setattr(row, field, value)
+                row.updated_at = updated_at
+            return self._pricing_override_dict(row)
+
+    def delete_model_pricing_override(self, user_id: str, model: str) -> bool:
+        """Delete only the active user's override in the current workspace."""
+        with self._session("delete_model_pricing_override") as session:
+            result = session.execute(
+                delete(SqlModelPricingOverride).where(
+                    SqlModelPricingOverride.workspace_id == current_workspace_id(),
+                    SqlModelPricingOverride.user_id == user_id,
+                    SqlModelPricingOverride.model == model,
+                )
+            )
+            return bool(cast(_RowCountResult, result).rowcount)
 
     def add_daily_cost(self, user_id: str, day_utc: str, delta_usd: float) -> None:
         """

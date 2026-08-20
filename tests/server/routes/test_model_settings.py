@@ -44,6 +44,8 @@ class FakeModelSettingsStore(ModelSettingsStore):
         update_smart_routing_prompt: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
+        workload_classification_enabled: bool | None = None,
+        update_workload_classification_enabled: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         del updated_by
@@ -67,6 +69,11 @@ class FakeModelSettingsStore(ModelSettingsStore):
                 smart_routing_cadence
                 if update_smart_routing_cadence and smart_routing_cadence is not None
                 else self.settings.smart_routing_cadence
+            ),
+            workload_classification_enabled=(
+                bool(workload_classification_enabled)
+                if update_workload_classification_enabled
+                else self.settings.workload_classification_enabled
             ),
         )
         return self.settings
@@ -111,6 +118,7 @@ async def test_model_settings_routes_discover_and_persist(
         assert discovered.json()["smart_routing_decision_model"] == "databricks-gpt-5-6-luna"
         assert discovered.json()["smart_routing_prompt"] == ""
         assert discovered.json()["smart_routing_cadence"] == "per_turn"
+        assert discovered.json()["workload_classification_enabled"] is False
 
         updated = await client.patch(
             "/v1/admin/model-settings",
@@ -120,12 +128,14 @@ async def test_model_settings_routes_discover_and_persist(
                 "smart_routing_decision_model": "databricks-glm-5-2",
                 "smart_routing_prompt": "Choose the best configured model.",
                 "smart_routing_cadence": "first_turn_only",
+                "workload_classification_enabled": True,
             },
         )
         assert updated.status_code == 200
         assert updated.json()["smart_routing_decision_model"] == "databricks-glm-5-2"
         assert updated.json()["smart_routing_prompt"] == "Choose the best configured model."
         assert updated.json()["smart_routing_cadence"] == "first_turn_only"
+        assert updated.json()["workload_classification_enabled"] is True
 
         cleared = await client.patch(
             "/v1/admin/model-settings",
@@ -144,6 +154,7 @@ async def test_model_settings_routes_discover_and_persist(
     assert store.get().smart_routing_decision_model is None
     assert store.get().smart_routing_prompt == "Choose the best configured model."
     assert store.get().smart_routing_cadence == "first_turn_only"
+    assert store.get().workload_classification_enabled is True
     assert caps.llm.model == "databricks-gpt-5-4"
 
 

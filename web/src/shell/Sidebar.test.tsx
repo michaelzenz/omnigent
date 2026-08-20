@@ -269,27 +269,6 @@ function closeProjectsMenu() {
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 }
 
-function showPuppyGardenTab() {
-  fireEvent.click(screen.getByTestId("sidebar-tab-puppy-garden"));
-}
-
-function renderSidebarWithRoutes(initialEntry = "/") {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <TooltipProvider>
-        <MemoryRouter initialEntries={[initialEntry]}>
-          <Routes>
-            <Route path="/" element={<Sidebar open onClose={vi.fn()} />} />
-            <Route path="/puppy-garden" element={<Sidebar open onClose={vi.fn()} />} />
-            <Route path="/c/:conversationId" element={<Sidebar open onClose={vi.fn()} />} />
-          </Routes>
-        </MemoryRouter>
-      </TooltipProvider>
-    </QueryClientProvider>,
-  );
-}
-
 beforeEach(() => {
   useConvMock.mockReset();
   useHostsMock.mockReset();
@@ -673,6 +652,19 @@ describe("Sidebar session list", () => {
     renderSidebar();
 
     expect(screen.queryByTestId("usage-nav")).toBeNull();
+  });
+
+  it("always shows Statistics directly below Glossaries and highlights its route", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/statistics");
+
+    const glossaries = screen.getByTestId("sidebar-tab-glossaries");
+    const statistics = screen.getByTestId("statistics-nav");
+    expect(statistics).toHaveAttribute("href", "/statistics");
+    expect(statistics).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(glossaries.compareDocumentPosition(statistics) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("shows and highlights Usage navigation when the release feature is on", () => {

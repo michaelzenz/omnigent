@@ -26,7 +26,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 from fastapi import (
@@ -37,6 +37,9 @@ from fastapi import (
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, StatementError
+
+if TYPE_CHECKING:
+    from omnigent.server.routes._sessions.common import ServerRunnerInfrastructure
 
 from omnigent.cost_plan import (
     COST_CONTROL_LABEL_NAMESPACE,
@@ -4748,7 +4751,7 @@ async def ensure_session_runner_client(
     *,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
-    infrastructure: "ServerRunnerInfrastructure | None" = None,
+    infrastructure: ServerRunnerInfrastructure | None = None,
 ) -> tuple[httpx.AsyncClient | None, bool]:
     """Resolve a connected runner client, launching one when needed.
 
@@ -4767,10 +4770,7 @@ async def ensure_session_runner_client(
         should run :func:`_ensure_runner_session_initialized` before
         forwarding an event.
     """
-    from omnigent.server.routes._sessions.common import (
-        ServerRunnerInfrastructure,
-        get_server_runner_infrastructure,
-    )
+    from omnigent.server.routes._sessions.common import get_server_runner_infrastructure
 
     infra = infrastructure if infrastructure is not None else get_server_runner_infrastructure()
 
@@ -6986,7 +6986,7 @@ def _build_policy_engine_from_spec_impl(
     host_connection = (
         caps.policy_llm_connection_factory() if caps.policy_llm_connection_factory else None
     )
-    return build_policy_engine(
+    engine = build_policy_engine(
         spec=spec,
         conversation_id=session_id,
         conversation_store=conversation_store,
@@ -7000,6 +7000,34 @@ def _build_policy_engine_from_spec_impl(
         server_llm=caps.llm,
         host_connection=host_connection,
     )
+    if conversation is not None and _resolve_harness(conversation) in {
+        "omnigent",
+        "openai-agents",
+    }:
+        llm_client = getattr(engine, "_llm_client", None)
+        if llm_client is not None:
+            from omnigent.usage_ledger import record_omnigent_usage, response_usage
+
+            def _record_policy_usage(response: object, model: str) -> None:
+                try:
+                    record_omnigent_usage(
+                        conversation_store,
+                        session_id=session_id,
+                        turn_id=None,
+                        purpose="policy",
+                        model=model,
+                        workload=None,
+                        usage=response_usage(response),
+                    )
+                except (OSError, RuntimeError, ValueError, NotImplementedError):
+                    _logger.warning(
+                        "policy usage ledger write failed for session=%s",
+                        session_id,
+                        exc_info=True,
+                    )
+
+            llm_client._usage_recorder = _record_policy_usage
+    return engine
 
 
 async def _apply_pending_policy_ask_writes(

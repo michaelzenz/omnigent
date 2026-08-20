@@ -17,6 +17,7 @@ import contextvars
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
@@ -54,6 +55,7 @@ class _RoutingRequestOverrides:
 
     decision_model: str | None = None
     prompt: str | None = None
+    usage_recorder: Callable[[object, str | None], None] | None = None
 
 
 _routing_request_overrides: contextvars.ContextVar[_RoutingRequestOverrides | None] = (
@@ -636,6 +638,11 @@ class LLMRoutingClient:
                 ),
                 timeout=ROUTING_REQUEST_TIMEOUT_S,
             )
+            if request_overrides.usage_recorder is not None:
+                request_overrides.usage_recorder(
+                    response,
+                    request_overrides.decision_model or getattr(response, "model", None),
+                )
             text = next(
                 (
                     candidate
@@ -2298,6 +2305,7 @@ async def route_turn(
     allow_static_fallback: bool = True,
     decision_model: str | None = None,
     smart_routing_prompt: str | None = None,
+    usage_recorder: Callable[[object, str | None], None] | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Pick the best model for a turn via the deployment's routing backends.
 
@@ -2423,6 +2431,7 @@ async def route_turn(
         _RoutingRequestOverrides(
             decision_model=decision_model,
             prompt=request_prompt,
+            usage_recorder=usage_recorder,
         )
     )
     try:
@@ -2439,6 +2448,10 @@ async def route_turn(
         _catalog_fetched,
         sum(len(models) for models in available.values()),
     )
+    if call is not None and call.source != "oss-llm" and usage_recorder is not None:
+        # External routing APIs do not expose token usage. Preserve the call as
+        # explicitly unpriced instead of silently dropping it from statistics.
+        usage_recorder({}, decision_model)
     if call is None or call.result is None:
         return None, None
     result = call.result

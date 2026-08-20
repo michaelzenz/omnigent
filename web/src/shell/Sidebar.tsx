@@ -17,6 +17,7 @@ import {
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BarChart3Icon,
   BookOpenIcon,
   CheckIcon,
   CheckIcon as CheckMarkIcon,
@@ -301,6 +302,7 @@ function useActiveNavItem(): {
   isInboxPage: boolean;
   isTasksPage: boolean;
   isUsagePage: boolean;
+  isStatisticsPage: boolean;
   isPuppyGardenPage: boolean;
   isGlossariesPage: boolean;
   newSessionProjectName: string | null;
@@ -311,6 +313,7 @@ function useActiveNavItem(): {
   const isInboxPage = leaf === "inbox";
   const isTasksPage = leaf === "tasks";
   const isUsagePage = leaf === "usage";
+  const isStatisticsPage = leaf === "statistics";
   const isPuppyGardenPage = leaf === "puppy-garden";
   const isGlossariesPage = leaf === "glossaries";
   const isNewSessionRoute =
@@ -318,6 +321,7 @@ function useActiveNavItem(): {
     !isInboxPage &&
     !isTasksPage &&
     !isUsagePage &&
+    !isStatisticsPage &&
     !isPuppyGardenPage &&
     !isGlossariesPage;
   const requestedProject = isNewSessionRoute
@@ -333,6 +337,7 @@ function useActiveNavItem(): {
     isInboxPage,
     isTasksPage,
     isUsagePage,
+    isStatisticsPage,
     isPuppyGardenPage,
     isGlossariesPage,
     newSessionProjectName,
@@ -616,6 +621,7 @@ export function Sidebar({
     isInboxPage,
     isTasksPage,
     isUsagePage,
+    isStatisticsPage,
     isPuppyGardenPage,
     isGlossariesPage,
     newSessionProjectName,
@@ -997,6 +1003,29 @@ export function Sidebar({
                   )}
                 />
                 Glossaries
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                SIDEBAR_ROW,
+                "w-full justify-start border-0 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isStatisticsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="statistics-nav"
+            >
+              <Link to="/statistics" onClick={onNavClick}>
+                <BarChart3Icon
+                  className={cn(
+                    "ui-icon",
+                    isStatisticsPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                Statistics
               </Link>
             </Button>
             {usagePageEnabled && (

@@ -347,6 +347,8 @@ from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedE
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.telemetry.surface import classify_surface as _classify_surface
 
+_pending_omnigent_workloads: dict[str, tuple[str, str | None]] = {}
+
 
 async def _publish_and_wait_for_harness_elicitation(
     request: Request,
@@ -1260,6 +1262,34 @@ def _accumulate_session_usage(
                 # token counts when the harness reports them; compute_llm_cost
                 # prices them at their own (cheaper read / pricier write) rates.
                 cost_delta = compute_llm_cost(usage_obj, pricing)
+
+    pending_turn = _pending_omnigent_workloads.pop(session_id, None)
+    if (
+        pending_turn is not None
+        and conv is not None
+        and _resolve_harness(conv) in {"omnigent", "openai-agents"}
+    ):
+        try:
+            from omnigent.usage_ledger import record_omnigent_usage
+
+            record_omnigent_usage(
+                conversation_store,
+                session_id=session_id,
+                turn_id=pending_turn[0],
+                purpose="user_interaction",
+                model=llm_model,
+                workload=pending_turn[1],
+                usage=usage_obj,
+                provider_cost=(
+                    float(provider_cost) if isinstance(provider_cost, (int, float)) else None
+                ),
+            )
+        except (OSError, RuntimeError, ValueError, NotImplementedError):
+            _logger.warning(
+                "usage ledger write failed for session=%s",
+                session_id,
+                exc_info=True,
+            )
 
     # Build the delta dict and atomically apply it to the persisted
     # session_usage in a single DB transaction (SELECT FOR UPDATE on
@@ -4875,6 +4905,12 @@ async def _forward_event_to_runner(
         _omnigent_routing_settings is not None
         and _omnigent_routing_settings.smart_routing_cadence == "per_turn"
     )
+    _classify_workload = bool(
+        _omnigent_routing_settings is not None
+        and getattr(_omnigent_routing_settings, "workload_classification_enabled", False)
+    )
+    _selected_workload: str | None = None
+    _unified_selection_done = False
     _routed_model: str | None = None
     _routed_harness: str | None = None
     _verdict: dict[str, Any] | None = None
@@ -5041,10 +5077,15 @@ async def _forward_event_to_runner(
                     else None
                 )
                 _turn_route_err: str | None = None
-                if _profile_auto:
+                if _profile_auto or _classify_workload:
                     from omnigent.turn_selection import select_omnigent_turn
+                    from omnigent.usage_ledger import (
+                        canonical_purpose,
+                        record_omnigent_usage,
+                    )
 
-                    assert prompt_profile_store is not None
+                    if _profile_auto:
+                        assert prompt_profile_store is not None
                     _joint_catalog = _turn_catalog
                     if _joint_catalog is None and _turn_backed:
                         _joint_catalog = infer_models(_harness)
@@ -5055,20 +5096,56 @@ async def _forward_event_to_runner(
                     ]
                     _selection = await select_omnigent_turn(
                         _user_text,
-                        prompt_profile_store,
+                        prompt_profile_store if _profile_auto else None,
+                        select_profile=_profile_auto,
                         model_candidates=_joint_candidates,
+                        classify_workload=_classify_workload,
                         decision_model=_decision_model,
                         smart_routing_prompt=_routing_prompt,
                     )
-                    _apply_auto_profile(_selection.profile)
-                    _profile_selected_this_turn = True
+                    if _selection.profile is not None:
+                        _apply_auto_profile(_selection.profile)
+                        _profile_selected_this_turn = True
                     _routed_model = _selection.model
                     _verdict = _selection.model_verdict
+                    _selected_workload = _selection.workload
+                    _unified_selection_done = True
+                    record_omnigent_usage(
+                        conversation_store,
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        purpose=canonical_purpose(
+                            [
+                                *(["profile_selection"] if _profile_auto else []),
+                                *(["smart_routing"] if _selection.model is not None else []),
+                                *(["workload_classification"] if _classify_workload else []),
+                            ]
+                        ),
+                        model=_selection.decision_model or _decision_model,
+                        workload=_selected_workload,
+                        usage=_selection.usage or {},
+                    )
                 else:
                     # ``_or_decline``: a routing outage returns an error string
                     # rather than raising. Raised here it became a 500 on the
                     # events POST, so a router that was merely down cost the user
                     # a message that had already been persisted.
+                    from omnigent.usage_ledger import (
+                        record_omnigent_usage,
+                        response_usage,
+                    )
+
+                    def _record_routing_usage(response: object, model: str | None) -> None:
+                        record_omnigent_usage(
+                            conversation_store,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            purpose="smart_routing",
+                            model=model,
+                            workload=None,
+                            usage=response_usage(response),
+                        )
+
                     _routed_model, _verdict, _turn_route_err = await route_turn_or_decline(
                         _harness,
                         _user_text,
@@ -5079,6 +5156,7 @@ async def _forward_event_to_runner(
                         allow_static_fallback=_turn_backed,
                         decision_model=_decision_model,
                         smart_routing_prompt=_routing_prompt,
+                        usage_recorder=_record_routing_usage,
                     )
                 if _turn_route_err is not None:
                     # Not routed, and visibly so — the turn runs on the
@@ -5111,15 +5189,57 @@ async def _forward_event_to_runner(
                                 session_id,
                                 exc_info=True,
                             )
-    if _profile_auto and not _profile_selected_this_turn:
+    if (_profile_auto and not _profile_selected_this_turn) or (
+        _classify_workload and not _unified_selection_done
+    ):
         from omnigent.turn_selection import select_omnigent_turn
+        from omnigent.usage_ledger import canonical_purpose, record_omnigent_usage
 
-        assert prompt_profile_store is not None
-        _profile_selection = await select_omnigent_turn(
-            _extract_user_text_for_routing(body) or "",
-            prompt_profile_store,
-        )
-        _apply_auto_profile(_profile_selection.profile)
+        if _profile_auto:
+            assert prompt_profile_store is not None
+        try:
+            if _profile_auto and not _classify_workload:
+                _profile_selection = await select_omnigent_turn(
+                    _extract_user_text_for_routing(body) or "",
+                    prompt_profile_store,
+                )
+            else:
+                _profile_selection = await select_omnigent_turn(
+                    _extract_user_text_for_routing(body) or "",
+                    prompt_profile_store if _profile_auto else None,
+                    select_profile=_profile_auto,
+                    classify_workload=_classify_workload,
+                    decision_model=(
+                        _omnigent_routing_settings.smart_routing_decision_model
+                        if _omnigent_routing_settings is not None
+                        else None
+                    ),
+                )
+            if _profile_selection.profile is not None:
+                _apply_auto_profile(_profile_selection.profile)
+            _selected_workload = _profile_selection.workload
+            record_omnigent_usage(
+                conversation_store,
+                session_id=session_id,
+                turn_id=turn_id,
+                purpose=canonical_purpose(
+                    [
+                        *(["profile_selection"] if _profile_auto else []),
+                        *(["workload_classification"] if _classify_workload else []),
+                    ]
+                ),
+                model=_profile_selection.decision_model,
+                workload=_selected_workload,
+                usage=_profile_selection.usage or {},
+            )
+        except OmnigentError:
+            if _profile_auto:
+                raise
+            _logger.warning(
+                "workload classification failed for session=%s; continuing unclassified",
+                session_id,
+                exc_info=True,
+            )
     # ────────────────────────────────────────────────────────────────
     if effective_runner_override is not None:
         runner_body["model_override"] = effective_runner_override
@@ -5141,6 +5261,9 @@ async def _forward_event_to_runner(
         body.data["execution_context"] = _execution_context
         forwarded_data["execution_context"] = _execution_context
         runner_body["execution_context"] = _execution_context
+
+    if _harness in {"omnigent", "openai-agents"} and body.data.get("role") == "user":
+        _pending_omnigent_workloads[session_id] = (turn_id, _selected_workload)
 
     # Keep invariant I1 (persist before forwarding), while delaying the append
     # until routing has supplied the turn's effective model.
