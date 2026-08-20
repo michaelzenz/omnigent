@@ -46,6 +46,8 @@ class FakeModelSettingsStore(ModelSettingsStore):
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,
         update_workload_classification_enabled: bool = False,
+        workload_custom_categories: list[str] | None = None,
+        update_workload_custom_categories: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         del updated_by
@@ -74,6 +76,11 @@ class FakeModelSettingsStore(ModelSettingsStore):
                 bool(workload_classification_enabled)
                 if update_workload_classification_enabled
                 else self.settings.workload_classification_enabled
+            ),
+            workload_custom_categories=(
+                tuple(workload_custom_categories or ())
+                if update_workload_custom_categories
+                else self.settings.workload_custom_categories
             ),
         )
         return self.settings
@@ -119,6 +126,7 @@ async def test_model_settings_routes_discover_and_persist(
         assert discovered.json()["smart_routing_prompt"] == ""
         assert discovered.json()["smart_routing_cadence"] == "per_turn"
         assert discovered.json()["workload_classification_enabled"] is False
+        assert discovered.json()["workload_custom_categories"] == []
 
         updated = await client.patch(
             "/v1/admin/model-settings",
@@ -129,6 +137,7 @@ async def test_model_settings_routes_discover_and_persist(
                 "smart_routing_prompt": "Choose the best configured model.",
                 "smart_routing_cadence": "first_turn_only",
                 "workload_classification_enabled": True,
+                "workload_custom_categories": ["research", "incident_response"],
             },
         )
         assert updated.status_code == 200
@@ -136,6 +145,7 @@ async def test_model_settings_routes_discover_and_persist(
         assert updated.json()["smart_routing_prompt"] == "Choose the best configured model."
         assert updated.json()["smart_routing_cadence"] == "first_turn_only"
         assert updated.json()["workload_classification_enabled"] is True
+        assert updated.json()["workload_custom_categories"] == ["research", "incident_response"]
 
         cleared = await client.patch(
             "/v1/admin/model-settings",
@@ -155,6 +165,7 @@ async def test_model_settings_routes_discover_and_persist(
     assert store.get().smart_routing_prompt == "Choose the best configured model."
     assert store.get().smart_routing_cadence == "first_turn_only"
     assert store.get().workload_classification_enabled is True
+    assert store.get().workload_custom_categories == ("research", "incident_response")
     assert caps.llm.model == "databricks-gpt-5-4"
 
 
@@ -181,7 +192,17 @@ async def test_model_settings_route_validates_smart_routing_fields() -> None:
             "/v1/admin/model-settings",
             json={"smart_routing_prompt": "p" * 20_001},
         )
+        invalid_category = await client.patch(
+            "/v1/admin/model-settings",
+            json={"workload_custom_categories": ["Not valid"]},
+        )
+        built_in_category = await client.patch(
+            "/v1/admin/model-settings",
+            json={"workload_custom_categories": ["debug"]},
+        )
 
     assert invalid_cadence.status_code == 422
     assert long_model.status_code == 422
     assert long_prompt.status_code == 422
+    assert invalid_category.status_code == 422
+    assert built_in_category.status_code == 422

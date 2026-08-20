@@ -35,7 +35,7 @@ class OmniHarnessTurnSelection:
     decision_model: str | None = None
 
 
-_WORKLOADS = (
+DEFAULT_WORKLOAD_CATEGORIES = (
     "development",
     "debug",
     "code_review",
@@ -50,6 +50,7 @@ def _selection_contract(
     select_profile: bool,
     select_model: bool,
     classify_workload: bool,
+    workload_categories: Sequence[str] = DEFAULT_WORKLOAD_CATEGORIES,
 ) -> tuple[str, dict[str, object]]:
     profile_instructions = (
         "Select the single best prompt profile for the user's current input. "
@@ -90,7 +91,7 @@ Return strict JSON matching the supplied schema."""
         )
         required.extend(["model", "rationale"])
     if classify_workload:
-        properties["workload"] = {"type": "string", "enum": list(_WORKLOADS)}
+        properties["workload"] = {"type": "string", "enum": list(workload_categories)}
         required.append("workload")
     return instructions, {
         "type": "object",
@@ -122,6 +123,7 @@ async def select_omniharness_turn(
     select_profile: bool = True,
     model_candidates: Sequence[str] | None = None,
     classify_workload: bool = False,
+    workload_categories: Sequence[str] | None = None,
     decision_model: str | None = None,
     smart_routing_prompt: str | None = None,
 ) -> OmniHarnessTurnSelection:
@@ -147,11 +149,15 @@ async def select_omniharness_turn(
             code=ErrorCode.CONFLICT,
         )
     candidates = list(dict.fromkeys(model_candidates or ()))
+    categories = list(dict.fromkeys(workload_categories or DEFAULT_WORKLOAD_CATEGORIES))
+    if not categories:
+        categories = list(DEFAULT_WORKLOAD_CATEGORIES)
     select_model = bool(candidates)
     instructions, schema = _selection_contract(
         select_profile=select_profile,
         select_model=select_model,
         classify_workload=classify_workload,
+        workload_categories=categories,
     )
     selection_context: dict[str, object] = {
         "user_input": user_input,
@@ -171,7 +177,7 @@ async def select_omniharness_turn(
             smart_routing_prompt or ""
         ).strip() or DEFAULT_SMART_ROUTING_PROMPT
     if classify_workload:
-        selection_context["workload_categories"] = list(_WORKLOADS)
+        selection_context["workload_categories"] = categories
     try:
         llm = build_server_llm_client(server_llm)
         if llm is None:
@@ -243,8 +249,8 @@ async def select_omniharness_turn(
         else None
     )
     workload = verdict.get("workload") if classify_workload else None
-    if classify_workload and workload not in _WORKLOADS:
-        workload = "other"
+    if classify_workload and workload not in categories:
+        workload = "other" if "other" in categories else categories[-1]
     from omnigent.usage_ledger import response_usage
 
     return OmniHarnessTurnSelection(

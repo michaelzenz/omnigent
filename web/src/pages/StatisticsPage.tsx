@@ -5,8 +5,18 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   Loader2Icon,
+  XIcon,
 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { PageScroll } from "@/components/PageScroll";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +41,43 @@ import type {
   StatisticsBreakdown,
   StatisticsReport,
 } from "@/lib/statisticsApi";
+
+const BUILT_IN_WORKLOAD_CATEGORIES = [
+  "development",
+  "debug",
+  "code_review",
+  "data_science",
+  "document_review",
+  "other",
+] as const;
+
+const CHART_CATEGORY_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--brand-accent)",
+] as const;
+
+function chartCategoryColor(index: number): string {
+  if (index < CHART_CATEGORY_COLORS.length) return CHART_CATEGORY_COLORS[index];
+  return `oklch(0.68 0.15 ${(index * 137.508) % 360})`;
+}
+
+function workloadCategoryLabel(category: string): string {
+  return category
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function normalizeWorkloadCategory(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
 
 function currentMonth(): string {
   const now = new Date();
@@ -212,7 +259,11 @@ function BreakdownSection({
                   content={<ChartTooltip />}
                   cursor={{ fill: "var(--accent)", opacity: 0.35 }}
                 />
-                <Bar dataKey="cost" fill="var(--primary)" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
+                  {chartData.map((entry, index) => (
+                    <Cell key={entry.name} fill={chartCategoryColor(index)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -362,12 +413,13 @@ function PricingDialog({ pricing, month }: { pricing: EnabledModelPricing[]; mon
           Cost / token
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle>Enabled Omnigent model pricing</DialogTitle>
+          <DialogTitle>Enabled OmniHarness model pricing</DialogTitle>
           <DialogDescription>
             Effective rates for enabled models. Pricing edits affect future calls only; historical
-            monthly costs remain unchanged.
+            monthly costs remain unchanged. If a provider does not list a separate cache-write
+            price, use its regular input price.
           </DialogDescription>
         </DialogHeader>
         {pricing.length === 0 ? (
@@ -376,7 +428,7 @@ function PricingDialog({ pricing, month }: { pricing: EnabledModelPricing[]; mon
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[840px] text-left text-xs">
+            <table className="w-full min-w-[800px] text-left text-xs">
               <thead className="bg-muted/50 text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 font-medium" scope="col">
@@ -461,18 +513,26 @@ function PricingDialog({ pricing, month }: { pricing: EnabledModelPricing[]; mon
                         </>
                       ) : (
                         <>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {displayRate(row.inputPerMillion)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {displayRate(row.outputPerMillion)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {displayRate(row.cacheReadPerMillion)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {displayRate(row.cacheWritePerMillion)}
-                          </td>
+                          {(
+                            [
+                              ["Input", row.inputPerMillion],
+                              ["Output", row.outputPerMillion],
+                              ["Cache read", row.cacheReadPerMillion],
+                              ["Cache write", row.cacheWritePerMillion],
+                            ] as const
+                          ).map(([label, value]) => (
+                            <td className="px-3 py-2 text-right tabular-nums" key={label}>
+                              <button
+                                type="button"
+                                className="rounded px-1 py-0.5 underline decoration-dotted underline-offset-4 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                aria-label={`Edit ${label.toLowerCase()} price for ${row.displayName}`}
+                                disabled={pending}
+                                onClick={() => beginEdit(row)}
+                              >
+                                {displayRate(value)}
+                              </button>
+                            </td>
+                          ))}
                           <td className="px-3 py-2 text-right">
                             <div className="flex justify-end gap-1">
                               <Button
@@ -530,6 +590,8 @@ function PricingDialog({ pricing, month }: { pricing: EnabledModelPricing[]; mon
 
 export function StatisticsPage() {
   const [month, setMonth] = useState(currentMonth);
+  const [workloadCategoryInput, setWorkloadCategoryInput] = useState("");
+  const [workloadCategoryError, setWorkloadCategoryError] = useState<string | null>(null);
   const report = useStatisticsReport(month);
   const modelSettings = useAdminModelSettings();
   const updateModelSettings = useUpdateAdminModelSettings();
@@ -538,6 +600,36 @@ export function StatisticsPage() {
     modelSettings.data?.workloadClassificationEnabled ??
     data?.workloadClassificationEnabled ??
     false;
+  const customWorkloadCategories = modelSettings.data?.workloadCustomCategories ?? [];
+  const addWorkloadCategory = () => {
+    const category = normalizeWorkloadCategory(workloadCategoryInput);
+    const allCategories = [...BUILT_IN_WORKLOAD_CATEGORIES, ...customWorkloadCategories];
+    if (!/^[a-z][a-z0-9_]{0,31}$/.test(category)) {
+      setWorkloadCategoryError(
+        "Use up to 32 letters, numbers, or underscores, starting with a letter.",
+      );
+      return;
+    }
+    if (allCategories.includes(category)) {
+      setWorkloadCategoryError("That category already exists.");
+      return;
+    }
+    if (customWorkloadCategories.length >= 20) {
+      setWorkloadCategoryError("You can add up to 20 custom categories.");
+      return;
+    }
+    setWorkloadCategoryError(null);
+    updateModelSettings.mutate(
+      { workloadCustomCategories: [...customWorkloadCategories, category] },
+      { onSuccess: () => setWorkloadCategoryInput("") },
+    );
+  };
+  const removeWorkloadCategory = (category: string) => {
+    setWorkloadCategoryError(null);
+    updateModelSettings.mutate({
+      workloadCustomCategories: customWorkloadCategories.filter((item) => item !== category),
+    });
+  };
   const months = useMemo(
     () => Array.from(new Set([...(data?.availableMonths ?? []), month])).sort(),
     [data?.availableMonths, month],
@@ -719,21 +811,94 @@ export function StatisticsPage() {
               </div>
             }
             disabledGuidance={
-              <div
-                className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
-                data-testid="workload-monitoring-guidance"
-              >
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
-                <p>
-                  Workload monitoring uses an agent call and consumes tokens and cost.{" "}
-                  {!workloadEnabled &&
-                    (data.byWorkload.length > 0
-                      ? "Monitoring is currently off; historical classifications for this month remain visible."
-                      : "Monitoring is off, so new turns remain unclassified.")}
-                  {modelSettings.isError &&
-                    " The current monitoring setting could not be loaded; retry from Models settings."}
-                </p>
-              </div>
+              <>
+                <div
+                  className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                  data-testid="workload-monitoring-guidance"
+                >
+                  <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <p>
+                    Workload monitoring uses an agent call and consumes tokens and cost.{" "}
+                    {!workloadEnabled &&
+                      (data.byWorkload.length > 0
+                        ? "Monitoring is currently off; historical classifications for this month remain visible."
+                        : "Monitoring is off, so new turns remain unclassified.")}
+                    {modelSettings.isError &&
+                      " The current monitoring setting could not be loaded; retry from Models settings."}
+                  </p>
+                </div>
+                <div className="mt-3 rounded-lg border border-border px-3 py-3">
+                  <p className="text-xs font-medium">Workload categories</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Built-in categories are always available. Add categories that match your own
+                    work.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {BUILT_IN_WORKLOAD_CATEGORIES.map((category) => (
+                      <span
+                        key={category}
+                        className="rounded-full bg-muted px-2 py-1 text-10 text-muted-foreground"
+                      >
+                        {workloadCategoryLabel(category)}
+                      </span>
+                    ))}
+                    {customWorkloadCategories.map((category) => (
+                      <span
+                        key={category}
+                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-10 text-primary"
+                      >
+                        {workloadCategoryLabel(category)}
+                        <button
+                          type="button"
+                          aria-label={`Remove ${workloadCategoryLabel(category)} workload category`}
+                          disabled={updateModelSettings.isPending}
+                          onClick={() => removeWorkloadCategory(category)}
+                          className="rounded-full hover:bg-primary/10 disabled:opacity-50"
+                        >
+                          <XIcon className="size-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <form
+                    className="mt-2 flex max-w-md gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      addWorkloadCategory();
+                    }}
+                  >
+                    <Input
+                      value={workloadCategoryInput}
+                      onChange={(event) => {
+                        setWorkloadCategoryInput(event.target.value);
+                        setWorkloadCategoryError(null);
+                      }}
+                      disabled={modelSettings.isLoading || updateModelSettings.isPending}
+                      maxLength={32}
+                      placeholder="e.g. research"
+                      aria-label="New workload category"
+                      className="h-8"
+                    />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        modelSettings.isLoading ||
+                        updateModelSettings.isPending ||
+                        workloadCategoryInput.trim() === ""
+                      }
+                    >
+                      Add
+                    </Button>
+                  </form>
+                  {(workloadCategoryError || updateModelSettings.isError) && (
+                    <p className="mt-1.5 text-xs text-destructive" role="alert">
+                      {workloadCategoryError ?? "Could not update workload categories. Try again."}
+                    </p>
+                  )}
+                </div>
+              </>
             }
           />
         </div>

@@ -17,6 +17,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
     assert settings.smart_routing_prompt == ""
     assert settings.smart_routing_cadence == "per_turn"
     assert settings.workload_classification_enabled is False
+    assert settings.workload_custom_categories == ()
 
     updated = store.update(
         harness="omniharness",
@@ -29,6 +30,8 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
         update_smart_routing_cadence=True,
         workload_classification_enabled=True,
         update_workload_classification_enabled=True,
+        workload_custom_categories=["research", "incident_response", "research"],
+        update_workload_custom_categories=True,
         updated_by="admin",
     )
 
@@ -38,6 +41,7 @@ def test_model_settings_store_reads_seed_and_updates(db_uri: str) -> None:
     assert updated.smart_routing_prompt == "Choose the best model."
     assert updated.smart_routing_cadence == "first_turn_only"
     assert updated.workload_classification_enabled is True
+    assert updated.workload_custom_categories == ("research", "incident_response")
     assert store.get() == updated
 
     cleared = store.update(

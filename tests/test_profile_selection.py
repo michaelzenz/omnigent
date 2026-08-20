@@ -221,15 +221,17 @@ async def test_workload_only_selection_uses_one_call(
     class LLM:
         def __init__(self) -> None:
             self.calls = 0
+            self.kwargs: dict[str, object] = {}
 
-        async def create(self, **_kwargs: object) -> SimpleNamespace:
+        async def create(self, **kwargs: object) -> SimpleNamespace:
             self.calls += 1
+            self.kwargs = kwargs
             return SimpleNamespace(
                 model="judge",
                 usage=SimpleNamespace(input_tokens=12, output_tokens=3),
                 output=[
                     SimpleNamespace(
-                        content=[SimpleNamespace(text=json.dumps({"workload": "debug"}))]
+                        content=[SimpleNamespace(text=json.dumps({"workload": "research"}))]
                     )
                 ],
             )
@@ -248,13 +250,17 @@ async def test_workload_only_selection_uses_one_call(
         "diagnose this failure",
         select_profile=False,
         classify_workload=True,
+        workload_categories=["debug", "research", "other"],
         decision_model="judge",
     )
 
     assert llm.calls == 1
     assert selection.profile is None
     assert selection.model is None
-    assert selection.workload == "debug"
+    assert selection.workload == "research"
+    assert json.loads(str(llm.kwargs["input"][0]["content"][0]["text"]))[
+        "workload_categories"
+    ] == ["debug", "research", "other"]
     assert selection.usage == {
         "input_tokens": 12,
         "output_tokens": 3,

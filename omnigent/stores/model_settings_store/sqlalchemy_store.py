@@ -26,13 +26,19 @@ def _decode(row: SqlModelSettings) -> ModelSettings:
         if not all(isinstance(model, str) for model in models):
             raise ValueError("model_settings.harness_models contains invalid model ids")
         harness_models[harness] = list(models)
+    workload_categories = json.loads(row.workload_custom_categories)
+    if not isinstance(workload_categories, list) or not all(
+        isinstance(category, str) for category in workload_categories
+    ):
+        raise ValueError("model_settings.workload_custom_categories must be a string list")
     return ModelSettings(
         harness_models=harness_models,
         policy_model=row.policy_model,
         smart_routing_decision_model=row.smart_routing_decision_model,
         smart_routing_prompt=row.smart_routing_prompt,
         smart_routing_cadence=row.smart_routing_cadence,
-        workload_classification_enabled=bool(row.workload_classification_enabled),
+        workload_classification_enabled=row.workload_classification_enabled,
+        workload_custom_categories=tuple(workload_categories),
     )
 
 
@@ -69,6 +75,8 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,
         update_workload_classification_enabled: bool = False,
+        workload_custom_categories: list[str] | None = None,
+        update_workload_custom_categories: bool = False,
         updated_by: str | None = None,
     ) -> ModelSettings:
         if (harness is None) != (enabled_models is None):
@@ -98,6 +106,13 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
                 if workload_classification_enabled is None:
                     raise ValueError("workload classification enabled must be a boolean")
                 row.workload_classification_enabled = workload_classification_enabled
+            if update_workload_custom_categories:
+                if workload_custom_categories is None:
+                    raise ValueError("workload custom categories must be a list")
+                row.workload_custom_categories = json.dumps(
+                    list(dict.fromkeys(workload_custom_categories)),
+                    separators=(",", ":"),
+                )
             row.updated_at = now_epoch()
             row.updated_by = updated_by
             return _decode(row)

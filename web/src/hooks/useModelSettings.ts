@@ -14,6 +14,7 @@ export interface AdminModelSettings {
   models: ModelOption[];
   omniharnessModels: string[];
   workloadClassificationEnabled?: boolean;
+  workloadCustomCategories?: string[];
   policyModel: string | null;
   smartRoutingDecisionModel: string | null;
   smartRoutingPrompt: string | null;
@@ -38,6 +39,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     models: WireModelOption[];
     omniharness_models: string[];
     workload_classification_enabled?: boolean;
+    workload_custom_categories?: string[];
     policy_model: string | null;
     smart_routing_decision_model: string | null;
     smart_routing_prompt: string | null;
@@ -53,6 +55,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     })),
     omniharnessModels: body.omniharness_models,
     workloadClassificationEnabled: body.workload_classification_enabled === true,
+    workloadCustomCategories: body.workload_custom_categories ?? [],
     policyModel: body.policy_model,
     smartRoutingDecisionModel: body.smart_routing_decision_model,
     smartRoutingPrompt: body.smart_routing_prompt,
@@ -96,6 +99,7 @@ export function useUpdateAdminModelSettings() {
     mutationFn: async (patch: {
       omniharnessModels?: string[];
       workloadClassificationEnabled?: boolean;
+      workloadCustomCategories?: string[];
       policyModel?: string | null;
       smartRoutingDecisionModel?: string | null;
       smartRoutingPrompt?: string | null;
@@ -110,6 +114,9 @@ export function useUpdateAdminModelSettings() {
             : {}),
           ...(patch.workloadClassificationEnabled !== undefined
             ? { workload_classification_enabled: patch.workloadClassificationEnabled }
+            : {}),
+          ...(patch.workloadCustomCategories !== undefined
+            ? { workload_custom_categories: patch.workloadCustomCategories }
             : {}),
           ...(patch.policyModel !== undefined ? { policy_model: patch.policyModel } : {}),
           ...(patch.smartRoutingDecisionModel !== undefined

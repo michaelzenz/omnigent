@@ -5074,7 +5074,10 @@ async def _forward_event_to_runner(
                 )
                 _turn_route_err: str | None = None
                 if _profile_auto or _classify_workload:
-                    from omnigent.omniharness_turn_selection import select_omniharness_turn
+                    from omnigent.omniharness_turn_selection import (
+                        DEFAULT_WORKLOAD_CATEGORIES,
+                        select_omniharness_turn,
+                    )
                     from omnigent.usage_ledger import (
                         canonical_purpose,
                         record_omniharness_usage,
@@ -5096,6 +5099,14 @@ async def _forward_event_to_runner(
                         select_profile=_profile_auto,
                         model_candidates=_joint_candidates,
                         classify_workload=_classify_workload,
+                        workload_categories=(
+                            *DEFAULT_WORKLOAD_CATEGORIES,
+                            *(
+                                _omniharness_routing_settings.workload_custom_categories
+                                if _omniharness_routing_settings is not None
+                                else ()
+                            ),
+                        ),
                         decision_model=_decision_model,
                         smart_routing_prompt=_routing_prompt,
                     )
@@ -5188,7 +5199,10 @@ async def _forward_event_to_runner(
     if (_profile_auto and not _profile_selected_this_turn) or (
         _classify_workload and not _unified_selection_done
     ):
-        from omnigent.omniharness_turn_selection import select_omniharness_turn
+        from omnigent.omniharness_turn_selection import (
+            DEFAULT_WORKLOAD_CATEGORIES,
+            select_omniharness_turn,
+        )
         from omnigent.usage_ledger import canonical_purpose, record_omniharness_usage
 
         if _profile_auto:
@@ -5205,6 +5219,14 @@ async def _forward_event_to_runner(
                     prompt_profile_store if _profile_auto else None,
                     select_profile=_profile_auto,
                     classify_workload=_classify_workload,
+                    workload_categories=(
+                        *DEFAULT_WORKLOAD_CATEGORIES,
+                        *(
+                            _omniharness_routing_settings.workload_custom_categories
+                            if _omniharness_routing_settings is not None
+                            else ()
+                        ),
+                    ),
                     decision_model=(
                         _omniharness_routing_settings.smart_routing_decision_model
                         if _omniharness_routing_settings is not None

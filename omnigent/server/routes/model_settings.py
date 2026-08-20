@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME
@@ -17,6 +17,7 @@ from omnigent.omniharness_model_catalog import (
     get_omniharness_model_metadata,
     refresh_omniharness_model_catalog,
 )
+from omnigent.omniharness_turn_selection import DEFAULT_WORKLOAD_CATEGORIES
 from omnigent.runtime import get_caps
 from omnigent.runtime.credentials.databricks import resolve_databricks_workspace
 from omnigent.server.auth import AuthProvider
@@ -24,6 +25,8 @@ from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.spec.types import LLMConfig
 from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
+
+_WORKLOAD_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
 class UpdateModelSettingsRequest(BaseModel):
@@ -35,6 +38,23 @@ class UpdateModelSettingsRequest(BaseModel):
     smart_routing_prompt: str | None = Field(default=None, max_length=20_000)
     smart_routing_cadence: Literal["per_turn", "first_turn_only"] = "per_turn"
     workload_classification_enabled: bool = False
+    workload_custom_categories: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator("workload_custom_categories")
+    @classmethod
+    def validate_workload_categories(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if len(value) != len(set(value)) or any(
+            not _WORKLOAD_CATEGORY_RE.fullmatch(category)
+            or category in DEFAULT_WORKLOAD_CATEGORIES
+            for category in value
+        ):
+            raise ValueError(
+                "custom categories must be unique lowercase identifiers up to "
+                "32 characters and cannot duplicate built-in categories"
+            )
+        return value
 
 
 class AdminModelSettingsResponse(BaseModel):
@@ -50,6 +70,7 @@ class AdminModelSettingsResponse(BaseModel):
     smart_routing_prompt: str | None
     smart_routing_cadence: Literal["per_turn", "first_turn_only"]
     workload_classification_enabled: bool
+    workload_custom_categories: list[str]
     error: str | None
 
 
@@ -63,6 +84,7 @@ class UpdatedModelSettingsResponse(BaseModel):
     smart_routing_prompt: str | None
     smart_routing_cadence: Literal["per_turn", "first_turn_only"]
     workload_classification_enabled: bool
+    workload_custom_categories: list[str]
 
 
 def _databricks_profile(config: dict[str, Any]) -> str | None:
@@ -234,6 +256,7 @@ def create_model_settings_router(
                 "smart_routing_prompt": settings.smart_routing_prompt,
                 "smart_routing_cadence": settings.smart_routing_cadence,
                 "workload_classification_enabled": settings.workload_classification_enabled,
+                "workload_custom_categories": list(settings.workload_custom_categories),
                 "error": None,
             }
         try:
@@ -254,6 +277,7 @@ def create_model_settings_router(
                 "smart_routing_prompt": settings.smart_routing_prompt,
                 "smart_routing_cadence": settings.smart_routing_cadence,
                 "workload_classification_enabled": settings.workload_classification_enabled,
+                "workload_custom_categories": list(settings.workload_custom_categories),
                 "error": str(exc),
             }
         return {
@@ -267,6 +291,7 @@ def create_model_settings_router(
             "smart_routing_prompt": settings.smart_routing_prompt,
             "smart_routing_cadence": settings.smart_routing_cadence,
             "workload_classification_enabled": settings.workload_classification_enabled,
+            "workload_custom_categories": list(settings.workload_custom_categories),
             "error": None,
         }
 
@@ -285,6 +310,8 @@ def create_model_settings_router(
         update_prompt = "smart_routing_prompt" in body.model_fields_set
         update_cadence = "smart_routing_cadence" in body.model_fields_set
         update_workload_classification = "workload_classification_enabled" in body.model_fields_set
+        update_workload_categories = "workload_custom_categories" in body.model_fields_set
+        custom_categories = list(dict.fromkeys(body.workload_custom_categories or []))
         workload_update = (
             {
                 "workload_classification_enabled": body.workload_classification_enabled,
@@ -305,6 +332,8 @@ def create_model_settings_router(
             update_smart_routing_prompt=update_prompt,
             smart_routing_cadence=body.smart_routing_cadence,
             update_smart_routing_cadence=update_cadence,
+            workload_custom_categories=custom_categories,
+            update_workload_custom_categories=update_workload_categories,
             updated_by=get_user_id(request, auth_provider),
             **workload_update,
         )
@@ -318,6 +347,7 @@ def create_model_settings_router(
             "smart_routing_prompt": settings.smart_routing_prompt,
             "smart_routing_cadence": settings.smart_routing_cadence,
             "workload_classification_enabled": settings.workload_classification_enabled,
+            "workload_custom_categories": list(settings.workload_custom_categories),
         }
 
     return router

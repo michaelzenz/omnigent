@@ -1349,6 +1349,11 @@ class SqlModelSettings(OmnigentBase):
         nullable=False,
         server_default=false(),
     )
+    workload_custom_categories: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="[]",
+    )
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 

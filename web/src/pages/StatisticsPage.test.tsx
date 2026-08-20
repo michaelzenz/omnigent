@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -39,7 +39,8 @@ vi.mock("recharts", () => ({
     <div data-testid="responsive-chart">{children}</div>
   ),
   BarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Bar: () => null,
+  Bar: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  Cell: ({ fill }: { fill: string }) => <div data-testid="chart-cell" data-fill={fill} />,
   CartesianGrid: () => null,
   Tooltip: () => null,
   XAxis: () => null,
@@ -147,7 +148,7 @@ beforeEach(() => {
     refetch: vi.fn(),
   }));
   settingsHook.mockReturnValue({
-    data: { workloadClassificationEnabled: false },
+    data: { workloadClassificationEnabled: false, workloadCustomCategories: [] },
     isLoading: false,
     isError: false,
   });
@@ -196,10 +197,13 @@ describe("StatisticsPage", () => {
 
     fireEvent.click(screen.getByTestId("statistics-pricing-trigger"));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText("Enabled Omnigent model pricing")).toBeInTheDocument();
+    expect(screen.getByText("Enabled OmniHarness model pricing")).toBeInTheDocument();
     expect(screen.getByText("Service price: Unknown")).toBeInTheDocument();
     expect(screen.getAllByText("Unknown")).toHaveLength(4);
+    expect(screen.getByText(/use its regular input price/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit input price for Model A" }));
+    expect(screen.getByLabelText("Input price per 1M for Model A")).toBeInTheDocument();
     expect(screen.getByText(/affect future calls only/i)).toBeInTheDocument();
   });
 
@@ -325,5 +329,56 @@ describe("StatisticsPage", () => {
     expect(screen.getByText(/historical classifications.*remain visible/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Enable workload monitoring" }));
     expect(updateMutate).toHaveBeenCalledWith({ workloadClassificationEnabled: true });
+  });
+
+  it("assigns distinct colors to breakdown bars", () => {
+    const report = reportFor();
+    report.byWorkload.push({
+      key: "debug",
+      label: "Debug",
+      costUsd: null,
+      totalTokens: 500,
+      calls: 1,
+      share: 0,
+    });
+    statisticsHook.mockReturnValue({
+      data: report,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+
+    const cells = within(screen.getByTestId("statistics-workload-chart")).getAllByTestId(
+      "chart-cell",
+    );
+    expect(cells.map((cell) => cell.dataset.fill)).toEqual(["var(--chart-1)", "var(--chart-2)"]);
+  });
+
+  it("adds and removes custom workload categories", () => {
+    settingsHook.mockReturnValue({
+      data: {
+        workloadClassificationEnabled: true,
+        workloadCustomCategories: ["incident_response"],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    expect(screen.getByText("Incident Response")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("New workload category"), {
+      target: { value: "Research Work" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(updateMutate).toHaveBeenCalledWith(
+      { workloadCustomCategories: ["incident_response", "research_work"] },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove Incident Response workload category" }),
+    );
+    expect(updateMutate).toHaveBeenCalledWith({ workloadCustomCategories: [] });
   });
 });
