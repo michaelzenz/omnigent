@@ -1902,7 +1902,7 @@ describe("Composer config gear", () => {
     await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
   });
 
-  it("switches SDK models directly from the composer label", async () => {
+  it("uses the composer selector for the execution target, not the SDK model", () => {
     const setModel = vi.fn().mockResolvedValue(undefined);
     useChatStore.setState({
       llmModel: "databricks-glm-5-2",
@@ -1914,15 +1914,15 @@ describe("Composer config gear", () => {
           showEffort: false,
           showModels: true,
           modelPickerKind: "sdk",
+          agents: [{ id: "a_omni", name: "OmniHarness" } as never],
+          selectedAgentId: "a_omni",
         })}
       />,
     );
 
-    expect(screen.getByTestId("composer-sdk-model-select")).toHaveTextContent("GLM 5.2");
-    fireEvent.click(screen.getByTestId("composer-sdk-model-select"));
-    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
-
-    await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
+    expect(screen.getByTestId("composer-execution-target-select")).toHaveTextContent("OmniHarness");
+    expect(screen.queryByTestId("composer-sdk-model-select")).toBeNull();
+    expect(setModel).not.toHaveBeenCalled();
   });
 
   it("uses the Default sentinel when Kiro marks no catalog row as default", async () => {

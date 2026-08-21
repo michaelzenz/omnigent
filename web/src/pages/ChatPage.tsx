@@ -21,6 +21,7 @@ import {
   ArrowUpToLineIcon,
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
   AlertTriangleIcon,
   CornerUpLeftIcon,
   CopyIcon,
@@ -90,6 +91,7 @@ import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
 import { OmniHarnessSystemPromptEditor } from "@/shell/OmniHarnessSystemPromptDialog";
+import { SwitchAgentDialog } from "@/shell/SwitchAgentDialog";
 import { attachmentKey, validateAttachments } from "@/lib/attachments";
 import { useSurfaceFrontmost } from "@/hooks/useNativeServerSwitcher";
 import {
@@ -3105,9 +3107,17 @@ export function JumpToTopButton({
   const jumpToLastMessage = useCallback(() => {
     if (!scroller) return;
     const { el, state } = scroller;
-    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-    state.isAtBottom = true;
-    state.escapedFromLock = false;
+    const userMessages = el.querySelectorAll<HTMLElement>(
+      '[data-role="user"][data-user-message-id]',
+    );
+    const lastUserMessage = userMessages.item(userMessages.length - 1);
+    if (!lastUserMessage) return;
+    // "Last message" means the beginning of the newest turn: align its user
+    // prompt with the roof and release the bottom lock so the assistant reply
+    // remains below it instead of snapping back to the transcript end.
+    state.isAtBottom = false;
+    state.escapedFromLock = true;
+    scrollToUserTurnStart(lastUserMessage);
   }, [scroller]);
 
   const jumpLabel = mode === "jump-to-top" ? "Jump to top" : "Jump to last message";
@@ -7321,76 +7331,34 @@ function useResolvedComposerModel(
   };
 }
 
-function ComposerSdkModelQuickSelect({
-  costRoutingEligible,
+function ComposerExecutionTargetQuickSelect({
   disabled,
-  sdkModelOptions,
+  harnessLabel,
 }: {
-  costRoutingEligible: boolean;
   disabled: boolean;
-  sdkModelOptions: readonly OmniHarnessModelOption[];
+  harnessLabel: string | null;
 }) {
-  const [pending, setPending] = useState(false);
-  const modelOverride = useChatStore((s) => s.sessionModelOverride);
-  const llmModel = useChatStore((s) => s.llmModel);
-  const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
-  const routingOn = costRoutingEligible && costControlModeOverride === "on";
-  const effectiveModel = modelOverride ?? llmModel;
-  const modelLabel =
-    sdkModelOptions.find((option) => option.id === effectiveModel)?.displayName ??
-    effectiveModel ??
-    "Default";
-  const defaultModelLabel =
-    sdkModelOptions.find((option) => option.id === llmModel)?.displayName ?? llmModel;
-  const value = routingOn ? MODEL_SELECT_SMART : (modelOverride ?? MODEL_SELECT_DEFAULT);
-
-  async function onChange(next: string) {
-    setPending(true);
-    try {
-      const store = useChatStore.getState();
-      if (next === MODEL_SELECT_SMART) {
-        await store.setCostControlMode("on");
-        return;
-      }
-      const model = next === MODEL_SELECT_DEFAULT ? null : next;
-      await store.setModel(model);
-      if (routingOn) await store.setCostControlMode("off");
-    } catch (error) {
-      showToast(
-        <span className="text-ui">
-          Failed to change model: {error instanceof Error ? error.message : "unknown error"}
-        </span>,
-      );
-    } finally {
-      setPending(false);
-    }
-  }
+  const [open, setOpen] = useState(false);
+  const conversationId = useChatStore((state) => state.conversationId);
 
   return (
-    <Select value={value} onValueChange={onChange} disabled={disabled || pending}>
-      <SelectTrigger
-        className="h-9 min-w-0 max-w-[220px] border-0 bg-transparent px-2.5 text-sm shadow-none md:h-8"
-        aria-label="Model"
-        data-testid="composer-sdk-model-select"
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        className="h-9 min-w-0 max-w-[220px] gap-2 px-2.5 text-sm font-normal md:h-8"
+        aria-label="Execution target"
+        data-testid="composer-execution-target-select"
+        disabled={disabled || conversationId === null}
+        onClick={() => setOpen(true)}
       >
-        <SelectValue>{routingOn ? SMART_ROUTING_LABEL : modelLabel}</SelectValue>
-      </SelectTrigger>
-      <SelectContent position="popper" align="end">
-        <SelectItem value={MODEL_SELECT_DEFAULT} data-model-id={MODEL_SELECT_DEFAULT}>
-          {defaultModelLabel ? `Default (${defaultModelLabel})` : "Default"}
-        </SelectItem>
-        {costRoutingEligible && (
-          <SelectItem value={MODEL_SELECT_SMART} data-model-id={MODEL_SELECT_SMART}>
-            {SMART_ROUTING_LABEL}
-          </SelectItem>
-        )}
-        {sdkModelOptions.map((option) => (
-          <SelectItem key={option.id} value={option.id} data-model-id={option.id}>
-            {option.displayName}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+        <span className="truncate">{harnessLabel ?? "OmniHarness"}</span>
+        <ChevronDownIcon className="size-4 shrink-0 opacity-60" />
+      </Button>
+      {open && conversationId && (
+        <SwitchAgentDialog sessionId={conversationId} open={open} onOpenChange={setOpen} />
+      )}
+    </>
   );
 }
 
@@ -7437,13 +7405,7 @@ function ComposerModelEffortLabel({
   );
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
   if (showModels && modelPickerKind === "sdk") {
-    return (
-      <ComposerSdkModelQuickSelect
-        costRoutingEligible={costRoutingEligible}
-        disabled={disabled}
-        sdkModelOptions={sdkModelOptions}
-      />
-    );
+    return <ComposerExecutionTargetQuickSelect disabled={disabled} harnessLabel={harnessLabel} />;
   }
   // Routing picks the model + effort per turn, so the label reads
   // "Smart Routing" with no pinned model/effort — matching the tooltip.

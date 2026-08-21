@@ -1014,13 +1014,21 @@ describe("JumpToTopButton", () => {
     expect(pill().className).toContain("pointer-events-none");
   });
 
-  it("can jump to the last message instead of loading older history", () => {
+  it("jumps to the newest user message at the top instead of the reply bottom", () => {
     const { container, scroll, scroller } = makeScroller({
       scrollTop: 300,
       scrollHeight: 1000,
       clientHeight: 400,
     });
     const metrics = scroll as unknown as { scrollTop: number };
+    scroll.style.overflowY = "auto";
+    const lastUserMessage = document.createElement("div");
+    lastUserMessage.dataset.role = "user";
+    lastUserMessage.dataset.userMessageId = "latest-turn";
+    vi.spyOn(lastUserMessage, "getBoundingClientRect").mockReturnValue(rect(120));
+    scroll.append(lastUserMessage);
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
 
     render(
       <JumpToTopButton
@@ -1037,8 +1045,9 @@ describe("JumpToTopButton", () => {
       document.querySelector<HTMLButtonElement>('button[aria-label="Jump to the last message"]')!,
     );
 
-    expect(metrics.scrollTop).toBe(600);
-    expect(scroller.state).toEqual({ isAtBottom: true, escapedFromLock: false });
+    expect(metrics.scrollTop).toBe(420);
+    expect(scroller.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+    window.matchMedia = originalMatchMedia;
   });
 
   it("releases the bottom-lock, pages in all history, then scrolls to the top", async () => {
