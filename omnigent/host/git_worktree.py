@@ -12,6 +12,7 @@ import codecs
 import errno
 import os
 import re
+import select
 import shlex
 import shutil
 import subprocess
@@ -403,6 +404,7 @@ def _run_git_streaming(
         return _run_git(args, cwd=cwd)
     argv = ["git", *args]
     stdout_parts: list[str] = []
+    git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
 
     def _emit(text: str) -> None:
         if text:
@@ -419,6 +421,7 @@ def _run_git_streaming(
                     proc = subprocess.Popen(
                         argv,
                         cwd=cwd,
+                        env=git_env,
                         stdin=subprocess.DEVNULL,
                         stdout=slave_fd,
                         stderr=slave_fd,
@@ -434,6 +437,14 @@ def _run_git_streaming(
             pending = ""
             try:
                 while True:
+                    readable, _, _ = select.select([master_fd], [], [], 0.1)
+                    if not readable:
+                        # A helper inherited the PTY after git exited. Waiting
+                        # for that unrelated process to close its copy would
+                        # leave a completed worktree stuck forever.
+                        if proc.poll() is not None:
+                            break
+                        continue
                     try:
                         chunk = os.read(master_fd, 4096)
                     except OSError as exc:
@@ -456,6 +467,7 @@ def _run_git_streaming(
             proc = subprocess.Popen(
                 argv,
                 cwd=cwd,
+                env=git_env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

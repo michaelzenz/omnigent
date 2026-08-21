@@ -115,7 +115,7 @@ import {
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { agentRootName, switchTargetCarriesHistory } from "@/lib/forkHarness";
-import { switchSessionAgent } from "@/lib/sessionsApi";
+import { getSessionSlim, switchSessionAgent } from "@/lib/sessionsApi";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -863,6 +863,54 @@ export function ChatPage() {
   const status = useChatStore((s) => s.status);
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
   const worktreeStatus = useChatStore((s) => s.worktreeStatus);
+  // Worktree status has one authority: the session snapshot. Poll only while
+  // creation is active; SSE remains responsible for low-latency log lines.
+  // This avoids ordering races between bind hydration and transient status
+  // events while still clearing the send gate promptly on ready/failed.
+  useEffect(() => {
+    if (
+      urlConvId === undefined ||
+      activeConversationId !== urlConvId ||
+      worktreeStatus?.stage !== "creating"
+    ) {
+      return;
+    }
+    const sessionId = urlConvId;
+    const controller = new AbortController();
+    let timer: number | null = null;
+    const poll = async (): Promise<void> => {
+      try {
+        const session = await getSessionSlim(sessionId, { signal: controller.signal });
+        if (
+          controller.signal.aborted ||
+          useChatStore.getState().conversationId !== sessionId
+        ) {
+          return;
+        }
+        const snapshotLogLines = session.worktreeStatus?.logLines ?? [];
+        useChatStore.setState((state) => ({
+          worktreeStatus: session.worktreeStatus ?? null,
+          worktreeLogLines:
+            snapshotLogLines.length > state.worktreeLogLines.length
+              ? snapshotLogLines
+              : state.worktreeLogLines,
+        }));
+      } catch {
+        // A transient snapshot failure is retried while the creating state remains.
+      }
+      if (
+        !controller.signal.aborted &&
+        useChatStore.getState().worktreeStatus?.stage === "creating"
+      ) {
+        timer = window.setTimeout(() => void poll(), 1000);
+      }
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [activeConversationId, urlConvId, worktreeStatus?.stage]);
   // True while the session's managed-sandbox launch is still running
   // (a failed launch is NOT "launching" — it gets normal unreachable
   // handling). Overrides the liveness-derived unreachable affordances
@@ -1003,8 +1051,8 @@ export function ChatPage() {
     // Gate the auto-send while the worktree is being created or has
     // failed — the runner hasn't launched yet (the background task
     // launches it after the worktree is ready). Sending now would POST
-    // to a session with no runner and fail. Once worktreeStatus clears
-    // (ready → null), the effect re-runs and sends. A failed worktree
+    // to a session with no runner and fail. Once worktreeStatus reaches
+    // ready, the effect re-runs and sends. A failed worktree
     // returns the consumed prompt to the composer in the effect below.
     if (worktreeStatus !== null) {
       return;
@@ -3674,7 +3722,7 @@ export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
  * streamed git output line in a capped-height scrollable box (not in
  * the chat transcript) while the background worktree task runs. On
  * failure, shows the error reason. Auto-dismisses once the worktree
- * is ready (``worktreeStatus`` clears to ``null``).
+ * and runner are ready (``worktreeStatus`` clears to ``null``).
  */
 export function WorktreeCreationPanel({
   status,

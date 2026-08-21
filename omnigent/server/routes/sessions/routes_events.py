@@ -2231,6 +2231,9 @@ def register_events_routes(
         # failed-launch session would leak one entry for the process
         # lifetime.
         _session_sandbox_status_cache.pop(session_id, None)
+        # Worktree logs, including successful runs, remain available for
+        # session revisits and must be released with the deleted session.
+        _session_worktree_status_cache.pop(session_id, None)
         # Same for MCP startup state: failed/cancelled maps are retained
         # for reload visibility while the session exists, so a session
         # whose MCP startup never settled clean would leak its entry.

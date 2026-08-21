@@ -5272,15 +5272,8 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       }));
       return;
     case "session_worktree_status":
-      // Advance the worktree-creation status. `ready` clears it — the
-      // workspace is patched and the runner is launching; `failed`
-      // retains the reason.
-      applyToConversation({
-        worktreeStatus:
-          event.stage === "ready"
-            ? null
-            : { stage: event.stage, branch: event.branch ?? null, error: event.error ?? null },
-      });
+      // Worktree status is snapshot-polled while creating. Keeping one
+      // authority avoids racing this transient event against bind hydration.
       return;
     case "session_mcp_startup": {
       // Mirror the harness's per-MCP-server startup map. Cleared once
@@ -5536,31 +5529,12 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
               };
             }
           }
-          // Clear ALL pending user messages on terminal status. Any
-          // message still pending when the session reaches idle was
-          // either consumed (input.consumed event raced ahead) or
-          // denied by policy (no input.consumed fires). In both
-          // cases, keeping it in pendingUserMessages would leave a
-          // dangling optimistic bubble in the transcript. (The
-          // "Working…" indicator no longer reads this — it tracks
-          // session.status directly — but the bubble cleanup still
-          // matters.)
-          //
-          // EXCEPT native-terminal sessions (claude/codex-native): their
-          // web message isn't persisted at POST time — it round-trips
-          // through the vendor TUI and is reconciled by the transcript
-          // forwarder's session.input.consumed event, which can arrive
-          // AFTER a transient idle/failed (Claude cold-start on resume,
-          // runner-relaunch status churn). Clearing here would drop the
-          // optimistic bubble before its consumed event lands, leaving a
-          // multi-second gap until the committed item re-renders. Native
-          // pending bubbles are reconciled by that consumed event (+ the
-          // server-side pending_inputs TTL), and native denials roll back
-          // via the POST `denied` response — so the idle-clear is never
-          // needed for them and only races the round-trip.
-          if (!s.isNativeTerminalSession && s.pendingUserMessages.length > 0) {
-            patch.pendingUserMessages = [];
-          }
+          // Do not clear optimistic bubbles on a terminal status edge. During
+          // runner reconnects, idle/failed can arrive before the delayed
+          // session.input.consumed event even for SDK harnesses; clearing here
+          // makes the sent message disappear until that event recreates it.
+          // The consumed handler owns promotion, while policy denial and POST
+          // failure each have their own explicit rollback paths.
         }
         // Surface the error inline when the harness reports a terminal failure
         // with a structured error payload (e.g. token expiration on startup).

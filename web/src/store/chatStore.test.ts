@@ -817,6 +817,55 @@ describe("chatStore — switchTo", () => {
     expect(useChatStore.getState().blocks).toHaveLength(1);
   });
 
+  it("keeps worktree progress scoped to its conversation across warm switches", async () => {
+    seedSession("conv_worktree", []);
+    seedSession("conv_other", []);
+
+    await useChatStore.getState().switchTo("conv_worktree");
+    useChatStore.setState({
+      worktreeStatus: {
+        stage: "creating",
+        branch: "feature/logs",
+        error: null,
+      },
+    });
+    handleSessionEvent({
+      type: "session_worktree_log",
+      conversationId: "conv_worktree",
+      line: "Updating files: 42%",
+    });
+
+    await useChatStore.getState().switchTo("conv_other");
+    expect(useChatStore.getState().worktreeStatus).toBeNull();
+    expect(useChatStore.getState().worktreeLogLines).toEqual([]);
+
+    await useChatStore.getState().switchTo("conv_worktree");
+    expect(useChatStore.getState().worktreeStatus).toEqual({
+      stage: "creating",
+      branch: "feature/logs",
+      error: null,
+    });
+    expect(useChatStore.getState().worktreeLogLines).toEqual(["Updating files: 42%"]);
+  });
+
+  it("leaves worktree status to snapshot polling instead of SSE ordering", async () => {
+    seedSession("conv_worktree_status", []);
+    await useChatStore.getState().switchTo("conv_worktree_status");
+    useChatStore.setState({
+      worktreeStatus: { stage: "creating", branch: "feature/status", error: null },
+    });
+
+    handleSessionEvent({
+      type: "session_worktree_status",
+      conversationId: "conv_worktree_status",
+      stage: "ready",
+      branch: "feature/status",
+      error: null,
+    });
+
+    expect(useChatStore.getState().worktreeStatus?.stage).toBe("creating");
+  });
+
   it("hydrates pendingUserMessages from the snapshot's pending_inputs (native rebind)", async () => {
     // The core fix: a native web message that hasn't round-tripped
     // through the transcript yet is replayed by the server in
@@ -3691,29 +3740,33 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       expect(useChatStore.getState().sessionStatus).toBe("waiting");
     });
 
-    it("idle clears local streaming when no active response will send response_end", () => {
-      useChatStore.setState({
-        status: "streaming",
-        activeResponse: null,
-        pendingUserMessages: [
-          { tempId: "pend_policy_denied", content: [{ type: "input_text", text: "blocked" }] },
-        ],
-      });
+    it.each(["idle", "failed", "waiting"] as const)(
+      "%s settles local streaming without clearing a lagging optimistic bubble",
+      (terminalStatus) => {
+        useChatStore.setState({
+          status: "streaming",
+          activeResponse: null,
+          pendingUserMessages: [
+            { tempId: "pend_reconnect", content: [{ type: "input_text", text: "hello again" }] },
+          ],
+        });
 
-      handleSessionEvent({
-        type: "session_status",
-        conversationId: "conv_abc",
-        status: "idle",
-      });
+        handleSessionEvent({
+          type: "session_status",
+          conversationId: "conv_abc",
+          status: terminalStatus,
+        });
 
-      const state = useChatStore.getState();
-      // INPUT policy DENY publishes running/idle without response_end or
-      // session.input.consumed. Terminal status must therefore settle the
-      // local streaming flag and drop the dangling optimistic bubble when
-      // no active response exists.
-      expect(state.status).toBe("idle");
-      expect(state.pendingUserMessages).toEqual([]);
-    });
+        const state = useChatStore.getState();
+        // Reconnect status churn may reach idle before session.input.consumed.
+        // Settle the response lifecycle but keep the stable optimistic bubble
+        // for the consumed handler to promote without a visible gap.
+        expect(state.status).toBe("idle");
+        expect(state.pendingUserMessages).toEqual([
+          { tempId: "pend_reconnect", content: [{ type: "input_text", text: "hello again" }] },
+        ]);
+      },
+    );
 
     it("idle does NOT clear the optimistic bubble on a native-terminal session", () => {
       // Native (claude/codex-native) web messages aren't persisted at POST

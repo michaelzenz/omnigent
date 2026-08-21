@@ -110,6 +110,20 @@ def test_deregister_poisons_outbound_queue() -> None:
     assert conn.outbound_queue.get_nowait() is None
 
 
+@pytest.mark.asyncio
+async def test_deregister_releases_pending_worktree_operation() -> None:
+    """A tunnel drop must not leave an unlimited worktree wait stuck."""
+    registry = HostRegistry()
+    conn = registry.register("host_worktree", FakeWebSocket(), _make_hello(), owner="bob")
+    pending: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
+    conn.pending_create_worktrees["request-1"] = pending
+
+    assert registry.deregister("host_worktree") is True
+    with pytest.raises(ConnectionError, match="disconnected during worktree operation"):
+        await pending
+    assert conn.pending_create_worktrees == {}
+
+
 def test_deregister_returns_false_for_unknown() -> None:
     """
     Verify that deregister reports whether it removed an entry.

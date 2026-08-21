@@ -1720,8 +1720,8 @@ class SandboxStatus(BaseModel):
     error: str | None = None
 
 
-# Stages of an async git-worktree creation: ``creating`` while git runs,
-# then terminal ``ready`` (workspace patched, runner launching) or ``failed``.
+# Stages of async git-worktree launch: ``creating`` while git runs and the
+# runner starts, then terminal ``ready`` or ``failed``.
 WorktreeLaunchStage = Literal[
     "creating",
     "ready",
@@ -1732,13 +1732,13 @@ WorktreeLaunchStage = Literal[
 class WorktreeStatus(BaseModel):
     """Git-worktree creation progress for a host-bound session.
 
-    Carried on the session snapshot only while the session's background
-    worktree creation is in flight or has failed; ``None`` for sessions
-    without a pending worktree and once the worktree succeeds.
+    Carried on the session snapshot while background worktree and runner
+    launch is in flight or has failed; ``None`` for sessions without a
+    pending worktree and once launch succeeds.
 
     :param stage: Current stage: ``"creating"`` while git runs on the
-        host, ``"ready"`` once the worktree is created and the workspace
-        patched, or ``"failed"`` on a git error.
+        host and its runner starts, ``"ready"`` once launch succeeds, or
+        ``"failed"`` on a git or runner-launch error.
     :param branch: The branch being created, e.g. ``"feature/login"``.
     :param error: Failure detail when ``stage == "failed"``, e.g.
         ``"branch already exists"``. ``None`` otherwise.

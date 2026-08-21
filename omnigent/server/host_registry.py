@@ -324,6 +324,25 @@ class HostConnection:
     )
 
 
+def _fail_pending_worktree_operations(conn: HostConnection) -> None:
+    """Release worktree requests that can no longer receive a tunnel reply."""
+    def _fail(future: asyncio.Future[dict[str, Any]]) -> None:
+        if not future.done():
+            future.set_exception(
+                ConnectionError(f"host '{conn.host_id}' disconnected during worktree operation")
+            )
+
+    for pending in (
+        conn.pending_create_worktrees,
+        conn.pending_remove_worktrees,
+        conn.pending_list_worktrees,
+    ):
+        for future in pending.values():
+            future.get_loop().call_soon_threadsafe(_fail, future)
+        pending.clear()
+    conn.pending_worktree_log_handlers.clear()
+
+
 class HostRegistry:
     """Thread-safe registry of live host WebSocket connections.
 
@@ -463,6 +482,7 @@ class HostRegistry:
                     ws_id,
                     host_id,
                 )
+                _fail_pending_worktree_operations(old)
                 old.outbound_queue.put_nowait(None)
             self._hosts[key] = conn
         return conn
@@ -498,6 +518,7 @@ class HostRegistry:
             removed = self._hosts.pop(key)
         # Without this the route handler's loops keep running and its ping loop
         # keeps the host row online, even though the host is now unreachable.
+        _fail_pending_worktree_operations(removed)
         removed.outbound_queue.put_nowait(None)
         return True
 

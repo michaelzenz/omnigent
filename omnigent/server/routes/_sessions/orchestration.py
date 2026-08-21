@@ -8798,14 +8798,19 @@ async def _run_worktree_creation(
         )
         return
 
-    _publish_worktree_status(session_id, "ready", branch=created.branch)
-
     # Launch the runner now that the workspace is the worktree path.
     # The create POST skipped the synchronous host launch; the background
     # task owns it here, mirroring the managed-sandbox launch pattern.
+    _publish_worktree_log(session_id, "Worktree created. Launching runner…")
     host_store = getattr(request.app.state, "host_store", None)
     permission_store = getattr(request.app.state, "permission_store", None)
     if host_store is None:
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error="host store not configured; runner was not launched",
+        )
         return
     try:
         target = await asyncio.to_thread(
@@ -8820,6 +8825,12 @@ async def _run_worktree_creation(
         )
     except Exception:  # noqa: BLE001
         _logger.warning("Host launch authorization failed for %s", session_id, exc_info=True)
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error="failed to authorize runner launch",
+        )
         return
     conv = target.conv
     # Set terminal_pending for terminal-first sessions right before launch.
@@ -8831,12 +8842,20 @@ async def _run_worktree_creation(
         host_registry,
         target.conn,
     )
-    if launch_attempt.error_code == _HARNESS_NOT_CONFIGURED_ERROR_CODE:
+    if launch_attempt.error is not None:
         _logger.warning(
-            "Harness not configured for session %s after worktree creation: %s",
+            "Runner launch failed for session %s after worktree creation: %s",
             session_id,
             launch_attempt.error,
         )
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error=launch_attempt.error,
+        )
+        return
+    _publish_worktree_status(session_id, "ready", branch=created.branch)
 
 
 def _create_session_from_bundle(
