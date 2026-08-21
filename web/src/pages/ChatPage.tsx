@@ -14,6 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@/lib/routing";
 import {
   ArrowUpIcon,
@@ -102,7 +103,6 @@ import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
 import { OmniHarnessSystemPromptEditor } from "@/shell/OmniHarnessSystemPromptDialog";
-import { SwitchAgentDialog } from "@/shell/SwitchAgentDialog";
 import { attachmentKey, validateAttachments } from "@/lib/attachments";
 import { useSurfaceFrontmost } from "@/hooks/useNativeServerSwitcher";
 import {
@@ -113,6 +113,9 @@ import {
   setNativeViewMode,
 } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
+import { useAvailableAgents } from "@/hooks/useAvailableAgents";
+import { agentRootName, switchTargetCarriesHistory } from "@/lib/forkHarness";
+import { switchSessionAgent } from "@/lib/sessionsApi";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -1072,6 +1075,43 @@ export function ChatPage() {
   // this is their only routing control.
   const subagentRoutingEligible = isSubagentRoutingEligible(serverInfo, activeSession);
 
+  // Switch targets for the composer's execution-target dropdown (in-place
+  // agent switch): history-preserving harnesses excluding the bound agent,
+  // mirroring SwitchAgentDialog's filter. Computed before the loading/error
+  // early returns below so these hooks run unconditionally every render.
+  const queryClient = useQueryClient();
+  const { data: availableAgents } = useAvailableAgents({ enabled: Boolean(urlConvId) });
+  const switchTargets = useMemo(() => {
+    const currentName = boundAgentBySession?.name ?? null;
+    const currentRoot = currentName ? agentRootName(currentName) : null;
+    return (availableAgents ?? [])
+      .filter(
+        (a) =>
+          a.id !== boundAgentBySession?.id &&
+          a.name !== currentName &&
+          a.name !== currentRoot &&
+          switchTargetCarriesHistory(a.harness),
+      )
+      .map((a) => ({ id: a.id, displayName: a.display_name }));
+  }, [availableAgents, boundAgentBySession]);
+  const handleSwitchAgent = useCallback(
+    (targetAgentId: string) => {
+      if (!urlConvId) return;
+      void (async () => {
+        try {
+          await switchSessionAgent(urlConvId, targetAgentId);
+          await queryClient.invalidateQueries({ queryKey: ["session", urlConvId] });
+          await queryClient.invalidateQueries({ queryKey: ["session-agent", urlConvId] });
+          await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : "unknown error";
+          showToast(<span className="text-ui">Couldn&apos;t switch agent: {detail}</span>);
+        }
+      })();
+    },
+    [urlConvId, queryClient],
+  );
+
   // Non-null only when the active session is a sub-agent (child): the
   // composer then peeks a "Chatting with sub-agent …" tray and the
   // scroll-pinned "Working…" tab is suppressed (the tray owns that slot).
@@ -1371,6 +1411,8 @@ export function ChatPage() {
       codexModelOptions={codexModelOptions}
       sdkModelOptions={sdkModelOptions}
       profileControls={profileControls}
+      switchTargets={switchTargets}
+      onSwitchAgent={handleSwitchAgent}
       showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
       showGoalControl={shouldShowGoalControl(capabilitySource)}
       showClaudeGoalControl={shouldShowPollyClaudeGoalControl(activeSession)}
@@ -1618,6 +1660,10 @@ interface MainAgentSurfaceProps {
   sdkModelOptions: readonly OmniHarnessModelOption[];
   /** Omnigent prompt-profile selector shown beside composer configuration. */
   profileControls?: ReactNode;
+  /** Switchable agents for the OmniHarness execution-target dropdown. */
+  switchTargets?: readonly SwitchTargetRow[];
+  /** Switch the active session to a different agent in place. */
+  onSwitchAgent?: (agentId: string) => void;
   /** Show the Codex Plan-mode toggle. */
   showCodexPlanMode: boolean;
   /** Show the session Goal control. */
@@ -1765,6 +1811,8 @@ export function MainAgentSurface({
   codexModelOptions,
   sdkModelOptions,
   profileControls,
+  switchTargets,
+  onSwitchAgent,
   showCodexPlanMode,
   showGoalControl = false,
   showClaudeGoalControl = false,
@@ -2345,6 +2393,8 @@ export function MainAgentSurface({
             codexModelOptions={codexModelOptions}
             sdkModelOptions={sdkModelOptions}
             profileControls={profileControls}
+            switchTargets={switchTargets}
+            onSwitchAgent={onSwitchAgent}
             showCodexPlanMode={showCodexPlanMode}
             showGoalControl={showGoalControl}
             showClaudeGoalControl={showClaudeGoalControl}
@@ -4662,6 +4712,10 @@ interface ComposerProps {
   sdkModelOptions?: readonly OmniHarnessModelOption[];
   /** Omnigent prompt-profile selector. */
   profileControls?: ReactNode;
+  /** Switchable agents for the OmniHarness execution-target dropdown. */
+  switchTargets?: readonly SwitchTargetRow[];
+  /** Switch the active session to a different agent in place. */
+  onSwitchAgent?: (agentId: string) => void;
   /** Show the Codex Plan-mode toggle. */
   showCodexPlanMode: boolean;
   /** Show the session Goal control. */
@@ -5161,6 +5215,8 @@ export function Composer({
   codexModelOptions,
   sdkModelOptions = EMPTY_OMNIHARNESS_MODEL_OPTIONS,
   profileControls,
+  switchTargets,
+  onSwitchAgent,
   showCodexPlanMode,
   showGoalControl = false,
   showClaudeGoalControl = false,
@@ -6402,6 +6458,8 @@ export function Composer({
                 costRoutingEligible={costRoutingEligible}
                 harnessLabel={harnessLabel}
                 disabled={isReadOnly || unreachable}
+                switchTargets={switchTargets}
+                onSwitchAgent={onSwitchAgent}
               />
               <ComposerConfigGear
                 harnessLabel={harnessLabel}
@@ -7579,34 +7637,67 @@ function ComposerSdkModelSelect({
   );
 }
 
+/** A switchable harness row offered by the execution-target dropdown. */
+interface SwitchTargetRow {
+  id: string;
+  displayName: string;
+}
+
+/**
+ * OmniHarness execution-target dropdown for an existing session: a ghost
+ * button showing the current harness that opens a menu of the other
+ * history-preserving harnesses and switches in place on select. Presentational
+ * — ChatPage passes the targets and handler so this needs no react-query.
+ */
 function ComposerExecutionTargetQuickSelect({
   disabled,
   harnessLabel,
+  switchTargets,
+  onSwitchAgent,
 }: {
   disabled: boolean;
   harnessLabel: string | null;
+  switchTargets?: readonly SwitchTargetRow[];
+  onSwitchAgent?: (agentId: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const conversationId = useChatStore((state) => state.conversationId);
+  const targets = switchTargets ?? [];
+  const trigger = (
+    <Button
+      type="button"
+      variant="ghost"
+      className="h-9 min-w-0 max-w-[220px] gap-2 px-2.5 text-sm font-normal md:h-8"
+      aria-label="Execution target"
+      data-testid="composer-execution-target-select"
+      disabled={disabled}
+    >
+      <span className="truncate">{harnessLabel ?? "OmniHarness"}</span>
+      <ChevronDownIcon className="size-4 shrink-0 opacity-60" />
+    </Button>
+  );
+
+  // No history-preserving targets (still loading, or none available): show
+  // the label with no menu so the slot isn't empty.
+  if (targets.length === 0) {
+    return <div className="flex items-center">{trigger}</div>;
+  }
 
   return (
-    <>
-      <Button
-        type="button"
-        variant="ghost"
-        className="h-9 min-w-0 max-w-[220px] gap-2 px-2.5 text-sm font-normal md:h-8"
-        aria-label="Execution target"
-        data-testid="composer-execution-target-select"
-        disabled={disabled || conversationId === null}
-        onClick={() => setOpen(true)}
-      >
-        <span className="truncate">{harnessLabel ?? "OmniHarness"}</span>
-        <ChevronDownIcon className="size-4 shrink-0 opacity-60" />
-      </Button>
-      {open && conversationId && (
-        <SwitchAgentDialog sessionId={conversationId} open={open} onOpenChange={setOpen} />
-      )}
-    </>
+    <div className="flex items-center rounded-lg transition-colors hover:bg-muted dark:hover:bg-muted/50">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-56">
+          {targets.map((agent) => (
+            <DropdownMenuItem
+              key={agent.id}
+              data-testid={`composer-execution-target-option-${agent.id}`}
+              onSelect={() => onSwitchAgent?.(agent.id)}
+            >
+              <span className="truncate">{agent.displayName}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -7634,6 +7725,8 @@ function ComposerModelEffortLabel({
   costRoutingEligible,
   harnessLabel,
   disabled,
+  switchTargets,
+  onSwitchAgent,
 }: {
   showModels: boolean;
   showEffort: boolean;
@@ -7643,6 +7736,8 @@ function ComposerModelEffortLabel({
   costRoutingEligible: boolean;
   harnessLabel: string | null;
   disabled: boolean;
+  switchTargets?: readonly SwitchTargetRow[];
+  onSwitchAgent?: (agentId: string) => void;
 }) {
   const selectedEffort = useSessionEffort();
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
@@ -7653,7 +7748,14 @@ function ComposerModelEffortLabel({
   );
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
   if (showModels && modelPickerKind === "sdk") {
-    return <ComposerExecutionTargetQuickSelect disabled={disabled} harnessLabel={harnessLabel} />;
+    return (
+      <ComposerExecutionTargetQuickSelect
+        disabled={disabled}
+        harnessLabel={harnessLabel}
+        switchTargets={switchTargets}
+        onSwitchAgent={onSwitchAgent}
+      />
+    );
   }
   // Routing picks the model + effort per turn, so the label reads
   // "Smart Routing" with no pinned model/effort — matching the tooltip.
