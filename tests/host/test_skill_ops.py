@@ -94,6 +94,24 @@ def test_host_edits_any_text_file_but_rejects_binary_files(tmp_path: Path, monke
         )
 
 
+def test_host_rejects_stale_variant_update(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    _skill(home, "demo")
+    monkeypatch.setenv("HOME", str(home))
+
+    with pytest.raises(ValueError, match="changed since"):
+        handle_skill_fs_op(
+            "skill.files.write",
+            {
+                "name": "demo",
+                "rel_home_path": ".claude/skills/demo",
+                "expected_content_sha256": "stale",
+                "files": {"SKILL.md": "replacement"},
+            },
+        )
+
+
 def test_host_reports_search_roots_per_harness(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -162,7 +180,30 @@ def test_host_reports_existing_omnigent_skill_as_optional_occurrence(
         for entry in inventory
     )
     assert not any(
-        entry["name"] == "claude-only" and entry["harness"] == "omnigent"
+        entry["name"] == "claude-only" and entry["harness"] == "omnigent" for entry in inventory
+    )
+
+
+def test_host_reports_agents_skill_as_omniharness_occurrence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    skill = home / ".agents" / "skills" / "shared"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: shared\ndescription: Shared skill\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    inventory = skill_inventory_wire()
+
+    assert any(
+        entry["name"] == "shared"
+        and entry["harness"] == "omnigent"
+        and entry["rel_home_path"] == ".agents/skills/shared"
         for entry in inventory
     )
 
@@ -187,3 +228,24 @@ def test_host_exports_and_imports_complete_skill_tree(tmp_path: Path, monkeypatc
         },
     )
     assert (home / ".cursor/skills/demo/references/guide.md").read_text() == "guide"
+
+
+def test_host_import_validates_requested_skill_name(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    _skill(home, "other")
+    monkeypatch.setenv("HOME", str(home))
+    exported = handle_skill_fs_op(
+        "skill.export",
+        {"name": "other", "rel_home_path": ".claude/skills/other"},
+    )
+
+    with pytest.raises(ValueError, match="frontmatter name"):
+        handle_skill_fs_op(
+            "skill.import",
+            {
+                "name": "demo",
+                "rel_home_path": ".cursor/skills/demo",
+                "files": exported["files"],
+            },
+        )

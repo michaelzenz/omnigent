@@ -134,10 +134,14 @@ def _editable_skill_file(skill_dir: Path, raw_path: str) -> Path:
     return path
 
 
-def _write_skill_files(skill_dir: Path, files: dict[str, str]) -> None:
+def _write_skill_files(
+    skill_dir: Path,
+    files: dict[str, str],
+    *,
+    expected_name: str,
+) -> None:
     destinations = {
-        _editable_skill_file(skill_dir, raw_path): content
-        for raw_path, content in files.items()
+        _editable_skill_file(skill_dir, raw_path): content for raw_path, content in files.items()
     }
     temporary: list[tuple[Path, Path]] = []
     try:
@@ -146,13 +150,24 @@ def _write_skill_files(skill_dir: Path, files: dict[str, str]) -> None:
             temp.write_text(content, encoding="utf-8")
             temporary.append((temp, destination))
         for temp, destination in temporary:
+            if destination.name != "SKILL.md":
+                continue
+            updated = _parse_skill(temp)
+            if updated.name != expected_name:
+                raise ValueError("SKILL.md frontmatter name cannot be changed")
+        for temp, destination in temporary:
             temp.replace(destination)
     finally:
         for temp, _destination in temporary:
             temp.unlink(missing_ok=True)
 
 
-def _write_tree(skill_dir: Path, files: dict[str, str]) -> None:
+def _write_tree(
+    skill_dir: Path,
+    files: dict[str, str],
+    *,
+    expected_name: str | None = None,
+) -> None:
     skill_dir.parent.mkdir(parents=True, exist_ok=True)
     temp = Path(tempfile.mkdtemp(prefix=f".{skill_dir.name}-", dir=skill_dir.parent))
     backup = skill_dir.with_name(f".{skill_dir.name}.backup")
@@ -166,6 +181,10 @@ def _write_tree(skill_dir: Path, files: dict[str, str]) -> None:
             destination.write_bytes(base64.b64decode(encoded, validate=True))
         if not (temp / "SKILL.md").is_file():
             raise ValueError("skill archive is missing SKILL.md")
+        if expected_name is not None:
+            imported = _parse_skill(temp / "SKILL.md")
+            if imported.name != expected_name:
+                raise ValueError("SKILL.md frontmatter name does not match the requested skill")
         if backup.exists():
             shutil.rmtree(backup)
         if skill_dir.exists():
@@ -200,16 +219,35 @@ def handle_skill_fs_op(op: str, params: dict[str, Any]) -> dict[str, Any]:
     if op == "skill.import":
         rel = params.get("rel_home_path")
         files = params.get("files")
+        expected_name = params.get("name")
+        create_only = params.get("create_only", False)
         if not isinstance(rel, str) or not isinstance(files, dict):
             raise ValueError("skill import requires rel_home_path and files")
+        if expected_name is not None and not isinstance(expected_name, str):
+            raise ValueError("skill import name must be a string")
+        if not isinstance(create_only, bool):
+            raise ValueError("skill import create_only must be a boolean")
         if not all(
             isinstance(key, str) and isinstance(value, str) for key, value in files.items()
         ):
             raise ValueError("skill import files must be base64 strings")
-        _write_tree(_safe_skill_dir(rel, home, must_exist=False), files)
+        skill_dir = _safe_skill_dir(rel, home, must_exist=False)
+        if create_only and skill_dir.exists():
+            raise FileExistsError("skill already exists on host")
+        _write_tree(
+            skill_dir,
+            files,
+            expected_name=expected_name,
+        )
         return _inventory_payload(home)
 
     entry = _entry_for(params, home)
+    expected_hash = params.get("expected_content_sha256")
+    if expected_hash is not None:
+        if not isinstance(expected_hash, str):
+            raise ValueError("expected skill hash must be a string")
+        if entry.content_sha256 != expected_hash:
+            raise ValueError("skill changed since this variant was selected")
     skill_dir = _safe_skill_dir(entry.rel_home_path, home, must_exist=True)
     if op == "skill.read":
         return {"content": (skill_dir / "SKILL.md").read_text(encoding="utf-8")}
@@ -228,7 +266,7 @@ def handle_skill_fs_op(op: str, params: dict[str, Any]) -> dict[str, Any]:
             isinstance(path, str) and isinstance(content, str) for path, content in files.items()
         ):
             raise ValueError("skill file write requires a string file map")
-        _write_skill_files(skill_dir, files)
+        _write_skill_files(skill_dir, files, expected_name=entry.name)
         return _inventory_payload(home)
     if op == "skill.export":
         files = {

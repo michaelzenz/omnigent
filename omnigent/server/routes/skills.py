@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -54,6 +55,7 @@ class SkillSyncRequest(BaseModel):
         description="Target host ids. Omit to sync every other registered host.",
     )
 
+
 class SkillWriteRequest(BaseModel):
     host_id: str
     harness: str
@@ -68,6 +70,10 @@ class SkillVariantFilesWriteRequest(BaseModel):
     files: dict[str, str]
 
 
+class SkillCreateRequest(BaseModel):
+    files: dict[str, str]
+
+
 class SkillHarnessSettingRequest(BaseModel):
     enabled: bool
 
@@ -75,6 +81,20 @@ class SkillHarnessSettingRequest(BaseModel):
 def _owner_id(request: Request, auth_provider: AuthProvider | None) -> str:
     user_id = require_user(request, auth_provider)
     return user_id or "local"
+
+
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _validate_skill_create(skill_name: str, files: dict[str, str]) -> None:
+    if _SKILL_NAME_RE.fullmatch(skill_name) is None:
+        raise HTTPException(status_code=422, detail="Invalid skill name.")
+    if "SKILL.md" not in files:
+        raise HTTPException(status_code=422, detail="New skills require SKILL.md.")
+    if not files or len(files) > 100:
+        raise HTTPException(status_code=422, detail="A skill must contain 1 to 100 files.")
+    if sum(len(path) + len(content) for path, content in files.items()) > 1_000_000:
+        raise HTTPException(status_code=413, detail="Skill files exceed the 1 MB limit.")
 
 
 def create_skills_router(
@@ -284,15 +304,9 @@ def create_skills_router(
     async def list_skills(request: Request) -> dict[str, Any]:
         owner = _owner_id(request, auth_provider)
         hosts = owner_hosts(owner)
-        inventories = {
-            host.host_id: host_registry.skill_inventory(host.host_id) for host in hosts
-        }
+        inventories = {host.host_id: host_registry.skill_inventory(host.host_id) for host in hosts}
         names = sorted(
-            {
-                skill["name"]
-                for inventory in inventories.values()
-                for skill in inventory or []
-            }
+            {skill["name"] for inventory in inventories.values() for skill in inventory or []}
         )
         data = []
         for name in names:
@@ -315,9 +329,7 @@ def create_skills_router(
                     )
             variants_by_hash: dict[str, list[dict[str, Any]]] = {}
             for occurrence in occurrences:
-                variants_by_hash.setdefault(occurrence["content_sha256"], []).append(
-                    occurrence
-                )
+                variants_by_hash.setdefault(occurrence["content_sha256"], []).append(occurrence)
             variants = [
                 {
                     "content_sha256": content_hash,
@@ -350,11 +362,7 @@ def create_skills_router(
                 sync_harnesses = host.skill_sync_harnesses
                 harness_rows = []
                 for harness in _SKILL_HARNESSES:
-                    enabled = (
-                        sync_harnesses[harness]
-                        if sync_harnesses is not None
-                        else None
-                    )
+                    enabled = sync_harnesses[harness] if sync_harnesses is not None else None
                     installed = _harness_is_installed(
                         host.configured_harnesses,
                         harness,
@@ -363,8 +371,7 @@ def create_skills_router(
                         (
                             item
                             for item in occurrences
-                            if item["host_id"] == host.host_id
-                            and item["harness"] == harness
+                            if item["host_id"] == host.host_id and item["harness"] == harness
                         ),
                         None,
                     )
@@ -401,8 +408,7 @@ def create_skills_router(
                     (
                         item
                         for item in occurrences
-                        if item["host_id"] == host.host_id
-                        and item["harness"] == "omnigent"
+                        if item["host_id"] == host.host_id and item["harness"] == "omnigent"
                     ),
                     None,
                 )
@@ -437,13 +443,9 @@ def create_skills_router(
                         visible_harnesses.append(harness_row)
                         continue
                     ignored_occurrence = harness_row["occurrence"]
-                    if (
-                        ignored_occurrence is not None
-                        and (
-                            not participating_hashes
-                            or ignored_occurrence["content_sha256"]
-                            not in participating_hashes
-                        )
+                    if ignored_occurrence is not None and (
+                        not participating_hashes
+                        or ignored_occurrence["content_sha256"] not in participating_hashes
                     ):
                         harness_row["state"] = "ignored_variant"
                         visible_harnesses.append(harness_row)
@@ -451,11 +453,7 @@ def create_skills_router(
             if len(participating_hashes) > 1:
                 has_failure = True
             sync_status = (
-                "not_synced"
-                if has_failure
-                else "partial"
-                if has_unavailable
-                else "synced"
+                "not_synced" if has_failure else "partial" if has_unavailable else "synced"
             )
             data.append(
                 {
@@ -555,8 +553,7 @@ def create_skills_router(
             (host.host_id, entry)
             for host in owner_hosts(owner)
             for entry in host_registry.skill_inventory(host.host_id) or []
-            if entry["name"] == skill_name
-            and entry["content_sha256"] == content_sha256
+            if entry["name"] == skill_name and entry["content_sha256"] == content_sha256
         ]
         if not occurrences:
             raise HTTPException(status_code=404, detail="Skill variant not found.")
@@ -603,14 +600,36 @@ def create_skills_router(
             (host.host_id, entry)
             for host in owner_hosts(owner)
             for entry in host_registry.skill_inventory(host.host_id) or []
-            if entry["name"] == skill_name
-            and entry["content_sha256"] == content_sha256
+            if entry["name"] == skill_name and entry["content_sha256"] == content_sha256
         ]
         if not occurrences:
             raise HTTPException(status_code=404, detail="Skill variant not found.")
         results = []
         updated_hashes: set[str] = set()
         for host_id, entry in occurrences:
+            current = next(
+                (
+                    item
+                    for item in host_registry.skill_inventory(host_id) or []
+                    if item["name"] == skill_name
+                    and item["harness"] == entry["harness"]
+                    and item["rel_home_path"] == entry["rel_home_path"]
+                ),
+                None,
+            )
+            if (
+                current is not None
+                and current["content_sha256"] != content_sha256
+                and current["content_sha256"] in updated_hashes
+            ):
+                results.append(
+                    {
+                        "host_id": host_id,
+                        "harness": entry["harness"],
+                        "status": "saved",
+                    }
+                )
+                continue
             try:
                 payload = await host_skill_request(
                     host_id,
@@ -619,6 +638,7 @@ def create_skills_router(
                         "name": skill_name,
                         "rel_home_path": entry["rel_home_path"],
                         "files": body.files,
+                        "expected_content_sha256": content_sha256,
                     },
                 )
                 inventory = payload.get("inventory")
@@ -649,11 +669,99 @@ def create_skills_router(
                         "host_id": host_id,
                         "harness": entry["harness"],
                         "status": "failed",
-                        "error": str(exc.detail),
+                        "error": exc.detail,
                     }
                 )
         return {
             "object": "skill_variant_files_write_result",
+            "results": results,
+            "content_sha256": next(iter(updated_hashes)) if len(updated_hashes) == 1 else None,
+        }
+
+    @router.post("/skills/{skill_name}/files")
+    async def create_skill_files(
+        request: Request,
+        skill_name: str,
+        body: SkillCreateRequest,
+    ) -> dict[str, Any]:
+        """Create a new skill on every participating detected harness root."""
+        owner = _owner_id(request, auth_provider)
+        _validate_skill_create(skill_name, body.files)
+        hosts = owner_hosts(owner)
+        if not hosts:
+            raise HTTPException(status_code=409, detail="No hosts are registered.")
+        if any(
+            entry["name"] == skill_name
+            for host in hosts
+            for entry in host_registry.skill_inventory(host.host_id) or []
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Skill already exists; use update_skill instead.",
+            )
+
+        encoded_files = {
+            path: base64.b64encode(content.encode("utf-8")).decode()
+            for path, content in body.files.items()
+        }
+        results: list[dict[str, Any]] = []
+        updated_hashes: set[str] = set()
+        for host in hosts:
+            settings = host.skill_sync_harnesses or {}
+            targets = [
+                harness
+                for harness in _SKILL_HARNESSES
+                if settings.get(harness, True)
+                and _harness_is_installed(host.configured_harnesses, harness)
+            ]
+            target_paths = [
+                (harness, f"{_NATIVE_SKILL_PATHS[harness]}/{skill_name}") for harness in targets
+            ] or [("omnigent", f".omnigent/skills/{skill_name}")]
+            for harness, rel_home_path in target_paths:
+                try:
+                    payload = await host_skill_request(
+                        host.host_id,
+                        "skill.import",
+                        {
+                            "name": skill_name,
+                            "rel_home_path": rel_home_path,
+                            "files": encoded_files,
+                            "create_only": True,
+                        },
+                    )
+                    inventory = payload.get("inventory")
+                    if isinstance(inventory, list):
+                        updated = next(
+                            (
+                                item
+                                for item in inventory
+                                if isinstance(item, dict)
+                                and item.get("name") == skill_name
+                                and item.get("harness") == harness
+                                and item.get("rel_home_path") == rel_home_path
+                            ),
+                            None,
+                        )
+                        if updated is not None and isinstance(updated.get("content_sha256"), str):
+                            updated_hashes.add(updated["content_sha256"])
+                    results.append(
+                        {
+                            "host_id": host.host_id,
+                            "harness": harness,
+                            "status": "created",
+                        }
+                    )
+                except HTTPException as exc:
+                    results.append(
+                        {
+                            "host_id": host.host_id,
+                            "harness": harness,
+                            "status": "failed",
+                            "error": exc.detail,
+                        }
+                    )
+        return {
+            "object": "skill_create_result",
             "results": results,
             "content_sha256": next(iter(updated_hashes)) if len(updated_hashes) == 1 else None,
         }
@@ -780,8 +888,7 @@ def create_skills_router(
                 (
                     entry
                     for entry in inventory
-                    if entry["name"] == skill_name
-                    and entry["harness"] == "omnigent"
+                    if entry["name"] == skill_name and entry["harness"] == "omnigent"
                 ),
                 None,
             )

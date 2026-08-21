@@ -46,6 +46,8 @@ from omnigent.tools.builtins import (
     SysTimerCancelTool,
     SysTimerSetTool,
     UpdateCommentTool,
+    UpdateSkillTool,
+    WriteSkillTool,
     any_skill_has_resources,
     get_builtin_tool,
 )
@@ -301,7 +303,8 @@ class ToolManager:
         """
         Register built-in skill tools.
 
-        Always registers ``load_skill`` — it discovers host-scope
+        Always registers ``load_skill``, ``update_skill``, and ``write_skill``.
+        ``load_skill`` discovers host-scope
         skills (``~/.claude/skills/``, ``.agents/skills/``, etc.)
         at init time even when the agent has no bundled skills.
         Registers ``read_skill_file`` only when at least one skill
@@ -313,6 +316,8 @@ class ToolManager:
             skills_filter=self._spec.skills_filter,
         )
         self._tools[load_tool.name()] = load_tool
+        self._tools[UpdateSkillTool.name()] = UpdateSkillTool()
+        self._tools[WriteSkillTool.name()] = WriteSkillTool()
         # Combine bundled + discovered skills for resource check.
         all_skills = load_tool.skills
         if any_skill_has_resources(all_skills):

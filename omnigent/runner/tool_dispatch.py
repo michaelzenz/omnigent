@@ -32,6 +32,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
+from urllib.parse import quote
 
 from omnigent.json_types import JsonObject as _JsonObject
 
@@ -366,10 +367,26 @@ _TASK_LIFECYCLE_TOOLS = frozenset(
     }
 )
 
-# Priority 5i: Skill tools — load_skill and read_skill_file.
+# Priority 5i: Skill tools — reads execute on the runner; writes proxy the server.
 # Dispatched locally in the runner so harness subprocesses can
 # call them via the action_required → dispatch_tool_locally path.
-_SKILL_TOOLS = frozenset({"load_skill", "read_skill_file"})
+_SKILL_TOOLS = frozenset(
+    {
+        "load_skill",
+        "read_skill_file",
+        "update_skill",
+        "write_skill",
+    }
+)
+_SKILL_WRITE_TOOLS = frozenset({"update_skill", "write_skill"})
+_loaded_skill_variants: dict[tuple[str, str], str] = {}
+
+
+def forget_skill_provenance(conversation_id: str) -> None:
+    """Drop loaded-skill variant selections when a runner session closes."""
+    for key in [key for key in _loaded_skill_variants if key[0] == conversation_id]:
+        _loaded_skill_variants.pop(key, None)
+
 
 # Priority 5j: Comment tools — list_comments and update_comment.
 # Auto-registered by ToolManager. The runner has no in-process
@@ -5410,11 +5427,13 @@ async def execute_tool(
                 server_client=server_client,
             )
         elif tool_name in _SKILL_TOOLS:
-            output = _execute_skill_tool(
+            output = await _execute_skill_tool(
                 tool_name,
                 args,
                 agent_spec=agent_spec,
                 runner_workspace=runner_workspace,
+                conversation_id=conversation_id,
+                server_client=server_client,
             )
         elif tool_name in _COMMENT_TOOLS:
             output = await _execute_comment_tool(
@@ -7304,21 +7323,72 @@ def _inject_orchestrator_skills(
     return skills
 
 
-def _execute_skill_tool(
+def _skill_files_argument(args: _JsonObject) -> tuple[dict[str, str] | None, str | None]:
+    files = args.get("files")
+    if not isinstance(files, dict) or not files:
+        return None, "'files' must be a non-empty object"
+    if not all(
+        isinstance(path, str) and path and isinstance(content, str)
+        for path, content in files.items()
+    ):
+        return None, "'files' must map non-empty relative paths to text"
+    return cast(dict[str, str], files), None
+
+
+def _resolved_skill_hash(
+    skill_name: str,
+    *,
+    agent_spec: AgentSpec | None,
+    runner_workspace: Path | None,
+) -> str | None:
+    from omnigent.server.skill_sync_registry import skill_dir_sha256
+    from omnigent.tools.builtins.load_skill import LoadSkillTool, find_skill_by_name
+
+    bundled_skills = list(getattr(agent_spec, "skills", None) or [])
+    skills_filter = getattr(agent_spec, "skills_filter", "all")
+    bundled_skills = _inject_orchestrator_skills(bundled_skills, agent_spec)
+    load_tool = LoadSkillTool(
+        bundled_skills,
+        agent_root=runner_workspace,
+        skills_filter=skills_filter,
+    )
+    skill = find_skill_by_name(load_tool.skills, skill_name)
+    if skill is None or skill.skill_dir is None:
+        return None
+    return skill_dir_sha256(skill.skill_dir)
+
+
+def _server_error(response: httpx.Response, operation: str) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return json.dumps(
+        {
+            "error": str(detail or f"{operation} returned {response.status_code}"),
+            "status_code": response.status_code,
+        }
+    )
+
+
+async def _execute_skill_tool(
     tool_name: str,
     args: _JsonObject,
     *,
     agent_spec: AgentSpec | None,
     runner_workspace: Path | None,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
 ) -> str:
     """
-    Runner-local handler for ``load_skill`` and ``read_skill_file``.
+    Resolve skill reads locally and mediate durable writes through the server.
 
     Instantiates the tool with the agent spec's bundled skills
     plus host-scope discovery from the runner workspace, then
     invokes it.
 
-    :param tool_name: ``"load_skill"`` or ``"read_skill_file"``.
+    :param tool_name: One of the four framework-owned skill tools.
     :param args: Parsed JSON arguments from the LLM.
     :param agent_spec: The session's AgentSpec.
     :param runner_workspace: The runner's workspace path for
@@ -7327,6 +7397,69 @@ def _execute_skill_tool(
     """
     from omnigent.tools.builtins.load_skill import LoadSkillTool
     from omnigent.tools.builtins.read_skill_file import ReadSkillFileTool
+
+    skill_name_key = "name" if tool_name != "read_skill_file" else "skill_name"
+    skill_name = args.get(skill_name_key)
+    if not isinstance(skill_name, str) or not skill_name:
+        return json.dumps({"error": f"{tool_name} requires a non-empty skill name"})
+
+    if tool_name in _SKILL_WRITE_TOOLS:
+        if server_client is None:
+            return json.dumps({"error": f"{tool_name} requires the Omnigent server"})
+        files, files_error = _skill_files_argument(args)
+        if files_error is not None:
+            return json.dumps({"error": files_error})
+        assert files is not None
+        encoded_name = quote(skill_name, safe="")
+        try:
+            if tool_name == "write_skill":
+                response = await server_client.post(
+                    f"/v1/skills/{encoded_name}/files",
+                    json={"files": files},
+                    timeout=30.0,
+                )
+            else:
+                provenance_key = (conversation_id or "", skill_name)
+                content_hash = _loaded_skill_variants.get(provenance_key)
+                if content_hash is None:
+                    content_hash = _resolved_skill_hash(
+                        skill_name,
+                        agent_spec=agent_spec,
+                        runner_workspace=runner_workspace,
+                    )
+                if content_hash is None:
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"Skill {skill_name!r} is not available in this session. "
+                                "Use write_skill to create a new skill."
+                            )
+                        }
+                    )
+                response = await server_client.put(
+                    f"/v1/skills/{encoded_name}/variants/{quote(content_hash, safe='')}/files",
+                    json={"files": files},
+                    timeout=30.0,
+                )
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"error": f"{tool_name} failed: {exc}"})
+        if response.status_code not in {200, 201}:
+            return _server_error(response, tool_name)
+        payload = response.json()
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if isinstance(results, list) and any(
+            isinstance(result, dict) and result.get("status") == "failed" for result in results
+        ):
+            return json.dumps(
+                {
+                    "error": f"{tool_name} only completed on some targets",
+                    **payload,
+                }
+            )
+        new_hash = payload.get("content_sha256") if isinstance(payload, dict) else None
+        if isinstance(new_hash, str) and conversation_id is not None:
+            _loaded_skill_variants[(conversation_id, skill_name)] = new_hash
+        return json.dumps(payload)
 
     bundled_skills = list(getattr(agent_spec, "skills", None) or [])
     skills_filter = getattr(agent_spec, "skills_filter", "all")
@@ -7350,4 +7483,13 @@ def _execute_skill_tool(
     from omnigent.tools.base import ToolContext
 
     ctx = ToolContext(task_id="", conversation_id="", agent_id="")
-    return tool.invoke(arguments_json, ctx)
+    output = tool.invoke(arguments_json, ctx)
+    if not output.startswith("Error:") and conversation_id is not None:
+        content_hash = _resolved_skill_hash(
+            skill_name,
+            agent_spec=agent_spec,
+            runner_workspace=runner_workspace,
+        )
+        if content_hash is not None:
+            _loaded_skill_variants[(conversation_id, skill_name)] = content_hash
+    return output

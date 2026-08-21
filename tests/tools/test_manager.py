@@ -53,6 +53,8 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset(
         # host-scope skills at init time even when the agent
         # has no bundled skills.
         "load_skill",
+        "update_skill",
+        "write_skill",
         # Comment tools are always auto-registered so agents can
         # list and update review comments without the spec opting in.
         "list_comments",

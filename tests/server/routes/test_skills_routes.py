@@ -171,9 +171,7 @@ async def test_existing_omnigent_copy_is_an_optional_variant(skills_app) -> None
     skill = response.json()["data"][0]
     assert skill["sync_status"] == "not_synced"
     omnigent = next(
-        harness
-        for harness in skill["hosts"][0]["harnesses"]
-        if harness["harness"] == "omnigent"
+        harness for harness in skill["hosts"][0]["harnesses"] if harness["harness"] == "omnigent"
     )
     assert omnigent["state"] == "present"
     assert omnigent["occurrence"]["rel_home_path"] == ".omnigent/skills/demo"
@@ -307,11 +305,7 @@ async def test_disabled_harness_only_shows_a_distinct_existing_variant(skills_ap
 
     skill = response.json()["data"][0]
     assert skill["sync_status"] == "synced"
-    cursor = next(
-        row
-        for row in skill["hosts"][0]["harnesses"]
-        if row["harness"] == "cursor"
-    )
+    cursor = next(row for row in skill["hosts"][0]["harnesses"] if row["harness"] == "cursor")
     assert cursor["state"] == "ignored_variant"
     assert cursor["occurrence"]["content_sha256"] == "different"
 
@@ -346,11 +340,7 @@ async def test_disabled_harness_shows_the_only_existing_variant(skills_app) -> N
 
     skill = response.json()["data"][0]
     assert skill["sync_status"] == "not_synced"
-    cursor = next(
-        row
-        for row in skill["hosts"][0]["harnesses"]
-        if row["harness"] == "cursor"
-    )
+    cursor = next(row for row in skill["hosts"][0]["harnesses"] if row["harness"] == "cursor")
     assert cursor["state"] == "ignored_variant"
     assert cursor["occurrence"]["content_sha256"] == "cursor-only"
 
@@ -412,6 +402,122 @@ async def test_groups_occurrences_into_variants_by_hash(skills_app) -> None:
         "different",
     ]
     assert skill["variants"][0]["active_count"] == 2
-    assert {
-        occurrence["harness"] for occurrence in skill["variants"][0]["occurrences"]
-    } == {"claude", "cursor"}
+    assert {occurrence["harness"] for occurrence in skill["variants"][0]["occurrences"]} == {
+        "claude",
+        "cursor",
+    }
+
+
+@pytest.mark.asyncio
+async def test_variant_file_update_fans_out_only_matching_hash(
+    skills_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry, host_store = skills_app
+    inventory = registry.skill_inventory(LOCAL_HOST_ID)
+    assert inventory is not None
+    registry.record_skill_inventory(
+        LOCAL_HOST_ID,
+        [
+            *[entry for entry in inventory if entry["harness"] != "cursor"],
+            {
+                **next(entry for entry in inventory if entry["harness"] == "cursor"),
+                "content_sha256": "different",
+            },
+        ],
+    )
+    monkeypatch.setattr(registry, "get", lambda _host_id: object())
+    calls: list[dict[str, object]] = []
+
+    async def write_files(**kwargs):
+        params = kwargs["params"]
+        calls.append(params)
+        updated = [
+            {
+                **entry,
+                "content_sha256": "updated"
+                if entry["harness"] == params["rel_home_path"].split("/")[0][1:]
+                else entry["content_sha256"],
+            }
+            for entry in registry.skill_inventory(LOCAL_HOST_ID) or []
+        ]
+        return {"inventory": updated}
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.skills.read_workspace_from_host",
+        write_files,
+    )
+    app = FastAPI()
+    app.include_router(
+        create_skills_router(registry, host_store=host_store, auth_provider=None),
+        prefix="/v1",
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
+        response = await http_client.put(
+            "/v1/skills/demo/variants/abc/files",
+            json={"files": {"SKILL.md": "updated"}},
+        )
+
+    assert response.status_code == 200
+    assert {call["rel_home_path"] for call in calls} == {
+        ".claude/skills/demo",
+        ".codex/skills/demo",
+    }
+    assert all(call["expected_content_sha256"] == "abc" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_create_skill_writes_every_detected_harness_root(
+    skills_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry, host_store = skills_app
+    registry.record_skill_inventory(LOCAL_HOST_ID, [])
+    monkeypatch.setattr(registry, "get", lambda _host_id: object())
+    calls: list[dict[str, object]] = []
+
+    async def import_skill(**kwargs):
+        params = kwargs["params"]
+        calls.append(params)
+        harness = params["rel_home_path"].split("/")[0][1:]
+        return {
+            "inventory": [
+                {
+                    "name": "new-skill",
+                    "description": "New",
+                    "harness": harness,
+                    "rel_home_path": params["rel_home_path"],
+                    "content_sha256": "new-hash",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.skills.read_workspace_from_host",
+        import_skill,
+    )
+    app = FastAPI()
+    app.include_router(
+        create_skills_router(registry, host_store=host_store, auth_provider=None),
+        prefix="/v1",
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
+        response = await http_client.post(
+            "/v1/skills/new-skill/files",
+            json={
+                "files": {
+                    "SKILL.md": (
+                        "---\nname: new-skill\ndescription: New skill\n---\n\nInstructions\n"
+                    )
+                }
+            },
+        )
+
+    assert response.status_code == 200
+    assert {call["rel_home_path"] for call in calls} == {
+        ".claude/skills/new-skill",
+        ".codex/skills/new-skill",
+        ".cursor/skills/new-skill",
+    }

@@ -9642,9 +9642,13 @@ def create_runner_app(
         await asyncio.to_thread(shutdown_session_router, session_id)
         forget_session_routing_class(session_id)
 
-        from omnigent.runner.tool_dispatch import forget_spawn_family
+        from omnigent.runner.tool_dispatch import (
+            forget_skill_provenance,
+            forget_spawn_family,
+        )
 
         forget_spawn_family(session_id)
+        forget_skill_provenance(session_id)
 
         _session_spec_cache.pop(session_id, None)
         _session_harness_overrides.pop(session_id, None)

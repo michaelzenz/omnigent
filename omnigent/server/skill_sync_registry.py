@@ -162,9 +162,7 @@ def build_skill_sync_manifest(home: Path | None = None) -> dict[str, SkillSyncEn
         if rel_root == ".cursor/skills":
             entries.update(_scan_cursor_skills(resolved_home, skipped=skipped))
             continue
-        entries.update(
-            _scan_skills_dir(resolved_home / rel_root, resolved_home, skipped=skipped)
-        )
+        entries.update(_scan_skills_dir(resolved_home / rel_root, resolved_home, skipped=skipped))
 
     ctx = SkillSourceContext(
         roots=(),
@@ -234,21 +232,29 @@ def build_skill_occurrences(
         )
     occurrences.extend(("claude", entry) for entry in claude.values())
     occurrences.extend(
-        ("cursor", entry)
-        for entry in _scan_cursor_skills(resolved_home, skipped=skipped).values()
+        ("cursor", entry) for entry in _scan_cursor_skills(resolved_home, skipped=skipped).values()
     )
     occurrences.extend(
-        ("codex", entry)
-        for entry in _scan_codex_skills(resolved_home, skipped=skipped).values()
+        ("codex", entry) for entry in _scan_codex_skills(resolved_home, skipped=skipped).values()
     )
-    occurrences.extend(
-        ("omnigent", entry)
-        for entry in _scan_skills_dir(
+    generic = _scan_skills_dir(
+        resolved_home / ".agents" / "skills",
+        resolved_home,
+        skipped=skipped,
+    )
+    # The generic OmniHarness lookup sees ~/.claude before ~/.agents, while
+    # ~/.omnigent is an explicit override. Native Claude occurrences above
+    # already represent the winning ~/.claude copies.
+    for name in set(generic) & set(claude):
+        generic.pop(name)
+    generic.update(
+        _scan_skills_dir(
             resolved_home / ".omnigent" / "skills",
             resolved_home,
             skipped=skipped,
-        ).values()
+        )
     )
+    occurrences.extend(("omnigent", entry) for entry in generic.values())
     for detail in skipped:
         _log.warning("Skill inventory scan skipped: %s", detail)
     return sorted(occurrences, key=lambda item: (item[1].name, item[0]))
