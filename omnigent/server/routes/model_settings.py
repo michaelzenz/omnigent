@@ -37,6 +37,7 @@ class UpdateModelSettingsRequest(BaseModel):
     smart_routing_decision_model: str | None = Field(default=None, max_length=300)
     smart_routing_prompt: str | None = Field(default=None, max_length=20_000)
     smart_routing_cadence: Literal["per_turn", "first_turn_only"] = "per_turn"
+    turn_selection_user_message_count: int = Field(default=3, ge=1)
     workload_classification_enabled: bool = False
     workload_custom_categories: list[str] | None = Field(default=None, max_length=20)
 
@@ -69,6 +70,7 @@ class AdminModelSettingsResponse(BaseModel):
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
     smart_routing_cadence: Literal["per_turn", "first_turn_only"]
+    turn_selection_user_message_count: int
     workload_classification_enabled: bool
     workload_custom_categories: list[str]
     error: str | None
@@ -83,6 +85,7 @@ class UpdatedModelSettingsResponse(BaseModel):
     smart_routing_decision_model: str | None
     smart_routing_prompt: str | None
     smart_routing_cadence: Literal["per_turn", "first_turn_only"]
+    turn_selection_user_message_count: int
     workload_classification_enabled: bool
     workload_custom_categories: list[str]
 
@@ -92,12 +95,14 @@ class OmniHarnessSettingsResponse(BaseModel):
 
     object: Literal["omniharness_settings"]
     system_prompt: str
+    prompt_profile_auto_include_limit: int
 
 
 class UpdateOmniHarnessSettingsRequest(BaseModel):
     """Editable OmniHarness settings."""
 
-    system_prompt: str = Field(max_length=100_000)
+    system_prompt: str | None = Field(default=None, max_length=100_000)
+    prompt_profile_auto_include_limit: int | None = Field(default=None, ge=1)
 
 
 def _databricks_profile(config: dict[str, Any]) -> str | None:
@@ -258,6 +263,7 @@ def create_model_settings_router(
         return {
             "object": "omniharness_settings",
             "system_prompt": settings.omniharness_system_prompt,
+            "prompt_profile_auto_include_limit": settings.prompt_profile_auto_include_limit,
         }
 
     @router.patch(
@@ -272,12 +278,17 @@ def create_model_settings_router(
         settings = await asyncio.to_thread(
             model_settings_store.update,
             omniharness_system_prompt=body.system_prompt,
-            update_omniharness_system_prompt=True,
+            update_omniharness_system_prompt="system_prompt" in body.model_fields_set,
+            prompt_profile_auto_include_limit=body.prompt_profile_auto_include_limit,
+            update_prompt_profile_auto_include_limit=(
+                "prompt_profile_auto_include_limit" in body.model_fields_set
+            ),
             updated_by=get_user_id(request, auth_provider),
         )
         return {
             "object": "omniharness_settings",
             "system_prompt": settings.omniharness_system_prompt,
+            "prompt_profile_auto_include_limit": settings.prompt_profile_auto_include_limit,
         }
 
     @router.get(
@@ -300,6 +311,7 @@ def create_model_settings_router(
                 "smart_routing_decision_model": settings.smart_routing_decision_model,
                 "smart_routing_prompt": settings.smart_routing_prompt,
                 "smart_routing_cadence": settings.smart_routing_cadence,
+                "turn_selection_user_message_count": settings.turn_selection_user_message_count,
                 "workload_classification_enabled": settings.workload_classification_enabled,
                 "workload_custom_categories": list(settings.workload_custom_categories),
                 "error": None,
@@ -321,6 +333,7 @@ def create_model_settings_router(
                 "smart_routing_decision_model": settings.smart_routing_decision_model,
                 "smart_routing_prompt": settings.smart_routing_prompt,
                 "smart_routing_cadence": settings.smart_routing_cadence,
+                "turn_selection_user_message_count": settings.turn_selection_user_message_count,
                 "workload_classification_enabled": settings.workload_classification_enabled,
                 "workload_custom_categories": list(settings.workload_custom_categories),
                 "error": str(exc),
@@ -335,6 +348,7 @@ def create_model_settings_router(
             "smart_routing_decision_model": settings.smart_routing_decision_model,
             "smart_routing_prompt": settings.smart_routing_prompt,
             "smart_routing_cadence": settings.smart_routing_cadence,
+            "turn_selection_user_message_count": settings.turn_selection_user_message_count,
             "workload_classification_enabled": settings.workload_classification_enabled,
             "workload_custom_categories": list(settings.workload_custom_categories),
             "error": None,
@@ -354,17 +368,10 @@ def create_model_settings_router(
         update_decision_model = "smart_routing_decision_model" in body.model_fields_set
         update_prompt = "smart_routing_prompt" in body.model_fields_set
         update_cadence = "smart_routing_cadence" in body.model_fields_set
+        update_message_count = "turn_selection_user_message_count" in body.model_fields_set
         update_workload_classification = "workload_classification_enabled" in body.model_fields_set
         update_workload_categories = "workload_custom_categories" in body.model_fields_set
         custom_categories = list(dict.fromkeys(body.workload_custom_categories or []))
-        workload_update = (
-            {
-                "workload_classification_enabled": body.workload_classification_enabled,
-                "update_workload_classification_enabled": True,
-            }
-            if update_workload_classification
-            else {}
-        )
         settings = await asyncio.to_thread(
             model_settings_store.update,
             harness=OMNIHARNESS_AGENT_NAME if update_models else None,
@@ -377,10 +384,13 @@ def create_model_settings_router(
             update_smart_routing_prompt=update_prompt,
             smart_routing_cadence=body.smart_routing_cadence,
             update_smart_routing_cadence=update_cadence,
+            turn_selection_user_message_count=body.turn_selection_user_message_count,
+            update_turn_selection_user_message_count=update_message_count,
             workload_custom_categories=custom_categories,
             update_workload_custom_categories=update_workload_categories,
+            workload_classification_enabled=body.workload_classification_enabled,
+            update_workload_classification_enabled=update_workload_classification,
             updated_by=get_user_id(request, auth_provider),
-            **workload_update,
         )
         if update_policy_model:
             _set_runtime_policy_model(settings.policy_model, _databricks_profile(config))
@@ -391,6 +401,7 @@ def create_model_settings_router(
             "smart_routing_decision_model": settings.smart_routing_decision_model,
             "smart_routing_prompt": settings.smart_routing_prompt,
             "smart_routing_cadence": settings.smart_routing_cadence,
+            "turn_selection_user_message_count": settings.turn_selection_user_message_count,
             "workload_classification_enabled": settings.workload_classification_enabled,
             "workload_custom_categories": list(settings.workload_custom_categories),
         }

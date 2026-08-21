@@ -1676,8 +1676,9 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-profile_general"));
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "General agent");
+    saveConfig();
     typeMessage("start with this profile");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
@@ -1711,14 +1712,14 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-auto"));
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "Research");
+    pickSelectOption("new-chat-landing-config-profile", "Auto Select");
+    expect(screen.getByTestId("new-chat-landing-config-profile").textContent).toContain("Auto Select");
+    saveConfig();
     typeMessage("research this change");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
-      "Profile: Auto Select",
-    );
     const sessionCall = vi
       .mocked(authenticatedFetch)
       .mock.calls.find(([url]) => url === "/v1/sessions");
@@ -1727,6 +1728,39 @@ describe("NewChatLandingScreen create flow", () => {
     const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
     expect(body.agent_id).toBe("ag_omniharness");
     expect(body.prompt_profile).toEqual({ mode: "auto" });
+  });
+
+  it("persists Auto Include for per-turn multi-profile selection", async () => {
+    setAgents([
+      agent({
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
+        harness: "openai-agents",
+        builtin: true,
+        enabled: true,
+      }),
+    ]);
+    vi.mocked(authenticatedFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "Auto Include");
+    saveConfig();
+    typeMessage("use every relevant profile");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    const sessionCall = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.find(([url]) => url === "/v1/sessions");
+    expect(sessionCall).toBeTruthy();
+    if (!sessionCall) throw new Error("Expected a session create call");
+    const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
+    expect(body.prompt_profile).toEqual({ mode: "auto_include" });
   });
 });
 

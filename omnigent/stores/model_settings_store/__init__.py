@@ -16,6 +16,8 @@ class ModelSettings:
     smart_routing_prompt: str | None
     smart_routing_cadence: str
     omniharness_system_prompt: str = ""
+    prompt_profile_auto_include_limit: int = 5
+    turn_selection_user_message_count: int = 3
     workload_classification_enabled: bool = False
     workload_custom_categories: tuple[str, ...] = ()
 
@@ -44,6 +46,10 @@ class ModelSettingsStore(ABC):
         update_smart_routing_prompt: bool = False,
         omniharness_system_prompt: str | None = None,
         update_omniharness_system_prompt: bool = False,
+        prompt_profile_auto_include_limit: int | None = None,
+        update_prompt_profile_auto_include_limit: bool = False,
+        turn_selection_user_message_count: int | None = None,
+        update_turn_selection_user_message_count: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,

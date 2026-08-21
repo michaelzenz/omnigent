@@ -19,6 +19,7 @@ export interface AdminModelSettings {
   smartRoutingDecisionModel: string | null;
   smartRoutingPrompt: string | null;
   smartRoutingCadence: "per_turn" | "first_turn_only";
+  turnSelectionUserMessageCount: number;
   error: string | null;
 }
 
@@ -45,6 +46,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     smart_routing_decision_model: string | null;
     smart_routing_prompt: string | null;
     smart_routing_cadence: "per_turn" | "first_turn_only";
+    turn_selection_user_message_count: number;
     error: string | null;
   };
   return {
@@ -61,6 +63,7 @@ async function fetchAdminModelSettings(): Promise<AdminModelSettings> {
     smartRoutingDecisionModel: body.smart_routing_decision_model,
     smartRoutingPrompt: body.smart_routing_prompt,
     smartRoutingCadence: body.smart_routing_cadence,
+    turnSelectionUserMessageCount: body.turn_selection_user_message_count,
     error: body.error,
   };
 }
@@ -91,8 +94,14 @@ export function useOmniHarnessSettings(enabled = true) {
     queryFn: async () => {
       const response = await authenticatedFetch("/v1/omniharness/settings");
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const body = (await response.json()) as { system_prompt: string };
-      return { systemPrompt: body.system_prompt };
+      const body = (await response.json()) as {
+        system_prompt: string;
+        prompt_profile_auto_include_limit: number;
+      };
+      return {
+        systemPrompt: body.system_prompt,
+        promptProfileAutoIncludeLimit: body.prompt_profile_auto_include_limit,
+      };
     },
     staleTime: 30_000,
     enabled,
@@ -102,14 +111,32 @@ export function useOmniHarnessSettings(enabled = true) {
 export function useUpdateOmniHarnessSettings() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ systemPrompt }: { systemPrompt: string }) => {
+    mutationFn: async ({
+      systemPrompt,
+      promptProfileAutoIncludeLimit,
+    }: {
+      systemPrompt?: string;
+      promptProfileAutoIncludeLimit?: number;
+    }) => {
       const response = await authenticatedFetch("/v1/omniharness/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system_prompt: systemPrompt }),
+        body: JSON.stringify({
+          ...(systemPrompt !== undefined ? { system_prompt: systemPrompt } : {}),
+          ...(promptProfileAutoIncludeLimit !== undefined
+            ? { prompt_profile_auto_include_limit: promptProfileAutoIncludeLimit }
+            : {}),
+        }),
       });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      return { systemPrompt };
+      const body = (await response.json()) as {
+        system_prompt: string;
+        prompt_profile_auto_include_limit: number;
+      };
+      return {
+        systemPrompt: body.system_prompt,
+        promptProfileAutoIncludeLimit: body.prompt_profile_auto_include_limit,
+      };
     },
     onSuccess: (settings) => {
       queryClient.setQueryData(OMNIHARNESS_SETTINGS_KEY, settings);
@@ -137,6 +164,7 @@ export function useUpdateAdminModelSettings() {
       smartRoutingDecisionModel?: string | null;
       smartRoutingPrompt?: string | null;
       smartRoutingCadence?: "per_turn" | "first_turn_only";
+      turnSelectionUserMessageCount?: number;
     }) => {
       const response = await authenticatedFetch("/v1/admin/model-settings", {
         method: "PATCH",
@@ -160,6 +188,9 @@ export function useUpdateAdminModelSettings() {
             : {}),
           ...(patch.smartRoutingCadence !== undefined
             ? { smart_routing_cadence: patch.smartRoutingCadence }
+            : {}),
+          ...(patch.turnSelectionUserMessageCount !== undefined
+            ? { turn_selection_user_message_count: patch.turnSelectionUserMessageCount }
             : {}),
         }),
       });

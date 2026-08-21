@@ -220,6 +220,7 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
     selector = AsyncMock(
         return_value=OmniHarnessTurnSelection(
             profile=profile,
+            profiles=(profile,),
             model=GPT_MODEL,
             model_verdict={
                 "model": GPT_MODEL,
@@ -263,6 +264,7 @@ async def test_omnigent_joint_profile_and_model_auto_selection_uses_one_ai_call(
 
     assert selector.await_count == 1
     assert external_router.calls == []
+    assert selector.await_args.args[0] == ["route and profile this turn"]
     selection_kwargs = selector.await_args.kwargs
     assert selection_kwargs["model_candidates"] == [GPT_MODEL, GLM_MODEL]
     messages = [
@@ -300,7 +302,9 @@ async def test_omnigent_profile_auto_selection_works_without_model_auto(
     assert conv is not None
     profile_store = SqlAlchemyPromptProfileStore(db_uri)
     profile = profile_store.create("cd" * 16, "Profile only", "Use this profile.")
-    selector = AsyncMock(return_value=OmniHarnessTurnSelection(profile=profile))
+    selector = AsyncMock(
+        return_value=OmniHarnessTurnSelection(profile=profile, profiles=(profile,))
+    )
     body = SessionEventInput(
         type="message",
         data={
@@ -331,8 +335,10 @@ async def test_omnigent_profile_auto_selection_works_without_model_auto(
             )
 
     selector.assert_awaited_once_with(
-        "select only a profile",
+        ["select only a profile"],
         profile_store,
+        profile_mode="single",
+        max_profiles=5,
     )
     message = next(
         item

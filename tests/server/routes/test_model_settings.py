@@ -44,6 +44,10 @@ class FakeModelSettingsStore(ModelSettingsStore):
         update_smart_routing_prompt: bool = False,
         omniharness_system_prompt: str | None = None,
         update_omniharness_system_prompt: bool = False,
+        prompt_profile_auto_include_limit: int | None = None,
+        update_prompt_profile_auto_include_limit: bool = False,
+        turn_selection_user_message_count: int | None = None,
+        update_turn_selection_user_message_count: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,
@@ -78,6 +82,18 @@ class FakeModelSettingsStore(ModelSettingsStore):
                 omniharness_system_prompt or ""
                 if update_omniharness_system_prompt
                 else self.settings.omniharness_system_prompt
+            ),
+            prompt_profile_auto_include_limit=(
+                prompt_profile_auto_include_limit
+                if update_prompt_profile_auto_include_limit
+                and prompt_profile_auto_include_limit is not None
+                else self.settings.prompt_profile_auto_include_limit
+            ),
+            turn_selection_user_message_count=(
+                turn_selection_user_message_count
+                if update_turn_selection_user_message_count
+                and turn_selection_user_message_count is not None
+                else self.settings.turn_selection_user_message_count
             ),
             workload_classification_enabled=(
                 bool(workload_classification_enabled)
@@ -132,17 +148,25 @@ async def test_model_settings_routes_discover_and_persist(
         assert discovered.json()["smart_routing_decision_model"] == "databricks-gpt-5-6-luna"
         assert discovered.json()["smart_routing_prompt"] == ""
         assert discovered.json()["smart_routing_cadence"] == "per_turn"
+        assert discovered.json()["turn_selection_user_message_count"] == 3
         assert discovered.json()["workload_classification_enabled"] is False
         assert discovered.json()["workload_custom_categories"] == []
 
         prompt = await client.get("/v1/omniharness/settings")
         assert prompt.json()["system_prompt"] == ""
+        assert prompt.json()["prompt_profile_auto_include_limit"] == 5
         prompt = await client.patch(
             "/v1/omniharness/settings",
             json={"system_prompt": "Be concise."},
         )
         assert prompt.status_code == 200
         assert prompt.json()["system_prompt"] == "Be concise."
+        prompt = await client.patch(
+            "/v1/omniharness/settings",
+            json={"prompt_profile_auto_include_limit": 7},
+        )
+        assert prompt.status_code == 200
+        assert prompt.json()["prompt_profile_auto_include_limit"] == 7
 
         updated = await client.patch(
             "/v1/admin/model-settings",
@@ -152,6 +176,7 @@ async def test_model_settings_routes_discover_and_persist(
                 "smart_routing_decision_model": "databricks-glm-5-2",
                 "smart_routing_prompt": "Choose the best configured model.",
                 "smart_routing_cadence": "first_turn_only",
+                "turn_selection_user_message_count": 5,
                 "workload_classification_enabled": True,
                 "workload_custom_categories": ["research", "incident_response"],
             },
@@ -160,6 +185,7 @@ async def test_model_settings_routes_discover_and_persist(
         assert updated.json()["smart_routing_decision_model"] == "databricks-glm-5-2"
         assert updated.json()["smart_routing_prompt"] == "Choose the best configured model."
         assert updated.json()["smart_routing_cadence"] == "first_turn_only"
+        assert updated.json()["turn_selection_user_message_count"] == 5
         assert updated.json()["workload_classification_enabled"] is True
         assert updated.json()["workload_custom_categories"] == ["research", "incident_response"]
 
@@ -180,9 +206,11 @@ async def test_model_settings_routes_discover_and_persist(
     assert store.get().smart_routing_decision_model is None
     assert store.get().smart_routing_prompt == "Choose the best configured model."
     assert store.get().smart_routing_cadence == "first_turn_only"
+    assert store.get().turn_selection_user_message_count == 5
     assert store.get().workload_classification_enabled is True
     assert store.get().workload_custom_categories == ("research", "incident_response")
     assert store.get().omniharness_system_prompt == "Be concise."
+    assert store.get().prompt_profile_auto_include_limit == 7
     assert caps.llm.model == "databricks-gpt-5-4"
 
 
@@ -213,6 +241,10 @@ async def test_model_settings_route_validates_smart_routing_fields() -> None:
             "/v1/admin/model-settings",
             json={"workload_custom_categories": ["Not valid"]},
         )
+        invalid_message_count = await client.patch(
+            "/v1/admin/model-settings",
+            json={"turn_selection_user_message_count": 0},
+        )
         built_in_category = await client.patch(
             "/v1/admin/model-settings",
             json={"workload_custom_categories": ["debug"]},
@@ -222,4 +254,5 @@ async def test_model_settings_route_validates_smart_routing_fields() -> None:
     assert long_model.status_code == 422
     assert long_prompt.status_code == 422
     assert invalid_category.status_code == 422
+    assert invalid_message_count.status_code == 422
     assert built_in_category.status_code == 422

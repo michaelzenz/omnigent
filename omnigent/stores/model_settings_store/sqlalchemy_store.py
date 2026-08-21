@@ -38,6 +38,8 @@ def _decode(row: SqlModelSettings) -> ModelSettings:
         smart_routing_prompt=row.smart_routing_prompt,
         smart_routing_cadence=row.smart_routing_cadence,
         omniharness_system_prompt=row.omniharness_system_prompt,
+        prompt_profile_auto_include_limit=row.prompt_profile_auto_include_limit,
+        turn_selection_user_message_count=row.turn_selection_user_message_count,
         workload_classification_enabled=row.workload_classification_enabled,
         workload_custom_categories=tuple(workload_categories),
     )
@@ -74,6 +76,10 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
         update_smart_routing_prompt: bool = False,
         omniharness_system_prompt: str | None = None,
         update_omniharness_system_prompt: bool = False,
+        prompt_profile_auto_include_limit: int | None = None,
+        update_prompt_profile_auto_include_limit: bool = False,
+        turn_selection_user_message_count: int | None = None,
+        update_turn_selection_user_message_count: bool = False,
         smart_routing_cadence: str | None = None,
         update_smart_routing_cadence: bool = False,
         workload_classification_enabled: bool | None = None,
@@ -103,6 +109,14 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
                 row.smart_routing_prompt = smart_routing_prompt
             if update_omniharness_system_prompt:
                 row.omniharness_system_prompt = omniharness_system_prompt or ""
+            if update_prompt_profile_auto_include_limit:
+                if prompt_profile_auto_include_limit is None or prompt_profile_auto_include_limit < 1:
+                    raise ValueError("prompt profile auto-include limit must be positive")
+                row.prompt_profile_auto_include_limit = prompt_profile_auto_include_limit
+            if update_turn_selection_user_message_count:
+                if turn_selection_user_message_count is None or turn_selection_user_message_count < 1:
+                    raise ValueError("turn selection user-message count must be positive")
+                row.turn_selection_user_message_count = turn_selection_user_message_count
             if update_smart_routing_cadence:
                 if smart_routing_cadence not in {"per_turn", "first_turn_only"}:
                     raise ValueError("invalid smart routing cadence")

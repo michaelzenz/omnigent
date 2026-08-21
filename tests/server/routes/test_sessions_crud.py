@@ -140,6 +140,19 @@ async def test_patch_prompt_profile_accepts_per_turn_auto_select(
     assert response.json()["prompt_profile"] == {"mode": "auto"}
 
 
+async def test_patch_prompt_profile_accepts_per_turn_auto_include(
+    client: httpx.AsyncClient,
+    omniharness_session_id: str,
+) -> None:
+    response = await client.patch(
+        f"/v1/sessions/{omniharness_session_id}",
+        json={"prompt_profile": {"mode": "auto_include"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["prompt_profile"] == {"mode": "auto_include"}
+
+
 async def test_patch_prompt_profile_rejects_non_omniharness_agent(
     client: httpx.AsyncClient,
     session_id: str,

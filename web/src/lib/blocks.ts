@@ -114,6 +114,7 @@ export interface ResponseStartBlock {
  */
 export interface MessageExecutionContext {
   profile?: string | null;
+  profiles?: string[];
   harness?: string | null;
   model?: string | null;
 }

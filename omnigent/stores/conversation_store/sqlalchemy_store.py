@@ -7,7 +7,7 @@ import logging
 import math
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy import (
     ColumnElement,
@@ -217,7 +217,10 @@ def _to_conversation(
         parent_conversation_id=row.parent_conversation_id,
         root_conversation_id=row.root_conversation_id,
         agent_id=row.agent_id,
-        prompt_profile_mode=row.prompt_profile_mode,
+        prompt_profile_mode=cast(
+            Literal["auto", "auto_include", "fixed"] | None,
+            row.prompt_profile_mode,
+        ),
         prompt_profile_id=row.prompt_profile_id,
         runner_id=meta.runner_id if meta else None,
         host_id=meta.host_id if meta else None,
@@ -258,7 +261,7 @@ def _validate_prompt_profile_columns(mode: str | None, profile_id: str | None) -
     """Enforce the nullable tagged-union shape stored on conversations."""
     if mode is None and profile_id is None:
         return
-    if mode == "auto" and profile_id is None:
+    if mode in {"auto", "auto_include"} and profile_id is None:
         return
     if mode == "fixed" and profile_id:
         return

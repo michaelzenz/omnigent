@@ -1096,8 +1096,8 @@ def _build_session_response(
             None
             if conv.prompt_profile_mode is None
             else (
-                {"mode": "auto"}
-                if conv.prompt_profile_mode == "auto"
+                {"mode": conv.prompt_profile_mode}
+                if conv.prompt_profile_mode in {"auto", "auto_include"}
                 else {"mode": "fixed", "profile_id": conv.prompt_profile_id}
             )
         ),
@@ -4606,6 +4606,44 @@ def _runner_reject_detail(response: httpx.Response) -> str:
     return f"{code}: {detail}" if code else detail
 
 
+def _recent_user_messages_for_turn_selection(
+    conversation_store: ConversationStore,
+    session_id: str,
+    current_message: str,
+    total_count: int,
+) -> list[str]:
+    """Return recent user messages in chronological order, including the current one."""
+    previous_needed = max(total_count - 1, 0)
+    if previous_needed == 0:
+        return [current_message]
+
+    previous: list[str] = []
+    after: str | None = None
+    while len(previous) < previous_needed:
+        page = conversation_store.list_items(
+            session_id,
+            limit=max(100, min(previous_needed * 2, 500)),
+            after=after,
+            order="desc",
+            type="message",
+        )
+        for item in page.data:
+            if (
+                isinstance(item.data, MessageData)
+                and item.data.role == "user"
+                and not item.data.is_meta
+                and (text := _message_text(item.data.content))
+            ):
+                previous.append(text[:4000])
+                if len(previous) == previous_needed:
+                    break
+        if len(previous) >= previous_needed or not page.has_more or page.last_id is None:
+            break
+        after = page.last_id
+
+    return [*reversed(previous), current_message]
+
+
 async def _forward_event_to_runner(
     session_id: str,
     conv: Conversation,
@@ -4876,25 +4914,39 @@ async def _forward_event_to_runner(
     ) or _parent_routing_on
     _harness = _resolve_harness(conv)
     _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None
-    _profile_auto = (
+    _profile_dynamic = (
         body.type == "message"
         and body.data.get("role") == "user"
         and _uses_omniharness
-        and conv.prompt_profile_mode == "auto"
+        and conv.prompt_profile_mode in {"auto", "auto_include"}
     )
+    _profile_include = conv.prompt_profile_mode == "auto_include"
     _profile_selected_this_turn = False
-    if _profile_auto and prompt_profile_store is None:
+    if _profile_dynamic and prompt_profile_store is None:
         raise OmnigentError(
             "Prompt profile selection is unavailable",
             code=ErrorCode.INTERNAL_ERROR,
         )
 
-    def _apply_auto_profile(profile: Any) -> None:
-        runner_body["profile_instructions"] = profile.instructions
+    def _apply_auto_profiles(profiles: Sequence[Any]) -> None:
+        if not profiles:
+            return
+        runner_body["profile_instructions"] = (
+            profiles[0].instructions
+            if len(profiles) == 1
+            else "\n\n".join(
+                f"## Prompt profile: {profile.name}\n{profile.instructions}"
+                for profile in profiles
+                if profile.instructions
+            )
+        )
         execution_context = body.data.get("execution_context")
         if isinstance(execution_context, dict):
             execution_context = dict(execution_context)
-            execution_context["profile"] = profile.name
+            names = [profile.name for profile in profiles]
+            execution_context["profile"] = names[0] if len(names) == 1 else None
+            if _profile_include:
+                execution_context["profiles"] = names
             body.data["execution_context"] = execution_context
             forwarded_data["execution_context"] = execution_context
             runner_body["execution_context"] = execution_context
@@ -4917,6 +4969,25 @@ async def _forward_event_to_runner(
         _omniharness_routing_settings is not None
         and getattr(_omniharness_routing_settings, "workload_classification_enabled", False)
     )
+    _turn_selection_messages: list[str] | None = None
+
+    async def _recent_turn_selection_messages(current_message: str) -> list[str]:
+        nonlocal _turn_selection_messages
+        if _turn_selection_messages is None:
+            total_count = (
+                _omniharness_routing_settings.turn_selection_user_message_count
+                if _omniharness_routing_settings is not None
+                else 3
+            )
+            _turn_selection_messages = await asyncio.to_thread(
+                _recent_user_messages_for_turn_selection,
+                conversation_store,
+                session_id,
+                current_message,
+                total_count,
+            )
+        return _turn_selection_messages
+
     _selected_workload: str | None = None
     _unified_selection_done = False
     _routed_model: str | None = None
@@ -5087,7 +5158,7 @@ async def _forward_event_to_runner(
                     else None
                 )
                 _turn_route_err: str | None = None
-                if _profile_auto or _classify_workload:
+                if _profile_dynamic or _classify_workload:
                     from omnigent.omniharness_turn_selection import (
                         DEFAULT_WORKLOAD_CATEGORIES,
                         select_omniharness_turn,
@@ -5097,7 +5168,7 @@ async def _forward_event_to_runner(
                         record_omniharness_usage,
                     )
 
-                    if _profile_auto:
+                    if _profile_dynamic:
                         assert prompt_profile_store is not None
                     _joint_catalog = _turn_catalog
                     if _joint_catalog is None and _turn_backed:
@@ -5108,9 +5179,19 @@ async def _forward_event_to_runner(
                         if not harness_bars_model(_harness, model)
                     ]
                     _selection = await select_omniharness_turn(
-                        _user_text,
-                        prompt_profile_store if _profile_auto else None,
-                        select_profile=_profile_auto,
+                        await _recent_turn_selection_messages(_user_text),
+                        prompt_profile_store if _profile_dynamic else None,
+                        select_profile=_profile_dynamic,
+                        profile_mode="include" if _profile_include else "single",
+                        max_profiles=(
+                            getattr(
+                                _omniharness_routing_settings,
+                                "prompt_profile_auto_include_limit",
+                                5,
+                            )
+                            if _omniharness_routing_settings is not None
+                            else 5
+                        ),
                         model_candidates=_joint_candidates,
                         classify_workload=_classify_workload,
                         workload_categories=(
@@ -5124,8 +5205,8 @@ async def _forward_event_to_runner(
                         decision_model=_decision_model,
                         smart_routing_prompt=_routing_prompt,
                     )
-                    if _selection.profile is not None:
-                        _apply_auto_profile(_selection.profile)
+                    if _profile_dynamic:
+                        _apply_auto_profiles(_selection.profiles)
                         _profile_selected_this_turn = True
                     _routed_model = _selection.model
                     _verdict = _selection.model_verdict
@@ -5137,7 +5218,7 @@ async def _forward_event_to_runner(
                         turn_id=turn_id,
                         purpose=canonical_purpose(
                             [
-                                *(["profile_selection"] if _profile_auto else []),
+                                *(["profile_selection"] if _profile_dynamic else []),
                                 *(["smart_routing"] if _selection.model is not None else []),
                                 *(["workload_classification"] if _classify_workload else []),
                             ]
@@ -5167,9 +5248,10 @@ async def _forward_event_to_runner(
                             usage=response_usage(response),
                         )
 
+                    _routing_messages = await _recent_turn_selection_messages(_user_text)
                     _routed_model, _verdict, _turn_route_err = await route_turn_or_decline(
                         _harness,
-                        _user_text,
+                        json.dumps({"user_messages": _routing_messages}, ensure_ascii=False),
                         session_id=session_id,
                         runner_client=runner_client,
                         catalog=_turn_catalog,
@@ -5210,7 +5292,7 @@ async def _forward_event_to_runner(
                                 session_id,
                                 exc_info=True,
                             )
-    if (_profile_auto and not _profile_selected_this_turn) or (
+    if (_profile_dynamic and not _profile_selected_this_turn) or (
         _classify_workload and not _unified_selection_done
     ):
         from omnigent.omniharness_turn_selection import (
@@ -5219,19 +5301,43 @@ async def _forward_event_to_runner(
         )
         from omnigent.usage_ledger import canonical_purpose, record_omniharness_usage
 
-        if _profile_auto:
+        if _profile_dynamic:
             assert prompt_profile_store is not None
         try:
-            if _profile_auto and not _classify_workload:
+            if _profile_dynamic and not _classify_workload:
                 _profile_selection = await select_omniharness_turn(
-                    _extract_user_text_for_routing(body) or "",
+                    await _recent_turn_selection_messages(
+                        _extract_user_text_for_routing(body) or ""
+                    ),
                     prompt_profile_store,
+                    profile_mode="include" if _profile_include else "single",
+                    max_profiles=(
+                        getattr(
+                            _omniharness_routing_settings,
+                            "prompt_profile_auto_include_limit",
+                            5,
+                        )
+                        if _omniharness_routing_settings is not None
+                        else 5
+                    ),
                 )
             else:
                 _profile_selection = await select_omniharness_turn(
-                    _extract_user_text_for_routing(body) or "",
-                    prompt_profile_store if _profile_auto else None,
-                    select_profile=_profile_auto,
+                    await _recent_turn_selection_messages(
+                        _extract_user_text_for_routing(body) or ""
+                    ),
+                    prompt_profile_store if _profile_dynamic else None,
+                    select_profile=_profile_dynamic,
+                    profile_mode="include" if _profile_include else "single",
+                    max_profiles=(
+                        getattr(
+                            _omniharness_routing_settings,
+                            "prompt_profile_auto_include_limit",
+                            5,
+                        )
+                        if _omniharness_routing_settings is not None
+                        else 5
+                    ),
                     classify_workload=_classify_workload,
                     workload_categories=(
                         *DEFAULT_WORKLOAD_CATEGORIES,
@@ -5247,8 +5353,8 @@ async def _forward_event_to_runner(
                         else None
                     ),
                 )
-            if _profile_selection.profile is not None:
-                _apply_auto_profile(_profile_selection.profile)
+            if _profile_dynamic:
+                _apply_auto_profiles(_profile_selection.profiles)
             _selected_workload = _profile_selection.workload
             record_omniharness_usage(
                 conversation_store,
@@ -5256,7 +5362,7 @@ async def _forward_event_to_runner(
                 turn_id=turn_id,
                 purpose=canonical_purpose(
                     [
-                        *(["profile_selection"] if _profile_auto else []),
+                        *(["profile_selection"] if _profile_dynamic else []),
                         *(["workload_classification"] if _classify_workload else []),
                     ]
                 ),
@@ -5265,7 +5371,7 @@ async def _forward_event_to_runner(
                 usage=_profile_selection.usage or {},
             )
         except OmnigentError:
-            if _profile_auto:
+            if _profile_dynamic:
                 raise
             _logger.warning(
                 "workload classification failed for session=%s; continuing unclassified",

@@ -103,6 +103,7 @@ import type {
   ModelUsage,
   NativeModelOption,
   PendingInput,
+  PromptProfileSelection,
   SandboxStatus,
   Session,
   SessionStatus,
@@ -371,6 +372,10 @@ export interface ConversationState {
    * on bind and written through `setSubagentRouting`.
    */
   subagentRoutingOverride: "on" | "off" | null;
+  /** OmniHarness PromptProfile selection applied to this session. */
+  promptProfile: PromptProfileSelection | null;
+  /** Parent session for sub-agents; null identifies a top-level session. */
+  parentSessionId: string | null;
   /**
    * Per-session Codex collaboration-mode flag. Hydrated from
    * ``omnigent.codex_native.collaboration_mode`` on bind and updated by the
@@ -761,6 +766,8 @@ export interface ChatActions {
    * unrouted sub-agents. No-ops when there is no active conversation.
    */
   setSubagentRouting: (mode: "on" | "off") => Promise<void>;
+  /** Set the active OmniHarness session's per-turn PromptProfile selection. */
+  setPromptProfile: (selection: PromptProfileSelection) => Promise<void>;
   /**
    * Re-read the active session's routing switches (cost control + sub-agent
    * routing) from the server and apply them.
@@ -1309,6 +1316,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   sessionReasoningEffort: null,
   costControlModeOverride: null,
   subagentRoutingOverride: null,
+  promptProfile: null,
+  parentSessionId: null,
   codexPlanMode: false,
   hasMoreHistory: false,
   loadingMoreHistory: false,
@@ -2306,6 +2315,21 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     }
   },
 
+  setPromptProfile: async (selection) => {
+    const { conversationId } = get();
+    if (!conversationId) return;
+    const previous = get().promptProfile;
+    const patchSet = setterFor(conversationId);
+    patchSet({ promptProfile: selection });
+    try {
+      const session = await updateSession(conversationId, { promptProfile: selection });
+      patchSet({ promptProfile: session.promptProfile ?? null });
+    } catch (err) {
+      patchSet({ promptProfile: previous });
+      throw err;
+    }
+  },
+
   refreshSessionOverrides: async () => {
     const { conversationId } = get();
     if (!conversationId) return;
@@ -3028,6 +3052,8 @@ function sessionBindingPatch(
     subAgentName: session.subAgentName ?? null,
     costControlModeOverride: session.costControlModeOverride ?? null,
     subagentRoutingOverride: session.subagentRoutingOverride ?? null,
+    promptProfile: session.promptProfile ?? null,
+    parentSessionId: session.parentSessionId ?? null,
     codexPlanMode: codexPlanModeFromSession(session),
     contextWindow: session.contextWindow ?? null,
     contextWindowIsEstimate: session.contextWindowIsEstimate ?? false,
@@ -4929,8 +4955,12 @@ function executionContextFromEvent(
     const entry = value[field];
     return typeof entry === "string" || entry === null ? entry : undefined;
   };
+  const profiles = Array.isArray(value.profiles)
+    ? value.profiles.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
   return {
     profile: optionalString("profile"),
+    profiles,
     harness: optionalString("harness"),
     model: optionalString("model"),
   };

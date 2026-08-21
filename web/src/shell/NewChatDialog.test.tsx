@@ -1152,7 +1152,7 @@ describe("NewChatLandingScreen", () => {
     expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
   });
 
-  it("shows Profile only for OmniHarness without changing that target", () => {
+  it("shows Profile only in the OmniHarness gear without changing that target", () => {
     mockAgents([
       {
         id: "ag_omniharness",
@@ -1174,14 +1174,15 @@ describe("NewChatLandingScreen", () => {
     mockPromptProfiles([promptProfile()]);
     renderLanding();
     selectAgent("ag_omniharness");
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-profile_research"));
-    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
-      "Profile: Researcher",
-    );
+    expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "Researcher");
+    expect(screen.getByTestId("new-chat-landing-config-profile")).toHaveTextContent("Researcher");
+    saveConfig();
     expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("OmniHarness");
     selectAgent("ag_native");
-    expect(screen.queryByTestId("new-chat-landing-profile-select")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    expect(screen.queryByTestId("new-chat-landing-config-profile")).toBeNull();
   });
 
   it("lists only enabled profiles returned by the selectable-profile hook", () => {
@@ -1198,8 +1199,9 @@ describe("NewChatLandingScreen", () => {
     mockPromptProfiles([promptProfile({ id: "profile_enabled", name: "Enabled profile" })]);
     renderLanding();
 
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
-    expect(screen.getByTestId("new-chat-landing-profile-profile_enabled")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    openSelect("new-chat-landing-config-profile");
+    expect(screen.getByRole("option", { name: "Enabled profile" })).toBeTruthy();
     expect(screen.queryByText("Disabled profile")).toBeNull();
   });
 

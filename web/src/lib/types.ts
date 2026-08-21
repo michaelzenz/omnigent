@@ -233,7 +233,10 @@ export interface ModelUsage {
   totalCostUsd: number | null;
 }
 
-export type PromptProfileSelection = { mode: "auto" } | { mode: "fixed"; profileId: string };
+export type PromptProfileSelection =
+  | { mode: "auto" }
+  | { mode: "auto_include" }
+  | { mode: "fixed"; profileId: string };
 
 export interface Session {
   id: string;

@@ -894,7 +894,7 @@ class SqlConversation(ConversationBase):
     # created without an agent binding. Indexed for the agent→conversation
     # reverse lookup and the list filters (agent_id / has_agent_id / agent_name).
     agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    prompt_profile_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    prompt_profile_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     prompt_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     # Per-session config overrides packed as a compact JSON object, e.g.
     # ``{"model_override":"claude-opus-4-8","reasoning_effort":"high"}``. Keys:
@@ -913,7 +913,8 @@ class SqlConversation(ConversationBase):
 
     __table_args__ = (
         CheckConstraint(
-            "prompt_profile_mode IS NULL OR prompt_profile_mode IN ('auto', 'fixed')",
+            "prompt_profile_mode IS NULL OR "
+            "prompt_profile_mode IN ('auto', 'auto_include', 'fixed')",
             name="ck_conversations_prompt_profile_mode",
         ),
         # No bare created_at/updated_at indexes: the sessions list is ACL-scoped
@@ -1343,6 +1344,16 @@ class SqlModelSettings(OmnigentBase):
         Text,
         nullable=False,
         server_default="",
+    )
+    prompt_profile_auto_include_limit: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="5",
+    )
+    turn_selection_user_message_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="3",
     )
     smart_routing_cadence: Mapped[str] = mapped_column(
         String(32),

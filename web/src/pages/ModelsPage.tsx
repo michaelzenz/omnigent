@@ -28,10 +28,16 @@ function SmartRoutingSettings({
   update: ReturnType<typeof useUpdateAdminModelSettings>;
 }) {
   const [prompt, setPrompt] = useState(data.smartRoutingPrompt ?? "");
+  const [messageCount, setMessageCount] = useState(
+    String(data.turnSelectionUserMessageCount),
+  );
 
   useEffect(() => {
     setPrompt(data.smartRoutingPrompt ?? "");
   }, [data.smartRoutingPrompt]);
+  useEffect(() => {
+    setMessageCount(String(data.turnSelectionUserMessageCount));
+  }, [data.turnSelectionUserMessageCount]);
 
   const configuredDecisionModel = data.smartRoutingDecisionModel;
   const decisionModels =
@@ -39,6 +45,10 @@ function SmartRoutingSettings({
       ? [{ id: configuredDecisionModel, displayName: configuredDecisionModel }, ...data.models]
       : data.models;
   const promptChanged = prompt !== (data.smartRoutingPrompt ?? "");
+  const parsedMessageCount = Number(messageCount);
+  const messageCountValid = Number.isInteger(parsedMessageCount) && parsedMessageCount >= 1;
+  const messageCountChanged =
+    messageCountValid && parsedMessageCount !== data.turnSelectionUserMessageCount;
 
   return (
     <section className="rounded-lg border border-border bg-background">
@@ -102,6 +112,40 @@ function SmartRoutingSettings({
               })
             }
           />
+        </div>
+
+        <div>
+          <label className="text-ui font-medium" htmlFor="turn-selection-message-count">
+            User messages for turn decisions
+          </label>
+          <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">
+            Most recent user messages used together by model and prompt-profile selection and
+            workload usage monitoring. The count includes the current message.
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <Input
+              id="turn-selection-message-count"
+              data-testid="turn-selection-message-count"
+              className="w-24"
+              type="number"
+              min={1}
+              step={1}
+              value={messageCount}
+              onChange={(event) => setMessageCount(event.target.value)}
+            />
+            <Button
+              size="sm"
+              disabled={!messageCountChanged || update.isPending}
+              onClick={() =>
+                update.mutate({ turnSelectionUserMessageCount: parsedMessageCount })
+              }
+            >
+              Save count
+            </Button>
+          </div>
+          {!messageCountValid && (
+            <p className="mt-1 text-xs text-destructive">Enter a positive whole number.</p>
+          )}
         </div>
 
         <div>

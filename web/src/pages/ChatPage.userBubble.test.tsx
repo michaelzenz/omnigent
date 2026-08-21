@@ -378,6 +378,45 @@ describe("UserBubble execution summary", () => {
       0,
     );
   });
+
+  it("shows every included profile when the execution line remains short", () => {
+    renderBubble(
+      userBubble("hello", {
+        executionContext: {
+          profiles: ["research", "review"],
+          harness: "omniharness",
+          model: "glm",
+        },
+      }),
+    );
+
+    expect(screen.getByTestId("message-execution-summary")).toHaveTextContent(
+      "Profile: Research, Review · omniharness / glm",
+    );
+  });
+
+  it("collapses long included-profile lists to Multiple and preserves the tooltip", () => {
+    renderBubble(
+      userBubble("hello", {
+        executionContext: {
+          profiles: [
+            "managed table migration specialist",
+            "predictive optimization reviewer",
+            "storage architecture analyst",
+          ],
+          harness: "omniharness",
+          model: "databricks-gpt-5-6-luna",
+        },
+      }),
+    );
+
+    const summary = screen.getByTestId("message-execution-summary");
+    expect(summary).toHaveTextContent(
+      "Profile: Multiple · omniharness / databricks-gpt-5-6-luna",
+    );
+    expect(summary.title).toContain("Managed Table Migration Specialist");
+    expect(summary.title).toContain("Predictive Optimization Reviewer");
+  });
 });
 
 describe("UserBubble rewind editor", () => {

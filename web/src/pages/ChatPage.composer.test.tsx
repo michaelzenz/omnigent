@@ -1,5 +1,6 @@
 import type * as UseWorkspaceChangedFilesModule from "@/hooks/useWorkspaceChangedFiles";
 import type * as UseSessionModule from "@/hooks/useSession";
+import type * as UsePromptProfilesModule from "@/hooks/usePromptProfiles";
 import type * as UseHostsModule from "@/hooks/useHosts";
 import type * as RunnerHealthProviderModule from "@/hooks/RunnerHealthProvider";
 import type * as AgentLabelsModule from "@/lib/agentLabels";
@@ -26,6 +27,10 @@ vi.mock("@/hooks/useWorkspaceChangedFiles", async (importOriginal) => {
 vi.mock("@/hooks/useSession", async (importOriginal) => ({
   ...(await importOriginal<typeof UseSessionModule>()),
   useSession: () => ({ session: { hostId: null }, isLoading: false, error: null }),
+}));
+vi.mock("@/hooks/usePromptProfiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof UsePromptProfilesModule>()),
+  usePromptProfiles: () => ({ data: [] }),
 }));
 vi.mock("@/hooks/useHosts", async (importOriginal) => ({
   ...(await importOriginal<typeof UseHostsModule>()),
@@ -723,6 +728,8 @@ describe("Composer model/effort label", () => {
   beforeEach(() => {
     useChatStore.setState({
       conversationId: "conv_test",
+      boundAgentName: null,
+      parentSessionId: null,
       skills: [],
       selectedModel: null,
       selectedEffort: null,
@@ -1875,9 +1882,10 @@ describe("Composer config gear", () => {
     expect(screen.getByTestId("composer-config-effort")).toBeTruthy();
   });
 
-  it("includes the SDK model picker in settings", async () => {
+  it("includes PromptProfile selection in OmniHarness settings", async () => {
     const setModel = vi.fn().mockResolvedValue(undefined);
     useChatStore.setState({
+      boundAgentName: "omniharness",
       llmModel: "databricks-glm-5-2",
       setModel,
     });
@@ -1893,13 +1901,16 @@ describe("Composer config gear", () => {
 
     fireEvent.click(gear()!);
     await screen.findByTestId("composer-config-modal");
-    expect(screen.getByTestId("composer-config-model")).toHaveTextContent("GLM 5.2");
+    expect(screen.queryByTestId("composer-config-model")).toBeNull();
+    expect(screen.getByTestId("composer-config-profile")).toHaveTextContent("Auto Select");
+    fireEvent.click(screen.getByTestId("composer-config-profile"));
+    expect(screen.getByRole("option", { name: "Auto Include" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: "Auto Select" }));
     expect(screen.getByTestId("omniharness-system-prompt-edit")).toBeTruthy();
     expect(screen.getByTestId("composer-config-busy-send-mode")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("composer-config-model"));
-    fireEvent.click(screen.getByRole("option", { name: "Kimi K3" }));
     fireEvent.click(screen.getByTestId("composer-config-save"));
-    await waitFor(() => expect(setModel).toHaveBeenCalledWith("databricks-kimi-k3"));
+    await waitFor(() => expect(screen.queryByTestId("composer-config-modal")).toBeNull());
+    expect(setModel).not.toHaveBeenCalled();
   });
 
   it("uses the composer selector for the execution target, not the SDK model", () => {
@@ -2239,6 +2250,7 @@ describe("Composer config gear — subagent routing", () => {
       selectedEffort: null,
       costControlModeOverride: null,
       subagentRoutingOverride: null,
+      promptProfile: null,
       // Opening the gear re-reads the switches from the server; stub it so
       // these renders don't reach the network.
       refreshSessionOverrides: vi.fn().mockResolvedValue(undefined),

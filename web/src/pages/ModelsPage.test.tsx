@@ -35,6 +35,7 @@ describe("ModelsPage", () => {
         smartRoutingDecisionModel: "databricks-gpt-5-4",
         smartRoutingPrompt: "",
         smartRoutingCadence: "per_turn",
+        turnSelectionUserMessageCount: 3,
         error: null,
       },
       isLoading: false,
@@ -69,6 +70,7 @@ describe("ModelsPage", () => {
         smartRoutingDecisionModel: "databricks-gpt-5-6-luna",
         smartRoutingPrompt: "",
         smartRoutingCadence: "per_turn",
+        turnSelectionUserMessageCount: 3,
         error: null,
       },
       isLoading: false,
@@ -93,6 +95,7 @@ describe("ModelsPage", () => {
         smartRoutingDecisionModel: "databricks-gpt-5-6-luna",
         smartRoutingPrompt: "",
         smartRoutingCadence: "per_turn",
+        turnSelectionUserMessageCount: 3,
         error: null,
       },
       isLoading: false,
@@ -106,6 +109,12 @@ describe("ModelsPage", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "Route every Omnigent turn" }));
     expect(mutate).toHaveBeenCalledWith({ smartRoutingCadence: "first_turn_only" });
+
+    fireEvent.change(screen.getByTestId("turn-selection-message-count"), {
+      target: { value: "5" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save count" }));
+    expect(mutate).toHaveBeenCalledWith({ turnSelectionUserMessageCount: 5 });
 
     fireEvent.change(screen.getByTestId("smart-routing-prompt"), {
       target: { value: "Prefer low-latency models." },

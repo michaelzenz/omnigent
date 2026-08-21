@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDownIcon,
   Loader2Icon,
@@ -34,8 +34,43 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 import type { AgentBundleInput } from "@/lib/agentBundle";
+import { PromptProfileSelect } from "@/components/HarnessConfigControls";
+import {
+  useOmniHarnessSettings,
+  useUpdateOmniHarnessSettings,
+} from "@/hooks/useModelSettings";
 
 export type ProfileSelection = "auto" | string;
+
+export function PromptProfileConfigControl({
+  profiles,
+  selection,
+  onSelect,
+  testId,
+}: {
+  profiles: PromptProfile[];
+  selection: ProfileSelection;
+  onSelect: (selection: ProfileSelection) => void;
+  testId: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <div className="min-w-0 flex-1">
+        <PromptProfileSelect
+          value={selection}
+          onValueChange={onSelect}
+          profiles={profiles}
+          testId={testId}
+        />
+      </div>
+      <ManageProfilesDialog
+        selectedProfileId={selection === "auto" || selection === "auto_include" ? null : selection}
+        onSelectProfile={(profile) => onSelect(profile.id)}
+        onSelectedProfileRemoved={() => onSelect("auto")}
+      />
+    </div>
+  );
+}
 
 export function ProfileControls({
   profiles,
@@ -119,10 +154,19 @@ function ManageProfilesDialog({
   const [editTarget, setEditTarget] = useState<PromptProfile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PromptProfile | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [autoIncludeLimit, setAutoIncludeLimit] = useState("5");
   const profilesQuery = usePromptProfiles({ enabled: open });
+  const omniHarnessSettings = useOmniHarnessSettings(open);
+  const updateOmniHarnessSettings = useUpdateOmniHarnessSettings();
   const archive = useArchivePromptProfile();
   const create = useCreatePromptProfile();
   const update = useUpdatePromptProfile();
+
+  useEffect(() => {
+    if (open && omniHarnessSettings.data) {
+      setAutoIncludeLimit(String(omniHarnessSettings.data.promptProfileAutoIncludeLimit));
+    }
+  }, [open, omniHarnessSettings.data]);
 
   const rows = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -189,6 +233,22 @@ function ManageProfilesDialog({
     }
   }
 
+  async function saveAutoIncludeLimit() {
+    setActionError(null);
+    const limit = Number.parseInt(autoIncludeLimit, 10);
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      setActionError("Auto Include maximum must be a positive whole number");
+      return;
+    }
+    try {
+      await updateOmniHarnessSettings.mutateAsync({
+        promptProfileAutoIncludeLimit: limit,
+      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Couldn't update Auto Include limit");
+    }
+  }
+
   const pendingId = update.isPending
     ? update.variables?.id
     : archive.isPending
@@ -220,6 +280,37 @@ function ManageProfilesDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-3">
+            <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+              <div>
+                <div className="text-sm font-medium">Auto Include maximum</div>
+                <div className="text-sm text-muted-foreground">
+                  Maximum suitable profiles injected into one turn
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={autoIncludeLimit}
+                  onChange={(event) => {
+                    if (/^\d*$/.test(event.target.value)) setAutoIncludeLimit(event.target.value);
+                  }}
+                  className="w-20"
+                  aria-label="Auto Include maximum"
+                  data-testid="manage-profiles-auto-include-limit"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void saveAutoIncludeLimit()}
+                  disabled={updateOmniHarnessSettings.isPending}
+                  data-testid="manage-profiles-auto-include-save"
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <SearchIcon className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />

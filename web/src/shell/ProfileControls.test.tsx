@@ -7,7 +7,17 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   archive: vi.fn(),
   create: vi.fn(),
+  updateSettings: vi.fn(),
   rows: [] as PromptProfile[],
+}));
+vi.mock("@/hooks/useModelSettings", () => ({
+  useOmniHarnessSettings: () => ({
+    data: { systemPrompt: "", promptProfileAutoIncludeLimit: 5 },
+  }),
+  useUpdateOmniHarnessSettings: () => ({
+    mutateAsync: mocks.updateSettings,
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/hooks/usePromptProfiles", () => ({
@@ -47,7 +57,36 @@ describe("ProfileControls", () => {
     mocks.update.mockReset();
     mocks.archive.mockReset();
     mocks.create.mockReset();
+    mocks.updateSettings.mockReset();
     mocks.rows = [];
+  });
+
+  it("updates the Auto Include maximum from profile management", async () => {
+    mocks.updateSettings.mockResolvedValue({
+      systemPrompt: "",
+      promptProfileAutoIncludeLimit: 7,
+    });
+    render(
+      <ProfileControls
+        profiles={[]}
+        selection="auto_include"
+        selectedProfileId={null}
+        disabled={false}
+        onSelect={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-gear"));
+    fireEvent.change(screen.getByTestId("manage-profiles-auto-include-limit"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByTestId("manage-profiles-auto-include-save"));
+
+    await waitFor(() =>
+      expect(mocks.updateSettings).toHaveBeenCalledWith({
+        promptProfileAutoIncludeLimit: 7,
+      }),
+    );
   });
 
   afterEach(cleanup);

@@ -206,8 +206,8 @@ import type { CostControlMode } from "@/components/CostRoutingControl";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentRowTooltip } from "@/components/AgentHoverCard";
 import type { AgentBundleInput } from "@/lib/agentBundle";
-import type { ProfileSelection } from "./ProfileControls";
-import { usePromptProfiles } from "@/hooks/usePromptProfiles";
+import { PromptProfileConfigControl, type ProfileSelection } from "./ProfileControls";
+import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles";
 
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
@@ -1424,6 +1424,8 @@ function HarnessConfigModal({
   pickedHarness,
   costControlMode,
   subagentRoutingMode,
+  profileSelection,
+  profiles,
   setPermissionMode,
   setApprovalMode,
   setCursorExecMode,
@@ -1434,6 +1436,7 @@ function HarnessConfigModal({
   setPickedHarness,
   setCostControlMode,
   setSubagentRoutingMode,
+  setProfileSelection,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1456,6 +1459,8 @@ function HarnessConfigModal({
   pickedHarness: string | null;
   costControlMode: CostControlMode;
   subagentRoutingMode: "on" | "off" | null;
+  profileSelection: ProfileSelection;
+  profiles: PromptProfile[];
   setPermissionMode: (mode: string) => void;
   setApprovalMode: (mode: string) => void;
   setCursorExecMode: (mode: string) => void;
@@ -1466,6 +1471,7 @@ function HarnessConfigModal({
   setPickedHarness: (harness: string | null, agentId?: string) => void;
   setCostControlMode: (mode: CostControlMode) => void;
   setSubagentRoutingMode: (mode: "on" | "off" | null) => void;
+  setProfileSelection: (selection: ProfileSelection) => void;
 }) {
   const info = useServerInfo();
   const sdkModelOptions = useOmniHarnessModelOptions().data ?? EMPTY_OMNIHARNESS_MODEL_OPTIONS;
@@ -1501,6 +1507,8 @@ function HarnessConfigModal({
   const [draftSubagentRouting, setDraftSubagentRouting] = useState<"on" | "off" | null>(
     subagentRoutingMode,
   );
+  const [draftProfileSelection, setDraftProfileSelection] =
+    useState<ProfileSelection>(profileSelection);
 
   useEffect(() => {
     if (!open) return;
@@ -1514,6 +1522,7 @@ function HarnessConfigModal({
     setDraftHarness(pickedHarness);
     setDraftRouting(costControlMode);
     setDraftSubagentRouting(subagentRoutingMode);
+    setDraftProfileSelection(profileSelection);
     // Seed once per open from the current live values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -1642,6 +1651,9 @@ function HarnessConfigModal({
     if (isOmniHarness && smartRoutingEligible) {
       setSubagentRoutingMode(draftSubagentRouting);
     }
+    if (isOmniHarness) {
+      setProfileSelection(draftProfileSelection);
+    }
     onOpenChange(false);
   };
 
@@ -1681,6 +1693,17 @@ function HarnessConfigModal({
                 models={sdkModelSelectOptions}
                 defaultLabel="Default (GLM 5.2)"
                 contentClassName="[&_[data-slot=select-item]]:pl-2.5"
+              />
+            </ConfigRow>
+          )}
+
+          {!autoRouting && isOmniHarness && (
+            <ConfigRow label="Prompt profile" description="Instructions applied to each turn">
+              <PromptProfileConfigControl
+                selection={draftProfileSelection}
+                onSelect={setDraftProfileSelection}
+                profiles={profiles}
+                testId="new-chat-landing-config-profile"
               />
             </ConfigRow>
           )}
@@ -2845,6 +2868,7 @@ export function NewChatLandingScreen() {
   useEffect(() => {
     if (
       profileSelection !== "auto" &&
+      profileSelection !== "auto_include" &&
       !profiles.some((profile) => profile.id === profileSelection)
     ) {
       setProfileSelection("auto");
@@ -2996,6 +3020,20 @@ export function NewChatLandingScreen() {
       const profileHarness = selectedAgent?.default_harness ?? selectedAgent?.harness;
       const activeHarness = pickedHarness ?? profileHarness;
       return [
+        ...(omniharnessSelected
+          ? [
+              {
+                label: "Prompt profile",
+                value:
+                  profileSelection === "auto"
+                    ? "Auto Select"
+                    : profileSelection === "auto_include"
+                      ? "Auto Include"
+                    : (profiles.find((profile) => profile.id === profileSelection)?.name ??
+                      "Auto Select"),
+              },
+            ]
+          : []),
         {
           label: selectedAgent?.is_multi_agent ? "Coordinator model" : "Model",
           value: modelValue,
@@ -3029,7 +3067,10 @@ export function NewChatLandingScreen() {
     supportsCursorMode,
     supportsAgySkipPermissions,
     selectedAgentUsesOmniHarness,
+    omniharnessSelected,
     selectedAgent,
+    profileSelection,
+    profiles,
     brainHarnessLabelsAll,
     routingOn,
     pickedModel,
@@ -3838,7 +3879,9 @@ export function NewChatLandingScreen() {
           ? profiles.find((profile) => profile.id === profileSelection)
           : undefined;
       const sessionPromptProfile = promptProfilesEnabled
-        ? promptProfile
+        ? profileSelection === "auto_include"
+          ? { mode: "auto_include" as const }
+          : promptProfile
           ? { mode: "fixed" as const, profile_id: promptProfile.id }
           : { mode: "auto" as const }
         : null;
@@ -4611,6 +4654,8 @@ export function NewChatLandingScreen() {
                     pickedHarness={pickedHarness}
                     costControlMode={costControlMode}
                     subagentRoutingMode={subagentRoutingMode}
+                    profileSelection={profileSelection}
+                    profiles={profiles}
                     setPermissionMode={setPermissionMode}
                     setApprovalMode={setApprovalMode}
                     setCursorExecMode={setCursorExecMode}
@@ -4621,6 +4666,7 @@ export function NewChatLandingScreen() {
                     setPickedHarness={handleSetPickedHarness}
                     setCostControlMode={setCostControlMode}
                     setSubagentRoutingMode={setSubagentRoutingMode}
+                    setProfileSelection={setProfileSelection}
                   />
                 )}
                 {/* Routing is not a standalone composer toggle — it folds into

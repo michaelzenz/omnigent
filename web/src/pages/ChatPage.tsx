@@ -178,6 +178,7 @@ import { useMentionBrowser } from "@/hooks/useMentionBrowser";
 export { detectMentionAt, mentionMarkerFor };
 export type { MentionItem, MentionState };
 import { useSession } from "@/hooks/useSession";
+import { usePromptProfiles } from "@/hooks/usePromptProfiles";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRefresh";
 import {
@@ -240,6 +241,7 @@ import type { ServerInfo } from "@/lib/capabilities";
 import { MainTerminalView } from "@/shell/MainTerminalView";
 import { UNTITLED_CONVERSATION_LABEL } from "@/shell/sidebarNav";
 import { NewChatLandingScreen } from "@/shell/NewChatDialog";
+import { PromptProfileConfigControl } from "@/shell/ProfileControls";
 import { ResumeWithDirectoryDialog } from "@/shell/ResumeWithDirectoryDialog";
 import { ReconnectSessionDialog } from "@/shell/ReconnectSessionDialog";
 import { useTerminalFirst } from "@/shell/TerminalFirstContext";
@@ -4355,14 +4357,24 @@ function UserBubble({
   const { isCopied, handleCopy } = useCopyMessage(() => text);
   const ts = formatBubbleTimestamp(bubble.createdAtS);
   const executionContext = bubble.executionContext;
-  const executionSummary = executionContext
-    ? [
-        executionContext.profile ? `Profile: ${agentDisplayLabel(executionContext.profile)}` : null,
-        [executionContext.harness, executionContext.model].filter(Boolean).join(" / ") || null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : "";
+  const executionProfileNames = (executionContext?.profiles?.length
+    ? executionContext.profiles
+    : executionContext?.profile
+      ? [executionContext.profile]
+      : []
+  ).map(agentDisplayLabel);
+  const executionTargetSummary =
+    [executionContext?.harness, executionContext?.model].filter(Boolean).join(" / ") || null;
+  const fullExecutionSummary = [
+    executionProfileNames.length > 0 ? `Profile: ${executionProfileNames.join(", ")}` : null,
+    executionTargetSummary,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const executionSummary =
+    executionProfileNames.length > 1 && fullExecutionSummary.length > 64
+      ? ["Profile: Multiple", executionTargetSummary].filter(Boolean).join(" · ")
+      : fullExecutionSummary;
   // Runtime-injected `[System: ...]` notifications (task completion,
   // timer firings, terminal idle) ride in on role=user. When the content
   // is a pure system marker — no attached images or files — swap the
@@ -4671,7 +4683,7 @@ function UserBubble({
               <span
                 className="max-w-[420px] truncate select-none text-[11px] leading-4 text-foreground/56"
                 data-testid="message-execution-summary"
-                title={executionSummary}
+                title={fullExecutionSummary}
               >
                 {executionSummary}
               </span>
@@ -7095,6 +7107,26 @@ function formatEffortLabel(effort: string): string {
 const SUBAGENT_ROUTING_LABEL = "Subagent routing";
 const SUBAGENT_ROUTING_DESCRIPTION = "Model routing for subagents this session spawns";
 
+function SessionPromptProfileRow({
+  value,
+  onValueChange,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+}) {
+  const { data: promptProfiles = [] } = usePromptProfiles({ enabledOnly: true });
+  return (
+    <ConfigRow label="Prompt profile" description="Instructions applied to each turn">
+      <PromptProfileConfigControl
+        selection={value}
+        onSelect={onValueChange}
+        profiles={promptProfiles}
+        testId="composer-config-profile"
+      />
+    </ConfigRow>
+  );
+}
+
 /**
  * In-session run-config modal opened from the composer's gear icon. The
  * live-committing analogue of the new-session ``HarnessConfigModal``: only the
@@ -7138,7 +7170,20 @@ function SessionConfigModal({
   const busySendMode = useChatStore((s) => s.busySendMode);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const subagentRoutingOverride = useChatStore((s) => s.subagentRoutingOverride);
+  const promptProfile = useChatStore((s) => s.promptProfile);
+  const boundAgentName = useChatStore((s) => s.boundAgentName);
+  const parentSessionId = useChatStore((s) => s.parentSessionId);
   const conversationId = useChatStore((s) => s.conversationId);
+  const profileSelectionEnabled =
+    modelPickerKind === "sdk" &&
+    boundAgentName === OMNIHARNESS_AGENT_NAME &&
+    parentSessionId === null;
+  const profileSelection =
+    promptProfile?.mode === "fixed"
+      ? promptProfile.profileId
+      : promptProfile?.mode === "auto_include"
+        ? "auto_include"
+        : "auto";
   const { llmModel, usesServerModelOptions, modelOptions, pickerSelectedModel, modelLabel } =
     useResolvedComposerModel(modelPickerKind, codexModelOptions, sdkModelOptions);
 
@@ -7167,6 +7212,7 @@ function SessionConfigModal({
   const [draftEffort, setDraftEffort] = useState<string | null>(selectedEffort);
   const [draftRoutingOn, setDraftRoutingOn] = useState(liveRoutingOn);
   const [draftBusySendMode, setDraftBusySendMode] = useState(busySendMode);
+  const [draftProfileSelection, setDraftProfileSelection] = useState(profileSelection);
   // The sub-agent row is stored as a PICK, not a pre-seeded draft:
   // `undefined` means "untouched", so the row mirrors the live stored value for
   // as long as the user hasn't chosen anything. A draft seeded once per open
@@ -7182,6 +7228,7 @@ function SessionConfigModal({
     setDraftEffort(selectedEffort);
     setDraftRoutingOn(liveRoutingOn);
     setDraftBusySendMode(busySendMode);
+    setDraftProfileSelection(profileSelection);
     setPickedSubagentRouting(undefined);
     // Nothing pushes a routing-switch change to the client (no SSE event, and
     // the session query never goes stale), so re-read them here — otherwise the
@@ -7190,7 +7237,7 @@ function SessionConfigModal({
     // Seed once per open from the current live values, and re-seed if the bound
     // session changes under an open modal (its drafts describe the old one).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, conversationId]);
+  }, [open, conversationId, profileSelection]);
 
   // The Select value: the router sentinel when routing is drafted on, else the
   // drafted model, else the "Default" sentinel (no override).
@@ -7235,6 +7282,18 @@ function SessionConfigModal({
       try {
         if (draftBusySendMode !== store.busySendMode) {
           store.setBusySendMode(draftBusySendMode);
+        }
+        if (
+          profileSelectionEnabled &&
+          draftProfileSelection !== profileSelection
+        ) {
+          await store.setPromptProfile(
+            draftProfileSelection === "auto"
+              ? { mode: "auto" }
+              : draftProfileSelection === "auto_include"
+                ? { mode: "auto_include" }
+              : { mode: "fixed", profileId: draftProfileSelection },
+          );
         }
         // Model/routing for SDK (OmniHarness) sessions lives in the composer
         // quick-select — skip committing the gear's stale drafts to avoid
@@ -7328,6 +7387,12 @@ function SessionConfigModal({
               </SelectContent>
             </Select>
           </ConfigRow>
+          {profileSelectionEnabled && (
+            <SessionPromptProfileRow
+              value={draftProfileSelection}
+              onValueChange={setDraftProfileSelection}
+            />
+          )}
           {/* Model selection lives in the composer's quick-select dropdown for
           SDK (OmniHarness) sessions; the gear keeps it only for native pickers. */}
           {showModels && modelPickerKind !== "sdk" && (

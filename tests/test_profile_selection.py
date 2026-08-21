@@ -77,13 +77,13 @@ async def test_profile_only_auto_select_runs_again_for_each_turn(
 
     class LLM:
         def __init__(self) -> None:
-            self.inputs: list[str] = []
+            self.inputs: list[list[str]] = []
             self.schemas: list[dict[str, object]] = []
 
         async def create(self, **kwargs: object) -> SimpleNamespace:
             payload = kwargs["input"]  # type: ignore[index]
             text = payload[0]["content"][0]["text"]  # type: ignore[index]
-            self.inputs.append(json.loads(text)["user_input"])
+            self.inputs.append(json.loads(text)["user_messages"])
             self.schemas.append(kwargs["text"])  # type: ignore[arg-type]
             return SimpleNamespace(
                 output=[
@@ -104,14 +104,83 @@ async def test_profile_only_auto_select_runs_again_for_each_turn(
     )
 
     store = _Store([profile])
-    await select_omniharness_turn("first turn", store)  # type: ignore[arg-type]
-    await select_omniharness_turn("second turn", store)  # type: ignore[arg-type]
+    await select_omniharness_turn(["first turn"], store)  # type: ignore[arg-type]
+    await select_omniharness_turn(["first turn", "second turn"], store)  # type: ignore[arg-type]
 
-    assert llm.inputs == ["first turn", "second turn"]
+    assert llm.inputs == [["first turn"], ["first turn", "second turn"]]
     assert all(
         "model" not in schema["format"]["schema"]["properties"]  # type: ignore[index]
         for schema in llm.schemas
     )
+
+
+async def test_auto_include_selects_multiple_suitable_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = _profile(id="22" * 16, name="research")
+    review = _profile(id="33" * 16, name="review")
+
+    class LLM:
+        async def create(self, **kwargs: object) -> SimpleNamespace:
+            schema = kwargs["text"]["format"]["schema"]  # type: ignore[index]
+            assert schema["properties"]["profile_ids"]["type"] == "array"
+            assert "up to 5" in kwargs["instructions"]  # type: ignore[operator]
+            return SimpleNamespace(
+                output=[
+                    SimpleNamespace(
+                        content=[
+                            SimpleNamespace(
+                                text=json.dumps({"profile_ids": [review.id, research.id]})
+                            )
+                        ]
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        "omnigent.omniharness_turn_selection.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
+        lambda _config: LLM(),
+    )
+
+    selection = await select_omniharness_turn(
+        ["research and review this"],
+        _Store([research, review]),  # type: ignore[arg-type]
+        profile_mode="include",
+        max_profiles=5,
+    )
+
+    assert selection.profiles == (review, research)
+    assert selection.profile == review
+
+
+async def test_auto_include_may_select_no_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    class LLM:
+        async def create(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                output=[SimpleNamespace(content=[SimpleNamespace(text='{"profile_ids":[]}')])]
+            )
+
+    monkeypatch.setattr(
+        "omnigent.omniharness_turn_selection.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
+        lambda _config: LLM(),
+    )
+
+    selection = await select_omniharness_turn(
+        ["hello"],
+        _Store([_profile()]),  # type: ignore[arg-type]
+        profile_mode="include",
+    )
+
+    assert selection.profiles == ()
+    assert selection.profile is None
 
 
 async def test_joint_auto_select_uses_one_call_for_profile_and_model(
@@ -154,7 +223,7 @@ async def test_joint_auto_select_uses_one_call_for_profile_and_model(
     )
 
     selection = await select_omniharness_turn(
-        "refactor this package",
+        ["refactor this package"],
         _Store([profile]),  # type: ignore[arg-type]
         model_candidates=["model-fast", "model-powerful"],
         decision_model="luna",
@@ -173,6 +242,7 @@ async def test_joint_auto_select_uses_one_call_for_profile_and_model(
     request = json.loads(llm.calls[0]["input"][0]["content"][0]["text"])  # type: ignore[index]
     assert request["model_candidates"] == ["model-fast", "model-powerful"]
     assert request["routing_guidance"] == "Prefer accuracy for refactors."
+    assert request["user_messages"] == ["refactor this package"]
 
 
 async def test_joint_auto_select_rejects_unknown_profile(
@@ -209,7 +279,7 @@ async def test_joint_auto_select_rejects_unknown_profile(
 
     with pytest.raises(OmnigentError, match="unknown profile"):
         await select_omniharness_turn(
-            "hello",
+            ["hello"],
             _Store([_profile()]),  # type: ignore[arg-type]
             model_candidates=["model-fast"],
         )
@@ -247,7 +317,7 @@ async def test_workload_only_selection_uses_one_call(
     )
 
     selection = await select_omniharness_turn(
-        "diagnose this failure",
+        ["diagnose this failure"],
         select_profile=False,
         classify_workload=True,
         workload_categories=["debug", "research", "other"],
