@@ -300,8 +300,8 @@ describe("SettingsPage", () => {
       "aria-checked",
       "true",
     );
-    fireEvent.click(screen.getByTestId("chat-top-button-jump-to-last-message"));
-    expect(localStorage.getItem("omnigent:chat-top-button")).toBe("jump-to-last-message");
+    fireEvent.click(screen.getByTestId("chat-top-button-jump-to-previous-message"));
+    expect(localStorage.getItem("omnigent:chat-top-button")).toBe("jump-to-previous-message");
     fireEvent.click(screen.getByTestId("chat-top-button-off"));
     expect(localStorage.getItem("omnigent:chat-top-button")).toBe("off");
   });

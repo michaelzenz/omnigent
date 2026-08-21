@@ -937,9 +937,9 @@ function ChatTopButtonControl() {
   }[] = [
     { value: "jump-to-top", label: "Top", testId: "chat-top-button-jump-to-top" },
     {
-      value: "jump-to-last-message",
-      label: "Last",
-      testId: "chat-top-button-jump-to-last-message",
+      value: "jump-to-previous-message",
+      label: "Previous",
+      testId: "chat-top-button-jump-to-previous-message",
     },
     { value: "off", label: "Off", testId: "chat-top-button-off" },
   ];

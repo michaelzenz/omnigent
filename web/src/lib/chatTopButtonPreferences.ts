@@ -1,4 +1,4 @@
-export type ChatTopButtonMode = "jump-to-top" | "jump-to-last-message" | "off";
+export type ChatTopButtonMode = "jump-to-top" | "jump-to-previous-message" | "off";
 
 export const DEFAULT_CHAT_TOP_BUTTON_MODE: ChatTopButtonMode = "jump-to-top";
 export const CHAT_TOP_BUTTON_STORAGE_KEY = "omnigent:chat-top-button";
@@ -6,13 +6,15 @@ export const CHAT_TOP_BUTTON_STORAGE_KEY = "omnigent:chat-top-button";
 const CHANGE_EVENT = "omnigent:chat-top-button-change";
 
 function isChatTopButtonMode(value: string | null): value is ChatTopButtonMode {
-  return value === "jump-to-top" || value === "jump-to-last-message" || value === "off";
+  return value === "jump-to-top" || value === "jump-to-previous-message" || value === "off";
 }
 
 export function readChatTopButtonMode(): ChatTopButtonMode {
   if (typeof window === "undefined") return DEFAULT_CHAT_TOP_BUTTON_MODE;
   try {
     const stored = window.localStorage.getItem(CHAT_TOP_BUTTON_STORAGE_KEY);
+    // Migrate the retired "jump-to-last-message" mode to the replacement.
+    if (stored === "jump-to-last-message") return "jump-to-previous-message";
     return isChatTopButtonMode(stored) ? stored : DEFAULT_CHAT_TOP_BUTTON_MODE;
   } catch {
     return DEFAULT_CHAT_TOP_BUTTON_MODE;

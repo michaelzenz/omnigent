@@ -17,7 +17,6 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpIcon,
-  ArrowDownIcon,
   ArrowUpToLineIcon,
   BotIcon,
   CheckIcon,
@@ -2983,7 +2982,6 @@ export function JumpToTopButton({
   mode?: Exclude<ChatTopButtonMode, "off">;
 }) {
   const [atTop, setAtTop] = useState(true);
-  const [atBottom, setAtBottom] = useState(true);
   const [hovering, setHovering] = useState(false);
   const [jumping, setJumping] = useState(false);
   // Reveal the pill while the user is scrolling up, then fade it back out once
@@ -3027,8 +3025,6 @@ export function JumpToTopButton({
       const top = scrollEl.scrollTop;
       const next = top <= 1;
       setAtTop((prev) => (prev === next ? prev : next));
-      const nextBottom = scrollEl.scrollHeight - scrollEl.clientHeight - top <= 1;
-      setAtBottom((prev) => (prev === nextBottom ? prev : nextBottom));
       // Upward scroll (and not already pinned to the top): show the pill and
       // (re)arm the idle timer that fades it out once scrolling settles.
       if (top < lastTop - 1 && top > 1) {
@@ -3046,9 +3042,7 @@ export function JumpToTopButton({
     };
   }, [scrollEl]);
 
-  // Somewhere to go: older pages exist, or we're scrolled down within the
-  // loaded window. At the very first message there's nothing to jump to.
-  const canJump = mode === "jump-to-top" ? hasMoreHistory || !atTop : !atBottom;
+  const canJump = hasMoreHistory || !atTop;
   const visible = jumping || ((hovering || scrolledUp) && canJump);
 
   const jumpToTop = useCallback(async () => {
@@ -3104,25 +3098,34 @@ export function JumpToTopButton({
     }
   }, [scroller]);
 
-  const jumpToLastMessage = useCallback(() => {
+  const jumpToPreviousMessage = useCallback(() => {
     if (!scroller) return;
     const { el, state } = scroller;
-    const userMessages = el.querySelectorAll<HTMLElement>(
-      '[data-role="user"][data-user-message-id]',
+    const userMessages = Array.from(
+      el.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
     );
-    const lastUserMessage = userMessages.item(userMessages.length - 1);
-    if (!lastUserMessage) return;
-    // "Last message" means the beginning of the newest turn: align its user
-    // prompt with the roof and release the bottom lock so the assistant reply
-    // remains below it instead of snapping back to the transcript end.
+    if (userMessages.length === 0) return;
+    const roof = el.getBoundingClientRect().top;
+    // Find the last user message at or above the roof — the one currently at
+    // the top of the viewport (possibly stuck via sticky positioning). The
+    // previous message in the list is the one we jump to.
+    let currentIndex = -1;
+    for (let i = 0; i < userMessages.length; i++) {
+      if (userMessages[i].getBoundingClientRect().top <= roof + 1) {
+        currentIndex = i;
+      } else {
+        break;
+      }
+    }
+    if (currentIndex <= 0) return;
     state.isAtBottom = false;
     state.escapedFromLock = true;
-    scrollToUserTurnStart(lastUserMessage);
+    scrollToUserTurnStart(userMessages[currentIndex - 1]);
   }, [scroller]);
 
-  const jumpLabel = mode === "jump-to-top" ? "Jump to top" : "Jump to last message";
+  const jumpLabel = mode === "jump-to-top" ? "Jump to top" : "Jump to previous message";
   const accessibleLabel =
-    mode === "jump-to-top" ? "Jump to the first message" : "Jump to the last message";
+    mode === "jump-to-top" ? "Jump to the first message" : "Jump to the previous message";
 
   return (
     <div
@@ -3144,7 +3147,7 @@ export function JumpToTopButton({
         disabled={jumping}
         onClick={() => {
           if (mode === "jump-to-top") void jumpToTop();
-          else jumpToLastMessage();
+          else jumpToPreviousMessage();
         }}
         aria-label={accessibleLabel}
         // When hidden (opacity-0 / pointer-events-none) keep the button out of
@@ -3167,10 +3170,8 @@ export function JumpToTopButton({
       >
         {jumping ? (
           <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
-        ) : mode === "jump-to-top" ? (
-          <ArrowUpIcon className="size-3.5" aria-hidden />
         ) : (
-          <ArrowDownIcon className="size-3.5" aria-hidden />
+          <ArrowUpIcon className="size-3.5" aria-hidden />
         )}
         {jumping ? "Loading history…" : jumpLabel}
       </Button>

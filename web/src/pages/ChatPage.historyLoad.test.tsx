@@ -900,6 +900,20 @@ describe("JumpToTopButton", () => {
     vi.useRealTimers();
   });
 
+  function rect(top: number): DOMRect {
+    return {
+      top,
+      bottom: top,
+      height: 0,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    };
+  }
+
   // Query by the aria-label attribute rather than role/accessible-name: when
   // hidden the button is aria-hidden (out of the accessibility tree, so its
   // accessible name computes to ""), and these tests assert on its
@@ -1014,7 +1028,7 @@ describe("JumpToTopButton", () => {
     expect(pill().className).toContain("pointer-events-none");
   });
 
-  it("jumps to the newest user message at the top instead of the reply bottom", () => {
+  it("jumps to the previous user message above the roof", () => {
     const { container, scroll, scroller } = makeScroller({
       scrollTop: 300,
       scrollHeight: 1000,
@@ -1022,11 +1036,19 @@ describe("JumpToTopButton", () => {
     });
     const metrics = scroll as unknown as { scrollTop: number };
     scroll.style.overflowY = "auto";
-    const lastUserMessage = document.createElement("div");
-    lastUserMessage.dataset.role = "user";
-    lastUserMessage.dataset.userMessageId = "latest-turn";
-    vi.spyOn(lastUserMessage, "getBoundingClientRect").mockReturnValue(rect(120));
-    scroll.append(lastUserMessage);
+    // Two user messages in DOM order (oldest first). Both sit above the
+    // viewport roof (top < 0 in jsdom); the newest is the "current" one at
+    // the top, the older one is the "previous" target.
+    const previousMessage = document.createElement("div");
+    previousMessage.dataset.role = "user";
+    previousMessage.dataset.userMessageId = "previous-turn";
+    vi.spyOn(previousMessage, "getBoundingClientRect").mockReturnValue(rect(-200));
+    scroll.append(previousMessage);
+    const currentMessage = document.createElement("div");
+    currentMessage.dataset.role = "user";
+    currentMessage.dataset.userMessageId = "current-turn";
+    vi.spyOn(currentMessage, "getBoundingClientRect").mockReturnValue(rect(-50));
+    scroll.append(currentMessage);
     const originalMatchMedia = window.matchMedia;
     window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
 
@@ -1035,17 +1057,20 @@ describe("JumpToTopButton", () => {
         containerEl={container}
         scroller={scroller}
         hasMoreHistory
-        mode="jump-to-last-message"
+        mode="jump-to-previous-message"
       />,
     );
     act(() => {
       fireEvent.mouseMove(container, { clientY: 10 });
     });
     fireEvent.click(
-      document.querySelector<HTMLButtonElement>('button[aria-label="Jump to the last message"]')!,
+      document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Jump to the previous message"]',
+      )!,
     );
 
-    expect(metrics.scrollTop).toBe(420);
+    // Scrolls to the previous message: scrollTop(300) + top(-200) = 100.
+    expect(metrics.scrollTop).toBe(100);
     expect(scroller.state).toEqual({ isAtBottom: false, escapedFromLock: true });
     window.matchMedia = originalMatchMedia;
   });
