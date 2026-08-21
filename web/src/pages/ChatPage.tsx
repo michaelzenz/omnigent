@@ -43,6 +43,14 @@ import { userColor, userColorTint, userInitials } from "@/lib/userBadge";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
+  captureActiveConversationScroll,
+  getConversationScrollPosition,
+  isConversationScrollPositionRestored,
+  registerActiveConversationScroller,
+  restoreConversationScrollPosition,
+  saveConversationScrollPosition,
+} from "@/lib/conversationScrollPositions";
+import {
   DEFAULT_STICKY_USER_MESSAGES,
   readStickyUserMessagesEnabled,
   subscribeStickyUserMessagesEnabled,
@@ -792,6 +800,7 @@ export function ChatPage() {
   // intentionally don't await it here. The store's `loadingConversation` flag
   // drives the loading UI below; `conversationLoadError` drives the error UI.
   useEffect(() => {
+    captureActiveConversationScroll(useChatStore.getState().conversationId);
     void useChatStore.getState().switchTo(urlConvId ?? null);
   }, [urlConvId]);
 
@@ -836,6 +845,7 @@ export function ChatPage() {
   // Subscribe to the bits of store state we render. Each is a
   // primitive selector so re-renders fire only when that specific
   // field changes — no `useShallow` needed.
+  const activeConversationId = useChatStore((s) => s.conversationId);
   const blocks = useChatStore((s) => s.blocks);
   const pendingUserMessages = useChatStore((s) => s.pendingUserMessages);
   const activeResponse = useChatStore((s) => s.activeResponse);
@@ -1322,7 +1332,9 @@ export function ChatPage() {
 
   const mainAgent = (
     <MainAgentSurface
-      conversationId={urlConvId ?? null}
+      // The URL leads the projected chat store by one render. Pair the scroll
+      // cache with the store id so its key changes in the same commit as bubbles.
+      conversationId={activeConversationId}
       bubbles={bubbles}
       status={status}
       isWorking={isWorking}
@@ -2263,6 +2275,7 @@ export function MainAgentSurface({
             reason as JumpToTopButton — outside the chat-scroll-fade mask, which
             would otherwise dissolve it against the header. */}
             <TranscriptScrollbar scroller={scroller} />
+            <ConversationScrollPosition conversationId={conversationId} scroller={scroller} />
             {/* Hover the top edge to reveal a pill that loads all older history and
             scrolls to the first message. Rendered here (a wrapper sibling of
             Conversation) rather than inside it so it escapes the chat-scroll-fade
@@ -2496,6 +2509,87 @@ function ScrollToBottomOnSend({ nonce }: { nonce: number }) {
     scrollToBottom("instant");
     requestAnimationFrame(() => scrollToBottom("instant"));
   }, [nonce, scrollToBottom]);
+
+  return null;
+}
+
+/**
+ * Preserves each transcript's reading position while switching sessions.
+ *
+ * Session hydration temporarily unmounts the conversation, and StickToBottom
+ * initializes every mount at the end. A user-message anchor and its viewport
+ * offset restore the same visible turn even when transcript height changes.
+ */
+export function ConversationScrollPosition({
+  conversationId,
+  scroller,
+}: {
+  conversationId: string | null;
+  scroller: ConversationScroller | null;
+}) {
+  const scrollElement = scroller?.el ?? null;
+  const scrollState = scroller?.state ?? null;
+  const stopScroll = scroller?.stopScroll ?? null;
+
+  useLayoutEffect(() => {
+    const el = scrollElement;
+    if (!el || !conversationId || !scrollState || !stopScroll) return;
+    const unregister = registerActiveConversationScroller(conversationId, el);
+    const saved = getConversationScrollPosition(conversationId);
+    let restoring = saved !== undefined;
+    let frame = 0;
+
+    const persist = () => saveConversationScrollPosition(conversationId, el);
+    const onScroll = () => {
+      if (!restoring) persist();
+    };
+    const settleForUser = () => {
+      restoring = false;
+      cancelAnimationFrame(frame);
+      persist();
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    for (const event of ["wheel", "touchstart", "pointerdown"] as const) {
+      el.addEventListener(event, settleForUser, { passive: true });
+    }
+
+    if (saved) {
+      stopScroll();
+      scrollState.isAtBottom = false;
+      scrollState.escapedFromLock = true;
+      const deadline = performance.now() + 2_000;
+      let quietSince = performance.now();
+      let lastScrollHeight = el.scrollHeight;
+      const restore = () => {
+        const now = performance.now();
+        const wasRestored = isConversationScrollPositionRestored(el, saved);
+        restoreConversationScrollPosition(el, saved);
+        if (!wasRestored || el.scrollHeight !== lastScrollHeight) quietSince = now;
+        lastScrollHeight = el.scrollHeight;
+        const settled =
+          isConversationScrollPositionRestored(el, saved) && now - quietSince >= 150;
+        const done = settled || now >= deadline;
+        if (!done) {
+          frame = requestAnimationFrame(restore);
+          return;
+        }
+        restoreConversationScrollPosition(el, saved);
+        restoring = false;
+        persist();
+      };
+      restore();
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      unregister();
+      el.removeEventListener("scroll", onScroll);
+      for (const event of ["wheel", "touchstart", "pointerdown"] as const) {
+        el.removeEventListener(event, settleForUser);
+      }
+    };
+  }, [conversationId, scrollElement, scrollState, stopScroll]);
 
   return null;
 }
@@ -7322,11 +7416,7 @@ function ComposerSdkModelSelect({
   costRoutingEligible: boolean;
   disabled: boolean;
 }) {
-  const { pickerSelectedModel, modelLabel } = useResolvedComposerModel(
-    "sdk",
-    [],
-    sdkModelOptions,
-  );
+  const { pickerSelectedModel, modelLabel } = useResolvedComposerModel("sdk", [], sdkModelOptions);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
   const label = routingOn ? SMART_ROUTING_LABEL : (modelLabel ?? "Default");

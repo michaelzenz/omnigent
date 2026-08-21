@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserMessageBlock } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 import {
+  ConversationScrollPosition,
   HistoryAutoLoader,
   JumpToTopButton,
   KeepBottomOnViewportResize,
@@ -69,6 +70,53 @@ function setScrollMetrics(
     get: () => metrics.clientHeight ?? 0,
   });
 }
+
+describe("ConversationScrollPosition", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    stickContext.scrollRef.current = null;
+    stickContext.scrollToBottom.mockReset();
+    stickContext.stopScroll = undefined;
+  });
+
+  it("restores a session's non-bottom transcript position after remount", () => {
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((_callback: FrameRequestCallback) => {
+        return 1;
+      }),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const metrics = { scrollTop: 640, scrollHeight: 2400, clientHeight: 800 };
+    const scrollRoot = document.createElement("div");
+    setScrollMetrics(scrollRoot, metrics);
+    stickContext.scrollRef.current = scrollRoot;
+    const stopScroll = vi.fn();
+    stickContext.stopScroll = stopScroll;
+    const scroller = { el: scrollRoot, state: stickContext.state, stopScroll };
+
+    const view = render(
+      <ConversationScrollPosition conversationId="conv-scroll-restore" scroller={scroller} />,
+    );
+    fireEvent.scroll(scrollRoot);
+    metrics.scrollTop = 1600;
+    view.rerender(
+      <ConversationScrollPosition conversationId="conv-other-session" scroller={scroller} />,
+    );
+    metrics.scrollTop = 300;
+    stickContext.state.isAtBottom = true;
+    stickContext.state.escapedFromLock = false;
+
+    view.rerender(
+      <ConversationScrollPosition conversationId="conv-scroll-restore" scroller={scroller} />,
+    );
+
+    expect(metrics.scrollTop).toBe(640);
+    expect(stopScroll).toHaveBeenCalledOnce();
+    expect(stickContext.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+  });
+});
 
 describe("ReleaseBottomLockOnResponseEnd", () => {
   it("keeps the reader's position when streaming settles", () => {
