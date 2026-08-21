@@ -414,9 +414,23 @@ export function useDeleteSkillEverywhere() {
 export function useCreateSkill() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, files }: { name: string; files: Record<string, string> }) =>
-      createSkill(name, files),
-    onSuccess: () => {
+    mutationFn: async ({ name, files }: { name: string; files: Record<string, string> }) => {
+      try {
+        await createSkill(name, files);
+      } catch (error) {
+        // Creation fans out across hosts and harness roots, so a failed
+        // response can still contain successful writes. Ask every connected
+        // host to report immediately so the glossary shows the partial state.
+        try {
+          await refreshSkillInventories();
+        } catch {
+          // Keep the original creation error; the inventory query still
+          // invalidates below and can display whichever reports arrived.
+        }
+        throw error;
+      }
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
     },
   });

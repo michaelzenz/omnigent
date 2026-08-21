@@ -158,6 +158,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _publish_runner_recovered_status,
     _run_managed_launch,
     _spawn_archive_stop,
+    _spawn_worktree_creation_task,
 )
 from omnigent.server.schemas import (
     AutomaticSessionRenameRequest,
@@ -175,6 +176,7 @@ from omnigent.server.schemas import (
     SessionResponse,
     SessionSwitchAgentRequest,
     UpdateSessionRequest,
+    WorktreeStatus,
 )
 from omnigent.session_lifecycle import (
     labels_with_closed_status,
@@ -327,7 +329,14 @@ def register_core_routes(
             and body.host_id is not None
             and conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE
         )
-        if _terminal_first_create:
+        if _terminal_first_create and not (
+            body.git is not None
+            and not body.git.existing_worktree
+            and body.host_id is not None
+        ):
+            # The background worktree task sets terminal_pending right
+            # before launching the runner; setting it here would spin
+            # the Terminal pill while the worktree is still being created.
             _publish_terminal_pending(resp.id, True)
         _rc = await _get_runner_client(resp.id, runner_router)
         if _rc is not None and conv is not None:
@@ -355,6 +364,31 @@ def register_core_routes(
             await asyncio.to_thread(permission_store.ensure_user, user_id)
             await asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
             resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
+        # Start worktree creation only after the ownership grant is visible:
+        # the background task eventually calls resolve_host_launch(), which
+        # enforces that grant before launching the runner.
+        if (
+            body.git is not None
+            and not body.git.existing_worktree
+            and body.host_id is not None
+            and conv is not None
+            and conv.workspace is not None
+        ):
+            _spawn_worktree_creation_task(
+                session_id=conv.id,
+                host_id=body.host_id,
+                source_repo=conv.workspace,
+                branch_name=body.git.branch_name,
+                base_branch=body.git.base_branch,
+                user_id=user_id,
+                conversation_store=conversation_store,
+                request=request,
+            )
+            resp.worktree_status = WorktreeStatus(
+                stage="creating",
+                branch=body.git.branch_name,
+                error=None,
+            )
         # Push the new session to this user's other open tabs (see the
         # multipart path above for the rationale).
         _announce_session_added(user_id, resp.id)
@@ -448,7 +482,16 @@ def register_core_routes(
         # managed) and no runner is bound yet, authorize (caller must
         # own the host AND the session), atomically bind, then launch.
         # Same authorization path as POST /v1/hosts/{host_id}/runners.
-        if launch_host_id is not None and resp.runner_id is None:
+        # Skipped when a new worktree is being created — the background
+        # worktree task owns the runner launch in that case (the workspace
+        # isn't the worktree path yet, so launching now would run the
+        # runner in the source repo instead of the worktree).
+        _pending_worktree = (
+            body.git is not None
+            and not body.git.existing_worktree
+            and body.host_id is not None
+        )
+        if launch_host_id is not None and resp.runner_id is None and not _pending_worktree:
             host_registry = getattr(request.app.state, "host_registry", None)
             host_store_inst = getattr(request.app.state, "host_store", None)
             if host_registry is not None and host_store_inst is not None:

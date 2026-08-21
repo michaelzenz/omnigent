@@ -307,8 +307,27 @@ describe("SkillsTab", () => {
       name: "my-new-skill",
       files: {
         "SKILL.md":
-          "---\nname: my-new-skill\ndescription: A brand new skill\n---\n\nDo the thing.\n",
+          '---\nname: "my-new-skill"\ndescription: "A brand new skill"\n---\n\nDo the thing.\n',
       },
     });
+  });
+
+  it("escapes YAML-sensitive skill descriptions", async () => {
+    createSkill.mockResolvedValue(undefined);
+    render(<SkillsTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+    fireEvent.change(screen.getByTestId("create-skill-name"), {
+      target: { value: "deploy-safely" },
+    });
+    fireEvent.change(screen.getByTestId("create-skill-description"), {
+      target: { value: "Deploy: production # carefully\nwithout injection" },
+    });
+    fireEvent.click(screen.getByTestId("create-skill-submit"));
+
+    await waitFor(() => expect(createSkill).toHaveBeenCalledOnce());
+    expect(createSkill.mock.calls[0]?.[0].files["SKILL.md"]).toContain(
+      'description: "Deploy: production # carefully\\nwithout injection"',
+    );
   });
 });

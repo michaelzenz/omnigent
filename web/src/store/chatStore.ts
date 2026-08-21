@@ -107,6 +107,7 @@ import type {
   Session,
   SessionStatus,
   SkillSummary,
+  WorktreeStatus,
 } from "@/lib/types";
 import { uploadFile } from "@/lib/filesApi";
 import type { ActiveResponse } from "./types";
@@ -133,6 +134,12 @@ export interface SendOptions {
   contentOverride?: MessageContentBlock[];
   /** Keep the preserved queue paused until the replacement POST is accepted. */
   preserveQueuePause?: boolean;
+  /**
+   * Interrupt the active turn before sending, so this message starts a fresh
+   * turn (with the current model/harness) instead of steering into the running
+   * turn. The server handles the interrupt + settle atomically.
+   */
+  interruptFirst?: boolean;
 }
 
 /**
@@ -530,6 +537,22 @@ export interface ConversationState {
    */
   sandboxStatus: SandboxStatus | null;
   /**
+   * Git-worktree creation progress for the bound session. Seeded
+   * from the session snapshot's `worktreeStatus` field on bind and
+   * updated by `session.worktree_status` SSE events; a `ready` event
+   * clears it back to `null`. Drives the worktree-creation log panel
+   * on the session page. Always `null` for sessions without a pending
+   * worktree.
+   */
+  worktreeStatus: WorktreeStatus | null;
+  /**
+   * Accumulated git output lines from the streaming worktree creation.
+   * Each `session.worktree_log` SSE event appends one line. Reset on
+   * session switch. Lives outside `blocks` so it never pollutes the
+   * chat transcript — it renders in a dedicated scrolling log panel.
+   */
+  worktreeLogLines: string[];
+  /**
    * Per-MCP-server startup map for the bound session (codex-native).
    * Updated by `session.mcp_startup` SSE events while the harness boots
    * its MCP servers; cleared back to `null` once every server settles
@@ -656,6 +679,14 @@ export interface ChatActions {
    * optimistic bubble promotes on POST. No-op if the id isn't queued.
    */
   steerMessage: (queueId: string) => void;
+  /**
+   * Send a queued message NOW, interrupting the active turn first so the
+   * message starts a fresh turn with the current model/harness (instead of
+   * steering into the running turn). Removes it from the queue and POSTs it
+   * with `interrupt_first: true`; the server handles the interrupt + settle
+   * atomically. No-op if the id isn't queued.
+   */
+  sendNowMessage: (queueId: string) => void;
   /**
    * Drop all queued messages for a conversation. Called when a conversation is
    * deleted so its queue can't linger in memory (it would never flush — you
@@ -1304,6 +1335,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   runnerLaunchedAt: null,
   viewers: [],
   sandboxStatus: null,
+  worktreeStatus: null,
+  worktreeLogLines: [],
   mcpStartup: null,
   abortController: null,
   historyGeneration: 0,
@@ -1379,6 +1412,16 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // Remove BEFORE the POST so a concurrent flush can't also send it.
     setActive({ queuedMessages: s.queuedMessages.filter((m) => m.queueId !== queueId) });
     void s.send(target.text, agentId, target.files);
+  },
+
+  sendNowMessage: (queueId) => {
+    const s = get();
+    const target = s.queuedMessages.find((m) => m.queueId === queueId);
+    const agentId = target?.agentId ?? s.boundAgentId;
+    if (target === undefined || agentId === null) return;
+    // Remove BEFORE the POST so a concurrent flush can't also send it.
+    setActive({ queuedMessages: s.queuedMessages.filter((m) => m.queueId !== queueId) });
+    void s.send(target.text, agentId, target.files, { interruptFirst: true });
   },
 
   clearQueuedMessages: (conversationId) => {
@@ -1657,6 +1700,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           role: "user",
           content: serverContent,
         },
+        ...(opts?.interruptFirst ? { interrupt_first: true } : {}),
       });
       // Policy denied the input — the server returned immediately
       // without starting a turn or persisting the user message, so
@@ -2964,6 +3008,8 @@ function sessionBindingPatch(
   | "codexModelOptions"
   | "terminalPending"
   | "sandboxStatus"
+  | "worktreeStatus"
+  | "worktreeLogLines"
   | "mcpStartup"
 > {
   const wrapper = session.labels?.["omnigent.wrapper"];
@@ -2990,6 +3036,8 @@ function sessionBindingPatch(
     codexModelOptions: session.codexModelOptions ?? [],
     terminalPending: session.terminalPending ?? false,
     sandboxStatus: session.sandboxStatus ?? null,
+    worktreeStatus: session.worktreeStatus ?? null,
+    worktreeLogLines: [],
     mcpStartup: session.mcpStartup ?? null,
   };
 }
@@ -5215,6 +5263,23 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // explains why the sandbox never came up.
       applyToConversation({
         sandboxStatus: event.stage === "ready" ? null : { stage: event.stage, error: event.error },
+      });
+      return;
+    case "session_worktree_log":
+      // Append one git output line to the worktree-creation log panel.
+      applyToConversation((s) => ({
+        worktreeLogLines: [...s.worktreeLogLines, event.line],
+      }));
+      return;
+    case "session_worktree_status":
+      // Advance the worktree-creation status. `ready` clears it — the
+      // workspace is patched and the runner is launching; `failed`
+      // retains the reason.
+      applyToConversation({
+        worktreeStatus:
+          event.stage === "ready"
+            ? null
+            : { stage: event.stage, branch: event.branch ?? null, error: event.error ?? null },
       });
       return;
     case "session_mcp_startup": {

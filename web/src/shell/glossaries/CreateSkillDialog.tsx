@@ -52,7 +52,9 @@ export function CreateSkillDialog({
   const canSubmit = nameValid && descriptionValid && !create.isPending;
 
   function buildSkillMd(): string {
-    return `---\nname: ${trimmedName}\ndescription: ${description.trim()}\n---\n\n${content}\n`;
+    // JSON string literals are valid YAML scalars and safely preserve colons,
+    // hashes, quotes, and multiline descriptions without frontmatter injection.
+    return `---\nname: ${JSON.stringify(trimmedName)}\ndescription: ${JSON.stringify(description.trim())}\n---\n\n${content}\n`;
   }
 
   async function handleSubmit() {
@@ -69,7 +71,7 @@ export function CreateSkillDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col gap-4 sm:max-w-2xl">
+      <DialogContent className="flex h-[min(88vh,56rem)] max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] flex-col gap-4 sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Create skill</DialogTitle>
           <DialogDescription>
@@ -117,7 +119,7 @@ export function CreateSkillDialog({
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex min-h-[20rem] flex-1 flex-col gap-1.5">
             <label
               htmlFor="create-skill-content"
               className="text-sm font-medium text-muted-foreground"
@@ -130,7 +132,7 @@ export function CreateSkillDialog({
               value={content}
               onChange={(event) => setContent(event.target.value)}
               placeholder="Write the skill instructions here…"
-              className="min-h-[16rem] font-mono text-sm"
+              className="min-h-[20rem] flex-1 resize-none font-mono text-sm"
               spellCheck={false}
             />
           </div>

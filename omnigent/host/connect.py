@@ -68,12 +68,13 @@ from omnigent.host.frames import (
     HostStopRunnerResultFrame,
     HostStoreSecretFrame,
     HostStoreSecretResultFrame,
+    HostWorktreeLogFrame,
     decode_host_frame,
     encode_host_frame,
 )
 from omnigent.host.git_worktree import (
     WorktreeError,
-    create_worktree,
+    create_worktree_streaming,
     list_worktrees,
     remove_worktree,
 )
@@ -2488,27 +2489,46 @@ class HostProcess:
     async def _handle_create_worktree(
         self,
         frame: HostCreateWorktreeFrame,
+        ws: websockets.asyncio.client.ClientConnection,
     ) -> HostCreateWorktreeResultFrame:
         """Handle a ``host.create_worktree`` request from the server.
 
         Runs the blocking git work in a worker thread so the tunnel
-        loop keeps servicing pings. See designs/SESSION_GIT_WORKTREE.md.
+        loop keeps servicing pings. Streams each git output line back as
+        a :class:`HostWorktreeLogFrame` before the final result frame,
+        so the server can relay them to the session's SSE stream for
+        real-time display.
 
         :param frame: The create-worktree request frame.
+        :param ws: The open tunnel connection, used to send log frames.
         :returns: Result frame with the worktree path and branch on
             success, or ``status: "failed"`` with an error message.
         """
+        loop = asyncio.get_running_loop()
+
+        def _on_log(line: str) -> None:
+            # Called from the worker thread — schedule the frame send on
+            # the event loop so we never touch the websocket from a thread.
+            asyncio.run_coroutine_threadsafe(
+                ws.send(
+                    encode_host_frame(
+                        HostWorktreeLogFrame(
+                            request_id=frame.request_id,
+                            line=line,
+                        )
+                    )
+                ),
+                loop,
+            )
+
         try:
-            # Pause the orphan reaper: create_worktree runs git via
-            # subprocess.run, whose children are direct children of this host
-            # but not tracked runners — the reaper must not wait() them out
-            # from under subprocess (#1782).
             with self._host_subprocess_op():
                 created = await asyncio.to_thread(
-                    create_worktree,
+                    create_worktree_streaming,
                     repo_path=frame.repo_path,
                     branch_name=frame.branch_name,
                     base_branch=frame.base_branch,
+                    on_log=_on_log,
                 )
         except WorktreeError as exc:
             return HostCreateWorktreeResultFrame(
@@ -3315,7 +3335,7 @@ class HostProcess:
             credentials_result = await asyncio.to_thread(self._handle_detect_credentials, frame)
             await ws.send(encode_host_frame(credentials_result))
         elif isinstance(frame, HostCreateWorktreeFrame):
-            await ws.send(encode_host_frame(await self._handle_create_worktree(frame)))
+            await ws.send(encode_host_frame(await self._handle_create_worktree(frame, ws)))
         elif isinstance(frame, HostRemoveWorktreeFrame):
             await ws.send(encode_host_frame(await self._handle_remove_worktree(frame)))
         elif isinstance(frame, HostListWorktreesFrame):

@@ -132,6 +132,7 @@ from omnigent.server.routes._sessions.common import (
     _queue_status_feed,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
+    _session_worktree_status_cache,
     get_server_runner_router,
     set_server_runner_router,
 )
@@ -459,6 +460,14 @@ def register_events_routes(
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise _session_not_found()
+        worktree_status = _session_worktree_status_cache.get(session_id)
+        if worktree_status is not None and body.type in ("message", _SLASH_COMMAND_TYPE):
+            detail = (
+                "Worktree creation is still running; retry after it completes."
+                if worktree_status.stage == "creating"
+                else "Worktree creation failed; resolve the failure before sending a message."
+            )
+            raise OmnigentError(detail, code=ErrorCode.CONFLICT)
         created_by = _attribution_user(user_id)
         body_created_by = _attribution_user(body.created_by)
         if body_created_by is not None:
@@ -1269,6 +1278,42 @@ def register_events_routes(
                     code=ErrorCode.RUNNER_UNAVAILABLE,
                 ) from exc
             return {"queued": True, "item_id": body.data["call_id"]}
+        # interrupt_first: interrupt the active turn and wait for it to
+        # settle before dispatching this message as a fresh turn (instead
+        # of steering into the running turn). Mirrors the rewind settle
+        # loop: forward an interrupt, poll live_status until not-running,
+        # then fall through to the normal item dispatch below.
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and body.interrupt_first
+            and (
+                _session_status_from_cache(session_id, conv.live_status) == "running"
+                or pending_elicitations.count_for(session_id) > 0
+            )
+        ):
+            await post_event(
+                request,
+                session_id,
+                SessionEventInput(type=_INTERRUPT_TYPE, data={}),
+            )
+            deadline = asyncio.get_running_loop().time() + 10.0
+            while True:
+                current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+                db_status = current.live_status if current is not None else None
+                settled = _session_status_from_cache(session_id, db_status) != "running"
+                no_elicitations = pending_elicitations.count_for(session_id) == 0
+                if settled and no_elicitations:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise OmnigentError(
+                        "Timed out waiting for the active turn to stop.",
+                        code=ErrorCode.CONFLICT,
+                    )
+                await asyncio.sleep(0.05)
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+            if conv is None:
+                raise _session_not_found()
         # Whether the runner was initially unavailable or was woken below. In
         # that case the session-init handshake may still be racing the first
         # message, even if we reused the original binding instead of launching

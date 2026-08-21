@@ -124,7 +124,7 @@ import {
 } from "@/lib/agentLabels";
 import { useConversations } from "@/hooks/useConversations";
 import { usePermissions } from "@/hooks/usePermissions";
-import type { NativeModelOption, SandboxStatus, Session, SessionStatus } from "@/lib/types";
+import type { NativeModelOption, SandboxStatus, Session, SessionStatus, WorktreeStatus } from "@/lib/types";
 import { usePromptHistory } from "@/hooks/usePromptHistory";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useDictationInsert } from "@/hooks/useDictationInsert";
@@ -860,6 +860,7 @@ export function ChatPage() {
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);
   const status = useChatStore((s) => s.status);
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
+  const worktreeStatus = useChatStore((s) => s.worktreeStatus);
   // True while the session's managed-sandbox launch is still running
   // (a failed launch is NOT "launching" — it gets normal unreachable
   // handling). Overrides the liveness-derived unreachable affordances
@@ -997,6 +998,15 @@ export function ChatPage() {
     ) {
       return;
     }
+    // Gate the auto-send while the worktree is being created or has
+    // failed — the runner hasn't launched yet (the background task
+    // launches it after the worktree is ready). Sending now would POST
+    // to a session with no runner and fail. Once worktreeStatus clears
+    // (ready → null), the effect re-runs and sends. A failed worktree
+    // returns the consumed prompt to the composer in the effect below.
+    if (worktreeStatus !== null) {
+      return;
+    }
     // TypeScript can't see through the predicate's boolean return, so
     // re-check to narrow the types for send()/the template literal. The
     // predicate already guarantees these, so this never fires at runtime.
@@ -1004,7 +1014,31 @@ export function ChatPage() {
     initialPromptSentForConvRef.current = urlConvId;
     const { send, sendSlashCommand } = useChatStore.getState();
     dispatchInitialPrompt(initialPrompt.prompt, agentId, send, sendSlashCommand);
-  }, [initialPrompt, urlConvId, loadingConversation, agentId]);
+  }, [initialPrompt, urlConvId, loadingConversation, agentId, worktreeStatus]);
+
+  // A failed worktree never gets a runner, so return the consumed landing
+  // prompt to the in-session composer instead of leaving it trapped in this
+  // auto-send effect. The composer stays disabled while the failure panel is
+  // present, but the draft remains visible and available after recovery.
+  useEffect(() => {
+    if (
+      worktreeStatus?.stage !== "failed" ||
+      initialPrompt === null ||
+      initialPrompt.conversationId !== urlConvId ||
+      urlConvId === null
+    ) {
+      return;
+    }
+    useChatStore.setState({
+      failedSendDraft: {
+        conversationId: urlConvId,
+        text: initialPrompt.prompt.text,
+        files: initialPrompt.prompt.files ?? [],
+      },
+    });
+    consumedInitialPromptRef.current = { conversationId: urlConvId, prompt: null };
+    setInitialPrompt(null);
+  }, [initialPrompt, urlConvId, worktreeStatus]);
 
   // Open state owned here (not inside MainAgentSurface) so the dialog
   // survives a re-mount of the chat surface. Declared BEFORE the
@@ -1081,6 +1115,8 @@ export function ChatPage() {
   // early returns below so these hooks run unconditionally every render.
   const queryClient = useQueryClient();
   const { data: availableAgents } = useAvailableAgents({ enabled: Boolean(urlConvId) });
+  const [switchingAgent, setSwitchingAgent] = useState(false);
+  const switchingAgentRef = useRef(false);
   const switchTargets = useMemo(() => {
     const currentName = boundAgentBySession?.name ?? null;
     const currentRoot = currentName ? agentRootName(currentName) : null;
@@ -1096,7 +1132,9 @@ export function ChatPage() {
   }, [availableAgents, boundAgentBySession]);
   const handleSwitchAgent = useCallback(
     (targetAgentId: string) => {
-      if (!urlConvId) return;
+      if (!urlConvId || switchingAgentRef.current) return;
+      switchingAgentRef.current = true;
+      setSwitchingAgent(true);
       void (async () => {
         try {
           await switchSessionAgent(urlConvId, targetAgentId);
@@ -1106,6 +1144,9 @@ export function ChatPage() {
         } catch (e) {
           const detail = e instanceof Error ? e.message : "unknown error";
           showToast(<span className="text-ui">Couldn&apos;t switch agent: {detail}</span>);
+        } finally {
+          switchingAgentRef.current = false;
+          setSwitchingAgent(false);
         }
       })();
     },
@@ -1387,7 +1428,9 @@ export function ChatPage() {
       runnerOnline={runnerOnline}
       liveness={liveness}
       agentsError={agentsError}
-      disabled={!agentId || agentsError !== null}
+      disabled={
+        !agentId || agentsError !== null || worktreeStatus !== null || switchingAgent
+      }
       onSend={onSend}
       onSendSlashCommand={onSendSlashCommand}
       onStop={onStop}
@@ -3598,6 +3641,71 @@ export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
   );
 }
 
+/**
+ * Scrolling log panel for async git-worktree creation. Shows each
+ * streamed git output line in a capped-height scrollable box (not in
+ * the chat transcript) while the background worktree task runs. On
+ * failure, shows the error reason. Auto-dismisses once the worktree
+ * is ready (``worktreeStatus`` clears to ``null``).
+ */
+export function WorktreeCreationPanel({
+  status,
+  logLines,
+}: {
+  status: WorktreeStatus;
+  logLines: string[];
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Auto-scroll to the bottom as new lines arrive.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logLines]);
+
+  const failed = status.stage === "failed";
+
+  return (
+    <div
+      data-testid="worktree-creation-panel"
+      className={cn(
+        "mx-auto mb-4 flex w-full flex-col gap-2 px-6 py-3",
+        CHAT_COLUMN_WIDTH,
+      )}
+    >
+      <div className="flex items-center gap-2 text-sm font-medium">
+        {failed ? (
+          <>
+            <AlertTriangleIcon className="size-3.5 shrink-0 text-destructive" aria-hidden />
+            <span className="text-destructive">
+              Worktree creation failed{status.error ? `: ${status.error}` : ""}
+            </span>
+          </>
+        ) : (
+          <>
+            <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+            <span className="text-muted-foreground">
+              Creating worktree{status.branch ? ` on branch "${status.branch}"` : ""}…
+            </span>
+          </>
+        )}
+      </div>
+      {logLines.length > 0 && (
+        <div
+          ref={scrollRef}
+          data-testid="worktree-creation-log"
+          className="max-h-40 overflow-y-auto rounded-md border border-border bg-muted/50 p-2 font-mono text-xs leading-relaxed text-muted-foreground"
+        >
+          {logLines.map((line, i) => (
+            <div key={`wt-log-${i}`} className="whitespace-pre-wrap break-all">
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConnectionIndicator({
   liveness,
   onShowReconnectHelp,
@@ -3615,6 +3723,8 @@ export function ConnectionIndicator({
     terminalFirst?.view === "chat",
   );
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
+  const worktreeStatus = useChatStore((s) => s.worktreeStatus);
+  const worktreeLogLines = useChatStore((s) => s.worktreeLogLines);
   // Genuinely-unreachable states get the reconnect banner, for
   // both terminal-first and regular sessions. `runner_asleep` (host up,
   // runner relaunches on the next message), `host_asleep` (resumable managed
@@ -3637,6 +3747,14 @@ export function ConnectionIndicator({
     surfaceFrontmost;
   useNativeChatTerminalBar(terminalFirst, nativeBarVisible);
 
+  if (worktreeStatus !== null) {
+    return (
+      <WorktreeCreationPanel
+        status={worktreeStatus}
+        logLines={worktreeLogLines}
+      />
+    );
+  }
   if (sandboxStatus !== null) {
     // A failed launch owns this band with its reason. An IN-FLIGHT
     // launch renders in the chat thread (RunnerStartingIndicator)
@@ -5330,6 +5448,7 @@ export function Composer({
   const maybeFlushQueuedHead = useChatStore((s) => s.maybeFlushQueuedHead);
   const dequeueMessage = useChatStore((s) => s.dequeueMessage);
   const steerMessage = useChatStore((s) => s.steerMessage);
+  const sendNowMessage = useChatStore((s) => s.sendNowMessage);
   const reorderQueuedMessage = useChatStore((s) => s.reorderQueuedMessage);
   // Drain the queue whenever idle with a waiting head — level-triggered so a
   // message queued right after the turn ended (or after an SSE reconnect that
@@ -6090,6 +6209,7 @@ export function Composer({
           textareaRef.current?.focus();
         }}
         onSteer={(queueId) => steerMessage(queueId)}
+        onSendNow={(queueId) => sendNowMessage(queueId)}
         onReorder={reorderQueuedMessage}
         widthClassName={CHAT_COLUMN_WIDTH}
       />

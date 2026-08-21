@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from omnigent.host.frames import (
@@ -137,41 +138,50 @@ async def create_worktree_on_host(
     repo_path: str,
     branch_name: str,
     base_branch: str | None,
+    on_log: Callable[[str], None] | None = None,
 ) -> CreatedWorktree:
-    """
-    Send a ``host.create_worktree`` frame and await the result.
+    """Send a ``host.create_worktree`` frame and await the result.
+
+    When ``on_log`` is supplied, each streamed git output line the host
+    emits before the final result is relayed to the callback, so the
+    caller can publish it to the session's SSE stream in real time.
 
     :param host_registry: Server-side registry; used to enqueue the
         outbound frame on the host's send queue.
     :param host_conn: Live host connection to create the worktree on.
     :param repo_path: Absolute path inside the source repo on the
-        host — the canonical picked directory, e.g.
-        ``"/Users/alice/myrepo"``.
+        host.
     :param branch_name: New branch to create, e.g. ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from the repo's current ``HEAD``.
+    :param on_log: Optional callback for each streamed git output line.
     :returns: The created worktree's path and branch.
     :raises WorktreeHostUnavailableError: If the host connection drops
         or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
     :raises WorktreeProxyError: If the host reports a worktree failure.
     """
     request_id = secrets.token_hex(8)
-    frame = encode_host_frame(
-        HostCreateWorktreeFrame(
-            request_id=request_id,
-            repo_path=repo_path,
-            branch_name=branch_name,
-            base_branch=base_branch,
+    if on_log is not None:
+        host_conn.pending_worktree_log_handlers[request_id] = on_log
+    try:
+        frame = encode_host_frame(
+            HostCreateWorktreeFrame(
+                request_id=request_id,
+                repo_path=repo_path,
+                branch_name=branch_name,
+                base_branch=base_branch,
+            )
         )
-    )
-    result = await _await_host_worktree_result(
-        host_registry=host_registry,
-        host_conn=host_conn,
-        pending=host_conn.pending_create_worktrees,
-        request_id=request_id,
-        frame=frame,
-        op="worktree creation",
-    )
+        result = await _await_host_worktree_result(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            pending=host_conn.pending_create_worktrees,
+            request_id=request_id,
+            frame=frame,
+            op="worktree creation",
+        )
+    finally:
+        host_conn.pending_worktree_log_handlers.pop(request_id, None)
     if result.get("status") != "ok":
         raise WorktreeProxyError(
             f"worktree creation failed: {result.get('error') or 'host reported no detail'}"

@@ -1298,6 +1298,10 @@ class SessionEventInput(BaseModel):
         tools are fixed at start time.
     :param created_by: Optional internal attribution actor for runner-
         originated events that are triggered by a prior human turn.
+    :param interrupt_first: When True on a user message, interrupt any
+        active turn and wait for it to settle before dispatching the
+        message as a fresh turn (instead of steering into the running
+        turn). No-op when the session is already idle.
     """
 
     type: str
@@ -1308,6 +1312,7 @@ class SessionEventInput(BaseModel):
     model_override: str | None = None
     tools: list[dict[str, Any]] | None = None
     created_by: str | None = None
+    interrupt_first: bool = False
 
 
 class SessionGitOptions(BaseModel):
@@ -1709,6 +1714,35 @@ class SandboxStatus(BaseModel):
     error: str | None = None
 
 
+# Stages of an async git-worktree creation: ``creating`` while git runs,
+# then terminal ``ready`` (workspace patched, runner launching) or ``failed``.
+WorktreeLaunchStage = Literal[
+    "creating",
+    "ready",
+    "failed",
+]
+
+
+class WorktreeStatus(BaseModel):
+    """Git-worktree creation progress for a host-bound session.
+
+    Carried on the session snapshot only while the session's background
+    worktree creation is in flight or has failed; ``None`` for sessions
+    without a pending worktree and once the worktree succeeds.
+
+    :param stage: Current stage: ``"creating"`` while git runs on the
+        host, ``"ready"`` once the worktree is created and the workspace
+        patched, or ``"failed"`` on a git error.
+    :param branch: The branch being created, e.g. ``"feature/login"``.
+    :param error: Failure detail when ``stage == "failed"``, e.g.
+        ``"branch already exists"``. ``None`` otherwise.
+    """
+
+    stage: WorktreeLaunchStage
+    branch: str | None = None
+    error: str | None = None
+
+
 class ModelUsage(BaseModel):
     """
     Cumulative token/cost usage attributed to a single LLM model.
@@ -2045,6 +2079,11 @@ class SessionResponse(BaseModel):
     model_options: list[NativeModelOption] = Field(default_factory=list)
     terminal_pending: bool = False
     sandbox_status: SandboxStatus | None = None
+    # Async git-worktree creation progress — present while the
+    # background worktree task is running or has failed. ``None``
+    # once the worktree is created (workspace patched, runner
+    # launching). Sourced from ``_session_worktree_status_cache``.
+    worktree_status: WorktreeStatus | None = None
     # Per-MCP-server startup state for native harness sessions
     # (codex-native), present while the harness boots its MCP servers or
     # when servers were cancelled/failed. ``None`` otherwise. Sourced from
@@ -3056,6 +3095,52 @@ class SessionSandboxStatusEvent(_SSEEventBase):
     type: Literal["session.sandbox_status"]
     conversation_id: str
     stage: SandboxLaunchStage
+    error: str | None = None
+
+
+class SessionWorktreeLogEvent(_SSEEventBase):
+    """One streamed line of git output during async worktree creation.
+
+    The background worktree task relays each ``HostWorktreeLogFrame`` line
+    to the session's SSE stream so the Web UI can append it to the
+    scrolling worktree-creation log panel in real time.
+
+    :param type: Always ``"session.worktree_log"``.
+    :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
+    :param line: One line of git stdout/stderr (without trailing newline).
+
+    Category: **transient** (SSE-only). Not persisted; the log panel
+    accumulates lines live and resets on session switch / reload.
+    """
+
+    type: Literal["session.worktree_log"]
+    conversation_id: str
+    line: str
+
+
+class SessionWorktreeStatusEvent(_SSEEventBase):
+    """Async git-worktree creation status transition.
+
+    Emitted when the background worktree task starts (``creating``),
+    succeeds (``ready`` — the workspace is patched and the runner is
+    launching), or fails (``failed`` + ``error``).
+
+    :param type: Always ``"session.worktree_status"``.
+    :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
+    :param stage: ``"creating"``, ``"ready"``, or ``"failed"``.
+    :param branch: The branch being created, e.g. ``"feature/login"``.
+    :param error: Failure detail when ``stage == "failed"``.
+
+    Category: **transient** (SSE + snapshot cache). A client connecting
+    mid-creation seeds from the session snapshot's ``worktree_status``
+    field; live updates arrive off this event. ``ready`` evicts the
+    cache entry.
+    """
+
+    type: Literal["session.worktree_status"]
+    conversation_id: str
+    stage: WorktreeLaunchStage
+    branch: str | None = None
     error: str | None = None
 
 
@@ -4322,6 +4407,8 @@ ServerStreamEvent = Annotated[
     | SessionTodosEvent
     | SessionTerminalPendingEvent
     | SessionSandboxStatusEvent
+    | SessionWorktreeLogEvent
+    | SessionWorktreeStatusEvent
     | SessionMcpStartupEvent
     | SessionSkillsEvent
     | SessionModelOptionsEvent

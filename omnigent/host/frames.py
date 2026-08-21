@@ -57,6 +57,7 @@ class HostFrameKind(str, Enum):
     LIST_DIR = "host.list_dir"
     LIST_DIR_RESULT = "host.list_dir_result"
     CREATE_WORKTREE = "host.create_worktree"
+    CREATE_WORKTREE_LOG = "host.create_worktree_log"
     CREATE_WORKTREE_RESULT = "host.create_worktree_result"
     REMOVE_WORKTREE = "host.remove_worktree"
     REMOVE_WORKTREE_RESULT = "host.remove_worktree_result"
@@ -478,6 +479,25 @@ class HostCreateWorktreeFrame:
 
 
 @dataclass
+class HostWorktreeLogFrame:
+    """Host → server: one streamed log line during worktree creation.
+
+    Sent zero or more times between the :class:`HostCreateWorktreeFrame`
+    request and the final :class:`HostCreateWorktreeResultFrame`, so the
+    server can relay each git stdout/stderr line to the session's SSE
+    stream for real-time display in the worktree-creation log panel.
+
+    :param request_id: Correlates to the
+        :class:`HostCreateWorktreeFrame`, e.g. ``"req_wt_1"``.
+    :param line: One line of git output (without trailing newline),
+        e.g. ``"remote: Enumerating objects: 42, done."``.
+    """
+
+    request_id: str
+    line: str
+
+
+@dataclass
 class HostCreateWorktreeResultFrame:
     """Host → server: outcome of a create-worktree request.
 
@@ -882,6 +902,7 @@ HostFrame = (
     | HostListDirFrame
     | HostListDirResultFrame
     | HostCreateWorktreeFrame
+    | HostWorktreeLogFrame
     | HostCreateWorktreeResultFrame
     | HostRemoveWorktreeFrame
     | HostRemoveWorktreeResultFrame
@@ -1096,6 +1117,14 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "repo_path": frame.repo_path,
                 "branch_name": frame.branch_name,
                 "base_branch": frame.base_branch,
+            }
+        )
+    if isinstance(frame, HostWorktreeLogFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.CREATE_WORKTREE_LOG.value,
+                "request_id": frame.request_id,
+                "line": frame.line,
             }
         )
     if isinstance(frame, HostCreateWorktreeResultFrame):
@@ -1355,6 +1384,8 @@ def _decode_known_host_frame(
             return _decode_list_dir_result(msg)
         case HostFrameKind.CREATE_WORKTREE:
             return _decode_create_worktree(msg)
+        case HostFrameKind.CREATE_WORKTREE_LOG:
+            return _decode_create_worktree_log(msg)
         case HostFrameKind.CREATE_WORKTREE_RESULT:
             return _decode_create_worktree_result(msg)
         case HostFrameKind.REMOVE_WORKTREE:
@@ -1648,6 +1679,18 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
         repo_path=_required_str(msg, "repo_path"),
         branch_name=_required_str(msg, "branch_name"),
         base_branch=_optional_nullable_str(msg, "base_branch"),
+    )
+
+
+def _decode_create_worktree_log(msg: _JsonObject) -> HostWorktreeLogFrame:
+    """Decode a host.create_worktree_log frame.
+
+    :param msg: Decoded frame object.
+    :returns: Typed host.create_worktree_log frame.
+    """
+    return HostWorktreeLogFrame(
+        request_id=_required_str(msg, "request_id"),
+        line=_required_str(msg, "line"),
     )
 
 

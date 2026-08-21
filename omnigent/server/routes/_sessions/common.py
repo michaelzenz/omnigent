@@ -42,6 +42,7 @@ from omnigent.server.schemas import (
     SandboxStatus,
     ServerStreamEvent,
     SkillSummary,
+    WorktreeStatus,
 )
 from omnigent.spec.types import (
     StateUpdate,
@@ -487,6 +488,9 @@ _session_terminal_pending_cache: dict[str, bool] = {}
 
 
 _session_sandbox_status_cache: dict[str, SandboxStatus] = {}
+
+
+_session_worktree_status_cache: dict[str, WorktreeStatus] = {}
 
 
 _session_mcp_startup_cache: dict[str, dict[str, McpServerStartup]] = {}
@@ -940,6 +944,7 @@ __all__ = [
     "_UI_ADDED_AGENT_TITLE_PREFIX",
     "_UPLOAD_READ_CHUNK_BYTES",
     "_WATCHER_TASKS",
+    "ServerRunnerInfrastructure",
     "_MirroredToolCall",
     "_PendingPolicyAskWrites",
     "_RelayHandle",
@@ -975,7 +980,7 @@ __all__ = [
     "_session_status_cache",
     "_session_terminal_pending_cache",
     "_session_todos_cache",
-    "ServerRunnerInfrastructure",
+    "_session_worktree_status_cache",
     "get_server_host_registry",
     "get_server_runner_infrastructure",
     "get_server_runner_router",

@@ -215,6 +215,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _session_status_cache,
     _session_terminal_pending_cache,
     _session_todos_cache,
+    _session_worktree_status_cache,
     build_policy_engine,
     get_agent_cache,
     get_caps,
@@ -263,8 +264,11 @@ from omnigent.server.schemas import (
     SessionSupersededEvent,
     SessionTerminalPendingEvent,
     SessionTodosEvent,
+    SessionWorktreeLogEvent,
+    SessionWorktreeStatusEvent,
     SkillSummary,
     ToolOutputDeltaEvent,
+    WorktreeStatus,
 )
 from omnigent.session_lifecycle import (
     labels_with_closed_status,
@@ -3968,6 +3972,58 @@ def _publish_sandbox_status_impl(session_id: str, stage: str, error: str | None 
         type="session.sandbox_status",
         conversation_id=session_id,
         stage=status.stage,
+        error=status.error,
+    )
+    session_stream.publish(session_id, event.model_dump())
+
+
+def _publish_worktree_log(session_id: str, line: str) -> None:
+    """Publish one git output line as a ``session.worktree_log`` event.
+
+    Thread-safe (``session_stream.publish`` is a thread-safe broadcast),
+    so the background worktree task may call this from the worker thread
+    its host-tunnel await runs on.
+
+    :param session_id: Session/conversation identifier.
+    :param line: One line of git stdout/stderr (no trailing newline).
+    """
+    event = SessionWorktreeLogEvent(
+        type="session.worktree_log",
+        conversation_id=session_id,
+        line=line,
+    )
+    session_stream.publish(session_id, event.model_dump())
+
+
+def _publish_worktree_status(
+    session_id: str,
+    stage: str,
+    branch: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Publish a ``session.worktree_status`` event and update the cache.
+
+    Mirrors :func:`_publish_sandbox_status`: ``ready`` evicts the cache
+    (the session then looks like any host-bound session); ``failed``
+    retains the reason so a reload still shows it.
+
+    :param session_id: Session/conversation identifier.
+    :param stage: ``"creating"``, ``"ready"``, or ``"failed"``.
+    :param branch: The branch being created.
+    :param error: Failure detail when ``stage == "failed"``.
+    """
+    status = WorktreeStatus.model_validate(
+        {"stage": stage, "branch": branch, "error": error}
+    )
+    if status.stage == "ready":
+        _session_worktree_status_cache.pop(session_id, None)
+    else:
+        _session_worktree_status_cache[session_id] = status
+    event = SessionWorktreeStatusEvent(
+        type="session.worktree_status",
+        conversation_id=session_id,
+        stage=status.stage,
+        branch=status.branch,
         error=status.error,
     )
     session_stream.publish(session_id, event.model_dump())
@@ -9704,6 +9760,8 @@ __all__ = [
     "_publish_session_superseded",
     "_publish_status",
     "_publish_terminal_pending",
+    "_publish_worktree_log",
+    "_publish_worktree_status",
     "_query_host_runner_status",
     "_read_state_entry",
     "_read_upload_capped",

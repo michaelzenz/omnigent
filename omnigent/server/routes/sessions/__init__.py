@@ -323,6 +323,7 @@ from omnigent.server.routes._sessions.common import (
     _session_background_task_count_cache as _session_background_task_count_cache,
     _session_mcp_startup_cache as _session_mcp_startup_cache,
     _session_sandbox_status_cache as _session_sandbox_status_cache,
+    _session_worktree_status_cache as _session_worktree_status_cache,
     _session_status_cache as _session_status_cache,
     _session_terminal_pending_cache as _session_terminal_pending_cache,
     _session_todos_cache as _session_todos_cache,
@@ -576,6 +577,12 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_sandbox_status_impl as _publish_sandbox_status,
 )
 from omnigent.server.routes._sessions.helpers import (
+    _publish_worktree_log,
+)
+from omnigent.server.routes._sessions.helpers import (
+    _publish_worktree_status,
+)
+from omnigent.server.routes._sessions.helpers import (
     _reset_runner_resources_after_switch_impl as _reset_runner_resources_after_switch,
 )
 from omnigent.server.routes._sessions.helpers import (
@@ -766,6 +773,8 @@ if TYPE_CHECKING:
         "_presentation_labels_for_agent",
         "_publish_runner_recovered_status",
         "_publish_sandbox_status",
+        "_publish_worktree_log",
+        "_publish_worktree_status",
         "_reset_runner_resources_after_switch",
         "_resolve_harness",
         "_same_provider_family",

@@ -45,6 +45,7 @@ from omnigent.host.frames import (
     HostStatResultFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretResultFrame,
+    HostWorktreeLogFrame,
     decode_host_frame,
 )
 from omnigent.host.identity import MANAGED_HOST_TOKEN_HEADER
@@ -699,6 +700,12 @@ async def _receive_loop(
                         "error": frame.error,
                     }
                 )
+            continue
+
+        if isinstance(frame, HostWorktreeLogFrame):
+            log_handler = conn.pending_worktree_log_handlers.get(frame.request_id)
+            if log_handler is not None:
+                log_handler(frame.line)
             continue
 
         if isinstance(frame, HostCreateWorktreeResultFrame):

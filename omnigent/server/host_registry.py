@@ -24,7 +24,7 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -286,6 +286,12 @@ class HostConnection:
         default_factory=dict,
     )
     pending_create_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    # Per-request_id log-line callbacks for in-flight worktree creation.
+    # Called by host_tunnel when a HostWorktreeLogFrame arrives, so the
+    # server can relay each line to the session's SSE stream in real time.
+    pending_worktree_log_handlers: dict[str, Callable[[str], None]] = field(
         default_factory=dict,
     )
     pending_remove_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(

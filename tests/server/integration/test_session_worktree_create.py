@@ -190,6 +190,22 @@ async def _create_git_session(
     )
 
 
+async def _wait_for_worktree_settled(
+    client: httpx.AsyncClient,
+    session_id: str,
+) -> dict[str, Any]:
+    """Poll until async worktree creation is ready or failed."""
+    for _ in range(100):
+        response = await client.get(f"/v1/sessions/{session_id}")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        status = body.get("worktree_status")
+        if status is None or status.get("stage") == "failed":
+            return body
+        await asyncio.sleep(0.01)
+    pytest.fail("worktree creation did not settle")
+
+
 async def test_create_passes_branch_and_base_branch_to_host(
     register_worktree_host: RegisterHost,
     client: httpx.AsyncClient,
@@ -209,6 +225,7 @@ async def test_create_passes_branch_and_base_branch_to_host(
         client, agent["id"], {"branch_name": "feature/login", "base_branch": "main"}
     )
     assert resp.status_code == 201, resp.text
+    body = await _wait_for_worktree_settled(client, resp.json()["id"])
 
     # The host received exactly one create-worktree frame carrying both
     # the new branch and the requested base ref.
@@ -218,9 +235,8 @@ async def test_create_passes_branch_and_base_branch_to_host(
     assert frame.branch_name == "feature/login"
     assert frame.base_branch == "main"
 
-    # The returned worktree path becomes the session workspace, and the
+    # The created worktree path becomes the session workspace, and the
     # branch is persisted (drives sidebar display + delete cleanup).
-    body = resp.json()
     assert body["git_branch"] == "feature/login"
     assert body["workspace"] == f"{_SOURCE_REPO}-worktrees/feature-login"
 
@@ -240,23 +256,22 @@ async def test_create_without_base_branch_sends_none(
 
     resp = await _create_git_session(client, agent["id"], {"branch_name": "wip"})
     assert resp.status_code == 201, resp.text
+    await _wait_for_worktree_settled(client, resp.json()["id"])
 
     assert len(cap.create) == 1
     assert cap.create[0].branch_name == "wip"
     assert cap.create[0].base_branch is None
 
 
-async def test_create_with_invalid_base_branch_fails_400(
+async def test_create_with_invalid_base_branch_reports_async_failure(
     register_worktree_host: RegisterHost,
     client: httpx.AsyncClient,
 ) -> None:
-    """An invalid base branch fails the create with 400 INVALID_INPUT.
+    """An invalid base branch is reported by async worktree status.
 
     The host rejects the bad base ref (``host.create_worktree`` →
-    ``status: failed``); the server maps that to INVALID_INPUT (400),
-    NOT 500 — it's user-correctable input — and surfaces the host's
-    reason. Worktree creation fails before ``create_conversation``, so
-    no session row is created (the response carries no session id).
+    ``status: failed``); the session remains available so the UI can
+    surface the host's reason and preserve the user's initial prompt.
     """
     register_worktree_host(
         create_status="failed",
@@ -270,12 +285,11 @@ async def test_create_with_invalid_base_branch_fails_400(
         {"branch_name": "feature/x", "base_branch": "nope-not-a-branch"},
     )
 
-    # 400 (not 500): a bad base ref is user input, not a server fault.
-    assert resp.status_code == 400, resp.text
-    body = resp.json()
-    assert body["error"]["code"] == "invalid_input"
+    assert resp.status_code == 201, resp.text
+    body = await _wait_for_worktree_settled(client, resp.json()["id"])
+    assert body["worktree_status"]["stage"] == "failed"
     # The host's reason is surfaced verbatim so the UI can show it.
-    assert "base branch does not exist" in body["error"]["message"]
+    assert "base branch does not exist" in body["worktree_status"]["error"]
 
 
 async def test_create_with_existing_worktree_persists_without_creating(
@@ -396,19 +410,12 @@ async def test_create_failure_never_removes_existing_worktree(
     )
 
 
-async def test_create_failure_rolls_back_omnigent_created_worktree(
+async def test_session_persistence_failure_does_not_start_worktree(
     register_worktree_host: RegisterHost,
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A create_conversation failure DOES clean up an Omnigent-made worktree.
-
-    The counterpart to the data-loss guard: when Omnigent creates the
-    worktree (the ``git`` path) and persistence then fails, the orphan
-    worktree it just made must be force-removed. Proves the narrowed
-    rollback guard (gated on Omnigent having created a worktree) still
-    fires for the case it is meant to clean up.
-    """
+    """A conversation persistence failure cannot leave an orphan worktree."""
     from omnigent.stores.conversation_store.sqlalchemy_store import (
         SqlAlchemyConversationStore,
     )
@@ -424,9 +431,7 @@ async def test_create_failure_rolls_back_omnigent_created_worktree(
     with pytest.raises(RuntimeError, match="simulated create_conversation failure"):
         await _create_git_session(client, agent["id"], {"branch_name": "feature/orphan"})
 
-    # Omnigent created the worktree, so the rollback force-removed it: one
-    # remove frame for the worktree it just made, deleting the branch too.
-    assert len(cap.create) == 1, cap.create
-    assert len(cap.remove) == 1, f"expected a create-rollback remove frame, got {cap.remove}"
-    assert cap.remove[0].branch == "feature/orphan"
-    assert cap.remove[0].delete_branch is True
+    # Worktree creation starts only after the session and its ownership grant
+    # are durable, so there is nothing to roll back in this failure window.
+    assert cap.create == []
+    assert cap.remove == []

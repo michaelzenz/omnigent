@@ -185,6 +185,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _session_status_cache,
     _session_terminal_pending_cache,
     _session_todos_cache,
+    _session_worktree_status_cache,
     get_caps,
     get_server_runner_router,
     session_stream,
@@ -207,7 +208,6 @@ from omnigent.server.routes._sessions.helpers import (
     _consume_pre_resolved_harness_elicitation,
     _create_and_publish_antigravity_child,
     _create_and_publish_codex_child,
-    _create_session_worktree,
     _delete_stored_session_bundle_after_failure,
     _derive_terminal_launch_args_from_spec,
     _emit_server_routing_decision,
@@ -268,6 +268,8 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_sandbox_status,
     _publish_status,
     _publish_terminal_pending,
+    _publish_worktree_log,
+    _publish_worktree_status,
     _query_host_runner_status,
     _read_state_entry,
     _record_daily_cost,
@@ -638,6 +640,11 @@ async def _best_effort_stop(
 # Strong references to detached archive stops so the tasks can't be
 # garbage-collected mid-stop (asyncio only holds weak refs to tasks).
 _detached_stop_tasks: set[asyncio.Task[None]] = set()
+
+
+# Strong references to background worktree-creation tasks so they can't be
+# GC'd mid-run (asyncio only holds weak refs to tasks).
+_worktree_creation_tasks: set[asyncio.Task[None]] = set()
 
 
 async def _archive_stop(
@@ -1152,6 +1159,7 @@ def _build_session_response(
         # once the launch succeeds; a failed launch is retained with
         # its reason. Populated by _publish_sandbox_status.
         sandbox_status=_session_sandbox_status_cache.get(conv.id),
+        worktree_status=_session_worktree_status_cache.get(conv.id),
         # Replay harness MCP-server startup state (codex-native) so a
         # client opening the session mid-startup sees the startup band.
         mcp_startup=_session_mcp_startup_cache.get(conv.id),
@@ -8246,15 +8254,15 @@ async def _create_session_from_existing_agent(
                 raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
             git_branch = body.git.branch_name
         else:
-            created_worktree = await _create_session_worktree(
-                host_id=body.host_id,
-                source_repo=canonical_workspace,
-                git=body.git,
-                request=request,
-            )
-            canonical_workspace = created_worktree.worktree_path
-            git_branch = created_worktree.branch
-            created_worktree_path = created_worktree.worktree_path
+            # Async worktree creation: the session row is created with the
+            # source repo as its workspace, and the background task creates
+            # the worktree, patches the workspace, and launches the runner.
+            # This returns immediately so the user lands on the session page
+            # and watches git output stream in real time instead of the send
+            # button looping until the worktree is ready.
+            git_branch = body.git.branch_name
+            # The background task signals completion via the worktree_status
+            # cache/SSE events; the runner launch is deferred to the task.
 
     # Native-terminal pass-through args.
     #
@@ -8634,6 +8642,195 @@ async def _create_session_from_existing_agent(
         agent_cache=agent_cache,
         liveness_lookup=liveness_lookup,
     )
+
+
+def _spawn_worktree_creation_task(
+    *,
+    session_id: str,
+    host_id: str,
+    source_repo: str,
+    branch_name: str,
+    base_branch: str | None,
+    user_id: str | None,
+    conversation_store: ConversationStore,
+    request: Request,
+) -> None:
+    """Launch the background worktree-creation + runner-launch task.
+
+    Seeds the ``worktree_status`` cache at ``"creating"`` so the first
+    GET snapshot (the Web UI navigates immediately after the 201) shows
+    the creation indicator, then spawns :func:`_run_worktree_creation`
+    as a retained background task.
+
+    :param session_id: The freshly-created session id.
+    :param host_id: Target host id.
+    :param source_repo: Validated source repo path (the session's
+        current workspace).
+    :param branch_name: New branch to create.
+    :param base_branch: Optional base ref.
+    :param user_id: Authenticated caller, or ``None`` when auth is
+        disabled.
+    :param conversation_store: Store holding the session row.
+    :param request: FastAPI request carrying app-state registries.
+    """
+    _publish_worktree_status(session_id, "creating", branch=branch_name)
+    task = asyncio.create_task(
+        _run_worktree_creation(
+            session_id=session_id,
+            host_id=host_id,
+            source_repo=source_repo,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            user_id=user_id,
+            conversation_store=conversation_store,
+            request=request,
+        )
+    )
+    _worktree_creation_tasks.add(task)
+    task.add_done_callback(_worktree_creation_tasks.discard)
+
+
+async def _run_worktree_creation(
+    *,
+    session_id: str,
+    host_id: str,
+    source_repo: str,
+    branch_name: str,
+    base_branch: str | None,
+    user_id: str | None,
+    conversation_store: ConversationStore,
+    request: Request,
+) -> None:
+    """Create a git worktree in the background, then patch + launch.
+
+    Streams each git output line to the session's SSE stream via
+    ``session.worktree_log`` events. On success, patches the session's
+    workspace to the worktree path and launches the runner (the create
+    POST skipped the synchronous host launch). On failure, publishes
+    ``worktree_status: failed`` with the reason and cleans up the orphan
+    worktree (if one was partially created).
+
+    :param session_id: The session to create the worktree for.
+    :param host_id: Target host id.
+    :param source_repo: Validated source repo path.
+    :param branch_name: New branch to create.
+    :param base_branch: Optional base ref.
+    :param user_id: Authenticated caller, or ``None``.
+    :param conversation_store: Store holding the session row.
+    :param request: FastAPI request carrying app-state registries.
+    """
+    from omnigent.server.routes._host_launch import resolve_host_launch
+    from omnigent.server.routes._host_worktree import (
+        WorktreeHostUnavailableError,
+        WorktreeProxyError,
+        create_worktree_on_host,
+    )
+
+    host_registry = getattr(request.app.state, "host_registry", None)
+    if host_registry is None:
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error="host registry not configured"
+        )
+        return
+    host_conn = host_registry.get(host_id)
+    if host_conn is None:
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error="host is offline"
+        )
+        return
+
+    def _on_log(line: str) -> None:
+        _publish_worktree_log(session_id, line)
+
+    try:
+        created = await create_worktree_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            repo_path=source_repo,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            on_log=_on_log,
+        )
+    except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:
+        _logger.warning("Worktree creation failed for %s: %s", session_id, exc.message)
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error=exc.message
+        )
+        return
+    except Exception:  # noqa: BLE001
+        _logger.exception("Worktree creation crashed for %s", session_id)
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=branch_name,
+            error="internal error during worktree creation",
+        )
+        return
+
+    # Patch the session's workspace to the worktree path.
+    try:
+        await asyncio.to_thread(
+            conversation_store.set_host_id,
+            session_id,
+            host_id,
+            workspace=created.worktree_path,
+            git_branch=created.branch,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.exception("Failed to patch workspace for %s", session_id)
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error="failed to update session workspace"
+        )
+        # Best-effort cleanup of the orphan worktree.
+        await _remove_session_worktree_best_effort(
+            host_id=host_id,
+            worktree_path=created.worktree_path,
+            branch=created.branch,
+            delete_branch=True,
+            request=request,
+            reason="worktree-patch-failed",
+        )
+        return
+
+    _publish_worktree_status(session_id, "ready", branch=created.branch)
+
+    # Launch the runner now that the workspace is the worktree path.
+    # The create POST skipped the synchronous host launch; the background
+    # task owns it here, mirroring the managed-sandbox launch pattern.
+    host_store = getattr(request.app.state, "host_store", None)
+    permission_store = getattr(request.app.state, "permission_store", None)
+    if host_store is None:
+        return
+    try:
+        target = await asyncio.to_thread(
+            resolve_host_launch,
+            user_id=user_id,
+            host_id=host_id,
+            session_id=session_id,
+            host_store=host_store,
+            host_registry=host_registry,
+            conversation_store=conversation_store,
+            permission_store=permission_store,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.warning("Host launch authorization failed for %s", session_id, exc_info=True)
+        return
+    conv = target.conv
+    # Set terminal_pending for terminal-first sessions right before launch.
+    if conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE:
+        _publish_terminal_pending(session_id, True)
+    launch_attempt = await _launch_runner_on_host(
+        conv,
+        conversation_store,
+        host_registry,
+        target.conn,
+    )
+    if launch_attempt.error_code == _HARNESS_NOT_CONFIGURED_ERROR_CODE:
+        _logger.warning(
+            "Harness not configured for session %s after worktree creation: %s",
+            session_id,
+            launch_attempt.error,
+        )
 
 
 def _create_session_from_bundle(

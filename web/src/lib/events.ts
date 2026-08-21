@@ -618,6 +618,34 @@ export interface SessionSandboxStatusEvent {
 /** Startup state of one harness MCP server (Codex's `McpServerStartupState`). */
 export type McpServerStartupState = "starting" | "ready" | "failed" | "cancelled";
 
+/**
+ * `session.worktree_log` — one streamed line of git output during
+ * async worktree creation. Appended to the scrolling worktree-creation
+ * log panel on the session page in real time.
+ */
+export interface SessionWorktreeLogEvent {
+  type: "session_worktree_log";
+  conversationId: string;
+  /** One line of git stdout/stderr (no trailing newline). */
+  line: string;
+}
+
+/**
+ * `session.worktree_status` — async git-worktree creation status
+ * transition. Emitted when the background task starts (`creating`),
+ * succeeds (`ready` — workspace patched, runner launching), or fails
+ * (`failed` + `error`). A client connecting mid-creation seeds from
+ * the session snapshot's `worktreeStatus` field.
+ */
+export interface SessionWorktreeStatusEvent {
+  type: "session_worktree_status";
+  conversationId: string;
+  stage: "creating" | "ready" | "failed";
+  branch?: string | null;
+  /** Failure detail when `stage === "failed"`; `null` otherwise. */
+  error?: string | null;
+}
+
 /** One MCP server's latest startup record within `session.mcp_startup`. */
 export interface McpServerStartup {
   status: McpServerStartupState;
@@ -909,6 +937,8 @@ export type StreamEvent =
   | SessionTodosEvent
   | SessionTerminalPendingEvent
   | SessionSandboxStatusEvent
+  | SessionWorktreeLogEvent
+  | SessionWorktreeStatusEvent
   | SessionMcpStartupEvent
   | SessionInputConsumedEvent
   | SessionInterruptedEvent

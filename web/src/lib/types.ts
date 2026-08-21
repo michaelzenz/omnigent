@@ -166,7 +166,7 @@ export type SessionStatus = "idle" | "launching" | "running" | "waiting" | "fail
  * Mirrors `omnigent.server.schemas.SessionEventInput`.
  */
 export type SessionEventInput =
-  | { type: "message"; data: { role: "user"; content: ContentBlock[] } }
+  | { type: "message"; data: { role: "user"; content: ContentBlock[] }; interrupt_first?: boolean }
   | { type: "function_call_output"; data: Record<string, unknown> }
   | { type: "approval"; data: Record<string, unknown> }
   | { type: "interrupt"; data?: Record<string, unknown> }
@@ -460,6 +460,13 @@ export interface Session {
    */
   sandboxStatus?: SandboxStatus | null;
   /**
+   * Git-worktree creation progress. Present while the background
+   * worktree task is running or has failed; `null` once the worktree
+   * is created. Sourced from the server's
+   * `_session_worktree_status_cache` at snapshot build time.
+   */
+  worktreeStatus?: WorktreeStatus | null;
+  /**
    * Per-MCP-server startup state for native harness sessions
    * (codex-native). Present while the harness boots its MCP servers or
    * when servers were cancelled/failed; `null` otherwise. Sourced from
@@ -497,6 +504,20 @@ export type SandboxLaunchStage =
 export interface SandboxStatus {
   /** Current launch stage, e.g. `"provisioning"`. */
   stage: SandboxLaunchStage;
+  /** Failure detail when `stage === "failed"`; `null` otherwise. */
+  error?: string | null;
+}
+
+/**
+ * Git-worktree creation progress — mirrors
+ * `omnigent.server.schemas.WorktreeStatus`. Drives the worktree-creation
+ * log panel on the session page while the background worktree task runs.
+ */
+export interface WorktreeStatus {
+  /** Current stage: `"creating"`, `"ready"`, or `"failed"`. */
+  stage: "creating" | "ready" | "failed";
+  /** The branch being created, e.g. `"feature/login"`. */
+  branch?: string | null;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */
   error?: string | null;
 }
