@@ -986,11 +986,8 @@ class HostProcess:
             # ``subprocess.run``'s own ``wait()`` and corrupt that command's
             # returncode to 0 (CPython swallows the ECHILD and reports 0).
             # Skip this sweep; a later one drains any real orphans once the op
-            # finishes. A worktree op can hold this off for up to
-            # ``_GIT_TIMEOUT_S`` (120s) per git command, so real orphans can
-            # linger that long in the rare case a runner dies mid-worktree-op —
-            # acceptable, since the leak this guards against accrues over hours,
-            # not a two-minute worst case.
+            # finishes. A worktree operation may run for a long time, but
+            # stealing its child would corrupt the checkout result.
             return 0
         if not hasattr(os, "WNOHANG"):
             # Windows: no child reparenting to a subreaper and no ``WNOHANG`` /
@@ -2528,6 +2525,7 @@ class HostProcess:
                     repo_path=frame.repo_path,
                     branch_name=frame.branch_name,
                     base_branch=frame.base_branch,
+                    auto_fetch_base=frame.auto_fetch_base,
                     on_log=_on_log,
                 )
         except WorktreeError as exc:

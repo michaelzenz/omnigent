@@ -3978,15 +3978,19 @@ def _publish_sandbox_status_impl(session_id: str, stage: str, error: str | None 
 
 
 def _publish_worktree_log(session_id: str, line: str) -> None:
-    """Publish one git output line as a ``session.worktree_log`` event.
+    """Retain and publish one git output line.
 
-    Thread-safe (``session_stream.publish`` is a thread-safe broadcast),
-    so the background worktree task may call this from the worker thread
-    its host-tunnel await runs on.
+    The bounded snapshot buffer prevents the first lines from being lost
+    while the browser navigates from session creation to its SSE stream.
 
     :param session_id: Session/conversation identifier.
     :param line: One line of git stdout/stderr (no trailing newline).
     """
+    status = _session_worktree_status_cache.get(session_id)
+    if status is not None:
+        _session_worktree_status_cache[session_id] = status.model_copy(
+            update={"log_lines": [*status.log_lines, line][-200:]}
+        )
     event = SessionWorktreeLogEvent(
         type="session.worktree_log",
         conversation_id=session_id,
@@ -4012,8 +4016,14 @@ def _publish_worktree_status(
     :param branch: The branch being created.
     :param error: Failure detail when ``stage == "failed"``.
     """
+    previous = _session_worktree_status_cache.get(session_id)
     status = WorktreeStatus.model_validate(
-        {"stage": stage, "branch": branch, "error": error}
+        {
+            "stage": stage,
+            "branch": branch,
+            "error": error,
+            "log_lines": previous.log_lines if previous is not None else [],
+        }
     )
     if status.stage == "ready":
         _session_worktree_status_cache.pop(session_id, None)
@@ -7922,6 +7932,7 @@ async def _create_session_worktree(
             repo_path=source_repo,
             branch_name=git.branch_name,
             base_branch=git.base_branch,
+            auto_fetch_base=git.auto_fetch_base,
         )
     except WorktreeHostUnavailableError as exc:
         # Host offline / unresponsive — infra, not user input.

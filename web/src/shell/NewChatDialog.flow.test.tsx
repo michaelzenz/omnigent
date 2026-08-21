@@ -1525,7 +1525,11 @@ describe("NewChatLandingScreen create flow", () => {
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     // The auto-filled default reaches the server just like a typed base would.
     const body = JSON.parse(init.body as string);
-    expect(body.git).toEqual({ branch_name: "feature/login", base_branch: "main" });
+    expect(body.git).toEqual({
+      branch_name: "feature/login",
+      base_branch: "main",
+      auto_fetch_base: false,
+    });
   });
 
   it("posts git.branch_name and git.base_branch when both are provided", async () => {
@@ -1551,7 +1555,11 @@ describe("NewChatLandingScreen create flow", () => {
     // Both the new branch and its base must reach the server so the host
     // creates the worktree off the requested ref, not HEAD.
     const body = JSON.parse(init.body as string);
-    expect(body.git).toEqual({ branch_name: "feature/login", base_branch: "main" });
+    expect(body.git).toEqual({
+      branch_name: "feature/login",
+      base_branch: "main",
+      auto_fetch_base: false,
+    });
   });
 
   it("omits base_branch when blank so the host branches from current HEAD", async () => {
@@ -1574,7 +1582,7 @@ describe("NewChatLandingScreen create flow", () => {
     // No base_branch key (undefined is dropped by JSON.stringify) → the host
     // falls back to the source repo's current HEAD.
     const body = JSON.parse(init.body as string);
-    expect(body.git).toEqual({ branch_name: "feature/login" });
+    expect(body.git).toEqual({ branch_name: "feature/login", auto_fetch_base: false });
   });
 
   it("surfaces the server's reason and does not navigate on a failed create", async () => {

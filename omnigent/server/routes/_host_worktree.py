@@ -1,10 +1,9 @@
 """
 Server-side proxies for the host git-worktree tunnel frames.
 
-Like ``_workspace_validation._ask_host_stat``: enqueue a
-``host.create_worktree`` / ``host.remove_worktree`` frame, register a
-future on the host connection, and await the result with a timeout. The
-host (not the server) runs git. See designs/SESSION_GIT_WORKTREE.md.
+Enqueue a ``host.create_worktree`` / ``host.remove_worktree`` frame,
+register a future on the host connection, and await the result. The host
+(not the server) runs git. See designs/SESSION_GIT_WORKTREE.md.
 """
 
 from __future__ import annotations
@@ -25,9 +24,9 @@ from omnigent.server.host_registry import HostConnection, HostRegistry
 
 _logger = logging.getLogger(__name__)
 
-# Above the host's own git timeout (120 s) so the host's specific error
-# surfaces instead of a generic server-side timeout.
-_WORKTREE_TIMEOUT_S: float = 150.0
+# Worktree operations may materialize very large repositories. Production
+# waits for the host result without a deadline; tests may inject one.
+_WORKTREE_TIMEOUT_S: float | None = None
 
 
 class WorktreeProxyError(Exception):
@@ -57,8 +56,7 @@ class WorktreeHostUnavailableError(WorktreeProxyError):
     """
     Raised when the host can't be reached for a worktree operation.
 
-    Connection loss or no reply within the timeout — an infrastructure
-    condition, not user input. The route layer maps this to
+    Connection loss is an infrastructure condition, not user input. The route layer maps this to
     ``CONFLICT`` (409). Subclasses :class:`WorktreeProxyError` so
     best-effort callers that catch the base type still catch it.
     """
@@ -107,8 +105,7 @@ async def _await_host_worktree_result(
         ``"worktree creation"``.
     :returns: The host's result dict (``status`` plus op-specific
         fields).
-    :raises WorktreeHostUnavailableError: On connection loss or no
-        reply within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: On connection loss.
     """
     future: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
     pending[request_id] = future
@@ -119,13 +116,14 @@ async def _await_host_worktree_result(
             raise WorktreeHostUnavailableError(
                 f"host '{host_conn.host_id}' connection lost during {op}"
             ) from exc
+        if _WORKTREE_TIMEOUT_S is None:
+            return await future
         try:
             return await asyncio.wait_for(future, timeout=_WORKTREE_TIMEOUT_S)
         except asyncio.TimeoutError as exc:
             raise WorktreeHostUnavailableError(
                 f"host '{host_conn.host_id}' did not respond to {op} within "
-                f"{_WORKTREE_TIMEOUT_S:.0f}s (it may be running an older version "
-                "that does not support worktrees)"
+                f"{_WORKTREE_TIMEOUT_S:.0f}s"
             ) from exc
     finally:
         pending.pop(request_id, None)
@@ -138,6 +136,7 @@ async def create_worktree_on_host(
     repo_path: str,
     branch_name: str,
     base_branch: str | None,
+    auto_fetch_base: bool = False,
     on_log: Callable[[str], None] | None = None,
 ) -> CreatedWorktree:
     """Send a ``host.create_worktree`` frame and await the result.
@@ -154,10 +153,10 @@ async def create_worktree_on_host(
     :param branch_name: New branch to create, e.g. ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from the repo's current ``HEAD``.
+    :param auto_fetch_base: Whether the host may fetch and retry a missing base.
     :param on_log: Optional callback for each streamed git output line.
     :returns: The created worktree's path and branch.
-    :raises WorktreeHostUnavailableError: If the host connection drops
-        or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
     :raises WorktreeProxyError: If the host reports a worktree failure.
     """
     request_id = secrets.token_hex(8)
@@ -170,6 +169,7 @@ async def create_worktree_on_host(
                 repo_path=repo_path,
                 branch_name=branch_name,
                 base_branch=base_branch,
+                auto_fetch_base=auto_fetch_base,
             )
         )
         result = await _await_host_worktree_result(
@@ -214,8 +214,7 @@ async def remove_worktree_on_host(
         deletion.
     :param delete_branch: When ``True``, delete ``branch`` after
         removing the worktree directory.
-    :raises WorktreeHostUnavailableError: If the host connection drops
-        or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
     :raises WorktreeProxyError: If the host reports a removal failure.
     """
     request_id = secrets.token_hex(8)
@@ -258,8 +257,7 @@ async def list_worktrees_on_host(
         ``"/Users/alice/myrepo"``.
     :returns: One dict per worktree with keys ``path``, ``branch``,
         ``is_main``, ``detached`` (main first).
-    :raises WorktreeHostUnavailableError: If the host connection drops
-        or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
     :raises WorktreeProxyError: If the host reports a listing failure.
     """
     request_id = secrets.token_hex(8)

@@ -380,6 +380,7 @@ def register_core_routes(
                 source_repo=conv.workspace,
                 branch_name=body.git.branch_name,
                 base_branch=body.git.base_branch,
+                auto_fetch_base=body.git.auto_fetch_base,
                 user_id=user_id,
                 conversation_store=conversation_store,
                 request=request,

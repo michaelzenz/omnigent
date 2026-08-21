@@ -700,6 +700,32 @@ describe("getSession", () => {
     );
   });
 
+  it("maps buffered worktree logs for a late stream connection", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_worktree",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+        worktree_status: {
+          stage: "creating",
+          branch: "feature/logs",
+          error: null,
+          log_lines: ["Resolving repository root…", "Preparing worktree"],
+        },
+      }),
+    );
+
+    const session = await getSession("conv_worktree");
+
+    expect(session.worktreeStatus).toEqual({
+      stage: "creating",
+      branch: "feature/logs",
+      error: null,
+      logLines: ["Resolving repository root…", "Preparing worktree"],
+    });
+  });
+
   it("maps permission_level from the wire to permissionLevel", async () => {
     // Regression for the bug where SessionResponseWire was missing
     // permission_level — the field was on the wire but dropped at the

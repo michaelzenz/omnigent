@@ -520,6 +520,8 @@ export interface WorktreeStatus {
   branch?: string | null;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */
   error?: string | null;
+  /** Recent git output retained for clients that connect after creation starts. */
+  logLines?: string[];
 }
 
 /**

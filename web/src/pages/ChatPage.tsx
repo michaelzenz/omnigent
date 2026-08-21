@@ -1896,6 +1896,8 @@ export function MainAgentSurface({
   // the not-yet-host-bound session as stranded.
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
   const sandboxLaunching = sandboxStatus !== null && sandboxStatus.stage !== "failed";
+  const worktreeStatus = useChatStore((s) => s.worktreeStatus);
+  const worktreeLogLines = useChatStore((s) => s.worktreeLogLines);
   // True while the harness reports MCP-server startup state (codex-native).
   // Forces the message-flow branch below even with zero bubbles, so a user
   // staring at a fresh session during a slow MCP boot sees the startup band
@@ -2198,6 +2200,9 @@ export function MainAgentSurface({
         className={cn("absolute inset-0 flex flex-col", !isShown && "invisible")}
         aria-hidden={!isShown}
       >
+        {isShown && worktreeStatus !== null && (
+          <WorktreeCreationPanel status={worktreeStatus} logLines={worktreeLogLines} />
+        )}
         <MainTerminalView
           conversationId={entry.conversationId}
           initialTerminalKey={isActive ? terminalFirst?.terminalViewKey : null}
@@ -2226,6 +2231,9 @@ export function MainAgentSurface({
       {terminalSurfaces}
       {!showTerminal && (
         <>
+          {worktreeStatus !== null && (
+            <WorktreeCreationPanel status={worktreeStatus} logLines={worktreeLogLines} />
+          )}
           {/* Wrapper div gives us a ref to scope the SelectionPopup to the
           conversation area without requiring Conversation to forward refs. */}
           <div
@@ -3723,8 +3731,6 @@ export function ConnectionIndicator({
     terminalFirst?.view === "chat",
   );
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
-  const worktreeStatus = useChatStore((s) => s.worktreeStatus);
-  const worktreeLogLines = useChatStore((s) => s.worktreeLogLines);
   // Genuinely-unreachable states get the reconnect banner, for
   // both terminal-first and regular sessions. `runner_asleep` (host up,
   // runner relaunches on the next message), `host_asleep` (resumable managed
@@ -3747,14 +3753,6 @@ export function ConnectionIndicator({
     surfaceFrontmost;
   useNativeChatTerminalBar(terminalFirst, nativeBarVisible);
 
-  if (worktreeStatus !== null) {
-    return (
-      <WorktreeCreationPanel
-        status={worktreeStatus}
-        logLines={worktreeLogLines}
-      />
-    );
-  }
   if (sandboxStatus !== null) {
     // A failed launch owns this band with its reason. An IN-FLIGHT
     // launch renders in the chat thread (RunnerStartingIndicator)

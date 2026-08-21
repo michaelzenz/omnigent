@@ -8651,6 +8651,7 @@ def _spawn_worktree_creation_task(
     source_repo: str,
     branch_name: str,
     base_branch: str | None,
+    auto_fetch_base: bool,
     user_id: str | None,
     conversation_store: ConversationStore,
     request: Request,
@@ -8668,6 +8669,7 @@ def _spawn_worktree_creation_task(
         current workspace).
     :param branch_name: New branch to create.
     :param base_branch: Optional base ref.
+    :param auto_fetch_base: Whether to fetch and retry an unavailable base.
     :param user_id: Authenticated caller, or ``None`` when auth is
         disabled.
     :param conversation_store: Store holding the session row.
@@ -8681,6 +8683,7 @@ def _spawn_worktree_creation_task(
             source_repo=source_repo,
             branch_name=branch_name,
             base_branch=base_branch,
+            auto_fetch_base=auto_fetch_base,
             user_id=user_id,
             conversation_store=conversation_store,
             request=request,
@@ -8697,6 +8700,7 @@ async def _run_worktree_creation(
     source_repo: str,
     branch_name: str,
     base_branch: str | None,
+    auto_fetch_base: bool,
     user_id: str | None,
     conversation_store: ConversationStore,
     request: Request,
@@ -8715,6 +8719,7 @@ async def _run_worktree_creation(
     :param source_repo: Validated source repo path.
     :param branch_name: New branch to create.
     :param base_branch: Optional base ref.
+    :param auto_fetch_base: Whether to fetch and retry an unavailable base.
     :param user_id: Authenticated caller, or ``None``.
     :param conversation_store: Store holding the session row.
     :param request: FastAPI request carrying app-state registries.
@@ -8749,6 +8754,7 @@ async def _run_worktree_creation(
             repo_path=source_repo,
             branch_name=branch_name,
             base_branch=base_branch,
+            auto_fetch_base=auto_fetch_base,
             on_log=_on_log,
         )
     except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:

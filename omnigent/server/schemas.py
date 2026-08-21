@@ -1343,11 +1343,15 @@ class SessionGitOptions(BaseModel):
         invalid with ``existing_worktree``.
     :param existing_worktree: When ``True``, bind to the pre-existing
         worktree at ``workspace`` instead of creating one (see above).
+    :param auto_fetch_base: When ``True``, verify ``base_branch`` locally
+        and fetch once before retrying if it is unavailable. Defaults off,
+        so Git runs directly and reports its own error.
     """
 
     branch_name: str
     base_branch: str | None = None
     existing_worktree: bool = False
+    auto_fetch_base: bool = False
 
     @model_validator(mode="after")
     def _check_existing_worktree(self) -> SessionGitOptions:
@@ -1362,6 +1366,8 @@ class SessionGitOptions(BaseModel):
         """
         if self.existing_worktree and self.base_branch is not None:
             raise ValueError("base_branch cannot be set when existing_worktree is true")
+        if self.existing_worktree and self.auto_fetch_base:
+            raise ValueError("auto_fetch_base cannot be set when existing_worktree is true")
         return self
 
 
@@ -1736,11 +1742,14 @@ class WorktreeStatus(BaseModel):
     :param branch: The branch being created, e.g. ``"feature/login"``.
     :param error: Failure detail when ``stage == "failed"``, e.g.
         ``"branch already exists"``. ``None`` otherwise.
+    :param log_lines: Recent git output retained so a client that opens
+        the session stream after creation starts does not miss early lines.
     """
 
     stage: WorktreeLaunchStage
     branch: str | None = None
     error: str | None = None
+    log_lines: list[str] = Field(default_factory=list)
 
 
 class ModelUsage(BaseModel):

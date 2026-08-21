@@ -13,6 +13,7 @@
 import type { ConversationItem } from "./conversationItems";
 import type { MessageContentBlock } from "./blocks";
 import type { McpServerStartup } from "./events";
+import { readAutoFetchWorktreeBase } from "./gitFetchPreferences";
 import { authenticatedFetch } from "./identity";
 import { isAndroidShell, isElectronShell, isIOSShell } from "@/lib/nativeBridge";
 import { setSessionHost } from "./sessionHost";
@@ -237,7 +238,11 @@ interface SessionResponseWire {
    */
   sandbox_status?: SandboxStatus | null;
   /** Async git-worktree creation progress; absent/null otherwise. */
-  worktree_status?: WorktreeStatus | null;
+  worktree_status?:
+    | (Omit<WorktreeStatus, "logLines"> & {
+        log_lines?: string[];
+      })
+    | null;
   mcp_startup?: Record<string, McpServerStartup> | null;
   /**
    * Response id of the turn currently in flight, or absent/null when
@@ -341,7 +346,14 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     codexModelOptions: wire.model_options ?? [],
     terminalPending: wire.terminal_pending ?? false,
     sandboxStatus: wire.sandbox_status ?? null,
-    worktreeStatus: wire.worktree_status ?? null,
+    worktreeStatus: wire.worktree_status
+      ? {
+          stage: wire.worktree_status.stage,
+          branch: wire.worktree_status.branch ?? null,
+          error: wire.worktree_status.error ?? null,
+          logLines: wire.worktree_status.log_lines ?? [],
+        }
+      : null,
     mcpStartup: wire.mcp_startup ?? null,
     activeResponseId: wire.active_response_id ?? null,
   };
@@ -641,14 +653,25 @@ export async function launchRunner(
   hostId: string,
   sessionId: string,
   workspace: string,
-  git?: { branchName: string; baseBranch?: string; existingWorktree?: boolean },
+  git?: {
+    branchName: string;
+    baseBranch?: string;
+    existingWorktree?: boolean;
+    autoFetchBase?: boolean;
+  },
 ): Promise<{ runnerId: string }> {
   const body: {
     session_id: string;
     workspace: string;
-    git?: { branch_name: string; base_branch?: string; existing_worktree?: boolean };
+    git?: {
+      branch_name: string;
+      base_branch?: string;
+      existing_worktree?: boolean;
+      auto_fetch_base?: boolean;
+    };
   } = { session_id: sessionId, workspace };
   if (git !== undefined) {
+    const autoFetchBase = git.autoFetchBase ?? readAutoFetchWorktreeBase();
     // `existing_worktree` binds a pre-existing worktree (no worktree is
     // created; the branch is recorded for the sidebar + delete flow), so it
     // never carries a base_branch.
@@ -657,8 +680,8 @@ export async function launchRunner(
       ...(git.existingWorktree
         ? { existing_worktree: true }
         : git.baseBranch !== undefined
-          ? { base_branch: git.baseBranch }
-          : {}),
+          ? { base_branch: git.baseBranch, auto_fetch_base: autoFetchBase }
+          : { auto_fetch_base: autoFetchBase }),
     };
   }
   const res = await authenticatedFetch(`/v1/hosts/${encodeURIComponent(hostId)}/runners`, {

@@ -470,12 +470,14 @@ class HostCreateWorktreeFrame:
     :param branch_name: New branch to create, e.g. ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from ``HEAD``.
+    :param auto_fetch_base: Whether to fetch and retry an unavailable base.
     """
 
     request_id: str
     repo_path: str
     branch_name: str
     base_branch: str | None = None
+    auto_fetch_base: bool = False
 
 
 @dataclass
@@ -1117,6 +1119,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "repo_path": frame.repo_path,
                 "branch_name": frame.branch_name,
                 "base_branch": frame.base_branch,
+                "auto_fetch_base": frame.auto_fetch_base,
             }
         )
     if isinstance(frame, HostWorktreeLogFrame):
@@ -1674,11 +1677,15 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
     :param msg: Decoded frame object.
     :returns: Typed host.create_worktree frame.
     """
+    auto_fetch_base = msg.get("auto_fetch_base", False)
+    if not isinstance(auto_fetch_base, bool):
+        raise ValueError("frame field must be a bool: 'auto_fetch_base'")
     return HostCreateWorktreeFrame(
         request_id=_required_str(msg, "request_id"),
         repo_path=_required_str(msg, "repo_path"),
         branch_name=_required_str(msg, "branch_name"),
         base_branch=_optional_nullable_str(msg, "base_branch"),
+        auto_fetch_base=auto_fetch_base,
     )
 
 

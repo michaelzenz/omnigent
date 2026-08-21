@@ -116,6 +116,7 @@ import {
 import { readLastHarness, writeLastHarness } from "@/lib/harnessPreferences";
 import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { readDefaultBaseBranch } from "@/lib/baseBranchPreferences";
+import { readAutoFetchWorktreeBase } from "@/lib/gitFetchPreferences";
 import { readHarnessOptions, writeHarnessOption } from "@/lib/modePreferences";
 import {
   AUTO_HARNESS_DESCRIPTION,
@@ -3960,7 +3961,11 @@ export function NewChatLandingScreen() {
                   // (`existing_worktree` records the branch for the sidebar +
                   // delete flow without creating anything), or neither.
                   git: shouldCreateWorktree
-                    ? { branch_name: trimmedBranch, base_branch: baseBranch.trim() || undefined }
+                    ? {
+                        branch_name: trimmedBranch,
+                        base_branch: baseBranch.trim() || undefined,
+                        auto_fetch_base: readAutoFetchWorktreeBase(),
+                      }
                     : startInExistingWorktree
                       ? { branch_name: trimmedBranch, existing_worktree: true }
                       : undefined,

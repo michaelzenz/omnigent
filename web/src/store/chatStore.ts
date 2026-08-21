@@ -3037,7 +3037,7 @@ function sessionBindingPatch(
     terminalPending: session.terminalPending ?? false,
     sandboxStatus: session.sandboxStatus ?? null,
     worktreeStatus: session.worktreeStatus ?? null,
-    worktreeLogLines: [],
+    worktreeLogLines: session.worktreeStatus?.logLines ?? [],
     mcpStartup: session.mcpStartup ?? null,
   };
 }

@@ -142,6 +142,10 @@ import {
 } from "@/lib/workspacePanelPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import {
+  readAutoFetchWorktreeBase,
+  writeAutoFetchWorktreeBase,
+} from "@/lib/gitFetchPreferences";
+import {
   DEFAULT_HIDE_UNCONFIGURED_HARNESSES,
   readHideUnconfiguredHarnesses,
   writeHideUnconfiguredHarnesses,
@@ -1192,6 +1196,7 @@ function GitSection() {
     <Section title="Git" description="Configure how Omnigent works with Git.">
       <div className="flex flex-col gap-8">
         <DefaultBaseBranchControl />
+        <AutoFetchWorktreeBaseControl />
       </div>
     </Section>
   );
@@ -1230,6 +1235,38 @@ function DefaultBaseBranchControl() {
         className="h-9 w-56 shrink-0"
         value={branch}
         onChange={(e) => update(e.target.value)}
+      />
+    </div>
+  );
+}
+
+/** Opt-in fetch fallback when a requested worktree base is unavailable. */
+function AutoFetchWorktreeBaseControl() {
+  const labelId = useId();
+  const [enabled, setEnabled] = useState(readAutoFetchWorktreeBase);
+
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeAutoFetchWorktreeBase(next);
+  }, []);
+
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex min-w-0 flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Fetch missing base branches
+        </span>
+        <span className="text-sm text-muted-foreground">
+          When enabled, fetch and retry if the selected base branch is not available locally. Off
+          skips this preflight and reports Git errors directly.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="auto-fetch-worktree-base-toggle"
+        className="mt-0.5 shrink-0"
       />
     </div>
   );

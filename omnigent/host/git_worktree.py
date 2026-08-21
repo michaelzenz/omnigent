@@ -8,15 +8,19 @@ designs/SESSION_GIT_WORKTREE.md.
 
 from __future__ import annotations
 
+import codecs
+import errno
+import os
 import re
+import shlex
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-# fetch/add can be slow on large repos; bound it so git can't hang the
-# host's tunnel loop.
-_GIT_TIMEOUT_S: float = 120.0
+# Materializing a large monorepo worktree can take an unbounded amount of
+# time. Let git finish or fail naturally.
+_GIT_TIMEOUT_S: float | None = None
 
 # Max directory-collision suffixes (``-2`` .. ``-N``) before giving up.
 _MAX_DIR_COLLISION_SUFFIX: int = 50
@@ -105,8 +109,7 @@ def _run_git(
     :param cwd: Working directory to run git in, e.g.
         ``"/Users/alice/myrepo"``.
     :returns: The completed process with captured text stdout/stderr.
-    :raises WorktreeError: If git is not installed, or the command
-        exceeds :data:`_GIT_TIMEOUT_S`.
+    :raises WorktreeError: If git is not installed.
     """
     try:
         return subprocess.run(
@@ -120,7 +123,7 @@ def _run_git(
     except FileNotFoundError as exc:
         raise WorktreeError("git is not installed on the host") from exc
     except subprocess.TimeoutExpired as exc:
-        raise WorktreeError(f"git command timed out after {_GIT_TIMEOUT_S:.0f}s") from exc
+        raise WorktreeError("git command timed out") from exc
 
 
 def _git_error(label: str, result: subprocess.CompletedProcess[str]) -> WorktreeError:
@@ -246,23 +249,6 @@ def list_worktrees(*, repo_path: str) -> list[WorktreeInfo]:
     return worktrees
 
 
-def _local_branch_exists(repo_root: str, branch_name: str) -> bool:
-    """Return whether a local branch already exists in the repo.
-
-    :param repo_root: Absolute repo work-tree root, e.g.
-        ``"/Users/alice/myrepo"``.
-    :param branch_name: Branch name to check, e.g. ``"feature/login"``.
-    :returns: ``True`` if ``refs/heads/<branch_name>`` resolves.
-    """
-    return (
-        _run_git(
-            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}"],
-            cwd=repo_root,
-        ).returncode
-        == 0
-    )
-
-
 def _resolve_worktree_path(repo_root: str, branch_name: str) -> Path:
     """Compute a collision-free sibling worktree directory path.
 
@@ -352,6 +338,7 @@ def create_worktree(
     repo_path: str,
     branch_name: str,
     base_branch: str | None = None,
+    auto_fetch_base: bool = False,
 ) -> CreatedWorktree:
     """Create a git worktree with a new branch checked out.
 
@@ -365,6 +352,8 @@ def create_worktree(
         ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from the repo's current ``HEAD``.
+    :param auto_fetch_base: Verify, fetch, and retry an unavailable base
+        before creating the worktree. Defaults off.
     :returns: The created worktree's path and branch.
     :raises WorktreeError: If the branch name is invalid, the path is
         not a git repo, the base ref can't be resolved, or
@@ -378,14 +367,7 @@ def create_worktree(
     # (``…/feature-worktrees/<branch>``); resolving to the main repo keeps
     # all worktrees as siblings (``…/myrepo-worktrees/<branch>``).
     repo_root = _main_work_tree(repo_path)
-    # Friendly pre-check before git's raw "branch already exists" error.
-    # We don't reuse the existing worktree: two sessions sharing one
-    # working tree would clobber each other (designs/SESSION_GIT_WORKTREE.md).
-    if _local_branch_exists(repo_root, branch_name):
-        raise WorktreeError(
-            f"a branch named {branch_name!r} already exists; choose a different branch name"
-        )
-    if base_branch is not None:
+    if base_branch is not None and auto_fetch_base:
         _ensure_base_resolvable(repo_root, base_branch)
     worktree_path = _resolve_worktree_path(repo_root, branch_name)
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,32 +404,84 @@ def _run_git_streaming(
         e.g. ``"git worktree add failed"``.
     :returns: The completed process (stdout/stderr captured even when
         streaming, so the error path can include detail).
-    :raises WorktreeError: If git is not installed or times out.
+    :raises WorktreeError: If git is not installed.
     """
     if on_log is None:
         return _run_git(args, cwd=cwd)
+    argv = ["git", *args]
+    stdout_parts: list[str] = []
+
+    def _emit(text: str) -> None:
+        if text:
+            stdout_parts.append(f"{text}\n")
+            on_log(text)
+
     try:
-        proc = subprocess.Popen(
-            ["git", *args],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
+        if os.name == "posix":
+            import pty
+
+            master_fd, slave_fd = pty.openpty()
+            try:
+                try:
+                    proc = subprocess.Popen(
+                        argv,
+                        cwd=cwd,
+                        stdin=subprocess.DEVNULL,
+                        stdout=slave_fd,
+                        stderr=slave_fd,
+                        close_fds=True,
+                    )
+                except Exception:
+                    os.close(master_fd)
+                    raise
+            finally:
+                os.close(slave_fd)
+
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            pending = ""
+            try:
+                while True:
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                    except OSError as exc:
+                        if exc.errno == errno.EIO:
+                            break
+                        raise
+                    if not chunk:
+                        break
+                    pending += decoder.decode(chunk)
+                    parts = re.split(r"\r\n|\r|\n", pending)
+                    pending = parts.pop()
+                    for part in parts:
+                        _emit(part)
+                pending += decoder.decode(b"", final=True)
+                _emit(pending)
+            finally:
+                os.close(master_fd)
+            proc.wait(timeout=_GIT_TIMEOUT_S)
+        else:
+            proc = subprocess.Popen(
+                argv,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                _emit(line.rstrip("\r\n"))
+            proc.wait(timeout=_GIT_TIMEOUT_S)
     except FileNotFoundError as exc:
         raise WorktreeError("git is not installed on the host") from exc
-    stdout_parts: list[str] = []
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        stdout_parts.append(line)
-        on_log(line.rstrip("\n"))
-    proc.wait(timeout=_GIT_TIMEOUT_S)
+
+    output = "".join(stdout_parts)
     result = subprocess.CompletedProcess(
-        args=["git", *args],
+        args=argv,
         returncode=proc.returncode,
-        stdout="".join(stdout_parts),
-        stderr="",
+        stdout=output,
+        stderr=output if proc.returncode else "",
     )
     if result.returncode != 0:
         raise _git_error(label, result)
@@ -459,6 +493,7 @@ def create_worktree_streaming(
     repo_path: str,
     branch_name: str,
     base_branch: str | None = None,
+    auto_fetch_base: bool = False,
     on_log: Callable[[str], None] | None = None,
 ) -> CreatedWorktree:
     """Create a git worktree, streaming git output line-by-line.
@@ -472,6 +507,8 @@ def create_worktree_streaming(
     :param repo_path: Absolute path inside the source repo.
     :param branch_name: New branch to create and check out.
     :param base_branch: Optional base ref, e.g. ``"main"``.
+    :param auto_fetch_base: Verify, fetch, and retry an unavailable base
+        before creating the worktree. Defaults off.
     :param on_log: Callback for each output line, or ``None`` to
         suppress streaming (non-streaming create path).
     :returns: The created worktree's path and branch.
@@ -483,25 +520,17 @@ def create_worktree_streaming(
     repo_root = _main_work_tree(repo_path)
     if on_log is not None:
         on_log(f"Repository root: {repo_root}")
-    if _local_branch_exists(repo_root, branch_name):
-        raise WorktreeError(
-            f"a branch named {branch_name!r} already exists; choose a different branch name"
-        )
-    if base_branch is not None:
+    if base_branch is not None and auto_fetch_base:
         if on_log is not None:
             on_log(f"Resolving base branch '{base_branch}'…")
         _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
     worktree_path = _resolve_worktree_path(repo_root, branch_name)
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    if on_log is not None:
-        on_log(
-            f"Creating worktree at {worktree_path} on branch {branch_name}"
-            + (f" from {base_branch}" if base_branch is not None else "")
-            + "…"
-        )
     add_args = ["worktree", "add", "-b", branch_name, str(worktree_path)]
     if base_branch is not None:
         add_args += ["--end-of-options", base_branch]
+    if on_log is not None:
+        on_log(f"$ {shlex.join(['git', '-C', repo_root, *add_args])}")
     _run_git_streaming(
         add_args,
         cwd=repo_root,
