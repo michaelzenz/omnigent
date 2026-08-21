@@ -175,6 +175,12 @@ import {
   writeChatTopButtonMode,
 } from "@/lib/chatTopButtonPreferences";
 import {
+  BOTTOM_LOCK_STORAGE_KEY,
+  DEFAULT_BOTTOM_LOCK_ENABLED,
+  readBottomLockEnabled,
+  writeBottomLockEnabled,
+} from "@/lib/bottomLockPreferences";
+import {
   applyThemePalette,
   DEFAULT_PALETTE,
   isThemeSelection,
@@ -895,6 +901,34 @@ function StickyUserMessagesControl() {
   );
 }
 
+function BottomLockControl() {
+  const [enabled, setEnabled] = useState(() => readBottomLockEnabled());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeBottomLockEnabled(next);
+  }, []);
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Keep chat pinned to bottom
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Jump to the latest message when you send, then follow new response content automatically.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="bottom-lock-toggle"
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
+}
+
 function RoutingNoticesControl() {
   const [enabled, setEnabled] = useState(() => readRoutingNoticesEnabled());
   const labelId = useId();
@@ -1009,6 +1043,7 @@ function AppearanceSection() {
 
     writeHideUnconfiguredHarnesses(DEFAULT_HIDE_UNCONFIGURED_HARNESSES);
     writeStickyUserMessagesEnabled(DEFAULT_STICKY_USER_MESSAGES);
+    writeBottomLockEnabled(DEFAULT_BOTTOM_LOCK_ENABLED);
     writeRoutingNoticesEnabled(DEFAULT_ROUTING_NOTICES_ENABLED);
     writeChatTopButtonMode(DEFAULT_CHAT_TOP_BUTTON_MODE);
 
@@ -1035,6 +1070,7 @@ function AppearanceSection() {
           "omnigent:default-workspace-panel",
           "omnigent:hide-unconfigured-harnesses",
           STICKY_USER_MESSAGES_STORAGE_KEY,
+          BOTTOM_LOCK_STORAGE_KEY,
           ROUTING_NOTICES_STORAGE_KEY,
           CHAT_TOP_BUTTON_STORAGE_KEY,
         ]) {
@@ -1082,6 +1118,8 @@ function AppearanceSection() {
         <HideUnconfiguredHarnessesControl />
 
         <StickyUserMessagesControl />
+
+        <BottomLockControl />
 
         <RoutingNoticesControl />
 

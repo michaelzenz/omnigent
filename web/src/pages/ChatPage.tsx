@@ -67,6 +67,11 @@ import {
   subscribeRoutingNoticesEnabled,
 } from "@/lib/routingNoticePreferences";
 import {
+  DEFAULT_BOTTOM_LOCK_ENABLED,
+  readBottomLockEnabled,
+  subscribeBottomLockEnabled,
+} from "@/lib/bottomLockPreferences";
+import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
@@ -1785,6 +1790,11 @@ export function MainAgentSurface({
     readRoutingNoticesEnabled,
     () => DEFAULT_ROUTING_NOTICES_ENABLED,
   );
+  const bottomLockEnabled = useSyncExternalStore(
+    subscribeBottomLockEnabled,
+    readBottomLockEnabled,
+    () => DEFAULT_BOTTOM_LOCK_ENABLED,
+  );
   // The turn rail is a hover minimap with no mobile affordance (CSS-hidden
   // under `md`). Gate its MOUNT — not just its visibility — on the viewport so
   // mobile never mounts observers and history listeners for a rail it can't see.
@@ -1953,10 +1963,7 @@ export function MainAgentSurface({
     let frame = 0;
     const update = () => {
       frame = 0;
-      const rootStyles = window.getComputedStyle(document.documentElement);
-      const rootFontSize = Number.parseFloat(rootStyles.fontSize) || 16;
-      const safeTop = Number.parseFloat(rootStyles.getPropertyValue("--omnigent-inset-top")) || 0;
-      const roof = scrollEl.getBoundingClientRect().top + rootFontSize * 5 + safeTop;
+      const roof = userMessageRoof(scrollEl);
       const nextId = nearestCrossedUserMessageId(
         Array.from(scrollEl.querySelectorAll<HTMLElement>("[data-user-message-id]"), (message) => ({
           itemId: message.dataset.userMessageId,
@@ -2162,9 +2169,10 @@ export function MainAgentSurface({
                 )}
               >
                 {/* Scroll helpers — must live inside StickToBottom to access context. */}
-                <ScrollToBottomOnSend nonce={sendScrollNonce} />
+                <BottomLockController enabled={bottomLockEnabled} />
+                <ScrollToBottomOnSend nonce={sendScrollNonce} enabled={bottomLockEnabled} />
                 <ReleaseBottomLockOnResponseEnd status={status} />
-                <KeepBottomOnViewportResize />
+                {bottomLockEnabled && <KeepBottomOnViewportResize />}
                 <ConversationScrollRefBridge onScroller={setScroller} />
                 <HistoryAutoLoader scrollElement={scroller?.el ?? null} />
                 {bubbles.length === 0 && !showWorkingIndicator && !mcpStartupActive ? (
@@ -2496,19 +2504,56 @@ function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?
 }
 
 /**
- * Forces the conversation back to the bottom when this client submits a
- * new message. StickToBottom intentionally respects a user who has scrolled
- * up while streaming, but an explicit send should bring the fresh user bubble
- * and ensuing response back into view.
+ * Keeps the library's implicit bottom lock released when automatic following
+ * is disabled. The scroll listener runs after the library's own listener, so
+ * reaching the bottom naturally does not silently re-arm the lock.
  */
-function ScrollToBottomOnSend({ nonce }: { nonce: number }) {
+export function BottomLockController({ enabled }: { enabled: boolean }) {
+  const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
+    scrollRef?: React.RefObject<HTMLElement>;
+    contentRef?: React.RefObject<HTMLElement>;
+    state: { isAtBottom: boolean; escapedFromLock: boolean };
+    stopScroll: () => void;
+  };
+  const scrollRef = ctx.scrollRef;
+  const contentRef = ctx.contentRef;
+  const state = ctx.state;
+  const stopScroll = ctx.stopScroll;
+
+  useLayoutEffect(() => {
+    if (enabled) return;
+    const scrollElement = scrollRef?.current;
+    const release = () => {
+      stopScroll();
+      state.isAtBottom = false;
+      state.escapedFromLock = true;
+    };
+    release();
+    if (!scrollElement) return;
+
+    scrollElement.addEventListener("scroll", release, { passive: true });
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => release());
+    const contentElement = contentRef?.current;
+    if (contentElement) observer?.observe(contentElement);
+    return () => {
+      scrollElement.removeEventListener("scroll", release);
+      observer?.disconnect();
+    };
+  }, [contentRef, enabled, scrollRef, state, stopScroll]);
+
+  return null;
+}
+
+/** Optionally jumps to and follows the response after a local send. */
+function ScrollToBottomOnSend({ nonce, enabled }: { nonce: number; enabled: boolean }) {
   const { scrollToBottom } = useStickToBottomContext();
 
   useLayoutEffect(() => {
-    if (nonce === 0) return;
+    if (!enabled || nonce === 0) return;
     scrollToBottom("instant");
     requestAnimationFrame(() => scrollToBottom("instant"));
-  }, [nonce, scrollToBottom]);
+  }, [enabled, nonce, scrollToBottom]);
 
   return null;
 }
@@ -3044,6 +3089,7 @@ export function JumpToTopButton({
   const [atTop, setAtTop] = useState(true);
   const [hovering, setHovering] = useState(false);
   const [jumping, setJumping] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   // Reveal the pill while the user is scrolling up, then fade it back out once
   // they pause — so it's reachable without having to find the top hover band.
   const [scrolledUp, setScrolledUp] = useState(false);
@@ -3160,27 +3206,22 @@ export function JumpToTopButton({
 
   const jumpToPreviousMessage = useCallback(() => {
     if (!scroller) return;
-    const { el, state } = scroller;
+    const { el, state, stopScroll } = scroller;
     const userMessages = Array.from(
       el.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
     );
     if (userMessages.length === 0) return;
-    const roof = el.getBoundingClientRect().top;
-    // Find the last user message at or above the roof — the one currently at
-    // the top of the viewport (possibly stuck via sticky positioning). The
-    // previous message in the list is the one we jump to.
-    let currentIndex = -1;
-    for (let i = 0; i < userMessages.length; i++) {
-      if (userMessages[i].getBoundingClientRect().top <= roof + 1) {
-        currentIndex = i;
-      } else {
-        break;
-      }
-    }
-    if (currentIndex <= 0) return;
+    const bannerBottom = buttonRef.current?.getBoundingClientRect().bottom ?? userMessageRoof(el);
+    const roof = el.scrollTop + bannerBottom - el.getBoundingClientRect().top;
+    const targetIndex = userMessageIndexNearestRoof(
+      userMessages.map((message) => ({ top: naturalElementTop(message) - naturalElementTop(el) })),
+      roof,
+    );
+    if (targetIndex < 0) return;
+    stopScroll();
     state.isAtBottom = false;
     state.escapedFromLock = true;
-    scrollToUserTurnStart(userMessages[currentIndex - 1]);
+    scrollToUserTurnStart(userMessages[targetIndex], bannerBottom);
   }, [scroller]);
 
   const jumpLabel = mode === "jump-to-top" ? "Jump to top" : "Jump to previous message";
@@ -3201,6 +3242,7 @@ export function JumpToTopButton({
       )}
     >
       <Button
+        ref={buttonRef}
         type="button"
         variant="outline"
         size="sm"
@@ -3254,6 +3296,23 @@ function bubbleKey(bubble: Bubble): string {
 const TURN_JUMP_DURATION_MS = 600;
 const turnJumpFrames = new WeakMap<HTMLElement, number>();
 
+function naturalElementTop(element: HTMLElement): number {
+  let top = 0;
+  let current: HTMLElement | null = element;
+  while (current) {
+    top += current.offsetTop;
+    current = current.offsetParent as HTMLElement | null;
+  }
+  return top;
+}
+
+function userMessageRoof(scroller: HTMLElement): number {
+  const rootStyles = window.getComputedStyle(document.documentElement);
+  const rootFontSize = Number.parseFloat(rootStyles.fontSize) || 16;
+  const safeTop = Number.parseFloat(rootStyles.getPropertyValue("--omnigent-inset-top")) || 0;
+  return scroller.getBoundingClientRect().top + rootFontSize * 5 + safeTop;
+}
+
 function scrollableAncestor(element: HTMLElement): HTMLElement | null {
   let candidate = element.parentElement;
   while (candidate) {
@@ -3290,7 +3349,7 @@ function animateScrollTop(element: HTMLElement, targetTop: number): void {
   turnJumpFrames.set(element, requestAnimationFrame(step));
 }
 
-function scrollToUserTurnStart(message: HTMLElement | null): void {
+function scrollToUserTurnStart(message: HTMLElement | null, viewportRoof?: number): void {
   if (!message) {
     console.warn("scrollToUserTurnStart: clicked action has no message ancestor");
     return;
@@ -3307,11 +3366,9 @@ function scrollToUserTurnStart(message: HTMLElement | null): void {
   if (sticky) message.style.position = "static";
   const scroller = scrollableAncestor(message);
   if (scroller) {
+    const targetRoof = viewportRoof ?? scroller.getBoundingClientRect().top + stickyTop;
     const targetTop =
-      scroller.scrollTop +
-      message.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top -
-      stickyTop;
+      scroller.scrollTop + message.getBoundingClientRect().top - targetRoof;
     const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     animateScrollTop(scroller, Math.max(0, Math.min(targetTop, maxTop)));
   } else {
@@ -3334,6 +3391,38 @@ export function nearestCrossedUserMessageId(
     activeId = message.itemId ?? null;
   }
   return activeId;
+}
+
+export function userMessageIndexNearestRoof(
+  messages: readonly { top: number }[],
+  roof: number,
+): number {
+  let nearestIndex = -1;
+  let nearestTop = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < messages.length; i++) {
+    const top = messages[i].top;
+    if (top <= roof + 1 && top > nearestTop) {
+      nearestIndex = i;
+      nearestTop = top;
+    }
+  }
+  if (nearestIndex < 0) return -1;
+
+  // Repeated clicks should keep moving backward. While partway through a long
+  // bubble, however, its top is still the nearest crossed top and is selected.
+  if (Math.abs(nearestTop - roof) <= 1) {
+    let previousIndex = -1;
+    let previousTop = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < messages.length; i++) {
+      const top = messages[i].top;
+      if (top < nearestTop - 1 && top > previousTop) {
+        previousIndex = i;
+        previousTop = top;
+      }
+    }
+    return previousIndex;
+  }
+  return nearestIndex;
 }
 
 /**

@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { useChatStore } from "@/store/chatStore";
-import { BubbleView, nearestCrossedUserMessageId, SessionRewindContext } from "./ChatPage";
+import {
+  BubbleView,
+  nearestCrossedUserMessageId,
+  SessionRewindContext,
+  userMessageIndexNearestRoof,
+} from "./ChatPage";
 
 // UserBubble renders its text through the same markdown renderer as the
 // assistant bubble (FilePathAwareMessageResponse → Streamdown). These tests
@@ -460,6 +465,22 @@ describe("sticky user turn selection", () => {
 
     expect(nearestCrossedUserMessageId(messages, 80)).toBe("first");
     expect(nearestCrossedUserMessageId(messages, 120)).toBe("second");
+  });
+});
+
+describe("previous user turn selection", () => {
+  const messages = [{ top: 100 }, { top: 500 }, { top: 1_400 }];
+
+  it("selects the current long bubble when its top is nearest above the roof", () => {
+    expect(userMessageIndexNearestRoof(messages, 1_100)).toBe(1);
+  });
+
+  it("selects the preceding bubble when the current bubble is already aligned", () => {
+    expect(userMessageIndexNearestRoof(messages, 500)).toBe(0);
+  });
+
+  it("selects the latest crossed bubble while viewing its reply", () => {
+    expect(userMessageIndexNearestRoof(messages, 1_800)).toBe(2);
   });
 });
 

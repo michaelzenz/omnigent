@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserMessageBlock } from "@/lib/blocks";
 import { useChatStore } from "@/store/chatStore";
 import {
+  BottomLockController,
   ConversationScrollPosition,
   HistoryAutoLoader,
   JumpToTopButton,
@@ -70,6 +71,33 @@ function setScrollMetrics(
     get: () => metrics.clientHeight ?? 0,
   });
 }
+
+describe("BottomLockController", () => {
+  afterEach(() => {
+    cleanup();
+    stickContext.scrollRef.current = null;
+    stickContext.stopScroll = undefined;
+  });
+
+  it("releases the lock initially and whenever reaching the bottom re-arms it", () => {
+    const scrollRoot = document.createElement("div");
+    stickContext.scrollRef.current = scrollRoot;
+    stickContext.state.isAtBottom = true;
+    stickContext.state.escapedFromLock = false;
+    const stopScroll = vi.fn();
+    stickContext.stopScroll = stopScroll;
+
+    render(<BottomLockController enabled={false} />);
+    expect(stopScroll).toHaveBeenCalledOnce();
+    expect(stickContext.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+
+    stickContext.state.isAtBottom = true;
+    stickContext.state.escapedFromLock = false;
+    fireEvent.scroll(scrollRoot);
+    expect(stopScroll).toHaveBeenCalledTimes(2);
+    expect(stickContext.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+  });
+});
 
 describe("ConversationScrollPosition", () => {
   afterEach(() => {

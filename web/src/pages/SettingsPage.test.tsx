@@ -293,6 +293,16 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:sticky-user-messages")).toBe("false");
   });
 
+  it("keeps automatic bottom locking off by default", () => {
+    renderPage("/settings/appearance");
+    const toggle = screen.getByTestId("bottom-lock-toggle");
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(localStorage.getItem("omnigent:bottom-lock")).toBe("true");
+  });
+
   it("configures the floating top chat button", () => {
     renderPage("/settings/appearance");
 
@@ -508,6 +518,7 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByTestId("workspace-panel-default-collapsed"));
     fireEvent.click(screen.getByTestId("hide-unconfigured-harnesses-toggle"));
     fireEvent.click(screen.getByTestId("sticky-user-messages-toggle"));
+    fireEvent.click(screen.getByTestId("bottom-lock-toggle"));
     fireEvent.click(screen.getByTestId("routing-notices-toggle"));
     fireEvent.click(screen.getByTestId("chat-top-button-off"));
     fireEvent.click(screen.getByTestId("ui-font-size-inc"));
@@ -564,6 +575,7 @@ describe("SettingsPage", () => {
       "aria-checked",
       "true",
     );
+    expect(screen.getByTestId("bottom-lock-toggle")).toHaveAttribute("aria-checked", "false");
     expect(screen.getByTestId("chat-top-button-jump-to-top")).toHaveAttribute(
       "aria-checked",
       "true",
