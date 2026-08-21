@@ -380,6 +380,19 @@ describe("deleteConversation", () => {
     fetchMock.mockResolvedValueOnce(mockResponse({}, { ok: false, status: 404 }));
     await expect(deleteConversation("missing")).rejects.toThrow(/404/);
   });
+
+  it("surfaces worktree cleanup failure details", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse(
+        { detail: "Failed to remove worktree: not a git worktree" },
+        { ok: false, status: 409 },
+      ),
+    );
+
+    await expect(deleteConversation("conv_worktree", true)).rejects.toThrow(
+      "Failed to remove worktree: not a git worktree",
+    );
+  });
 });
 
 describe("useStopAndDeleteConversation stops the running session first", () => {

@@ -7943,6 +7943,56 @@ async def _create_session_worktree(
         raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
 
 
+async def _remove_session_worktree(
+    *,
+    host_id: str,
+    worktree_path: str,
+    branch: str,
+    delete_branch: bool,
+    request: Request,
+) -> None:
+    """Remove a session worktree and surface cleanup failures.
+
+    :param host_id: Host that owns the worktree, e.g.
+        ``"host_a1b2c3d4..."``.
+    :param worktree_path: Absolute worktree directory to remove on the
+        host, e.g. ``"/Users/alice/.omnigent/worktrees/feature-login"``.
+    :param branch: Branch checked out in the worktree, e.g.
+        ``"feature/login"``.
+    :param delete_branch: When ``True``, also run ``git branch -D``
+        after removing the worktree directory.
+    :param request: FastAPI request carrying the host registry.
+    :raises OmnigentError: If the host is unavailable or cleanup fails.
+    """
+    from omnigent.server.routes._host_worktree import (
+        WorktreeProxyError,
+        remove_worktree_on_host,
+    )
+
+    host_registry = getattr(request.app.state, "host_registry", None)
+    if host_registry is None:
+        raise OmnigentError("Host registry unavailable", code=ErrorCode.INTERNAL_ERROR)
+    host_conn = host_registry.get(host_id)
+    if host_conn is None:
+        raise OmnigentError(
+            f"Cannot remove worktree while host {host_id!r} is offline",
+            code=ErrorCode.CONFLICT,
+        )
+    try:
+        await remove_worktree_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=worktree_path,
+            branch=branch,
+            delete_branch=delete_branch,
+        )
+    except WorktreeProxyError as exc:
+        raise OmnigentError(
+            f"Failed to remove worktree: {exc}",
+            code=ErrorCode.CONFLICT,
+        ) from exc
+
+
 async def _remove_session_worktree_best_effort(
     *,
     host_id: str,
@@ -7952,51 +8002,16 @@ async def _remove_session_worktree_best_effort(
     request: Request,
     reason: str,
 ) -> None:
-    """
-    Best-effort removal of a session's git worktree.
-
-    Used for create-rollback (orphan cleanup) and opt-in session-delete
-    cleanup. Never raises — a failure is logged so the caller's primary
-    operation still completes.
-
-    :param host_id: Host that owns the worktree, e.g.
-        ``"host_a1b2c3d4..."``.
-    :param worktree_path: Absolute worktree directory to remove on the
-        host, e.g. ``"/Users/alice/myrepo-worktrees/feature-login"``.
-    :param branch: Branch checked out in the worktree, e.g.
-        ``"feature/login"``.
-    :param delete_branch: When ``True``, also run ``git branch -D``
-        after removing the worktree directory.
-    :param request: FastAPI request carrying the host registry.
-    :param reason: Short label for log lines, e.g.
-        ``"create-rollback"`` or ``"session-delete"``.
-    """
-    from omnigent.server.routes._host_worktree import (
-        WorktreeProxyError,
-        remove_worktree_on_host,
-    )
-
-    host_registry = getattr(request.app.state, "host_registry", None)
-    if host_registry is None:
-        return
-    host_conn = host_registry.get(host_id)
-    if host_conn is None:
-        _logger.warning(
-            "Skipping worktree removal (%s) for %s: host %s offline",
-            reason,
-            worktree_path,
-            host_id,
-        )
-        return
+    """Best-effort worktree cleanup used for failed session creation."""
     try:
-        await remove_worktree_on_host(
-            host_registry=host_registry,
-            host_conn=host_conn,
+        await _remove_session_worktree(
+            host_id=host_id,
             worktree_path=worktree_path,
             branch=branch,
             delete_branch=delete_branch,
+            request=request,
         )
-    except WorktreeProxyError:
+    except OmnigentError:
         _logger.warning(
             "Best-effort worktree removal (%s) failed for %s",
             reason,

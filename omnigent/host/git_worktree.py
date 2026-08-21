@@ -13,6 +13,7 @@ import errno
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -148,11 +149,7 @@ def _main_work_tree(repo_path: str) -> str:
     repository; its first entry is always the main one (the checkout all
     linked worktrees share). Run from ``repo_path``, this resolves the
     same main work tree whether the user picked the main checkout, a
-    subdirectory, or a *linked worktree* — so a new worktree is always
-    created as a sibling of the MAIN repo (e.g.
-    ``…/myrepo-worktrees/<branch>``) rather than nested inside a worktree
-    the session happened to start in (which ``rev-parse --show-toplevel``
-    would produce: ``…/myrepo-worktrees/feature-worktrees/<branch>``).
+    subdirectory, or a linked worktree.
 
     :param repo_path: Absolute path inside a git repository — the
         directory the user picked, e.g.
@@ -180,7 +177,7 @@ class WorktreeInfo:
     """One entry from ``git worktree list``.
 
     :param path: Absolute worktree directory, e.g.
-        ``"/Users/alice/myrepo-worktrees/feature-login"``.
+        ``"/Users/alice/.omnigent/worktrees/feature-login"``.
     :param branch: Checked-out branch without the ``refs/heads/``
         prefix, e.g. ``"feature/login"``. ``None`` when the worktree
         is in detached-HEAD state.
@@ -249,24 +246,21 @@ def list_worktrees(*, repo_path: str) -> list[WorktreeInfo]:
     return worktrees
 
 
-def _resolve_worktree_path(repo_root: str, branch_name: str) -> Path:
-    """Compute a collision-free sibling worktree directory path.
+def _resolve_worktree_path(branch_name: str) -> Path:
+    """Compute a collision-free Omnigent worktree directory path.
 
     Places the worktree at
-    ``<parent-of-repo-root>/<repo-name>-worktrees/<sanitized-branch>``,
-    appending a numeric suffix if that path already exists on disk.
+    ``~/.omnigent/worktrees/<sanitized-branch>``, appending a numeric
+    suffix if that path already exists on disk.
 
-    :param repo_root: Absolute repo work-tree root, e.g.
-        ``"/Users/alice/myrepo"``.
     :param branch_name: Validated branch name, e.g.
         ``"feature/login"``.
     :returns: A path that does not yet exist, e.g.
-        ``Path("/Users/alice/myrepo-worktrees/feature-login")``.
+        ``Path("/Users/alice/.omnigent/worktrees/feature-login")``.
     :raises WorktreeError: If no free path is found within
         :data:`_MAX_DIR_COLLISION_SUFFIX` attempts.
     """
-    root = Path(repo_root)
-    base_dir = root.parent / f"{root.name}-worktrees"
+    base_dir = Path.home() / ".omnigent" / "worktrees"
     dirname = _sanitize_dirname(branch_name)
     candidate = base_dir / dirname
     if not candidate.exists():
@@ -342,7 +336,7 @@ def create_worktree(
 ) -> CreatedWorktree:
     """Create a git worktree with a new branch checked out.
 
-    Resolves the repo root, picks a collision-free sibling directory,
+    Resolves the repo root, picks a collision-free Omnigent directory,
     and runs ``git worktree add -b`` (fetching once if ``base_branch``
     isn't locally resolvable).
 
@@ -363,13 +357,12 @@ def create_worktree(
     # Always create the worktree off the MAIN work tree, even when
     # ``repo_path`` is itself a linked worktree (e.g. the fork-resume
     # picker prefilled a worktree as the source). Otherwise the new
-    # worktree would nest under the picked worktree
-    # (``…/feature-worktrees/<branch>``); resolving to the main repo keeps
-    # all worktrees as siblings (``…/myrepo-worktrees/<branch>``).
+    # Git operations should target the shared main checkout even when the
+    # selected path is itself a linked worktree.
     repo_root = _main_work_tree(repo_path)
     if base_branch is not None and auto_fetch_base:
         _ensure_base_resolvable(repo_root, base_branch)
-    worktree_path = _resolve_worktree_path(repo_root, branch_name)
+    worktree_path = _resolve_worktree_path(branch_name)
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
     add_args = ["worktree", "add", "-b", branch_name, str(worktree_path)]
@@ -524,7 +517,7 @@ def create_worktree_streaming(
         if on_log is not None:
             on_log(f"Resolving base branch '{base_branch}'…")
         _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
-    worktree_path = _resolve_worktree_path(repo_root, branch_name)
+    worktree_path = _resolve_worktree_path(branch_name)
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
     add_args = ["worktree", "add", "-b", branch_name, str(worktree_path)]
     if base_branch is not None:
@@ -591,7 +584,7 @@ def _main_repo_for_worktree(worktree_path: str) -> str:
     resolves correctly.
 
     :param worktree_path: Absolute path of a linked worktree, e.g.
-        ``"/Users/alice/myrepo-worktrees/feature-login"``.
+        ``"/Users/alice/.omnigent/worktrees/feature-login"``.
     :returns: Absolute path of the main repo work tree, e.g.
         ``"/Users/alice/myrepo"``.
     :raises WorktreeError: If ``worktree_path`` is missing or not part
@@ -605,6 +598,29 @@ def _main_repo_for_worktree(worktree_path: str) -> str:
     common_dir = Path(result.stdout.strip())
     if not common_dir.is_absolute():
         common_dir = (Path(worktree_path) / common_dir).resolve()
+    return str(common_dir.parent)
+
+
+def _orphaned_worktree_main_repo(worktree_path: str) -> str | None:
+    """Recover the main repo from a linked worktree's stale ``.git`` file."""
+    git_file = Path(worktree_path) / ".git"
+    if not git_file.is_file() or git_file.is_symlink():
+        return None
+    try:
+        marker = git_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "gitdir:"
+    if not marker.lower().startswith(prefix):
+        return None
+    metadata = Path(marker[len(prefix) :].strip())
+    if not metadata.is_absolute():
+        metadata = (git_file.parent / metadata).resolve()
+    if metadata.exists():
+        return None
+    common_dir = metadata.parent.parent
+    if common_dir.name != ".git" or not common_dir.is_dir():
+        return None
     return str(common_dir.parent)
 
 
@@ -622,7 +638,7 @@ def remove_worktree(
     refuses to remove the main work tree.
 
     :param worktree_path: Absolute path of the worktree to remove,
-        e.g. ``"/Users/alice/myrepo-worktrees/feature-login"``.
+        e.g. ``"/Users/alice/.omnigent/worktrees/feature-login"``.
     :param branch: Branch to delete when ``delete_branch`` is
         ``True``, e.g. ``"feature/login"``. ``None`` skips branch
         deletion.
@@ -631,14 +647,30 @@ def remove_worktree(
     :raises WorktreeError: If the worktree path is missing/invalid, or
         a git command fails.
     """
-    main_repo = _main_repo_for_worktree(worktree_path)
-    remove_result = _run_git(
-        ["worktree", "remove", "--force", worktree_path],
-        cwd=main_repo,
-    )
-    if remove_result.returncode != 0:
-        raise _git_error("git worktree remove failed", remove_result)
+    try:
+        main_repo = _main_repo_for_worktree(worktree_path)
+    except WorktreeError:
+        main_repo = _orphaned_worktree_main_repo(worktree_path)
+        if main_repo is None:
+            raise
+        try:
+            shutil.rmtree(worktree_path)
+        except OSError as exc:
+            raise WorktreeError(f"failed to remove orphaned worktree: {exc}") from exc
+    else:
+        remove_result = _run_git(
+            ["worktree", "remove", "--force", worktree_path],
+            cwd=main_repo,
+        )
+        if remove_result.returncode != 0:
+            raise _git_error("git worktree remove failed", remove_result)
     if delete_branch and branch is not None:
+        branch_exists = _run_git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=main_repo,
+        )
+        if branch_exists.returncode != 0:
+            return
         branch_result = _run_git(["branch", "-D", branch], cwd=main_repo)
         if branch_result.returncode != 0:
             raise _git_error("git branch -D failed", branch_result)

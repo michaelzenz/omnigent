@@ -8,6 +8,7 @@ root resolution, or removal ordering fails loud here.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -125,7 +126,7 @@ def _worktree_count(repo: Path) -> int:
 
 
 @pytest.fixture()
-def git_repo(tmp_path: Path) -> Iterator[Path]:
+def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Create a one-commit git repo and yield its resolved root.
 
     :returns: Iterator yielding the repo root path (realpath, so it
@@ -133,6 +134,7 @@ def git_repo(tmp_path: Path) -> Iterator[Path]:
     """
     # Resolve so comparisons match git's realpath output (macOS
     # /tmp -> /private/tmp).
+    monkeypatch.setenv("HOME", str(tmp_path))
     repo = (tmp_path / "myrepo").resolve()
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
@@ -142,11 +144,11 @@ def git_repo(tmp_path: Path) -> Iterator[Path]:
     yield repo
 
 
-def test_create_worktree_places_sibling_of_repo_root(git_repo: Path) -> None:
-    """A new worktree lands at ``<repo>-worktrees/<branch>`` with the branch checked out."""
+def test_create_worktree_uses_omnigent_worktree_root(git_repo: Path) -> None:
+    """A new worktree lands under ``~/.omnigent/worktrees``."""
     created = create_worktree(repo_path=str(git_repo), branch_name="feature/login")
-    expected = git_repo.parent / "myrepo-worktrees" / "feature-login"
-    # Path proves the sibling layout + slash->dash dir sanitization;
+    expected = Path.home() / ".omnigent" / "worktrees" / "feature-login"
+    # Path proves the managed layout + slash->dash dir sanitization;
     # a regression in _resolve_worktree_path would change this.
     assert created.worktree_path == str(expected)
     assert Path(created.worktree_path).is_dir()
@@ -156,38 +158,25 @@ def test_create_worktree_places_sibling_of_repo_root(git_repo: Path) -> None:
 
 
 def test_create_worktree_resolves_repo_root_from_subdir(git_repo: Path) -> None:
-    """Picking a subdir still anchors the worktree at the repo root's sibling."""
+    """Picking a subdir still creates under Omnigent's managed root."""
     sub = git_repo / "src"
     sub.mkdir()
     created = create_worktree(repo_path=str(sub), branch_name="wip")
-    # Sibling of the repo ROOT, not of the picked subdir — proves
-    # rev-parse --show-toplevel is used rather than the raw repo_path.
-    assert created.worktree_path == str(git_repo.parent / "myrepo-worktrees" / "wip")
+    assert created.worktree_path == str(Path.home() / ".omnigent" / "worktrees" / "wip")
 
 
-def test_create_worktree_from_linked_worktree_anchors_at_main_repo(git_repo: Path) -> None:
-    """Creating a worktree while inside a LINKED worktree anchors at the MAIN repo.
-
-    Resolving the repo root naively (``rev-parse --show-toplevel``) from a
-    linked worktree would nest the new worktree under it
-    (``…/feature-a-worktrees/feature-b``). ``_main_work_tree`` resolves to
-    the main checkout so worktrees stay siblings
-    (``…/myrepo-worktrees/feature-b``) — the fork-resume picker prefills a
-    worktree as the source session's workspace, so this is the common path.
-    """
+def test_create_worktree_from_linked_worktree_uses_managed_root(git_repo: Path) -> None:
+    """Creating from a linked worktree still uses the managed root."""
     # First worktree, created off the main repo.
     first = create_worktree(repo_path=str(git_repo), branch_name="feature/a")
     first_path = Path(first.worktree_path)
-    assert first_path == git_repo.parent / "myrepo-worktrees" / "feature-a"
+    expected_root = Path.home() / ".omnigent" / "worktrees"
+    assert first_path == expected_root / "feature-a"
 
     # Second worktree, requested from INSIDE the first (linked) worktree.
     second = create_worktree(repo_path=str(first_path), branch_name="feature/b")
 
-    # Sibling of the MAIN repo, NOT nested under the first worktree. A
-    # regression to --show-toplevel would put it under
-    # ``feature-a-worktrees/`` and this fails.
-    assert second.worktree_path == str(git_repo.parent / "myrepo-worktrees" / "feature-b")
-    assert "feature-a-worktrees" not in second.worktree_path
+    assert second.worktree_path == str(expected_root / "feature-b")
     assert Path(second.worktree_path).is_dir()
     assert _current_branch(Path(second.worktree_path)) == "feature/b"
 
@@ -303,6 +292,24 @@ def test_remove_worktree_keeps_branch_when_flag_false(git_repo: Path) -> None:
     assert not Path(created.worktree_path).exists()
     # Branch survives — only the checkout directory was removed.
     assert _branch_exists(git_repo, "feature/keep")
+
+
+def test_remove_worktree_recovers_orphaned_directory(git_repo: Path) -> None:
+    """A stale gitdir pointer can still be removed with its branch."""
+    created = create_worktree(repo_path=str(git_repo), branch_name="feature/orphan")
+    worktree_path = Path(created.worktree_path)
+    marker = (worktree_path / ".git").read_text(encoding="utf-8").strip()
+    metadata = Path(marker.removeprefix("gitdir:").strip())
+    shutil.rmtree(metadata)
+
+    remove_worktree(
+        worktree_path=created.worktree_path,
+        branch="feature/orphan",
+        delete_branch=True,
+    )
+
+    assert not worktree_path.exists()
+    assert not _branch_exists(git_repo, "feature/orphan")
 
 
 def test_remove_worktree_missing_path_fails(git_repo: Path) -> None:

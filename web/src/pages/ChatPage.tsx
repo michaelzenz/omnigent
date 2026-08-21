@@ -248,6 +248,8 @@ import { supportsEffortControl } from "@/lib/sessionCapabilities";
 import { isCodexNativeSession } from "@/lib/codexPlanMode";
 import { getCliServerUrl } from "@/lib/host";
 import { SessionImage } from "@/components/SessionImage";
+import { TurnActivityPopover } from "@/components/TurnActivityPopover";
+import { collectTurnActivity } from "@/lib/turnActivity";
 import { GoalControl, GoalStatusPill, useGoalState, type Goal } from "@/components/goal";
 import { copyText } from "@/lib/clipboard";
 import { showToast } from "@/components/ui/toast";
@@ -1975,6 +1977,23 @@ export function MainAgentSurface({
     () => (pendingElicitations.length === 0 ? bubbles : stripPendingElicitations(bubbles)),
     [bubbles, pendingElicitations.length],
   );
+  // A user turn can span multiple assistant response ids when an agent yields
+  // and continues later. Carry activity forward until the next real user
+  // message so the final response's board includes the whole turn, not only
+  // the last response bubble. Runtime-injected system bubbles do not start a
+  // new turn.
+  const turnActivityItemsByBubble = useMemo(() => {
+    let current: RenderItem[] = [];
+    return streamBubbles.map((bubble) => {
+      if (bubble.kind === "user" && !isSystemBubble(bubble)) {
+        current = [];
+        return undefined;
+      }
+      if (bubble.kind !== "assistant") return undefined;
+      current = [...current, ...bubble.items];
+      return current;
+    });
+  }, [streamBubbles]);
   // While the session runs, the last assistant bubble is (or may be) the
   // live turn even if its lifecycle reads settled — BlockRenderer keeps
   // its "Worked for" fold suppressed until a terminal status edge lands.
@@ -2314,6 +2333,7 @@ export function MainAgentSurface({
                         routingNoticesEnabled={routingNoticesEnabled}
                         isLastAssistant={bubbleIndex === lastAssistantIndex}
                         showsWorking={showsWorking && bubbleIndex === lastAssistantIndex}
+                        turnActivityItems={turnActivityItemsByBubble[bubbleIndex]}
                       />
                     ))}
                     {/* Pending elicitation cards, floated to the bottom of the
@@ -4132,6 +4152,7 @@ export const BubbleView = memo(
     routingNoticesEnabled = true,
     isLastAssistant = false,
     showsWorking = false,
+    turnActivityItems,
   }: {
     bubble: Bubble;
     isStickyUser?: boolean;
@@ -4139,6 +4160,7 @@ export const BubbleView = memo(
     routingNoticesEnabled?: boolean;
     isLastAssistant?: boolean;
     showsWorking?: boolean;
+    turnActivityItems?: RenderItem[];
   }) {
     if (bubble.kind === "user") {
       return (
@@ -4170,6 +4192,7 @@ export const BubbleView = memo(
         bubble={bubble}
         isLastAssistant={isLastAssistant}
         showsWorking={showsWorking}
+        turnActivityItems={turnActivityItems}
       />
     );
   },
@@ -4179,6 +4202,7 @@ export const BubbleView = memo(
     (prev.routingNoticesEnabled ?? true) === (next.routingNoticesEnabled ?? true) &&
     (prev.isLastAssistant ?? false) === (next.isLastAssistant ?? false) &&
     (prev.showsWorking ?? false) === (next.showsWorking ?? false) &&
+    prev.turnActivityItems === next.turnActivityItems &&
     bubblesEqual(prev.bubble, next.bubble),
 );
 
@@ -4645,10 +4669,12 @@ function AssistantBubble({
   bubble,
   isLastAssistant = false,
   showsWorking = false,
+  turnActivityItems,
 }: {
   bubble: Extract<Bubble, { kind: "assistant" }>;
   isLastAssistant?: boolean;
   showsWorking?: boolean;
+  turnActivityItems?: RenderItem[];
 }) {
   // The walker only emits an assistant bubble when at least one
   // assistant-side block exists, so `items` is non-empty here in the
@@ -4671,6 +4697,8 @@ function AssistantBubble({
   if (bubble.items.length === 0) return null;
 
   const markdownText = collectBubbleMarkdown(bubble.items);
+  const activityItems = turnActivityItems ?? bubble.items;
+  const hasTurnActivity = collectTurnActivity(activityItems).totalCalls > 0;
   const ts = formatBubbleTimestamp(bubble.createdAtS);
 
   // The bubble collapses to nothing but the "Worked for" row — its text
@@ -4732,13 +4760,15 @@ function AssistantBubble({
             skipped when there is neither a timestamp nor actions to show.
             40%-visible on touch (no hover), hover/focus-reveal on desktop.
             Order matches the design target: actions, then timestamp. */}
-        {!foldOnly && (ts || markdownText) && (
+        {!foldOnly && (ts || markdownText || hasTurnActivity) && (
           <div className="flex items-center gap-3 py-1 opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-            {markdownText && (
+            {(markdownText || hasTurnActivity) && (
               <MessageActions>
-                <MessageAction tooltip="Copy" size="icon-xxs" onClick={handleCopy}>
-                  {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
-                </MessageAction>
+                {markdownText && (
+                  <MessageAction tooltip="Copy" size="icon-xxs" onClick={handleCopy}>
+                    {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                  </MessageAction>
+                )}
                 {/* Fork from this response: clone the session with history
                     truncated after this turn. Hidden while the response is
                     still streaming (its items aren't committed yet) and when
@@ -4753,6 +4783,7 @@ function AssistantBubble({
                     <GitForkIcon size={14} />
                   </MessageAction>
                 )}
+                <TurnActivityPopover items={activityItems} />
               </MessageActions>
             )}
             {ts && (

@@ -175,6 +175,7 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_policy_deny,
     _publish_session_superseded,
     _publish_status,
+    _remove_session_worktree,
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
     _resolve_harness,
@@ -2137,9 +2138,9 @@ def register_events_routes(
             has a server-created worktree (``git_branch`` set), the
             host removes the worktree directory and deletes its branch
             (``git worktree remove --force`` then ``git branch -D``).
-            Ignored for sessions with no worktree. Best-effort: a
-            cleanup failure does not block the delete. Defaults to
-            ``False`` (worktree and branch left untouched). See
+            Ignored for sessions with no worktree. A cleanup failure
+            aborts the session deletion and is returned to the caller.
+            Defaults to ``False`` (worktree and branch left untouched). See
             designs/SESSION_GIT_WORKTREE.md.
         :returns: A :class:`ConversationDeleted` confirmation.
         :raises OmnigentError: 404 if no session or no access,
@@ -2196,6 +2197,22 @@ def register_events_routes(
 
             with contextlib.suppress(RuntimeError):
                 await get_terminal_registry().cleanup_conversation(session_id)
+        # Opt-in git worktree cleanup: only when delete_branch=true and
+        # the session has a server-created worktree. Keep the session row
+        # and files when cleanup fails so the caller can retry.
+        if (
+            delete_branch
+            and conv.git_branch is not None
+            and conv.workspace is not None
+            and conv.host_id is not None
+        ):
+            await _remove_session_worktree(
+                host_id=conv.host_id,
+                worktree_path=conv.workspace,
+                branch=conv.git_branch,
+                delete_branch=True,
+                request=request,
+            )
         # Session file cleanup.
         if file_store is not None and artifact_store is not None:
             deleted_file_ids = await asyncio.to_thread(
@@ -2203,23 +2220,6 @@ def register_events_routes(
             )
             for fid in deleted_file_ids:
                 await asyncio.to_thread(artifact_store.delete, fid)
-        # Opt-in git worktree cleanup: only when delete_branch=true and
-        # the session has a server-created worktree. Runs after runner
-        # teardown; best-effort (designs/SESSION_GIT_WORKTREE.md).
-        if (
-            delete_branch
-            and conv.git_branch is not None
-            and conv.workspace is not None
-            and conv.host_id is not None
-        ):
-            await _remove_session_worktree_best_effort(
-                host_id=conv.host_id,
-                worktree_path=conv.workspace,
-                branch=conv.git_branch,
-                delete_branch=True,
-                request=request,
-                reason="session-delete",
-            )
         _interrupt_fenced_sessions.discard(session_id)
         _intentional_stop_sessions.discard(session_id)
         deleted = await conversation_store.delete_conversation(session_id)
