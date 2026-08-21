@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
   Trash2Icon,
@@ -41,6 +42,7 @@ import {
   type SkillTreeFile,
 } from "@/hooks/useSkills";
 import { cn } from "@/lib/utils";
+import { CreateSkillDialog } from "./CreateSkillDialog";
 
 const SkillVariantDiff = lazy(() =>
   import("./SkillVariantDiff").then((module) => ({ default: module.SkillVariantDiff })),
@@ -289,6 +291,7 @@ export function SkillsTab() {
   );
   const [message, setMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRevision = useRef(0);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
@@ -490,7 +493,16 @@ export function SkillsTab() {
                 Variants reported independently by every host and harness.
               </p>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center gap-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-label="Create skill"
+                data-testid="create-skill-open"
+                onClick={() => setCreateOpen(true)}
+              >
+                <PlusIcon /> New skill
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -714,6 +726,14 @@ export function SkillsTab() {
         )}
       </section>
       <SkillRootsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <CreateSkillDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(name) => {
+          setSelectedName(name);
+          setMessage(null);
+        }}
+      />
     </div>
   );
 }

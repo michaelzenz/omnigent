@@ -520,4 +520,5 @@ async def test_create_skill_writes_every_detected_harness_root(
         ".claude/skills/new-skill",
         ".codex/skills/new-skill",
         ".cursor/skills/new-skill",
+        ".omnigent/skills/new-skill",
     }

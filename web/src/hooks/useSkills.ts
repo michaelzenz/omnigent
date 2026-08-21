@@ -249,6 +249,25 @@ async function syncSkill(name: string, sourceHostId: string, sourceHarness: stri
   if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
 }
 
+async function createSkill(
+  name: string,
+  files: Record<string, string>,
+): Promise<void> {
+  const response = await authenticatedFetch(`/v1/skills/${encodeURIComponent(name)}/files`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files }),
+  });
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+  const body = (await response.json()) as {
+    results: { status: string; error?: string }[];
+  };
+  const failed = body.results.filter((result) => result.status === "failed");
+  if (failed.length > 0) {
+    throw new Error(failed[0]?.error || `${failed.length} skill location(s) failed to create.`);
+  }
+}
+
 async function deleteSkillEverywhere(name: string): Promise<void> {
   const response = await authenticatedFetch(`/v1/skills/${encodeURIComponent(name)}`, {
     method: "DELETE",
@@ -386,6 +405,17 @@ export function useDeleteSkillEverywhere() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteSkillEverywhere,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    },
+  });
+}
+
+export function useCreateSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, files }: { name: string; files: Record<string, string> }) =>
+      createSkill(name, files),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
     },

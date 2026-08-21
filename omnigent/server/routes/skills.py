@@ -716,7 +716,10 @@ def create_skills_router(
             ]
             target_paths = [
                 (harness, f"{_NATIVE_SKILL_PATHS[harness]}/{skill_name}") for harness in targets
-            ] or [("omnigent", f".omnigent/skills/{skill_name}")]
+            ]
+            # Always mirror into the omnigent override root so the skill is
+            # discoverable by every harness's host walk even without a native root.
+            target_paths.append(("omnigent", f".omnigent/skills/{skill_name}"))
             for harness, rel_home_path in target_paths:
                 try:
                     payload = await host_skill_request(

@@ -2,10 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillsTab } from "./SkillsTab";
 
-const { refreshSkills, refetchSkills, saveSkillFiles } = vi.hoisted(() => ({
+const { refreshSkills, refetchSkills, saveSkillFiles, createSkill } = vi.hoisted(() => ({
   refreshSkills: vi.fn(),
   refetchSkills: vi.fn(),
   saveSkillFiles: vi.fn(),
+  createSkill: vi.fn(),
 }));
 
 vi.mock("@/hooks/useSkills", () => ({
@@ -208,6 +209,7 @@ vi.mock("@/hooks/useSkills", () => ({
   useSaveSkillVariantFiles: () => ({ mutateAsync: saveSkillFiles, isPending: false }),
   useSyncSkills: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSkillEverywhere: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreateSkill: () => ({ mutateAsync: createSkill, isPending: false }),
 }));
 
 describe("SkillsTab", () => {
@@ -215,6 +217,7 @@ describe("SkillsTab", () => {
     refreshSkills.mockReset();
     refetchSkills.mockReset();
     saveSkillFiles.mockReset();
+    createSkill.mockReset();
   });
 
   it("shows global sync state and the selected skill editor", async () => {
@@ -277,5 +280,35 @@ describe("SkillsTab", () => {
     });
     expect(document.activeElement).toBe(editor);
     vi.useRealTimers();
+  });
+
+  it("creates a new skill on every detected harness from the dialog", async () => {
+    createSkill.mockResolvedValue(undefined);
+    render(<SkillsTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+    expect(
+      screen.getByText(/Saves the new skill to every detected harness/),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("create-skill-name"), {
+      target: { value: "my-new-skill" },
+    });
+    fireEvent.change(screen.getByTestId("create-skill-description"), {
+      target: { value: "A brand new skill" },
+    });
+    fireEvent.change(screen.getByTestId("create-skill-content"), {
+      target: { value: "Do the thing." },
+    });
+    fireEvent.click(screen.getByTestId("create-skill-submit"));
+
+    await waitFor(() => expect(createSkill).toHaveBeenCalledOnce());
+    expect(createSkill).toHaveBeenCalledWith({
+      name: "my-new-skill",
+      files: {
+        "SKILL.md":
+          "---\nname: my-new-skill\ndescription: A brand new skill\n---\n\nDo the thing.\n",
+      },
+    });
   });
 });
