@@ -14,7 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "@/lib/routing";
 import {
   ArrowUpIcon,
   ArrowDownIcon,
@@ -41,7 +41,6 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { userColor, userColorTint, userInitials } from "@/lib/userBadge";
-import { useNavigate, useParams } from "@/lib/routing";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
@@ -201,6 +200,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -238,9 +243,6 @@ import {
   OMNIHARNESS_AGENT_NAME,
   type OmniHarnessModelOption,
 } from "@/lib/omniharnessModels";
-import { usePromptProfiles } from "@/hooks/usePromptProfiles";
-import { ProfileControls, type ProfileSelection } from "@/shell/ProfileControls";
-import { updateSession } from "@/lib/sessionsApi";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -730,7 +732,6 @@ const sessionDrafts = loadDraftsFromStorage();
 export function ChatPage() {
   const { conversationId: urlConvId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   // Optional first message handed off by the landing composer through the
   // shared chatStore (keyed by conversation id), not router state — router state
   // doesn't survive the embed's host-provided routing. Consumed read-once
@@ -770,8 +771,6 @@ export function ChatPage() {
     error: agentsError,
     refetch: refetchAgents,
   } = useAgents({ enabled: !urlConvId });
-  const profilesQuery = usePromptProfiles({ enabled: Boolean(urlConvId) });
-  const [profileChangeBusy, setProfileChangeBusy] = useState(false);
   const { data: conversationsData } = useConversations("", true);
   const conversations = useMemo(
     () => conversationsData?.pages.flatMap((p) => p.data),
@@ -1291,45 +1290,12 @@ export function ChatPage() {
     harness: activeSession?.harness ?? null,
     agentName: activeSession?.agentName ?? activeConv?.agent_name ?? null,
   };
-  const profileCatalog = profilesQuery.data ?? [];
-  const activeProfileId =
-    activeSession?.promptProfile?.mode === "fixed" ? activeSession.promptProfile.profileId : null;
-  const profileSelection: ProfileSelection =
-    activeProfileId && profileCatalog.some((profile) => profile.id === activeProfileId)
-      ? activeProfileId
-      : "auto";
-  const selectableProfiles = profileCatalog.filter(
-    (profile) => profile.enabled || profile.id === activeProfileId,
-  );
   const showProfileSelector = Boolean(urlConvId) && supportsSessionProfileSelection(activeSession);
   const profileControls = showProfileSelector ? (
-    <ProfileControls
-      profiles={selectableProfiles}
-      selection={profileSelection}
-      selectedProfileId={activeProfileId}
-      disabled={profileChangeBusy || permissionLevel === 1 || readOnlyReason !== null}
-      onSelect={(selection) => {
-        const nextProfile =
-          selection === "auto"
-            ? ({ mode: "auto" } as const)
-            : ({ mode: "fixed", profileId: selection } as const);
-        if (
-          !urlConvId ||
-          (nextProfile.mode === "auto" && activeSession?.promptProfile?.mode === "auto") ||
-          (nextProfile.mode === "fixed" && nextProfile.profileId === activeProfileId)
-        )
-          return;
-        setProfileChangeBusy(true);
-        void updateSession(urlConvId, { promptProfile: nextProfile })
-          .then((updated) => {
-            queryClient.setQueryData(["session", urlConvId], updated);
-          })
-          .catch((error: unknown) => {
-            const detail = error instanceof Error ? error.message : String(error);
-            showToast(`Couldn't change profile: ${detail}`);
-          })
-          .finally(() => setProfileChangeBusy(false));
-      }}
+    <ComposerSdkModelSelect
+      sdkModelOptions={sdkModelOptions}
+      costRoutingEligible={costRoutingEligible}
+      disabled={permissionLevel === 1 || readOnlyReason !== null}
     />
   ) : null;
   const modelPickerKind = modelPickerKindForConv(capabilitySource);
@@ -6831,21 +6797,26 @@ function SessionConfigModal({
         if (draftBusySendMode !== store.busySendMode) {
           store.setBusySendMode(draftBusySendMode);
         }
-        if (draftRoutingOn) {
-          if (costRoutingEligible && !liveRoutingOn) await store.setCostControlMode("on");
-        } else {
-          // Re-pin the model when routing was on and there's a Model dropdown
-          // (its setter cleared the applied override, and `resolvedModelId`
-          // reflects the leftover cross-session sticky — not what's applied — so
-          // the ``!==`` guard would false-negative), or whenever the drafted
-          // model actually changed. For a no-dropdown agent (e.g. Polly) the
-          // user can't have chosen a model, so re-pinning the seeded
-          // `resolvedModelId` would risk pinning a leaked sticky — turning
-          // routing off just clears via setModel(null) below.
-          const modelChanged = draftModelId !== resolvedModelId;
-          const rePinAfterRouting = liveRoutingOn && showModels;
-          if (rePinAfterRouting || modelChanged) await store.setModel(draftModelId);
-          if (costRoutingEligible && liveRoutingOn) await store.setCostControlMode("off");
+        // Model/routing for SDK (OmniHarness) sessions lives in the composer
+        // quick-select — skip committing the gear's stale drafts to avoid
+        // reverting a quick-select change made while the modal was open.
+        if (modelPickerKind !== "sdk") {
+          if (draftRoutingOn) {
+            if (costRoutingEligible && !liveRoutingOn) await store.setCostControlMode("on");
+          } else {
+            // Re-pin the model when routing was on and there's a Model dropdown
+            // (its setter cleared the applied override, and `resolvedModelId`
+            // reflects the leftover cross-session sticky — not what's applied — so
+            // the ``!==`` guard would false-negative), or whenever the drafted
+            // model actually changed. For a no-dropdown agent (e.g. Polly) the
+            // user can't have chosen a model, so re-pinning the seeded
+            // `resolvedModelId` would risk pinning a leaked sticky — turning
+            // routing off just clears via setModel(null) below.
+            const modelChanged = draftModelId !== resolvedModelId;
+            const rePinAfterRouting = liveRoutingOn && showModels;
+            if (rePinAfterRouting || modelChanged) await store.setModel(draftModelId);
+            if (costRoutingEligible && liveRoutingOn) await store.setCostControlMode("off");
+          }
         }
         // Skip effort while routing is on: the router picks it per turn, and a
         // stray ``/effort`` injection would just be noise.
@@ -6918,7 +6889,9 @@ function SessionConfigModal({
               </SelectContent>
             </Select>
           </ConfigRow>
-          {showModels && (
+          {/* Model selection lives in the composer's quick-select dropdown for
+          SDK (OmniHarness) sessions; the gear keeps it only for native pickers. */}
+          {showModels && modelPickerKind !== "sdk" && (
             <ConfigRow label="Model" description="Underlying LLM">
               <RoutingModelSelect
                 value={modelValue}
@@ -7329,6 +7302,101 @@ function useResolvedComposerModel(
     effectiveModel,
     modelLabel,
   };
+}
+
+/**
+ * Quick model-select dropdown for OmniHarness (SDK) sessions, shown in the
+ * composer row where the prompt-profile selector used to live. Commits the
+ * pick immediately (no Save button) via `store.setModel` / `setCostControlMode`,
+ * matching the gear modal's Model row it replaces. Smart Routing is offered as
+ * the first option when the session is routing-eligible, mutually exclusive
+ * with a pinned model — same semantics as the modal.
+ */
+function ComposerSdkModelSelect({
+  sdkModelOptions,
+  costRoutingEligible,
+  disabled,
+}: {
+  sdkModelOptions: readonly OmniHarnessModelOption[];
+  costRoutingEligible: boolean;
+  disabled: boolean;
+}) {
+  const { pickerSelectedModel, modelLabel } = useResolvedComposerModel(
+    "sdk",
+    [],
+    sdkModelOptions,
+  );
+  const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
+  const routingOn = costRoutingEligible && costControlModeOverride === "on";
+  const label = routingOn ? SMART_ROUTING_LABEL : (modelLabel ?? "Default");
+  const activeId = routingOn ? null : pickerSelectedModel;
+
+  const handleSelect = (value: string) => {
+    const store = useChatStore.getState();
+    if (value === MODEL_SELECT_SMART) {
+      void store.setCostControlMode("on");
+    } else if (value === MODEL_SELECT_DEFAULT) {
+      void store.setModel(null);
+      if (routingOn) void store.setCostControlMode("off");
+    } else {
+      void store.setModel(value);
+      if (routingOn) void store.setCostControlMode("off");
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center rounded-lg transition-colors hover:bg-muted dark:hover:bg-muted/50"
+      data-testid="composer-sdk-model-group"
+    >
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            className="h-9 gap-1.5 pr-2 pl-2.5 font-normal text-muted-foreground md:h-8"
+            data-testid="composer-sdk-model-select"
+          >
+            <span className="max-w-48 truncate text-ui text-foreground">Model: {label}</span>
+            <ChevronDownIcon className="size-3.5 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-56">
+          {costRoutingEligible && (
+            <DropdownMenuItem
+              data-testid="composer-sdk-model-smart-routing"
+              data-active={routingOn ? "true" : undefined}
+              onSelect={() => handleSelect(MODEL_SELECT_SMART)}
+              className="data-[active=true]:bg-muted"
+            >
+              {SMART_ROUTING_LABEL}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem
+            data-testid="composer-sdk-model-default"
+            data-active={!routingOn && !activeId ? "true" : undefined}
+            onSelect={() => handleSelect(MODEL_SELECT_DEFAULT)}
+            className="data-[active=true]:bg-muted"
+          >
+            Default
+          </DropdownMenuItem>
+          {sdkModelOptions.map((option) => (
+            <DropdownMenuItem
+              key={option.id}
+              data-testid={`composer-sdk-model-${option.id}`}
+              data-active={activeId === option.id ? "true" : undefined}
+              onSelect={() => handleSelect(option.id)}
+              className="data-[active=true]:bg-muted"
+            >
+              <span className="truncate">{option.displayName}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 }
 
 function ComposerExecutionTargetQuickSelect({

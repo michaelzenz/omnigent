@@ -138,6 +138,7 @@ import {
   EMPTY_OMNIHARNESS_MODEL_OPTIONS,
   OMNIHARNESS_AGENT_NAME,
   OPENAI_AGENTS_ADAPTER,
+  type OmniHarnessModelOption,
 } from "@/lib/omniharnessModels";
 import { partitionAgentsByKind, sortAgentsForDisplay } from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
@@ -204,8 +205,8 @@ import type { CostControlMode } from "@/components/CostRoutingControl";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentRowTooltip } from "@/components/AgentHoverCard";
 import type { AgentBundleInput } from "@/lib/agentBundle";
-import { ProfileControls, type ProfileSelection } from "./ProfileControls";
-import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles";
+import type { ProfileSelection } from "./ProfileControls";
+import { usePromptProfiles } from "@/hooks/usePromptProfiles";
 
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
@@ -1606,7 +1607,10 @@ function HarnessConfigModal({
       // Picking the spec default clears the override so the session tracks it.
       setPickedHarness(draftHarness === brainDefault ? null : draftHarness, agent.id);
     }
-    if (hasSdkModelControl) {
+    // Model selection for OmniHarness lives in the composer quick-select, not
+    // the gear — skip committing the gear's stale draft to avoid reverting a
+    // quick-select change made while the modal was open.
+    if (hasSdkModelControl && !isOmniHarness) {
       setPickedModel(draftModel);
       writeHarnessOption(isOmniHarness ? OMNIHARNESS_AGENT_NAME : (agent.harness ?? agent.name), {
         model: draftModel,
@@ -1616,7 +1620,8 @@ function HarnessConfigModal({
     // (Claude Code and Codex), so commit it outside the per-capability branches.
     // Remembered per harness like the model pick, so the next new session with
     // this harness starts on it again.
-    if (smartRoutingEligible) {
+    // Skipped for OmniHarness — its routing lives in the quick-select too.
+    if (smartRoutingEligible && !isOmniHarness) {
       setCostControlMode(draftRouting);
       if (draftRouting === "on") {
         // Routing owns the model and its effort, so clear both — live state AND
@@ -1659,7 +1664,10 @@ function HarnessConfigModal({
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-1">
-          {!autoRouting && hasSdkModelControl && (
+          {/* Model selection lives in the landing composer's quick-select
+          dropdown for OmniHarness; the gear keeps it only for non-native
+          bundle agents (hasSdkModelControl && !isOmniHarness). */}
+          {!autoRouting && hasSdkModelControl && !isOmniHarness && (
             <ConfigRow
               label={isMultiAgentProfile ? "Coordinator model" : "Model"}
               description={isMultiAgentProfile ? "Root executor LLM" : "Underlying LLM"}
@@ -2006,6 +2014,94 @@ let landingDraft: LandingDraft | null = null;
 // design, which would otherwise leak between tests).
 export function resetLandingDraft(): void {
   landingDraft = null;
+}
+
+/**
+ * Quick model-select dropdown for the OmniHarness landing composer — replaces
+ * the prompt-profile selector. Commits immediately (no Save button) by setting
+ * local picked-model/cost-control state and persisting the pick via
+ * `writeHarnessOption`, mirroring the gear modal's Model row it replaces.
+ * Smart Routing is offered as the first option when routing is eligible,
+ * mutually exclusive with a pinned model.
+ */
+function LandingSdkModelSelect({
+  sdkModelOptions,
+  pickedModel,
+  costControlMode,
+  smartRoutingEligible,
+  disabled,
+  onPickModel,
+  onPickDefault,
+  onPickRouting,
+}: {
+  sdkModelOptions: readonly OmniHarnessModelOption[];
+  pickedModel: string;
+  costControlMode: CostControlMode;
+  smartRoutingEligible: boolean;
+  disabled: boolean;
+  onPickModel: (model: string) => void;
+  onPickDefault: () => void;
+  onPickRouting: () => void;
+}) {
+  const routingOn = smartRoutingEligible && costControlMode === "on";
+  const label = routingOn
+    ? SMART_ROUTING_LABEL
+    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ?? "Default (GLM 5.2)");
+  const activeId = routingOn ? null : (pickedModel || null);
+
+  return (
+    <div
+      className="flex items-center rounded-lg transition-colors hover:bg-muted dark:hover:bg-muted/50"
+      data-testid="new-chat-landing-model-group"
+    >
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            className="h-9 gap-1.5 pr-2 pl-2.5 font-normal text-muted-foreground md:h-8"
+            data-testid="new-chat-landing-model-select"
+          >
+            <span className="max-w-48 truncate text-ui text-foreground">Model: {label}</span>
+            <ChevronDownIcon className="size-3.5 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-56">
+          {smartRoutingEligible && (
+            <DropdownMenuItem
+              data-testid="new-chat-landing-model-smart-routing"
+              data-active={routingOn ? "true" : undefined}
+              onSelect={onPickRouting}
+              className="data-[active=true]:bg-muted"
+            >
+              {SMART_ROUTING_LABEL}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem
+            data-testid="new-chat-landing-model-default"
+            data-active={!routingOn && !activeId ? "true" : undefined}
+            onSelect={onPickDefault}
+            className="data-[active=true]:bg-muted"
+          >
+            Default (GLM 5.2)
+          </DropdownMenuItem>
+          {sdkModelOptions.map((option) => (
+            <DropdownMenuItem
+              key={option.id}
+              data-testid={`new-chat-landing-model-${option.id}`}
+              data-active={activeId === option.id ? "true" : undefined}
+              onSelect={() => onPickModel(option.id)}
+              className="data-[active=true]:bg-muted"
+            >
+              <span className="truncate">{option.displayName}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 }
 
 export function NewChatLandingScreen() {
@@ -3654,10 +3750,6 @@ export function NewChatLandingScreen() {
     setPickedAgentId(agent.id);
     writeLastAgentId(agent.id);
   };
-  const handleSelectProfile = (selection: ProfileSelection, _profile?: PromptProfile) => {
-    setProfileSelection(selection);
-    setCreateError(null);
-  };
 
   function selectHost(hostId: string) {
     // Persist the explicit pick even when it matches the current selection, so
@@ -4377,12 +4469,36 @@ export function NewChatLandingScreen() {
               </div>
               <div className="flex items-center gap-0.5 md:gap-2">
                 {promptProfilesEnabled && omniharnessBaseAgent && (
-                  <ProfileControls
-                    profiles={profiles}
-                    selection={profileSelection}
-                    selectedProfileId={profileSelection === "auto" ? null : profileSelection}
+                  <LandingSdkModelSelect
+                    sdkModelOptions={sdkModelOptions}
+                    pickedModel={pickedModel}
+                    costControlMode={costControlMode}
+                    smartRoutingEligible={smartRoutingEligible}
                     disabled={creating}
-                    onSelect={handleSelectProfile}
+                    onPickModel={(model) => {
+                      setPickedModel(model);
+                      writeHarnessOption(OMNIHARNESS_AGENT_NAME, {
+                        model,
+                        routing: "off",
+                      });
+                    }}
+                    onPickDefault={() => {
+                      setPickedModel("");
+                      setCostControlMode(null);
+                      writeHarnessOption(OMNIHARNESS_AGENT_NAME, {
+                        model: "",
+                        routing: "off",
+                      });
+                    }}
+                    onPickRouting={() => {
+                      setCostControlMode("on");
+                      setPickedEffort("");
+                      writeHarnessOption(OMNIHARNESS_AGENT_NAME, {
+                        routing: "on",
+                        model: "",
+                        effort: "",
+                      });
+                    }}
                   />
                 )}
                 <div className="flex items-center rounded-lg transition-colors has-[button:not(:disabled)]:hover:bg-muted dark:has-[button:not(:disabled)]:hover:bg-muted/50 has-aria-expanded:bg-muted dark:has-aria-expanded:bg-muted/50 [&>button]:bg-transparent!">

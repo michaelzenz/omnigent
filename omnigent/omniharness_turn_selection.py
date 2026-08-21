@@ -144,15 +144,17 @@ async def select_omniharness_turn(
         else []
     )
     if select_profile and not profiles:
-        raise OmnigentError(
-            "Auto Select is unavailable because no enabled profiles exist.",
-            code=ErrorCode.CONFLICT,
-        )
+        # No enabled profiles — skip profile selection rather than erroring.
+        select_profile = False
     candidates = list(dict.fromkeys(model_candidates or ()))
     categories = list(dict.fromkeys(workload_categories or DEFAULT_WORKLOAD_CATEGORIES))
     if not categories:
         categories = list(DEFAULT_WORKLOAD_CATEGORIES)
     select_model = bool(candidates)
+    if not any((select_profile, select_model, classify_workload)):
+        # No dimensions remain to select (e.g. profile was the only one but no
+        # enabled profiles exist) — return an empty selection without an AI call.
+        return OmniHarnessTurnSelection()
     instructions, schema = _selection_contract(
         select_profile=select_profile,
         select_model=select_model,
