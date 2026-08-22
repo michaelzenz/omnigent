@@ -168,7 +168,7 @@ export function TaskCard({ taskId, title, description, state, managerRoleKey }: 
               workers={dashboard.workers}
             />
           </div>
-          <TaskCardAssets assets={dashboard.assets ?? []} />
+          <TaskCardAssets taskId={taskId} assets={dashboard.assets ?? []} />
         </div>
       ) : null}
     </article>

@@ -255,6 +255,16 @@ export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard>
   return readJson<TaskDashboard>(res);
 }
 
+export async function deleteTaskAsset(taskId: string, assetId: number): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/assets/${assetId}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
 export interface WorkerLaneSummary {
   id: string;
   task_id: string;

@@ -48,6 +48,10 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     isPending: false,
     variables: undefined,
   })),
+  useDeleteTaskAsset: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
 }));
 
 vi.mock("@/hooks/useRoleProfiles", () => ({
@@ -56,7 +60,7 @@ vi.mock("@/hooks/useRoleProfiles", () => ({
   })),
 }));
 
-import { useTaskDashboard } from "@/hooks/useAgentTasks";
+import { useDeleteTaskAsset, useTaskDashboard } from "@/hooks/useAgentTasks";
 
 const mockedDashboard = vi.mocked(useTaskDashboard);
 
@@ -188,6 +192,52 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("worker-lane-worker-1")).toHaveAttribute("data-expanded", "false");
     fireEvent.click(screen.getByTestId("worker-lane-toggle-worker-1"));
     expect(screen.getByText("Investigate failure")).toBeInTheDocument();
+  });
+
+  it("opens an asset by clicking its title and removes it via the X button", () => {
+    const removeMutate = vi.fn();
+    vi.mocked(useDeleteTaskAsset).mockReturnValue({
+      mutate: removeMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useDeleteTaskAsset>);
+
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-1",
+          title: "Land PR #123",
+          description: "Fix upload retries",
+          state: "active",
+          manager_conversation_id: "mgr-session",
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [],
+        reconcile_queue_count: 0,
+        assets: [
+          {
+            id: 1,
+            kind: "url",
+            title: "PR #123",
+            url: "https://github.com/example/repo/pull/123",
+            created_at: 1,
+          },
+        ],
+        workers: [],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
+    renderCard();
+
+    // The title is the open affordance: clicking it follows the link.
+    const title = screen.getByText("PR #123");
+    expect(title.tagName).toBe("A");
+    expect(title).toHaveAttribute("href", "https://github.com/example/repo/pull/123");
+
+    // The X button detaches the asset.
+    fireEvent.click(screen.getByTestId("task-asset-remove-1"));
+    expect(removeMutate).toHaveBeenCalledWith(1);
   });
 
   it("expands a worker lane and folds finished rows by default", async () => {

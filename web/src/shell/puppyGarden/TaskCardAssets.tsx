@@ -1,13 +1,17 @@
-import { ExternalLinkIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDeleteTaskAsset } from "@/hooks/useAgentTasks";
 import type { TaskAssetSummary } from "@/lib/agentTasksApi";
 import { TASK_CARD_ASSETS_WIDTH_CLASS, TASK_CARD_SCROLLABLE_LIST_CLASS } from "./taskCardUtils";
 
 interface TaskCardAssetsProps {
+  taskId: string;
   assets: TaskAssetSummary[];
 }
 
-export function TaskCardAssets({ assets }: TaskCardAssetsProps) {
+export function TaskCardAssets({ taskId, assets }: TaskCardAssetsProps) {
+  const deleteAsset = useDeleteTaskAsset(taskId);
+
   return (
     <aside
       className={cn(
@@ -33,27 +37,45 @@ export function TaskCardAssets({ assets }: TaskCardAssetsProps) {
           className={cn("min-h-0 flex-1 space-y-1.5 p-2", TASK_CARD_SCROLLABLE_LIST_CLASS)}
           data-testid="task-card-assets-list"
         >
-          {assets.map((asset) => (
-            <li key={asset.id} data-testid={`task-asset-${asset.id}`}>
-              {asset.kind === "url" && asset.url ? (
-                <a
-                  href={asset.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-start gap-1.5 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs hover:bg-muted/60"
-                >
-                  <ExternalLinkIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 break-words font-medium text-primary">
+          {assets.map((asset) => {
+            const openable = asset.kind === "url" && asset.url;
+            return (
+              <li
+                key={asset.id}
+                data-testid={`task-asset-${asset.id}`}
+                className="flex items-start gap-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs hover:bg-muted/60"
+              >
+                {openable ? (
+                  <a
+                    href={asset.url ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1 break-words font-medium text-primary hover:underline"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     {asset.title}
-                  </span>
-                </a>
-              ) : (
-                <span className="block rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs">
-                  {asset.title}
-                </span>
-              )}
-            </li>
-          ))}
+                  </a>
+                ) : (
+                  <span className="min-w-0 flex-1 break-words font-medium">{asset.title}</span>
+                )}
+                <button
+                  type="button"
+                  aria-label="Remove asset"
+                  title="Remove asset"
+                  className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  disabled={deleteAsset.isPending}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    deleteAsset.mutate(asset.id);
+                  }}
+                  data-testid={`task-asset-remove-${asset.id}`}
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </aside>

@@ -79,6 +79,13 @@ export function fixtureRemoveItem(taskId: string, taskItemId: string): void {
   notify();
 }
 
+export function fixtureRemoveAsset(taskId: string, assetId: number): void {
+  const dashboard = dashboards.get(taskId);
+  if (!dashboard) return;
+  dashboard.assets = dashboard.assets.filter((asset) => asset.id !== assetId);
+  notify();
+}
+
 export function fixtureRetryItem(taskId: string, taskItemId: string): void {
   const dashboard = dashboards.get(taskId);
   if (!dashboard) return;
