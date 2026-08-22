@@ -1865,6 +1865,8 @@ interface MainAgentSurfaceProps {
   sdkModelOptions: readonly OmniHarnessModelOption[];
   /** Omnigent prompt-profile selector shown beside composer configuration. */
   profileControls?: ReactNode;
+  /** Hide the fixed execution-target selector while retaining model controls. */
+  hideExecutionTargetQuickSelect?: boolean;
   /** Switchable agents for the OmniHarness execution-target dropdown. */
   switchTargets?: readonly SwitchTargetRow[];
   /** Switch the active session to a different agent in place. */
@@ -2017,6 +2019,7 @@ export function MainAgentSurface({
   codexModelOptions,
   sdkModelOptions,
   profileControls,
+  hideExecutionTargetQuickSelect = false,
   switchTargets,
   onSwitchAgent,
   showCodexPlanMode,
@@ -2661,6 +2664,7 @@ export function MainAgentSurface({
             codexModelOptions={codexModelOptions}
             sdkModelOptions={sdkModelOptions}
             profileControls={profileControls}
+            hideExecutionTargetQuickSelect={hideExecutionTargetQuickSelect}
             switchTargets={switchTargets}
             onSwitchAgent={onSwitchAgent}
             showCodexPlanMode={showCodexPlanMode}
@@ -5140,6 +5144,8 @@ interface ComposerProps {
   sdkModelOptions?: readonly OmniHarnessModelOption[];
   /** Omnigent prompt-profile selector. */
   profileControls?: ReactNode;
+  /** Hide the fixed execution-target selector while retaining model controls. */
+  hideExecutionTargetQuickSelect?: boolean;
   /** Switchable agents for the OmniHarness execution-target dropdown. */
   switchTargets?: readonly SwitchTargetRow[];
   /** Switch the active session to a different agent in place. */
@@ -5683,6 +5689,7 @@ export function Composer({
   codexModelOptions,
   sdkModelOptions = EMPTY_OMNIHARNESS_MODEL_OPTIONS,
   profileControls,
+  hideExecutionTargetQuickSelect = false,
   switchTargets,
   onSwitchAgent,
   showCodexPlanMode,
@@ -6973,18 +6980,20 @@ export function Composer({
             )}
             {profileControls}
             <div className="flex min-h-9 min-w-0 items-center rounded-lg transition-colors empty:hidden md:min-h-8 has-[button:not([aria-disabled=true])]:hover:bg-muted dark:has-[button:not([aria-disabled=true])]:hover:bg-muted/50 [&>button]:bg-transparent!">
-              <ComposerModelEffortLabel
-                showModels={showModels}
-                showEffort={showEffort}
-                modelPickerKind={modelPickerKind}
-                codexModelOptions={codexModelOptions}
-                sdkModelOptions={sdkModelOptions}
-                costRoutingEligible={costRoutingEligible}
-                harnessLabel={harnessLabel}
-                disabled={isReadOnly || unreachable}
-                switchTargets={switchTargets}
-                onSwitchAgent={onSwitchAgent}
-              />
+              {!hideExecutionTargetQuickSelect && (
+                <ComposerModelEffortLabel
+                  showModels={showModels}
+                  showEffort={showEffort}
+                  modelPickerKind={modelPickerKind}
+                  codexModelOptions={codexModelOptions}
+                  sdkModelOptions={sdkModelOptions}
+                  costRoutingEligible={costRoutingEligible}
+                  harnessLabel={harnessLabel}
+                  disabled={isReadOnly || unreachable}
+                  switchTargets={switchTargets}
+                  onSwitchAgent={onSwitchAgent}
+                />
+              )}
               <ComposerConfigGear
                 harnessLabel={harnessLabel}
                 showModels={showModels}

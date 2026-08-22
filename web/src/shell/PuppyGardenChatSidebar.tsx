@@ -270,6 +270,7 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
           codexModelOptions={codexModelOptions}
           sdkModelOptions={sdkModelOptions}
           profileControls={profileControls}
+          hideExecutionTargetQuickSelect
           showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
           showGoalControl={shouldShowGoalControl(capabilitySource)}
           costRoutingEligible={costRoutingEligible}

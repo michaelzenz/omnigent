@@ -1255,6 +1255,33 @@ describe("Composer claude-native permission mode", () => {
   });
 });
 
+describe("Composer fixed execution target", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("hides only the execution target while retaining model and gear controls", async () => {
+    useChatStore.setState({ conversationId: "conv_test", sessionHarness: "openai-agents-sdk" });
+
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showModels: true,
+          modelPickerKind: "sdk",
+          profileControls: <div data-testid="quick-model-control" />,
+          hideExecutionTargetQuickSelect: true,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("quick-model-control")).toBeInTheDocument();
+    expect(screen.queryByTestId("composer-execution-target-select")).toBeNull();
+    fireEvent.click(screen.getByTestId("composer-config-gear"));
+    expect(await screen.findByTestId("composer-config-modal")).toBeInTheDocument();
+  });
+});
+
 describe("slashCommandMatches", () => {
   it("matches the leaf segment after a namespace prefix", () => {
     expect(slashCommandMatches("/superpowers:using-superpowers", "using-superpowers")).toBe(true);
