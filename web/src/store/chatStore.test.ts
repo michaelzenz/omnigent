@@ -10027,6 +10027,60 @@ describe("chatStore — client-side message queue", () => {
     expect(useChatStore.getState().queuedMessages).toEqual([]);
   });
 
+  it("enqueueDraft keeps an idle draft in the strip without sending it", () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      conversationId: "conv_abc",
+      boundAgentId: "agent_xyz",
+      status: "idle",
+      sessionStatus: "idle",
+      send: sendSpy,
+      queuedMessages: [],
+    });
+
+    useChatStore.getState().enqueueDraft("send this later", undefined);
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queuedMessages).toMatchObject([
+      {
+        text: "send this later",
+        conversationId: "conv_abc",
+        kind: "draft",
+      },
+    ]);
+  });
+
+  it("auto-flush skips drafts and sends the first queued message behind them", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      conversationId: "conv_abc",
+      boundAgentId: "agent_xyz",
+      status: "idle",
+      sessionStatus: "idle",
+      send: sendSpy,
+      queuedMessages: [
+        {
+          queueId: "q_draft",
+          text: "hold me",
+          conversationId: "conv_abc",
+          kind: "draft",
+        },
+        {
+          queueId: "q_message",
+          text: "send me",
+          conversationId: "conv_abc",
+          kind: "message",
+        },
+      ],
+    });
+
+    useChatStore.getState().maybeFlushQueuedHead();
+    await tick();
+
+    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual(["send me", "agent_xyz"]);
+    expect(useChatStore.getState().queuedMessages.map((m) => m.queueId)).toEqual(["q_draft"]);
+  });
+
   it("dequeueMessage removes the message with the given id, keeping order", () => {
     useChatStore.setState({
       conversationId: "conv_abc",

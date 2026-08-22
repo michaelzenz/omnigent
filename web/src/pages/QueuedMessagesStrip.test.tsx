@@ -13,6 +13,10 @@ const msg = (queueId: string, text: string): QueuedMessage => ({
   text,
   conversationId: "conv_abc",
 });
+const draft = (queueId: string, text: string): QueuedMessage => ({
+  ...msg(queueId, text),
+  kind: "draft",
+});
 
 afterEach(cleanup);
 
@@ -108,6 +112,42 @@ describe("QueuedMessagesStrip", () => {
     fireEvent.click(buttons[0]!);
     expect(onSendNow).toHaveBeenCalledTimes(1);
     expect(onSendNow).toHaveBeenCalledWith("q_1");
+  });
+
+  it("shows a single Steer action for a draft during an active turn", () => {
+    const onSteer = vi.fn();
+    render(
+      <QueuedMessagesStrip
+        messages={[draft("q_1", "later")]}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+        onSteer={onSteer}
+        onSendNow={vi.fn()}
+        turnActive
+      />,
+    );
+
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Steer draft into running turn" }));
+    expect(onSteer).toHaveBeenCalledWith("q_1");
+    expect(
+      screen.queryByRole("button", { name: "Send now, interrupting the current turn" }),
+    ).toBeNull();
+  });
+
+  it("changes the draft action to Send when no turn is active", () => {
+    const onSteer = vi.fn();
+    render(
+      <QueuedMessagesStrip
+        messages={[draft("q_1", "later")]}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+        onSteer={onSteer}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send draft" }));
+    expect(onSteer).toHaveBeenCalledWith("q_1");
   });
 
   it("shows a drag handle per row only when onReorder is provided", () => {

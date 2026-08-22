@@ -183,11 +183,11 @@ export interface PendingUserMessage {
 }
 
 /**
- * A message the user submitted while the agent was busy. It is held
- * client-side — NOT yet POSTed — and shown in the docked queue strip above
- * the composer until the agent goes idle, when the head is flushed FIFO (one
- * per turn). This is the opposite of {@link PendingUserMessage}, which is
- * already POSTed and renders as an optimistic bubble in the transcript.
+ * A client-side composer queue item that has not been POSTed yet. Normal
+ * messages flush FIFO when the agent goes idle; drafts stay in the strip until
+ * the user explicitly sends, steers, edits, or removes them. This is the
+ * opposite of {@link PendingUserMessage}, which is already POSTed and renders
+ * as an optimistic bubble in the transcript.
  *
  * In-memory only: a hard reload clears the queue, so `files` can be held
  * directly (no serialization concern).
@@ -201,6 +201,12 @@ export interface QueuedMessage {
   files?: File[];
   /** Owning conversation, so a switch/idle only flushes its own queue. */
   conversationId: string;
+  /**
+   * Drafts share the queue strip but never auto-flush. Missing means a normal
+   * queued message for compatibility with in-memory state created before this
+   * field was introduced.
+   */
+  kind?: "message" | "draft";
   /**
    * Agent bound when the message was queued, so it flushes to the agent it was
    * composed for even if the binding changed meanwhile (e.g. a `/model` switch).
@@ -664,6 +670,8 @@ export interface ChatActions {
    * turn) when the session next goes idle — see the `session_status` handler.
    */
   enqueueMessage: (text: string, files?: File[]) => void;
+  /** Save a composer draft in the queue strip without ever auto-sending it. */
+  enqueueDraft: (text: string, files?: File[]) => void;
   /** Set the app-wide busy-send behavior and persist it across reloads. */
   setBusySendMode: (mode: BusySendMode) => void;
   /** Remove a queued message by id (the strip's per-row delete). */
@@ -1362,6 +1370,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           queueId,
           text,
           conversationId,
+          kind: "message",
           ...(boundAgentId !== null ? { agentId: boundAgentId } : {}),
           ...(files && files.length > 0 ? { files } : {}),
         },
@@ -1371,6 +1380,25 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // to the queue but the turn had already ended) would otherwise wait for an
     // idle edge that never comes — flush now.
     get().maybeFlushQueuedHead();
+  },
+
+  enqueueDraft: (text, files) => {
+    const { conversationId, boundAgentId } = get();
+    if (conversationId === null) return;
+    queueSeq += 1;
+    setActive((s) => ({
+      queuedMessages: [
+        ...s.queuedMessages,
+        {
+          queueId: `q_${queueSeq}`,
+          text,
+          conversationId,
+          kind: "draft",
+          ...(boundAgentId !== null ? { agentId: boundAgentId } : {}),
+          ...(files && files.length > 0 ? { files } : {}),
+        },
+      ],
+    }));
   },
 
   setBusySendMode: (mode) => {
@@ -1471,11 +1499,12 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // Clear the latch on THIS conversation's entry only, alongside its status.
       setActive({ status: "idle", sendLatchedAt: null });
     }
-    // Flush the FIRST message OF THE BOUND CONVERSATION (FIFO within it), not
-    // the global array head. The queue is one flat array across conversations,
-    // so an undrained message from another conversation can sit at index 0; a
-    // head-only guard would let it block this conversation's messages forever.
-    const head = s.queuedMessages.find((m) => m.conversationId === s.conversationId);
+    // Flush the FIRST non-draft message OF THE BOUND CONVERSATION (FIFO within
+    // dispatchable messages), not the global array head. Foreign messages and
+    // drafts must never block this conversation's sendable queue.
+    const head = s.queuedMessages.find(
+      (m) => m.conversationId === s.conversationId && m.kind !== "draft",
+    );
     if (head === undefined) return;
     // Remove it BEFORE the POST so a re-entrant flush can't double-send.
     setActive({ queuedMessages: s.queuedMessages.filter((m) => m.queueId !== head.queueId) });
@@ -1486,10 +1515,13 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const s = get();
     if (queryClient === null || s.queuedMessages.length === 0) return;
 
-    // Conversations (other than the active one) that have a queued message.
-    // The active conversation is owned by maybeFlushQueuedHead.
+    // Conversations (other than the active one) that have a dispatchable
+    // queued message. Draft-only conversations never enter the flush loop.
     const candidateIds = new Set(
-      s.queuedMessages.map((m) => m.conversationId).filter((id) => id !== s.conversationId),
+      s.queuedMessages
+        .filter((m) => m.kind !== "draft")
+        .map((m) => m.conversationId)
+        .filter((id) => id !== s.conversationId),
     );
     if (candidateIds.size === 0) return;
 
@@ -1523,7 +1555,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       if (backgroundFlushInFlight.has(conversationId)) continue;
       const cooldownUntil = backgroundFlushCooldownUntil.get(conversationId);
       if (cooldownUntil !== undefined && cooldownUntil > now) continue;
-      const head = get().queuedMessages.find((m) => m.conversationId === conversationId);
+      const head = get().queuedMessages.find(
+        (m) => m.conversationId === conversationId && m.kind !== "draft",
+      );
       if (head === undefined) continue;
 
       // Remove BEFORE the work starts so a re-entrant trigger can't double-send.

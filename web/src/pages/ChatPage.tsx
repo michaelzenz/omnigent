@@ -679,7 +679,9 @@ export function shouldQueueSend(
 ): boolean {
   if (conversationId === null) return false;
   const isBusy = status === "streaming" || sessionStatus === "running";
-  const hasQueued = queuedMessages.some((m) => m.conversationId === conversationId);
+  const hasQueued = queuedMessages.some(
+    (m) => m.conversationId === conversationId && m.kind !== "draft",
+  );
   return isBusy || hasQueued;
 }
 
@@ -5556,6 +5558,7 @@ export function Composer({
   const sessionStatus = useChatStore((s) => s.sessionStatus);
   const flushBoundAgentId = useChatStore((s) => s.boundAgentId);
   const maybeFlushQueuedHead = useChatStore((s) => s.maybeFlushQueuedHead);
+  const enqueueDraft = useChatStore((s) => s.enqueueDraft);
   const dequeueMessage = useChatStore((s) => s.dequeueMessage);
   const steerMessage = useChatStore((s) => s.steerMessage);
   const sendNowMessage = useChatStore((s) => s.sendNowMessage);
@@ -5794,6 +5797,7 @@ export function Composer({
   // Depends on mentionedItems (from the hook above), so it's computed here.
   const hasDraft = value.trim().length > 0 || files.length > 0 || mentionedItems.length > 0;
   const showInterruptButton = isWorking && !hasDraft;
+  const turnActive = status === "streaming" || sessionStatus === "running";
 
   // Drain externally-queued attachments (file viewer "Attach to agent") into
   // the local mention chips, deduping against what's already tagged, then
@@ -6050,6 +6054,31 @@ export function Composer({
     dirtyRef.current = true;
   };
 
+  const assembleMessageText = (trimmed: string) => {
+    const quotePreamble =
+      replyQuotes.length > 0
+        ? replyQuotes
+            .map((quote) =>
+              quote.text
+                .split("\n")
+                .map((line) => `> ${line}`)
+                .join("\n"),
+            )
+            .join("\n\n") + "\n\n"
+        : "";
+    return buildMentionPreamble(mentionedItems, sessionHarness) + quotePreamble + trimmed;
+  };
+
+  const clearComposerContent = () => {
+    dirtyRef.current = true;
+    setValue("");
+    setFiles([]);
+    setAttachmentError(null);
+    setMentionedItems([]);
+    setMention(null);
+    onClearAllQuotes();
+  };
+
   const submit = () => {
     const trimmed = value.trim();
     // Allow send if there's text, attached files, OR "@"-tagged paths.
@@ -6118,39 +6147,36 @@ export function Composer({
     }
 
     setCommandError(null);
-    // Prepend all active reply quotes as Markdown blockquotes.
-    const quotePreamble =
-      replyQuotes.length > 0
-        ? replyQuotes
-            .map((quote) =>
-              quote.text
-                .split("\n")
-                .map((line) => `> ${line}`)
-                .join("\n"),
-            )
-            .join("\n\n") + "\n\n"
-        : "";
     // Prepend each "@"-tagged path as an attachment marker on its own line —
     // the same format the native executors emit for attachments and that
     // title-seeding strips (_ATTACHMENT_MARKER_RE). Wording is harness-aware
     // (codex says "Attached file:"). Folders carry a trailing "/" so the
     // agent knows to open the directory. The native vendor reads the on-disk
     // workspace file/folder from this marker; no upload happens.
-    const messageText =
-      buildMentionPreamble(mentionedItems, sessionHarness) + quotePreamble + trimmed;
+    const messageText = assembleMessageText(trimmed);
     // Sending while a prior response is streaming is fine — the
     // server queues the message and delivers it to the running task
     // (or starts a fresh one once the current drains). Escape still
     // interrupts.
     if (trimmed) appendEntry(trimmed);
     onSend(messageText, files.length > 0 ? files : undefined);
-    dirtyRef.current = true;
-    setValue("");
-    setFiles([]);
-    setAttachmentError(null);
-    setMentionedItems([]);
-    setMention(null);
-    onClearAllQuotes();
+    clearComposerContent();
+  };
+
+  const saveDraft = () => {
+    const trimmed = value.trim();
+    if (
+      conversationId === null ||
+      (!trimmed && files.length === 0 && mentionedItems.length === 0) ||
+      disabled ||
+      isReadOnly ||
+      hasPendingElicitation
+    ) {
+      return;
+    }
+    enqueueDraft(assembleMessageText(trimmed), files.length > 0 ? files : undefined);
+    setCommandError(null);
+    clearComposerContent();
   };
 
   const handleSubmit = (e: FormEvent) => {
@@ -6321,6 +6347,7 @@ export function Composer({
         onSteer={(queueId) => steerMessage(queueId)}
         onSendNow={(queueId) => sendNowMessage(queueId)}
         onReorder={reorderQueuedMessage}
+        turnActive={turnActive}
         widthClassName={CHAT_COLUMN_WIDTH}
       />
       {/* Sub-agent context tray — peeks above the card; reserves its own
@@ -6613,6 +6640,24 @@ export function Composer({
                 resetCursor();
               }}
             />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-9 md:size-8"
+              disabled={
+                conversationId === null ||
+                !hasDraft ||
+                disabled ||
+                isReadOnly ||
+                hasPendingElicitation
+              }
+              onClick={saveDraft}
+              title="Save draft"
+              aria-label="Save draft"
+            >
+              <PencilIcon className="size-4" data-icon-size="16" />
+            </Button>
           </div>
           {/* Right side: read-only model/effort label + config gear + Send.
               Smart Routing lives inside the gear modal — folded into the Model

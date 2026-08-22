@@ -1713,6 +1713,40 @@ describe("Composer — queued-message flush gating", () => {
   });
 });
 
+describe("Composer — save draft", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useChatStore.setState({ queuedMessages: [] });
+  });
+
+  it("stores the composer text as a non-sending draft and clears the input", () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      conversationId: "conv_test",
+      boundAgentId: "agent_xyz",
+      status: "idle",
+      sessionStatus: "idle",
+      send: sendSpy,
+      queuedMessages: [],
+    });
+    render(<Composer {...composerProps()} />);
+
+    fireEvent.change(textarea(), { target: { value: "Review this later" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+
+    expect(textarea()).toHaveValue("");
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queuedMessages).toMatchObject([
+      {
+        text: "Review this later",
+        conversationId: "conv_test",
+        kind: "draft",
+      },
+    ]);
+  });
+});
+
 describe("Composer config gear", () => {
   beforeEach(() => {
     useChatStore.setState({
@@ -2664,5 +2698,11 @@ describe("shouldQueueSend", () => {
 
   it("ignores queued messages belonging to a different conversation", () => {
     expect(shouldQueueSend("conv_a", "idle", "idle", [q("conv_b")])).toBe(false);
+  });
+
+  it("ignores drafts when deciding whether an idle send must queue", () => {
+    expect(
+      shouldQueueSend("conv_a", "idle", "idle", [{ ...q("conv_a"), kind: "draft" }]),
+    ).toBe(false);
   });
 });
