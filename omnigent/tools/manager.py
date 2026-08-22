@@ -31,6 +31,8 @@ from omnigent.tools.builtins import (
     SysCancelAsyncTool,
     SysListModelsTool,
     SysReadInboxTool,
+    SysProjectCreateTool,
+    SysProjectListTool,
     SysScheduledTaskCreateTool,
     SysScheduledTaskDeleteTool,
     SysScheduledTaskListTool,
@@ -42,6 +44,8 @@ from omnigent.tools.builtins import (
     SysSessionListTool,
     SysSessionRenameTool,
     SysSessionSendTool,
+    SysSessionSetProjectTool,
+    SysSessionSetWorkspaceTool,
     SysSessionShareTool,
     SysTimerCancelTool,
     SysTimerSetTool,
@@ -513,8 +517,23 @@ class ToolManager:
             self._tools[SysSessionCreateTool.name()] = SysSessionCreateTool()
 
     def _register_session_tools(self) -> None:
-        """Register framework-owned tools for the current session."""
+        """Register framework-owned tools for the current session.
+
+        Project tools (create, list, set) are always available because
+        they only mutate server-side metadata via REST endpoints. The
+        workspace tool is OmniHarness-only: native terminal harnesses
+        cannot change their process cwd at runtime.
+        """
         self._tools[SysSessionRenameTool.name()] = SysSessionRenameTool()
+        self._tools[SysProjectCreateTool.name()] = SysProjectCreateTool()
+        self._tools[SysProjectListTool.name()] = SysProjectListTool()
+        self._tools[SysSessionSetProjectTool.name()] = SysSessionSetProjectTool()
+        from omnigent.execution_targets import is_omniharness_spec
+
+        if is_omniharness_spec(self._spec):
+            self._tools[SysSessionSetWorkspaceTool.name()] = (
+                SysSessionSetWorkspaceTool()
+            )
 
     def _register_agent_mgmt_tools(self) -> None:
         """

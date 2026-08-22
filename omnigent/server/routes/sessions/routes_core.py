@@ -145,6 +145,7 @@ from omnigent.server.routes._sessions.helpers import (
     _set_read_state,
     _surface_model_change_forward_failure,
     _title_content_from_item,
+    _validate_session_workspace,
     _validate_terminal_launch_args,
     _validated_cost_control_mode_override,
     _validated_subagent_routing_override,
@@ -1617,12 +1618,13 @@ def register_core_routes(
         # Owner implies edit, so a single check at the resolved level gates all
         # three with no redundant second permission-store read.
         set_project = "project_id" in body.model_fields_set
+        set_workspace = "workspace" in body.model_fields_set
         pin_only = body.model_fields_set == {"labels"} and set(body.labels or {}) == {
             PINNED_LABEL_KEY
         }
         if pin_only:
             required_level = LEVEL_READ
-        elif body.archived is not None or set_project:
+        elif body.archived is not None or set_project or set_workspace:
             required_level = LEVEL_OWNER
         else:
             required_level = LEVEL_EDIT
@@ -2134,6 +2136,60 @@ def register_core_routes(
                 )
                 if not filed:
                     raise _session_not_found()
+        # Change the session workspace (owner-only, gated above). The
+        # directory must already exist on the session's host and be within
+        # the agent's os_env.cwd boundary. Only OmniHarness sessions can
+        # change workspace at runtime — native terminal harnesses cannot
+        # change their process cwd.
+        if set_workspace:
+            if body.workspace is None:
+                raise OmnigentError(
+                    "workspace must be a non-empty path; omit the field to "
+                    "leave it unchanged",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            workspace_value = body.workspace.strip()
+            if not workspace_value:
+                raise OmnigentError(
+                    "workspace must be a non-empty path",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            conv_for_workspace = await asyncio.to_thread(
+                conversation_store.get_conversation, session_id
+            )
+            if conv_for_workspace is None:
+                raise _session_not_found()
+            if conv_for_workspace.host_id is None:
+                raise OmnigentError(
+                    "workspace can only be changed for sessions bound to a host",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if not conversation_uses_omniharness(conv_for_workspace, agent_store):
+                raise OmnigentError(
+                    "workspace change is only supported for OmniHarness sessions",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            agent_for_workspace = agent_store.get(conv_for_workspace.agent_id)
+            if agent_for_workspace is None:
+                raise OmnigentError(
+                    f"agent {conv_for_workspace.agent_id!r} not found",
+                    code=ErrorCode.NOT_FOUND,
+                )
+            canonical_workspace = await _validate_session_workspace(
+                user_id=user_id,
+                host_id=conv_for_workspace.host_id,
+                workspace=workspace_value,
+                agent=agent_for_workspace,
+                agent_cache=agent_cache,
+                request=request,
+            )
+            updated_conv = await asyncio.to_thread(
+                conversation_store.set_conversation_workspace,
+                session_id,
+                canonical_workspace,
+            )
+            if updated_conv is None:
+                raise _session_not_found()
         level = await _get_permission_level(user_id, session_id, permission_store)
         # PATCH callers consume only the snapshot's scalar fields (clients
         # hydrate transcripts via GET /sessions/{id}/items), so skip the

@@ -1045,6 +1045,24 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def set_conversation_workspace(
+        self,
+        conversation_id: str,
+        workspace: str,
+    ) -> Conversation | None:
+        """Update the workspace path for a conversation.
+
+        Sets ``omnigent_conversation_metadata.workspace`` to the given
+        canonical path. Unlike ``set_host_id``, this only updates the
+        workspace — the host binding stays unchanged.
+
+        :param conversation_id: The conversation to update.
+        :param workspace: Canonical absolute workspace path.
+        :returns: The updated :class:`Conversation`, or ``None`` if the
+            conversation has no metadata row.
+        """
+        ...
+
     def increment_session_usage(
         self,
         conversation_id: str,

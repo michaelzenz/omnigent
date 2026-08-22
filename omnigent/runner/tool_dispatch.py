@@ -299,6 +299,23 @@ _SESSION_QUERY_TOOLS = frozenset(
 
 _SESSION_SELF_WRITE_TOOLS = frozenset({SysSessionRenameTool.name()})
 
+# Project tools: create/list projects and file/unfile the current session.
+# These proxy existing REST endpoints (POST/GET /v1/projects,
+# PATCH /v1/sessions/{id} with project_id) and are available to all
+# harnesses — they only mutate server-side metadata.
+_PROJECT_TOOLS = frozenset(
+    {
+        "sys_project_create",
+        "sys_project_list",
+        "sys_session_set_project",
+    }
+)
+
+# Workspace tool: change the current session's workspace directory.
+# Only supported for OmniHarness sessions; the runner handler checks
+# the harness type and rejects native terminal sessions.
+_SESSION_WORKSPACE_TOOLS = frozenset({"sys_session_set_workspace"})
+
 # Grantee sentinel for an anonymous, public read-only share. Mirrors the
 # server's RESERVED_USER_PUBLIC; only specs with
 # ``agent_session_sharing: public`` may grant it (enforced in
@@ -484,6 +501,8 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     _COMMENT_TOOLS
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
+    | _PROJECT_TOOLS
+    | _SESSION_WORKSPACE_TOOLS
     | _ASYNC_INBOX_TOOLS
     | _SUBAGENT_TOOLS
     | _LIST_MODELS_TOOLS
@@ -547,6 +566,11 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
         SysOsShellTool,
         SysOsWriteTool,
     )
+    from omnigent.tools.builtins.session_project import (
+        SysProjectCreateTool,
+        SysProjectListTool,
+        SysSessionSetProjectTool,
+    )
     from omnigent.tools.builtins.spawn import (
         SysSessionGetHistoryTool,
         SysSessionGetInfoTool,
@@ -590,6 +614,9 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
             SysSessionGetHistoryTool,
             SysSessionGetInfoTool,
             SysSessionRenameTool,
+            SysProjectCreateTool,
+            SysProjectListTool,
+            SysSessionSetProjectTool,
             SysAgentGetTool,
             SysAgentListTool,
             SysAgentDownloadTool,
@@ -893,6 +920,8 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_CREATE_TOOLS
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
+    | _PROJECT_TOOLS
+    | _SESSION_WORKSPACE_TOOLS
     | _WEB_FETCH_TOOLS
     | _CONVERSATION_SEARCH_TOOLS
     | _EXPORT_AGENT_TOOLS
@@ -5075,6 +5104,154 @@ async def _rename_current_session_via_rest(
     return json.dumps(payload)
 
 
+async def _create_project_via_rest(
+    args: _JsonObject,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Create a project via ``POST /v1/projects``."""
+    if server_client is None:
+        return json.dumps({"error": "sys_project_create requires server access"})
+    name = args.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return json.dumps({"error": "sys_project_create requires a non-empty 'name'"})
+    try:
+        response = await server_client.post(
+            "/v1/projects",
+            json={"name": name.strip()},
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"sys_project_create failed: {exc}"})
+    if response.status_code >= 400:
+        return json.dumps(
+            {"error": f"sys_project_create returned {response.status_code}", "detail": response.text[:200]}
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return json.dumps({"error": f"sys_project_create returned invalid JSON: {exc}"})
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "sys_project_create returned a non-object response"})
+    return json.dumps(payload)
+
+
+async def _list_projects_via_rest(
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """List the caller's projects via ``GET /v1/projects``."""
+    if server_client is None:
+        return json.dumps({"error": "sys_project_list requires server access"})
+    try:
+        response = await server_client.get("/v1/projects", timeout=30.0)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"sys_project_list failed: {exc}"})
+    if response.status_code >= 400:
+        return json.dumps(
+            {"error": f"sys_project_list returned {response.status_code}", "detail": response.text[:200]}
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return json.dumps({"error": f"sys_project_list returned invalid JSON: {exc}"})
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "sys_project_list returned a non-object response"})
+    return json.dumps(payload)
+
+
+async def _set_current_session_project_via_rest(
+    args: _JsonObject,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """File or unfile the current session via ``PATCH /v1/sessions/{id}``."""
+    if server_client is None:
+        return json.dumps({"error": "sys_session_set_project requires server access"})
+    if conversation_id is None:
+        return json.dumps({"error": "sys_session_set_project requires a session id"})
+    if "project_id" not in args:
+        return json.dumps({"error": "sys_session_set_project requires 'project_id'"})
+    project_id = args["project_id"]
+    # null → unfile (server uses "" as the unfile sentinel)
+    if project_id is None:
+        patch_body: dict[str, Any] = {"project_id": ""}
+    elif isinstance(project_id, str) and project_id.strip():
+        patch_body = {"project_id": project_id.strip()}
+    else:
+        return json.dumps(
+            {"error": "sys_session_set_project requires a non-empty project_id or null"}
+        )
+    try:
+        response = await server_client.patch(
+            f"/v1/sessions/{conversation_id}",
+            json=patch_body,
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"sys_session_set_project failed: {exc}"})
+    if response.status_code >= 400:
+        return json.dumps(
+            {"error": f"sys_session_set_project returned {response.status_code}", "detail": response.text[:200]}
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return json.dumps({"error": f"sys_session_set_project returned invalid JSON: {exc}"})
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "sys_session_set_project returned a non-object response"})
+    return json.dumps(payload)
+
+
+async def _set_current_session_workspace_via_rest(
+    args: _JsonObject,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
+    *,
+    set_live_session_workspace: Any,
+) -> str:
+    """Change the current session's workspace via ``PATCH /v1/sessions/{id}``.
+
+    After the server validates and persists the new workspace, the
+    runner's live workspace cache is updated so subsequent filesystem
+    tool calls use the new directory.
+    """
+    if server_client is None:
+        return json.dumps({"error": "sys_session_set_workspace requires server access"})
+    if conversation_id is None:
+        return json.dumps({"error": "sys_session_set_workspace requires a session id"})
+    workspace = args.get("workspace")
+    if not isinstance(workspace, str) or not workspace.strip():
+        return json.dumps({"error": "sys_session_set_workspace requires a non-empty 'workspace'"})
+    try:
+        response = await server_client.patch(
+            f"/v1/sessions/{conversation_id}",
+            json={"workspace": workspace.strip()},
+            timeout=60.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"sys_session_set_workspace failed: {exc}"})
+    if response.status_code >= 400:
+        return json.dumps(
+            {"error": f"sys_session_set_workspace returned {response.status_code}", "detail": response.text[:200]}
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return json.dumps({"error": f"sys_session_set_workspace returned invalid JSON: {exc}"})
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "sys_session_set_workspace returned a non-object response"})
+    # Update the runner's live workspace cache so subsequent filesystem
+    # tool calls resolve to the new directory. The server returns the
+    # canonical workspace path in the session snapshot.
+    new_workspace = payload.get("workspace")
+    if (
+        isinstance(new_workspace, str)
+        and new_workspace.strip()
+        and set_live_session_workspace is not None
+    ):
+        await set_live_session_workspace(conversation_id, new_workspace.strip())
+    return json.dumps(payload)
+
+
 async def _collect_sub_agents(
     conversation_id: str,
     server_client: httpx.AsyncClient,
@@ -5576,6 +5753,7 @@ async def execute_tool(
     harness_client: httpx.AsyncClient | None = None,
     publish_event: Callable[[str, _JsonObject], None] | None = None,
     filesystem_registry: FilesystemRegistry | None = None,
+    set_live_session_workspace: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> str:
     """
     Execute a tool and return the output string.
@@ -5701,6 +5879,22 @@ async def execute_tool(
                 args,
                 conversation_id,
                 server_client,
+            )
+        elif tool_name in _PROJECT_TOOLS:
+            if tool_name == "sys_project_create":
+                output = await _create_project_via_rest(args, server_client)
+            elif tool_name == "sys_project_list":
+                output = await _list_projects_via_rest(server_client)
+            elif tool_name == "sys_session_set_project":
+                output = await _set_current_session_project_via_rest(
+                    args, conversation_id, server_client
+                )
+        elif tool_name in _SESSION_WORKSPACE_TOOLS:
+            output = await _set_current_session_workspace_via_rest(
+                args,
+                conversation_id,
+                server_client,
+                set_live_session_workspace=set_live_session_workspace,
             )
         elif tool_name in _SESSION_QUERY_TOOLS:
             output = await _execute_session_query_tool(
@@ -5934,6 +6128,7 @@ async def dispatch_tool_locally(
     session_async_tasks: dict[str, tuple[asyncio.Task[str], asyncio.Event]] | None = None,
     publish_event: Callable[[str, _JsonObject], None] | None = None,
     filesystem_registry: FilesystemRegistry | None = None,
+    set_live_session_workspace: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> str:
     """Execute a tool locally and PATCH the result to the harness.
 
@@ -5975,6 +6170,7 @@ async def dispatch_tool_locally(
         harness_client=harness_client,
         filesystem_registry=filesystem_registry,
         publish_event=publish_event,
+        set_live_session_workspace=set_live_session_workspace,
     )
 
     # A file-mutating tool just ran — nudge the web to refetch the
