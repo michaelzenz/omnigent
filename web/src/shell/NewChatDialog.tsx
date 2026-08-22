@@ -1808,11 +1808,18 @@ function HarnessConfigModal({
         });
       }
     }
-    if (isOmniHarness && smartRoutingEligible) {
-      setSubagentRoutingMode(draftSubagentRouting);
-    }
     if (isOmniHarness) {
       setProfileSelection(draftProfileSelection);
+      const rememberedOptions: HarnessOptions = {
+        promptProfile: draftProfileSelection,
+      };
+      if (smartRoutingEligible) {
+        const committedSubagentRouting =
+          draftSubagentRouting ?? (smartRoutingOn ? "on" : "off");
+        setSubagentRoutingMode(committedSubagentRouting);
+        rememberedOptions.subagentRouting = committedSubagentRouting;
+      }
+      writeHarnessOption(OMNIHARNESS_AGENT_NAME, rememberedOptions);
     }
     onOpenChange(false);
   };
@@ -2302,7 +2309,9 @@ export function NewChatLandingScreen() {
   const poweredBy = usePoweredBy();
   const serverUrl = getCliServerUrl();
   const { data: agents } = useAvailableAgents();
-  const { data: profiles = [] } = usePromptProfiles({ enabledOnly: true });
+  const { data: profiles = [], isLoading: profilesLoading } = usePromptProfiles({
+    enabledOnly: true,
+  });
   // refetchOnFocus: returning from a terminal `omni setup` must clear the
   // readiness badge even if the live push was missed while the tab was hidden.
   const { data: hosts, isLoading: hostsLoading } = useHosts({ refetchOnFocus: true });
@@ -2454,7 +2463,10 @@ export function NewChatLandingScreen() {
     () => landingDraft?.pickedAgentId ?? (projectParam !== "" ? null : readLastAgentId()),
   );
   const [profileSelection, setProfileSelection] = useState<ProfileSelection>(
-    () => landingDraft?.profileSelection ?? "auto",
+    () =>
+      landingDraft?.profileSelection ??
+      readHarnessOptions(OMNIHARNESS_AGENT_NAME).promptProfile ??
+      "auto",
   );
   const [selectedHostId, setSelectedHostId] = useState<string | null>(
     () => landingDraft?.selectedHostId ?? null,
@@ -2632,7 +2644,13 @@ export function NewChatLandingScreen() {
     () => landingDraft?.costControlMode ?? null,
   );
   const [subagentRoutingMode, setSubagentRoutingMode] = useState<"on" | "off" | null>(
-    () => landingDraft?.subagentRoutingMode ?? null,
+    () => {
+      if (landingDraft?.subagentRoutingMode !== undefined) {
+        return landingDraft.subagentRoutingMode;
+      }
+      const stored = readHarnessOptions(OMNIHARNESS_AGENT_NAME).subagentRouting;
+      return stored === "on" || stored === "off" ? stored : null;
+    },
   );
   // Model selection and smart routing are mutually exclusive: enabling
   // routing clears the explicit model pick, and picking a model turns
@@ -3056,14 +3074,16 @@ export function NewChatLandingScreen() {
   const promptProfilesEnabled = omniharnessSelected;
   const harnessPickerAgentId = effectiveAgentId;
   useEffect(() => {
+    if (profilesLoading) return;
     if (
       profileSelection !== "auto" &&
       profileSelection !== "auto_include" &&
       !profiles.some((profile) => profile.id === profileSelection)
     ) {
       setProfileSelection("auto");
+      writeHarnessOption(OMNIHARNESS_AGENT_NAME, { promptProfile: "auto" });
     }
-  }, [profileSelection, profiles]);
+  }, [profileSelection, profiles, profilesLoading]);
 
   const supportsPermissionMode = nativeAgentHasCapability(selectedAgent, "permissionMode");
   const supportsApprovalMode = nativeAgentHasCapability(selectedAgent, "approvalMode");
@@ -3391,14 +3411,29 @@ export function NewChatLandingScreen() {
   // choices independently from the native harness options above.
   useEffect(() => {
     if (!selectedAgentUsesOmniHarness) return;
-    const storedModel = readHarnessOptions(OMNIHARNESS_AGENT_NAME).model;
+    const stored = readHarnessOptions(OMNIHARNESS_AGENT_NAME);
+    const storedModel = stored.model;
     setPickedModel(
       storedModel != null && sdkModelOptions.some((model) => model.id === storedModel)
         ? storedModel
         : "",
     );
     setPickedEffort("");
-  }, [selectedAgentUsesOmniHarness, effectiveAgentId, sdkModelOptions, setPickedModel]);
+    if (omniharnessSelected) {
+      setProfileSelection(stored.promptProfile ?? "auto");
+      setSubagentRoutingMode(
+        stored.subagentRouting === "on" || stored.subagentRouting === "off"
+          ? stored.subagentRouting
+          : null,
+      );
+    }
+  }, [
+    selectedAgentUsesOmniHarness,
+    omniharnessSelected,
+    effectiveAgentId,
+    sdkModelOptions,
+    setPickedModel,
+  ]);
   // Smart Routing is remembered per harness alongside the mode/model
   // knobs, in its own effect because eligibility depends on the server flag
   // (which resolves after mount — this must reseed when it lands). A stored

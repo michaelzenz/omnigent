@@ -15,6 +15,7 @@ import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import type { PromptProfile } from "@/hooks/usePromptProfiles";
 import { NewChatLandingScreen, resetLandingDraft, sanitizeInitialPrompt } from "./NewChatDialog";
 import { writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
+import { readHarnessOptions } from "@/lib/modePreferences";
 import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
 
 // The landing screen drives the real Web-start flow end to end: the host and
@@ -1954,6 +1955,15 @@ describe("NewChatLandingScreen create flow", () => {
     if (!sessionCall) throw new Error("Expected a session create call");
     const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
     expect(body.prompt_profile).toEqual({ mode: "auto_include" });
+    expect(readHarnessOptions("omniharness").promptProfile).toBe("auto_include");
+
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_new"));
+    cleanup();
+    resetLandingDraft();
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    expect(screen.getByTestId("new-chat-landing-config-profile")).toHaveTextContent("Auto Include");
   });
 });
 

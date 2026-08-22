@@ -1669,6 +1669,19 @@ describe("NewChatLandingScreen", () => {
     openSelect("new-chat-landing-config-subagent-routing");
     fireEvent.click(screen.getByRole("option", { name: "Smart Routing" }));
     saveConfig();
+    expect(
+      JSON.parse(localStorage.getItem(HARNESS_OPTIONS_KEY) ?? "{}").omniharness,
+    ).toMatchObject({ subagentRouting: "on" });
+
+    remountLanding({
+      smart_routing_enabled: true,
+      smart_routing_sources: { external: false, oss: true },
+    });
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    expect(screen.getByTestId("new-chat-landing-config-subagent-routing")).toHaveTextContent(
+      "Smart Routing",
+    );
+    saveConfig();
 
     fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
       target: { value: "start with Kimi" },
