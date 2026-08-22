@@ -39,6 +39,7 @@ from omnigent.host.frames import (
     HostListWorktreesResultFrame,
     HostModelOptionsResultFrame,
     HostRemoveWorktreeResultFrame,
+    HostRenewWorktreeLeaseResultFrame,
     HostRunnerExitedFrame,
     HostRunnerStatusResultFrame,
     HostSkillInventoryFrame,
@@ -739,6 +740,18 @@ async def _receive_loop(
                     {
                         "status": frame.status,
                         "worktrees": frame.worktrees,
+                        "error": frame.error,
+                    }
+                )
+            continue
+
+        if isinstance(frame, HostRenewWorktreeLeaseResultFrame):
+            renew_future = conn.pending_renew_worktree_leases.pop(frame.request_id, None)
+            if renew_future is not None and not renew_future.done():
+                renew_future.set_result(
+                    {
+                        "status": frame.status,
+                        "renewed": frame.renewed,
                         "error": frame.error,
                     }
                 )

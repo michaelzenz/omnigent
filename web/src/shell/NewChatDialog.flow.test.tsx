@@ -109,6 +109,11 @@ vi.mock("@/hooks/useHostFilesystem", () => ({
 }));
 vi.mock("@/hooks/useHostWorktrees", () => ({
   useHostWorktrees: () => ({ data: undefined }),
+  useHostRepository: () => ({
+    data: { isGitRepository: true, worktrees: [], autoWorktreesSupported: true },
+    isLoading: false,
+    isError: false,
+  }),
 }));
 // No other sessions in scope — keep the conflict hooks inert so they don't
 // issue their own /health fetch or surface a warning. The warning is covered

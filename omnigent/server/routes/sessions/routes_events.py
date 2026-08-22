@@ -15,6 +15,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from omnigent.entities import (
+    Conversation,
     ErrorData,
     NewConversationItem,
 )
@@ -175,6 +176,8 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_policy_deny,
     _publish_session_superseded,
     _publish_status,
+    _publish_worktree_log,
+    _publish_worktree_status,
     _remove_session_worktree,
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
@@ -218,6 +221,7 @@ from omnigent.server.schemas import (
     SessionEventInput,
     SessionRewindRequest,
 )
+
 from omnigent.session_lifecycle import (
     is_session_closed,
 )
@@ -234,6 +238,7 @@ from omnigent.telemetry.installation_id import get_installation_id as _get_insta
 from omnigent.tools.client_specified import parse_client_side_tool_specs
 
 _rewinding_sessions: set[str] = set()
+_auto_worktree_restore_locks: dict[str, asyncio.Lock] = {}
 
 
 async def _compose_turn_memory(
@@ -347,6 +352,109 @@ def register_events_routes(
             return True
         runner_id = getattr(conv, "runner_id", None)
         return isinstance(runner_id, str) and token_bound_runner_id(token) == runner_id
+
+    async def _renew_or_relocate_auto_worktree(conv: Conversation) -> Conversation:
+        if conv.labels.get("omnigent.auto_worktree") != "1":
+            return conv
+        if conv.host_id is None or conv.workspace is None or conv.git_branch is None:
+            raise OmnigentError(
+                "auto worktree session is missing its host, workspace, or branch",
+                code=ErrorCode.CONFLICT,
+            )
+        if host_registry is None:
+            raise OmnigentError("host registry is unavailable", code=ErrorCode.CONFLICT)
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is None:
+            raise OmnigentError("session host is offline", code=ErrorCode.CONFLICT)
+        if not host_conn.hello.managed_worktree_leases:
+            raise OmnigentError(
+                "session host must be upgraded before its worktree lease can be restored",
+                code=ErrorCode.CONFLICT,
+            )
+
+        from omnigent.server.routes._host_worktree import (
+            WorktreeProxyError,
+            create_worktree_on_host,
+            renew_worktree_lease_on_host,
+        )
+
+        try:
+            renewed = await renew_worktree_lease_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                worktree_path=conv.workspace,
+                lease_owner=conv.id,
+            )
+        except WorktreeProxyError as exc:
+            raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
+        if renewed:
+            return conv
+
+        _publish_worktree_status(conv.id, "reacquiring", branch=conv.git_branch)
+        _publish_worktree_log(conv.id, "The previous worktree was reassigned; relocating…")
+        if conv.runner_id is not None:
+            stopped = await _stop_session_host_runner(
+                conv.id,
+                conv.host_id,
+                conv.runner_id,
+                host_registry,
+                missing_ok=True,
+            )
+            if not stopped:
+                _publish_worktree_status(
+                    conv.id,
+                    "failed",
+                    branch=conv.git_branch,
+                    error="could not stop the stale runner before relocation",
+                )
+                raise OmnigentError(
+                    "Could not safely relocate the session workspace; retry after stopping its runner.",
+                    code=ErrorCode.CONFLICT,
+                )
+            await asyncio.to_thread(
+                conversation_store.clear_runner_id,
+                conv.id,
+                bump_updated_at=False,
+            )
+
+        source_repo = conv.labels.get("omnigent.auto_worktree.source_repo")
+        if not source_repo:
+            raise OmnigentError(
+                "auto worktree session is missing its source repository",
+                code=ErrorCode.CONFLICT,
+            )
+        _publish_worktree_status(conv.id, "relocating", branch=conv.git_branch)
+
+        def _on_log(line: str) -> None:
+            _publish_worktree_log(conv.id, line)
+
+        try:
+            created = await create_worktree_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                repo_path=source_repo,
+                branch_name=conv.git_branch,
+                base_branch=None,
+                auto_reuse=True,
+                reuse_existing_branch=True,
+                lease_owner=conv.id,
+                on_log=_on_log,
+            )
+        except WorktreeProxyError as exc:
+            _publish_worktree_status(
+                conv.id, "failed", branch=conv.git_branch, error=exc.message
+            )
+            raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
+        await asyncio.to_thread(
+            conversation_store.set_host_id,
+            conv.id,
+            conv.host_id,
+            workspace=created.worktree_path,
+            git_branch=created.branch,
+        )
+        _publish_worktree_status(conv.id, "ready", branch=created.branch)
+        refreshed = await asyncio.to_thread(conversation_store.get_conversation, conv.id)
+        return refreshed or conv
 
     @router.post(
         "/sessions/{session_id}/events",
@@ -462,13 +570,32 @@ def register_events_routes(
             if conv is None:
                 raise _session_not_found()
         worktree_status = _session_worktree_status_cache.get(session_id)
-        if worktree_status is not None and body.type in ("message", _SLASH_COMMAND_TYPE):
+        retrying_auto_restore = (
+            worktree_status is not None
+            and worktree_status.stage == "failed"
+            and conv.labels.get("omnigent.auto_worktree") == "1"
+        )
+        if (
+            worktree_status is not None
+            and not retrying_auto_restore
+            and body.type in ("message", _SLASH_COMMAND_TYPE)
+        ):
             detail = (
                 "Worktree creation is still running; retry after it completes."
                 if worktree_status.stage == "creating"
                 else "Worktree creation failed; resolve the failure before sending a message."
             )
             raise OmnigentError(detail, code=ErrorCode.CONFLICT)
+        if body.type in ("message", _SLASH_COMMAND_TYPE):
+            if retrying_auto_restore:
+                _session_worktree_status_cache.pop(session_id, None)
+            restore_lock = _auto_worktree_restore_locks.setdefault(session_id, asyncio.Lock())
+            async with restore_lock:
+                latest = await asyncio.to_thread(
+                    conversation_store.get_conversation,
+                    session_id,
+                )
+                conv = await _renew_or_relocate_auto_worktree(latest or conv)
         created_by = _attribution_user(user_id)
         body_created_by = _attribution_user(body.created_by)
         if body_created_by is not None:
@@ -2213,6 +2340,31 @@ def register_events_routes(
                 delete_branch=True,
                 request=request,
             )
+        if (
+            conv.labels.get("omnigent.auto_worktree") == "1"
+            and conv.host_id is not None
+            and conv.workspace is not None
+            and host_registry is not None
+        ):
+            host_conn = host_registry.get(conv.host_id)
+            if host_conn is not None:
+                from omnigent.server.routes._host_worktree import (
+                    WorktreeProxyError,
+                    release_worktree_lease_on_host,
+                )
+
+                try:
+                    await release_worktree_lease_on_host(
+                        host_registry=host_registry,
+                        host_conn=host_conn,
+                        worktree_path=conv.workspace,
+                        lease_owner=conv.id,
+                    )
+                except WorktreeProxyError:
+                    _logger.warning(
+                        "Failed to release managed worktree lease for deleted session %s",
+                        session_id,
+                    )
         # Session file cleanup.
         if file_store is not None and artifact_store is not None:
             deleted_file_ids = await asyncio.to_thread(
@@ -2234,6 +2386,7 @@ def register_events_routes(
         # Worktree logs, including successful runs, remain available for
         # session revisits and must be released with the deleted session.
         _session_worktree_status_cache.pop(session_id, None)
+        _auto_worktree_restore_locks.pop(session_id, None)
         # Same for MCP startup state: failed/cancelled maps are retained
         # for reload visibility while the session exists, so a session
         # whose MCP startup never settled clean would leak its entry.

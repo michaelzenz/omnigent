@@ -802,10 +802,19 @@ def create_hosts_router(
                 validate_branch_name,
             )
 
+            if body.git.auto_create:
+                raise HTTPException(
+                    status_code=400,
+                    detail="auto worktree creation is supported only by POST /v1/sessions",
+                )
+            branch_name = body.git.branch_name
+            if branch_name is None:  # pragma: no cover - schema rejects this shape
+                raise HTTPException(status_code=400, detail="branch_name is required")
+
             # Shared by both modes — the host never runs git in bind mode, so
             # the server is the only gate on the name there.
             try:
-                validate_branch_name(body.git.branch_name)
+                validate_branch_name(branch_name)
             except WorktreeError as exc:
                 raise HTTPException(status_code=400, detail=exc.message) from exc
 
@@ -813,7 +822,7 @@ def create_hosts_router(
                 # Binding to a pre-existing worktree: no worktree is created,
                 # but record its branch so the sidebar shows it and the opt-in
                 # delete flow can offer to remove it.
-                git_branch = body.git.branch_name
+                git_branch = branch_name
             else:
                 from omnigent.server.routes._host_worktree import (
                     WorktreeHostUnavailableError,
@@ -826,7 +835,7 @@ def create_hosts_router(
                         host_registry=host_registry,
                         host_conn=conn,
                         repo_path=workspace,
-                        branch_name=body.git.branch_name,
+                        branch_name=branch_name,
                         base_branch=body.git.base_branch,
                         auto_fetch_base=body.git.auto_fetch_base,
                     )
@@ -1568,6 +1577,10 @@ def create_hosts_router(
             # treats this as "no worktrees here".
             raise HTTPException(status_code=400, detail=exc.message) from exc
 
-        return {"object": "list", "data": worktrees}
+        return {
+            "object": "list",
+            "data": worktrees,
+            "auto_worktrees_supported": conn.hello.managed_worktree_leases,
+        }
 
     return router

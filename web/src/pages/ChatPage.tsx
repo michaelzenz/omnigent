@@ -3785,7 +3785,10 @@ export function WorktreeCreationPanel({
           <>
             <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
             <span className="text-muted-foreground">
-              Creating worktree{status.branch ? ` on branch "${status.branch}"` : ""}…
+              {status.stage === "relocating" || status.stage === "reacquiring"
+                ? "Restoring session workspace"
+                : "Creating worktree"}
+              {status.branch ? ` on branch "${status.branch}"` : ""}…
             </span>
           </>
         )}

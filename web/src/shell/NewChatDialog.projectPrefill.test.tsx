@@ -13,7 +13,7 @@ import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useProjectConfig, useProjects } from "@/hooks/useConversations";
 import type { ProjectConfig } from "@/lib/projectsApi";
-import { useHostWorktrees } from "@/hooks/useHostWorktrees";
+import { useHostRepository, useHostWorktrees } from "@/hooks/useHostWorktrees";
 import type { HostWorktree } from "@/hooks/useHostWorktrees";
 import { NewChatLandingScreen } from "./NewChatDialog";
 
@@ -59,6 +59,7 @@ vi.mock("@/hooks/useHostFilesystem", () => ({
 }));
 vi.mock("@/hooks/useHostWorktrees", () => ({
   useHostWorktrees: vi.fn(),
+  useHostRepository: vi.fn(),
 }));
 vi.mock("@/hooks/useDirectorySessions", () => ({
   useDirectorySessions: () => ({ data: [] }),
@@ -126,6 +127,18 @@ function setRepoIsGit(): void {
         : ([] as HostWorktree[]),
       isError: false,
     } as ReturnType<typeof useHostWorktrees>;
+  });
+  vi.mocked(useHostRepository).mockImplementation((hostId, path) => {
+    const worktrees = vi.mocked(useHostWorktrees)(hostId, path).data ?? [];
+    return {
+      data: {
+        isGitRepository: worktrees.length > 0,
+        worktrees,
+        autoWorktreesSupported: true,
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useHostRepository>;
   });
 }
 

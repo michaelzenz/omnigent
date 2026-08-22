@@ -640,7 +640,7 @@ export interface SessionWorktreeLogEvent {
 export interface SessionWorktreeStatusEvent {
   type: "session_worktree_status";
   conversationId: string;
-  stage: "creating" | "ready" | "failed";
+  stage: "creating" | "reacquiring" | "relocating" | "ready" | "failed";
   branch?: string | null;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */
   error?: string | null;

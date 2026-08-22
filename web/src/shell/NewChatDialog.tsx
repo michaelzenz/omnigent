@@ -27,6 +27,7 @@ import {
   SettingsIcon,
   ShuffleIcon,
   TriangleAlertIcon,
+  WandSparklesIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -172,7 +173,7 @@ import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
 import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { useHostFilesystem, type HostFilesystemEntry } from "@/hooks/useHostFilesystem";
-import { useHostWorktrees } from "@/hooks/useHostWorktrees";
+import { useHostRepository, useHostWorktrees } from "@/hooks/useHostWorktrees";
 import { useNativeServerSwitcherForMainSurface } from "@/hooks/useNativeServerSwitcher";
 import type { WorkspaceFile } from "@/hooks/useWorkspaceChangedFiles";
 import type { Conversation } from "@/hooks/useConversations";
@@ -2019,6 +2020,8 @@ interface LandingDraft {
   workspace: string;
   branchName: string;
   prefilledBranch: string;
+  autoCreateWorktree: boolean;
+  autoBaseBranch: string;
   permissionMode: string;
   approvalMode: string;
   bypassSandbox: boolean;
@@ -2384,6 +2387,13 @@ export function NewChatLandingScreen() {
   const [prefilledBranch, setPrefilledBranch] = useState<string>(
     () => landingDraft?.prefilledBranch ?? "",
   );
+  const [autoCreateWorktree, setAutoCreateWorktree] = useState<boolean>(
+    () => landingDraft?.autoCreateWorktree ?? false,
+  );
+  const [autoBaseBranch, setAutoBaseBranch] = useState<string>(
+    () => landingDraft?.autoBaseBranch ?? "",
+  );
+  const [autoBaseBranchEdited, setAutoBaseBranchEdited] = useState(false);
   // Project to file the new session under. Empty = unfiled. Stamped as the
   // `omni_project` label at create (so the row is filed from its first sidebar
   // appearance), then promoted to first-class `project_id` right after.
@@ -2502,6 +2512,8 @@ export function NewChatLandingScreen() {
     workspace,
     branchName,
     prefilledBranch,
+    autoCreateWorktree,
+    autoBaseBranch,
     permissionMode,
     approvalMode,
     bypassSandbox,
@@ -2650,6 +2662,9 @@ export function NewChatLandingScreen() {
     setPickedAgentId(projectParam !== "" ? null : readLastAgentId());
     setWorkspace("");
     setBranchName("");
+    setAutoCreateWorktree(false);
+    setAutoBaseBranch("");
+    setAutoBaseBranchEdited(false);
     seededHostRef.current = null;
     worktreeSeededForRef.current = null;
     seededConfigSigRef.current = prefillConfigSig;
@@ -3366,14 +3381,26 @@ export function NewChatLandingScreen() {
     return counts;
   }, [conflictCandidates, runnerHealth]);
 
-  // Existing git worktrees of the picked directory's repo, for the
-  // worktree picker. Skipped for sandbox sessions (server-managed) and
-  // when no directory is picked. A non-git path resolves to [].
+  // Inspect the picked path on the host. The explicit repository bit keeps a
+  // non-Git directory distinct from a Git repository whose linked-worktree
+  // list happens to be empty.
   const worktreesEnabled = !sandboxSelected && selectedHostId !== null && workspaceTrimmed !== "";
-  const { data: hostWorktrees, isPlaceholderData: hostWorktreesArePlaceholder } = useHostWorktrees(
+  const {
+    data: hostRepository,
+    isLoading: hostRepositoryLoading,
+    isError: hostRepositoryError,
+  } = useHostRepository(
     worktreesEnabled ? selectedHostId : null,
     worktreesEnabled ? workspaceTrimmed : null,
   );
+  const hostWorktrees = hostRepository?.worktrees;
+  const hostWorktreesArePlaceholder = false;
+  const isGitWorkspace =
+    worktreesEnabled &&
+    !hostRepositoryLoading &&
+    !hostRepositoryError &&
+    hostRepository?.isGitRepository === true;
+  const autoWorktreesSupported = hostRepository?.autoWorktreesSupported === true;
   // Linked worktrees (exclude the main work tree — "starting in the main
   // repo" is just picking that directory, not selecting a worktree).
   const linkedWorktrees = useMemo(
@@ -3388,6 +3415,36 @@ export function NewChatLandingScreen() {
     if (target === null) return null;
     return linkedWorktrees.find((w) => normalizeWorkspacePath(w.path) === target) ?? null;
   }, [linkedWorktrees, workspaceTrimmed]);
+  const currentWorkspaceWorktree = useMemo(() => {
+    const target = normalizeWorkspacePath(workspaceTrimmed);
+    if (target === null) return null;
+    return (
+      [...(hostWorktrees ?? [])]
+        .filter((worktree) => {
+          const root = normalizeWorkspacePath(worktree.path);
+          return root !== null && (target === root || target.startsWith(`${root}/`));
+        })
+        .sort((left, right) => right.path.length - left.path.length)[0] ?? null
+    );
+  }, [hostWorktrees, workspaceTrimmed]);
+  const currentWorkspaceBranch = currentWorkspaceWorktree?.branch ?? "";
+
+  useEffect(() => {
+    if (!isGitWorkspace || !autoWorktreesSupported) {
+      setAutoCreateWorktree(false);
+    }
+    if (!isGitWorkspace) {
+      setAutoBaseBranch("");
+      setAutoBaseBranchEdited(false);
+      return;
+    }
+    if (!autoBaseBranchEdited) setAutoBaseBranch(currentWorkspaceBranch);
+  }, [
+    isGitWorkspace,
+    autoWorktreesSupported,
+    currentWorkspaceBranch,
+    autoBaseBranchEdited,
+  ]);
   // When the workspace lands on an existing worktree, prefill the branch
   // field with its branch and remember it as the prefill. Leaving the
   // worktree clears the prefill (but not a name the user typed themselves).
@@ -3413,7 +3470,8 @@ export function NewChatLandingScreen() {
     activeWorktree !== null && prefilledBranch !== "" && branchName.trim() === prefilledBranch;
   // A new, isolated worktree is created only when a branch is named and the
   // workspace isn't already sitting on that existing worktree.
-  const shouldCreateWorktree = branchName.trim() !== "" && !startInExistingWorktree;
+  const shouldCreateManualWorktree = branchName.trim() !== "" && !startInExistingWorktree;
+  const shouldCreateWorktree = autoCreateWorktree || shouldCreateManualWorktree;
   // Auto-fill the base branch when a new-worktree branch is named, but only
   // until the user touches the base field — then their choice (including a
   // cleared field) stands. Clearing the branch name (so the base field goes
@@ -3422,7 +3480,7 @@ export function NewChatLandingScreen() {
   // the user-global one (Settings › Git); an unset project default falls
   // through to the global one, then to blank (fork from current branch).
   useEffect(() => {
-    if (!shouldCreateWorktree) {
+    if (!shouldCreateManualWorktree) {
       // No base field shown: reset so the next named branch re-seeds cleanly.
       setBaseBranchEdited(false);
       _setBaseBranch("");
@@ -3431,7 +3489,7 @@ export function NewChatLandingScreen() {
     if (!baseBranchEdited) {
       _setBaseBranch(projectBaseBranch ?? readDefaultBaseBranch() ?? "");
     }
-  }, [shouldCreateWorktree, baseBranchEdited, projectBaseBranch]);
+  }, [shouldCreateManualWorktree, baseBranchEdited, projectBaseBranch]);
   // The branch input doubles as a combobox: focusing it reveals existing
   // worktrees, and what the user types filters them (match on branch or path
   // substring, case-insensitive). Typing a name that matches none = a new
@@ -3706,7 +3764,9 @@ export function NewChatLandingScreen() {
       : (selectedHostDisplayName ?? (onlineHosts.length === 0 ? "No hosts" : "Choose host"));
   // The chip shows just the branch (the "(existing)" distinction lives in the
   // popover's warning; appending it here only gets clipped by the chip's cap).
-  const worktreeLabel = branchName.trim() || "Worktree";
+  const worktreeLabel = autoCreateWorktree
+    ? `Base: ${autoBaseBranch.trim() || currentWorkspaceBranch || "current"}`
+    : branchName.trim() || "Worktree";
   // Sandbox repository chip label: repo name (server's clone-dir rule)
   // plus the pinned branch, e.g. "repo#main"; placeholder when unset.
   const sandboxRepoName = deriveRepoName(sandboxRepoUrl);
@@ -4003,7 +4063,14 @@ export function NewChatLandingScreen() {
                   // Create a new worktree, or bind an existing one
                   // (`existing_worktree` records the branch for the sidebar +
                   // delete flow without creating anything), or neither.
-                  git: shouldCreateWorktree
+                  git: autoCreateWorktree
+                    ? {
+                        auto_create: true,
+                        branch_name_prompt: initialPrompt.slice(0, 2000),
+                        base_branch: autoBaseBranch.trim() || undefined,
+                        auto_fetch_base: readAutoFetchWorktreeBase(),
+                      }
+                    : shouldCreateManualWorktree
                     ? {
                         branch_name: trimmedBranch,
                         base_branch: baseBranch.trim() || undefined,
@@ -5008,9 +5075,51 @@ export function NewChatLandingScreen() {
                 </Popover>
               )}
 
+              {isGitWorkspace && autoWorktreesSupported && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-pressed={autoCreateWorktree}
+                        aria-label={
+                          autoCreateWorktree ? "Auto new worktree" : "Custom new worktree"
+                        }
+                        onClick={() => {
+                          setAutoCreateWorktree((enabled) => {
+                            const next = !enabled;
+                            if (next && !autoBaseBranchEdited) {
+                              setAutoBaseBranch(currentWorkspaceBranch);
+                            }
+                            return next;
+                          });
+                        }}
+                        className={cn(
+                          "flex h-6 cursor-pointer items-center gap-1.5 rounded-full px-2 text-xs font-medium transition-colors",
+                          autoCreateWorktree
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                        )}
+                        data-testid="new-chat-auto-worktree-toggle"
+                      >
+                        <WandSparklesIcon className="size-3.5" />
+                        <span>
+                          {autoCreateWorktree ? "Auto new worktree" : "Custom new worktree"}
+                        </span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {autoCreateWorktree
+                        ? "Auto New Worktree — Omnigent will automatically manage worktrees for you."
+                        : "Custom New Worktree — Choose the branch and worktree settings yourself."}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+
               {/* Git worktree chip — hidden for sandbox sessions (worktree
                 creation requires a caller-supplied host_id). */}
-              {!sandboxSelected && (
+              {isGitWorkspace && (
                 <Popover open={worktreePopoverOpen} onOpenChange={setWorktreePopoverOpen}>
                   <PopoverTrigger asChild>
                     <button
@@ -5034,6 +5143,33 @@ export function NewChatLandingScreen() {
                     className="w-[min(20rem,calc(100vw-2rem))] p-3"
                   >
                     <div className="flex flex-col gap-2">
+                      {autoCreateWorktree ? (
+                        <>
+                          <label
+                            htmlFor="landing-auto-base-branch"
+                            className="text-sm font-medium text-foreground"
+                          >
+                            Base branch
+                          </label>
+                          <p className="text-sm text-muted-foreground">
+                            A new isolated worktree and branch will be created automatically.
+                          </p>
+                          <input
+                            id="landing-auto-base-branch"
+                            type="text"
+                            value={autoBaseBranch}
+                            onChange={(event) => {
+                              setAutoBaseBranch(event.target.value);
+                              setAutoBaseBranchEdited(true);
+                            }}
+                            placeholder={currentWorkspaceBranch || "Current branch"}
+                            aria-label="Base branch"
+                            className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-colors focus-visible:border-ring"
+                            data-testid="new-chat-auto-base-branch-input"
+                          />
+                        </>
+                      ) : (
+                        <>
                       <label
                         htmlFor="landing-branch-name"
                         className="text-sm font-medium text-foreground"
@@ -5171,6 +5307,8 @@ export function NewChatLandingScreen() {
                         >
                           Starts in existing worktree, edit the name to create a new one.
                         </p>
+                      )}
+                        </>
                       )}
                     </div>
                   </PopoverContent>

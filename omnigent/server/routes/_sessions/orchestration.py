@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import secrets
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -6098,6 +6099,56 @@ async def _relay_runner_stream(
             return
 
 
+_auto_worktree_lease_renewed_at: dict[str, float] = {}
+_AUTO_WORKTREE_RENEW_INTERVAL_S = 3_600
+
+
+async def _renew_active_auto_worktree_lease(
+    session_id: str,
+    conversation_store: ConversationStore,
+) -> None:
+    """Throttle lease renewal while a runner turn remains active."""
+    if _session_status_cache.get(session_id) not in ("running", "waiting"):
+        return
+    now = time.time()
+    if now - _auto_worktree_lease_renewed_at.get(session_id, 0) < _AUTO_WORKTREE_RENEW_INTERVAL_S:
+        return
+    conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+    if (
+        conv is None
+        or conv.labels.get("omnigent.auto_worktree") != "1"
+        or conv.host_id is None
+        or conv.workspace is None
+    ):
+        return
+    from omnigent.server.routes._host_worktree import (
+        WorktreeProxyError,
+        renew_worktree_lease_on_host,
+    )
+    from omnigent.server.routes._sessions.common import get_server_host_registry
+
+    host_registry = get_server_host_registry()
+    host_conn = host_registry.get(conv.host_id) if host_registry is not None else None
+    if (
+        host_registry is None
+        or host_conn is None
+        or not host_conn.hello.managed_worktree_leases
+    ):
+        return
+    try:
+        renewed = await renew_worktree_lease_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=conv.workspace,
+            lease_owner=session_id,
+        )
+    except WorktreeProxyError:
+        _logger.warning("Failed to renew active worktree lease for %s", session_id)
+        return
+    if renewed:
+        _auto_worktree_lease_renewed_at[session_id] = now
+
+
 async def _relay_runner_stream_once(
     session_id: str,
     runner_client: httpx.AsyncClient,
@@ -6189,6 +6240,10 @@ async def _relay_runner_stream_once(
                     if evt_type == "session.heartbeat":
                         if ready is not None:
                             ready.set()
+                        await _renew_active_auto_worktree_lease(
+                            session_id,
+                            conversation_store,
+                        )
                         continue
 
                     # Stopped turn: drop its trailing response.* output (no
@@ -8354,11 +8409,14 @@ async def _create_session_from_existing_agent(
             # runs git for this path, so the server is the only gate).
             from omnigent.host.git_worktree import WorktreeError, validate_branch_name
 
+            branch_name = body.git.branch_name
+            if branch_name is None:  # pragma: no cover - schema rejects this shape
+                raise OmnigentError("branch_name is required", code=ErrorCode.INVALID_INPUT)
             try:
-                validate_branch_name(body.git.branch_name)
+                validate_branch_name(branch_name)
             except WorktreeError as exc:
                 raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
-            git_branch = body.git.branch_name
+            git_branch = branch_name
         else:
             # Async worktree creation: the session row is created with the
             # source repo as its workspace, and the background task creates
@@ -8750,14 +8808,93 @@ async def _create_session_from_existing_agent(
     )
 
 
+async def _generate_auto_worktree_branch(
+    *,
+    session_id: str,
+    initial_prompt: str | None,
+    conversation_store: ConversationStore,
+) -> str:
+    """Generate a semantic branch name with a bounded, fail-open AI call."""
+    fallback = f"worktree-{secrets.token_hex(4)}"
+    if not initial_prompt:
+        return fallback
+
+    from omnigent.runtime import get_caps
+    from omnigent.runtime.policies.builder import build_server_llm_client
+    from omnigent.usage_ledger import record_omniharness_usage, response_usage
+
+    configured = get_caps().llm
+    if configured is None:
+        return fallback
+    try:
+        client = build_server_llm_client(configured)
+        if client is None:
+            return fallback
+        response = await asyncio.wait_for(
+            client.create(
+                instructions=(
+                    "Return only a concise lowercase git branch slug describing the task. "
+                    "Use hyphens between words and no surrounding explanation."
+                ),
+                input=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": initial_prompt[:2000]}],
+                    }
+                ],
+                timeout=10.0,
+            ),
+            timeout=10.0,
+        )
+        usage = response_usage(response)
+        model = getattr(response, "model", None) or getattr(configured, "model", None)
+        record_omniharness_usage(
+            conversation_store,
+            session_id=session_id,
+            turn_id=None,
+            purpose="branch_name_generation",
+            model=model if isinstance(model, str) else None,
+            workload="other",
+            usage=usage,
+        )
+        output = getattr(response, "output", None)
+        text = getattr(response, "output_text", None)
+        if not isinstance(text, str):
+            text = next(
+                (
+                    value
+                    for item in output or ()
+                    for content in getattr(item, "content", ())
+                    if isinstance((value := getattr(content, "text", None)), str) and value
+                ),
+                "",
+            )
+        slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48].rstrip("-")
+        if not slug:
+            return fallback
+        candidate = f"agent/{slug}-{secrets.token_hex(3)}"
+        from omnigent.host.git_worktree import WorktreeError, validate_branch_name
+
+        try:
+            validate_branch_name(candidate)
+        except WorktreeError:
+            return fallback
+        return candidate
+    except Exception:  # noqa: BLE001 - naming must never block session creation.
+        _logger.warning("AI branch naming failed for session=%s; using fallback", session_id)
+        return fallback
+
+
 def _spawn_worktree_creation_task(
     *,
     session_id: str,
     host_id: str,
     source_repo: str,
-    branch_name: str,
+    branch_name: str | None,
     base_branch: str | None,
     auto_fetch_base: bool,
+    auto_create: bool = False,
+    initial_prompt: str | None = None,
     user_id: str | None,
     conversation_store: ConversationStore,
     request: Request,
@@ -8790,6 +8927,8 @@ def _spawn_worktree_creation_task(
             branch_name=branch_name,
             base_branch=base_branch,
             auto_fetch_base=auto_fetch_base,
+            auto_create=auto_create,
+            initial_prompt=initial_prompt,
             user_id=user_id,
             conversation_store=conversation_store,
             request=request,
@@ -8804,9 +8943,11 @@ async def _run_worktree_creation(
     session_id: str,
     host_id: str,
     source_repo: str,
-    branch_name: str,
+    branch_name: str | None,
     base_branch: str | None,
     auto_fetch_base: bool,
+    auto_create: bool = False,
+    initial_prompt: str | None = None,
     user_id: str | None,
     conversation_store: ConversationStore,
     request: Request,
@@ -8837,6 +8978,21 @@ async def _run_worktree_creation(
         create_worktree_on_host,
     )
 
+    if auto_create:
+        _publish_worktree_log(session_id, "Generating a branch name…")
+        branch_name = await _generate_auto_worktree_branch(
+            session_id=session_id,
+            initial_prompt=initial_prompt,
+            conversation_store=conversation_store,
+        )
+        _publish_worktree_status(session_id, "creating", branch=branch_name)
+        _publish_worktree_log(session_id, f"Using branch '{branch_name}'.")
+    if branch_name is None:
+        _publish_worktree_status(
+            session_id, "failed", branch=None, error="worktree branch name is missing"
+        )
+        return
+
     host_registry = getattr(request.app.state, "host_registry", None)
     if host_registry is None:
         _publish_worktree_status(
@@ -8849,11 +9005,22 @@ async def _run_worktree_creation(
             session_id, "failed", branch=branch_name, error="host is offline"
         )
         return
+    if auto_create and not host_conn.hello.managed_worktree_leases:
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=branch_name,
+            error="host must be upgraded before auto worktree creation can be used",
+        )
+        return
 
     def _on_log(line: str) -> None:
         _publish_worktree_log(session_id, line)
 
     try:
+        auto_options: dict[str, Any] = (
+            {"auto_reuse": True, "lease_owner": session_id} if auto_create else {}
+        )
         created = await create_worktree_on_host(
             host_registry=host_registry,
             host_conn=host_conn,
@@ -8862,6 +9029,7 @@ async def _run_worktree_creation(
             base_branch=base_branch,
             auto_fetch_base=auto_fetch_base,
             on_log=_on_log,
+            **auto_options,
         )
     except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:
         _logger.warning("Worktree creation failed for %s: %s", session_id, exc.message)
@@ -8888,6 +9056,16 @@ async def _run_worktree_creation(
             workspace=created.worktree_path,
             git_branch=created.branch,
         )
+        if auto_create:
+            await asyncio.to_thread(
+                conversation_store.set_labels,
+                session_id,
+                {
+                    "omnigent.auto_worktree": "1",
+                    "omnigent.auto_worktree.source_repo": source_repo,
+                    "omnigent.auto_worktree.base_ref": base_branch or "",
+                },
+            )
     except Exception:  # noqa: BLE001
         _logger.exception("Failed to patch workspace for %s", session_id)
         _publish_worktree_status(

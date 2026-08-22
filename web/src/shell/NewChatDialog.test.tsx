@@ -40,7 +40,7 @@ import {
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { PromptProfile } from "@/hooks/usePromptProfiles";
 import { useHostFilesystem, type HostFilesystemEntry } from "@/hooks/useHostFilesystem";
-import { useHostWorktrees } from "@/hooks/useHostWorktrees";
+import { useHostRepository, useHostWorktrees } from "@/hooks/useHostWorktrees";
 import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import type { Conversation } from "@/hooks/useConversations";
@@ -108,7 +108,10 @@ vi.mock("@/hooks/useHostFilesystem", () => ({
 }));
 // Mocked so it doesn't hit authenticatedFetch (which would pollute the
 // call list the create-flow assertions index into positionally).
-vi.mock("@/hooks/useHostWorktrees", () => ({ useHostWorktrees: vi.fn() }));
+vi.mock("@/hooks/useHostWorktrees", () => ({
+  useHostWorktrees: vi.fn(),
+  useHostRepository: vi.fn(),
+}));
 vi.mock("@/hooks/useDirectorySessions", () => ({
   useDirectorySessions: vi.fn(),
 }));
@@ -195,6 +198,7 @@ const useHostModelOptionsMock = vi.mocked(useHostModelOptions);
 const useAvailableAgentsMock = vi.mocked(useAvailableAgents);
 const useHostFilesystemMock = vi.mocked(useHostFilesystem);
 const useHostWorktreesMock = vi.mocked(useHostWorktrees);
+const useHostRepositoryMock = vi.mocked(useHostRepository);
 const useDirectorySessionsMock = vi.mocked(useDirectorySessions);
 const useRunnerHealthMock = vi.mocked(useRunnerHealthRegistration);
 const setPendingInitialPromptMock = vi.mocked(setPendingInitialPrompt);
@@ -725,6 +729,7 @@ function setupLandingMocks() {
   useAvailableAgentsMock.mockReset();
   useHostFilesystemMock.mockReset();
   useHostWorktreesMock.mockReset();
+  useHostRepositoryMock.mockReset();
   useDirectorySessionsMock.mockReset();
   useRunnerHealthMock.mockReset();
   // Reset the install hooks to their inert defaults: per-test overrides
@@ -756,6 +761,18 @@ function setupLandingMocks() {
   useHostWorktreesMock.mockReturnValue({
     data: undefined,
   } as unknown as ReturnType<typeof useHostWorktrees>);
+  useHostRepositoryMock.mockImplementation(
+    (...args) =>
+      ({
+        data: {
+          isGitRepository: true,
+          worktrees: useHostWorktreesMock(...args).data ?? [],
+          autoWorktreesSupported: true,
+        },
+        isLoading: false,
+        isError: false,
+      }) as unknown as ReturnType<typeof useHostRepository>,
+  );
   mockHosts([host("online")]);
   useHostModelOptionsMock.mockImplementation(
     (_hostId, harness) =>
@@ -2054,6 +2071,49 @@ describe("NewChatLandingScreen", () => {
     expect(body.git?.existing_worktree).toBe(true);
     expect(body.git?.branch_name).toBe("feature/x");
     expect(body.git?.base_branch).toBeUndefined();
+  });
+
+  it("hides worktree controls for a non-git workspace", async () => {
+    useHostRepositoryMock.mockReturnValue({
+      data: { isGitRepository: false, worktrees: [], autoWorktreesSupported: true },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useHostRepository>);
+    renderLanding();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-workspace-chip")).toHaveTextContent("repo"),
+    );
+    expect(screen.queryByTestId("new-chat-auto-worktree-toggle")).toBeNull();
+    expect(screen.queryByTestId("new-chat-landing-branch-chip")).toBeNull();
+  });
+
+  it("auto worktree mode selects only a base branch and sends server-owned naming", async () => {
+    useHostWorktreesMock.mockReturnValue({
+      data: [{ path: "/Users/corey/repo", branch: "main", is_main: true, detached: false }],
+    } as unknown as ReturnType<typeof useHostWorktrees>);
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    const toggle = await screen.findByTestId("new-chat-auto-worktree-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByTestId("new-chat-landing-branch-chip"));
+    const base = screen.getByTestId("new-chat-auto-base-branch-input") as HTMLInputElement;
+    expect(base.value).toBe("main");
+    expect(screen.queryByTestId("new-chat-landing-branch-input")).toBeNull();
+    fireEvent.change(base, { target: { value: "develop" } });
+
+    const { body } = await submitAndReadBody("fix login timeout");
+    expect(body.git).toEqual({
+      auto_create: true,
+      branch_name_prompt: "fix login timeout",
+      base_branch: "develop",
+      auto_fetch_base: false,
+    });
   });
 
   it("creates a new worktree when the prefilled branch name is edited", async () => {

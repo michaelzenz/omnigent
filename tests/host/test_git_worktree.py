@@ -8,6 +8,7 @@ root resolution, or removal ordering fails loud here.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -18,9 +19,11 @@ import pytest
 from omnigent.host.git_worktree import (
     CreatedWorktree,
     WorktreeError,
+    acquire_auto_worktree_streaming,
     create_worktree,
     list_worktrees,
     remove_worktree,
+    renew_auto_worktree_lease,
     validate_branch_name,
 )
 
@@ -155,6 +158,61 @@ def test_create_worktree_uses_omnigent_worktree_root(git_repo: Path) -> None:
     # The branch is actually checked out in the worktree (not just the dir made).
     assert _current_branch(Path(created.worktree_path)) == "feature/login"
     assert isinstance(created, CreatedWorktree)
+
+
+def test_auto_worktree_reuses_only_expired_clean_entry(git_repo: Path) -> None:
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/first-aaaaaa",
+        lease_owner="session-1",
+    )
+    second = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/second-bbbbbb",
+        lease_owner="session-2",
+    )
+    assert second.worktree_path != first.worktree_path
+
+    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
+    entries = json.loads(registry.read_text())
+    entries[first.worktree_path]["lease_expires_at"] = 0
+    registry.write_text(json.dumps(entries))
+
+    reused = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/third-cccccc",
+        lease_owner="session-3",
+    )
+    assert reused.worktree_path == first.worktree_path
+    assert _current_branch(Path(reused.worktree_path)) == "agent/third-cccccc"
+    assert _branch_exists(git_repo, "agent/first-aaaaaa")
+
+
+def test_auto_worktree_quarantines_expired_dirty_entry(git_repo: Path) -> None:
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/dirty-aaaaaa",
+        lease_owner="session-1",
+    )
+    dirty_file = Path(first.worktree_path) / "local.txt"
+    dirty_file.write_text("keep me")
+
+    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
+    entries = json.loads(registry.read_text())
+    entries[first.worktree_path]["lease_expires_at"] = 0
+    registry.write_text(json.dumps(entries))
+
+    acquired = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/new-bbbbbb",
+        lease_owner="session-2",
+    )
+    assert acquired.worktree_path != first.worktree_path
+    assert dirty_file.read_text() == "keep me"
+    assert renew_auto_worktree_lease(
+        worktree_path=first.worktree_path,
+        lease_owner="session-1",
+    )
 
 
 def test_create_worktree_resolves_repo_root_from_subdir(git_repo: Path) -> None:

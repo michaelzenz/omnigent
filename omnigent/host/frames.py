@@ -63,6 +63,8 @@ class HostFrameKind(str, Enum):
     REMOVE_WORKTREE_RESULT = "host.remove_worktree_result"
     LIST_WORKTREES = "host.list_worktrees"
     LIST_WORKTREES_RESULT = "host.list_worktrees_result"
+    RENEW_WORKTREE_LEASE = "host.renew_worktree_lease"
+    RENEW_WORKTREE_LEASE_RESULT = "host.renew_worktree_lease_result"
     CREATE_DIR = "host.create_dir"
     CREATE_DIR_RESULT = "host.create_dir_result"
     INSTALL_HARNESS = "host.install_harness"
@@ -123,6 +125,7 @@ class HostHelloFrame:
     skill_sync_harnesses: dict[str, bool] | None = None
     skill_search_roots: list[_JsonObject] | None = None
     memory_files: list[_JsonObject] | None = None
+    managed_worktree_leases: bool = False
 
 
 @dataclass
@@ -221,6 +224,7 @@ class HostStopRunnerFrame:
 
     request_id: str
     runner_id: str
+    missing_ok: bool = False
 
 
 @dataclass
@@ -478,6 +482,10 @@ class HostCreateWorktreeFrame:
     branch_name: str
     base_branch: str | None = None
     auto_fetch_base: bool = False
+    auto_reuse: bool = False
+    reuse_existing_branch: bool = False
+    lease_owner: str | None = None
+    lease_seconds: int = 86_400
 
 
 @dataclass
@@ -598,6 +606,27 @@ class HostListWorktreesResultFrame:
     request_id: str
     status: str
     worktrees: list[_JsonObject] | None = None
+    error: str | None = None
+
+
+@dataclass
+class HostRenewWorktreeLeaseFrame:
+    """Server → host: extend a managed worktree lease for its owner."""
+
+    request_id: str
+    worktree_path: str
+    lease_owner: str
+    lease_seconds: int = 86_400
+    release: bool = False
+
+
+@dataclass
+class HostRenewWorktreeLeaseResultFrame:
+    """Host → server: whether the managed worktree lease was renewed."""
+
+    request_id: str
+    status: str
+    renewed: bool = False
     error: str | None = None
 
 
@@ -910,6 +939,8 @@ HostFrame = (
     | HostRemoveWorktreeResultFrame
     | HostListWorktreesFrame
     | HostListWorktreesResultFrame
+    | HostRenewWorktreeLeaseFrame
+    | HostRenewWorktreeLeaseResultFrame
     | HostCreateDirFrame
     | HostCreateDirResultFrame
     | HostInstallHarnessFrame
@@ -978,6 +1009,11 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "skill_sync_harnesses": frame.skill_sync_harnesses,
                 "skill_search_roots": frame.skill_search_roots,
                 "memory_files": frame.memory_files,
+                **(
+                    {"managed_worktree_leases": True}
+                    if frame.managed_worktree_leases
+                    else {}
+                ),
             }
         )
     if isinstance(frame, HostHarnessReadinessFrame):
@@ -1025,6 +1061,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "kind": HostFrameKind.STOP_RUNNER.value,
                 "request_id": frame.request_id,
                 "runner_id": frame.runner_id,
+                **({"missing_ok": True} if frame.missing_ok else {}),
             }
         )
     if isinstance(frame, HostStopRunnerResultFrame):
@@ -1120,6 +1157,10 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "branch_name": frame.branch_name,
                 "base_branch": frame.base_branch,
                 "auto_fetch_base": frame.auto_fetch_base,
+                "auto_reuse": frame.auto_reuse,
+                "reuse_existing_branch": frame.reuse_existing_branch,
+                "lease_owner": frame.lease_owner,
+                "lease_seconds": frame.lease_seconds,
             }
         )
     if isinstance(frame, HostWorktreeLogFrame):
@@ -1175,6 +1216,27 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "request_id": frame.request_id,
                 "status": frame.status,
                 "worktrees": frame.worktrees,
+                "error": frame.error,
+            }
+        )
+    if isinstance(frame, HostRenewWorktreeLeaseFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.RENEW_WORKTREE_LEASE.value,
+                "request_id": frame.request_id,
+                "worktree_path": frame.worktree_path,
+                "lease_owner": frame.lease_owner,
+                "lease_seconds": frame.lease_seconds,
+                "release": frame.release,
+            }
+        )
+    if isinstance(frame, HostRenewWorktreeLeaseResultFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.RENEW_WORKTREE_LEASE_RESULT.value,
+                "request_id": frame.request_id,
+                "status": frame.status,
+                "renewed": frame.renewed,
                 "error": frame.error,
             }
         )
@@ -1399,6 +1461,10 @@ def _decode_known_host_frame(
             return _decode_list_worktrees(msg)
         case HostFrameKind.LIST_WORKTREES_RESULT:
             return _decode_list_worktrees_result(msg)
+        case HostFrameKind.RENEW_WORKTREE_LEASE:
+            return _decode_renew_worktree_lease(msg)
+        case HostFrameKind.RENEW_WORKTREE_LEASE_RESULT:
+            return _decode_renew_worktree_lease_result(msg)
         case HostFrameKind.CREATE_DIR:
             return _decode_create_dir(msg)
         case HostFrameKind.CREATE_DIR_RESULT:
@@ -1432,6 +1498,9 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
     :param msg: Decoded frame object.
     :returns: Typed host hello frame.
     """
+    managed_worktree_leases = msg.get("managed_worktree_leases", False)
+    if not isinstance(managed_worktree_leases, bool):
+        raise ValueError("frame field must be a bool: 'managed_worktree_leases'")
     return HostHelloFrame(
         version=_required_str(msg, "version"),
         frame_protocol_version=_required_int(msg, "frame_protocol_version"),
@@ -1446,6 +1515,7 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
         skill_sync_harnesses=optional_str_bool_map(msg, "skill_sync_harnesses"),
         skill_search_roots=_optional_object_list(msg, "skill_search_roots"),
         memory_files=_optional_object_list(msg, "memory_files"),
+        managed_worktree_leases=managed_worktree_leases,
     )
 
 
@@ -1517,9 +1587,13 @@ def _decode_stop_runner(msg: _JsonObject) -> HostStopRunnerFrame:
     :param msg: Decoded frame object.
     :returns: Typed stop-runner frame.
     """
+    missing_ok = msg.get("missing_ok", False)
+    if not isinstance(missing_ok, bool):
+        raise ValueError("frame field must be a bool: 'missing_ok'")
     return HostStopRunnerFrame(
         request_id=_required_str(msg, "request_id"),
         runner_id=_required_str(msg, "runner_id"),
+        missing_ok=missing_ok,
     )
 
 
@@ -1680,12 +1754,25 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
     auto_fetch_base = msg.get("auto_fetch_base", False)
     if not isinstance(auto_fetch_base, bool):
         raise ValueError("frame field must be a bool: 'auto_fetch_base'")
+    auto_reuse = msg.get("auto_reuse", False)
+    if not isinstance(auto_reuse, bool):
+        raise ValueError("frame field must be a bool: 'auto_reuse'")
+    reuse_existing_branch = msg.get("reuse_existing_branch", False)
+    if not isinstance(reuse_existing_branch, bool):
+        raise ValueError("frame field must be a bool: 'reuse_existing_branch'")
+    lease_seconds = msg.get("lease_seconds", 86_400)
+    if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or lease_seconds <= 0:
+        raise ValueError("frame field must be a positive int: 'lease_seconds'")
     return HostCreateWorktreeFrame(
         request_id=_required_str(msg, "request_id"),
         repo_path=_required_str(msg, "repo_path"),
         branch_name=_required_str(msg, "branch_name"),
         base_branch=_optional_nullable_str(msg, "base_branch"),
         auto_fetch_base=auto_fetch_base,
+        auto_reuse=auto_reuse,
+        reuse_existing_branch=reuse_existing_branch,
+        lease_owner=_optional_nullable_str(msg, "lease_owner"),
+        lease_seconds=lease_seconds,
     )
 
 
@@ -1781,6 +1868,36 @@ def _decode_list_worktrees_result(
         request_id=_required_str(msg, "request_id"),
         status=_required_str(msg, "status"),
         worktrees=raw,
+        error=_optional_nullable_str(msg, "error"),
+    )
+
+
+def _decode_renew_worktree_lease(msg: _JsonObject) -> HostRenewWorktreeLeaseFrame:
+    lease_seconds = msg.get("lease_seconds", 86_400)
+    if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or lease_seconds <= 0:
+        raise ValueError("frame field must be a positive int: 'lease_seconds'")
+    release = msg.get("release", False)
+    if not isinstance(release, bool):
+        raise ValueError("frame field must be a bool: 'release'")
+    return HostRenewWorktreeLeaseFrame(
+        request_id=_required_str(msg, "request_id"),
+        worktree_path=_required_str(msg, "worktree_path"),
+        lease_owner=_required_str(msg, "lease_owner"),
+        lease_seconds=lease_seconds,
+        release=release,
+    )
+
+
+def _decode_renew_worktree_lease_result(
+    msg: _JsonObject,
+) -> HostRenewWorktreeLeaseResultFrame:
+    renewed = msg.get("renewed", False)
+    if not isinstance(renewed, bool):
+        raise ValueError("frame field must be a bool: 'renewed'")
+    return HostRenewWorktreeLeaseResultFrame(
+        request_id=_required_str(msg, "request_id"),
+        status=_required_str(msg, "status"),
+        renewed=renewed,
         error=_optional_nullable_str(msg, "error"),
     )
 

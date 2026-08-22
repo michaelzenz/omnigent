@@ -517,8 +517,8 @@ export interface SandboxStatus {
  * log panel on the session page while the background worktree task runs.
  */
 export interface WorktreeStatus {
-  /** Current stage: `"creating"`, `"ready"`, or `"failed"`. */
-  stage: "creating" | "ready" | "failed";
+  /** Current creation or restore stage. */
+  stage: "creating" | "reacquiring" | "relocating" | "ready" | "failed";
   /** The branch being created, e.g. `"feature/login"`. */
   branch?: string | null;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */

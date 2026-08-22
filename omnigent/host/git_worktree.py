@@ -10,15 +10,27 @@ from __future__ import annotations
 
 import codecs
 import errno
+import json
 import os
 import re
 import select
 import shlex
 import shutil
 import subprocess
-from collections.abc import Callable
+import threading
+import time
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows uses the process lock below.
+    fcntl = None  # type: ignore[assignment]
+    import msvcrt
+else:  # pragma: no cover - Windows-only module.
+    msvcrt = None  # type: ignore[assignment]
 
 # Materializing a large monorepo worktree can take an unbounded amount of
 # time. Let git finish or fail naturally.
@@ -26,6 +38,8 @@ _GIT_TIMEOUT_S: float | None = None
 
 # Max directory-collision suffixes (``-2`` .. ``-N``) before giving up.
 _MAX_DIR_COLLISION_SUFFIX: int = 50
+_AUTO_LEASE_SECONDS = 86_400
+_AUTO_CACHE_PROCESS_LOCK = threading.RLock()
 
 # Chars git refuses in a ref: space, control chars, ``~^:?*[\``, DEL.
 # (``..``, leading ``-``/``.``, ``/`` edges, ``.lock``, ``@{`` are
@@ -326,6 +340,257 @@ class CreatedWorktree:
 
     worktree_path: str
     branch: str
+
+
+def _auto_cache_paths() -> tuple[Path, Path]:
+    root = Path.home() / ".omnigent" / "worktrees"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / ".auto-worktrees.json", root / ".auto-worktrees.lock"
+
+
+@contextmanager
+def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
+    """Lock and persist the host-local managed-worktree registry."""
+    registry_path, lock_path = _auto_cache_paths()
+    with _AUTO_CACHE_PROCESS_LOCK, lock_path.open("a+", encoding="utf-8") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        elif msvcrt is not None:  # pragma: no cover - Windows.
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write("\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            deadline = time.monotonic() + 120.0
+            while True:
+                try:
+                    getattr(msvcrt, "locking")(
+                        lock_file.fileno(),
+                        getattr(msvcrt, "LK_NBLCK"),
+                        1,
+                    )
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise WorktreeError(
+                            "timed out waiting for the managed worktree lock"
+                        ) from exc
+                    time.sleep(0.1)
+        try:
+            try:
+                raw = json.loads(registry_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                raw = {}
+            entries: dict[str, object] = raw if isinstance(raw, dict) else {}
+            yield entries
+            temp_path = registry_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(entries, sort_keys=True), encoding="utf-8")
+            os.replace(temp_path, registry_path)
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            elif msvcrt is not None:  # pragma: no cover - Windows.
+                lock_file.seek(0)
+                getattr(msvcrt, "locking")(
+                    lock_file.fileno(),
+                    getattr(msvcrt, "LK_UNLCK"),
+                    1,
+                )
+
+
+def _worktree_is_clean(path: str) -> bool:
+    result = _run_git(
+        [
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+            "--ignore-submodules=none",
+        ],
+        cwd=path,
+    )
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() == ""
+
+
+def acquire_auto_worktree_streaming(
+    *,
+    repo_path: str,
+    branch_name: str,
+    lease_owner: str,
+    base_branch: str | None = None,
+    auto_fetch_base: bool = False,
+    lease_seconds: int = _AUTO_LEASE_SECONDS,
+    reuse_existing_branch: bool = False,
+    on_log: Callable[[str], None] | None = None,
+    on_reclaim: Callable[[str, str], bool] | None = None,
+) -> CreatedWorktree:
+    """Atomically reuse a clean managed worktree or create and lease one."""
+    validate_branch_name(branch_name)
+    repo_root = _main_work_tree(repo_path)
+    if base_branch is not None and auto_fetch_base:
+        _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
+    base_ref = branch_name if reuse_existing_branch else (base_branch or "HEAD")
+    base_result = _run_git(
+        ["rev-parse", "--verify", "--end-of-options", base_ref],
+        cwd=repo_root,
+    )
+    if base_result.returncode != 0:
+        raise WorktreeError(f"base branch does not exist: {base_ref}")
+    base_commit = base_result.stdout.strip()
+    now = int(time.time())
+
+    with _locked_auto_cache() as raw_entries:
+        if not isinstance(raw_entries, dict):  # pragma: no cover - context normalizes this
+            raise WorktreeError("managed worktree registry is invalid")
+        worktrees = {worktree.path: worktree for worktree in list_worktrees(repo_path=repo_root)}
+        candidates: list[tuple[str, dict[str, object]]] = []
+        for path, raw_entry in list(raw_entries.items()):
+            if not isinstance(path, str) or not isinstance(raw_entry, dict):
+                raw_entries.pop(path, None)
+                continue
+            if raw_entry.get("repo_root") != repo_root:
+                continue
+            worktree = worktrees.get(path)
+            if worktree is None or worktree.is_main:
+                raw_entries.pop(path, None)
+                continue
+            expires_at = raw_entry.get("lease_expires_at")
+            owner = raw_entry.get("lease_owner")
+            if owner == lease_owner or not isinstance(expires_at, int) or expires_at <= now:
+                candidates.append((path, raw_entry))
+
+        def _last_used(candidate: tuple[str, dict[str, object]]) -> int:
+            value = candidate[1].get("last_used_at")
+            return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+        for path, entry in sorted(candidates, key=_last_used):
+            same_owner = entry.get("lease_owner") == lease_owner
+            worktree = worktrees[path]
+            if same_owner and worktree.branch == branch_name:
+                entry.update(
+                    {
+                        "lease_expires_at": now + lease_seconds,
+                        "last_used_at": now,
+                        "health": "ready",
+                    }
+                )
+                if on_log is not None:
+                    on_log(f"Reacquired existing worktree {path}.")
+                return CreatedWorktree(worktree_path=path, branch=branch_name)
+            previous_owner = entry.get("lease_owner")
+            if (
+                isinstance(previous_owner, str)
+                and previous_owner != lease_owner
+                and on_reclaim is not None
+                and not on_reclaim(previous_owner, path)
+            ):
+                continue
+            if not _worktree_is_clean(path):
+                entry["health"] = "dirty"
+                entry["lease_expires_at"] = None
+                continue
+            previous_generation = entry.get("generation")
+            generation = (
+                previous_generation
+                if isinstance(previous_generation, int) and not isinstance(previous_generation, bool)
+                else 0
+            ) + 1
+            entry.update(
+                {
+                    "lease_owner": lease_owner,
+                    "lease_expires_at": now + lease_seconds,
+                    "generation": generation,
+                    "health": "preparing",
+                    "last_used_at": now,
+                }
+            )
+            if on_log is not None:
+                on_log(f"Reusing managed worktree {path}…")
+            try:
+                switch_args = (
+                    ["switch", branch_name]
+                    if reuse_existing_branch
+                    else ["switch", "-c", branch_name, base_commit]
+                )
+                result = _run_git_streaming(
+                    switch_args,
+                    cwd=path,
+                    on_log=on_log,
+                    label="git switch failed",
+                )
+            except WorktreeError:
+                entry["health"] = "quarantined"
+                entry["lease_owner"] = None
+                entry["lease_expires_at"] = None
+                continue
+            if result.returncode != 0:
+                entry["health"] = "quarantined"
+                entry["lease_owner"] = None
+                entry["lease_expires_at"] = None
+                continue
+            entry.update(
+                {
+                    "branch": branch_name,
+                    "base_commit": base_commit,
+                    "health": "ready",
+                }
+            )
+            return CreatedWorktree(worktree_path=path, branch=branch_name)
+
+        if reuse_existing_branch:
+            worktree_path = _resolve_worktree_path(branch_name)
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+            result = _run_git_streaming(
+                ["worktree", "add", str(worktree_path), branch_name],
+                cwd=repo_root,
+                on_log=on_log,
+                label="git worktree add failed",
+            )
+            if result.returncode != 0:
+                raise _git_error("git worktree add failed", result)
+            created = CreatedWorktree(worktree_path=str(worktree_path), branch=branch_name)
+        else:
+            created = create_worktree_streaming(
+                repo_path=repo_root,
+                branch_name=branch_name,
+                base_branch=base_commit,
+                auto_fetch_base=False,
+                on_log=on_log,
+            )
+        raw_entries[created.worktree_path] = {
+            "repo_root": repo_root,
+            "branch": created.branch,
+            "base_commit": base_commit,
+            "lease_owner": lease_owner,
+            "lease_expires_at": now + lease_seconds,
+            "generation": 1,
+            "health": "ready",
+            "created_at": now,
+            "last_used_at": now,
+        }
+        return created
+
+
+def renew_auto_worktree_lease(
+    *,
+    worktree_path: str,
+    lease_owner: str,
+    lease_seconds: int = _AUTO_LEASE_SECONDS,
+    release: bool = False,
+) -> bool:
+    """Extend a managed lease only when the caller still owns it."""
+    now = int(time.time())
+    with _locked_auto_cache() as entries:
+        entry = entries.get(worktree_path)
+        if not isinstance(entry, dict) or entry.get("lease_owner") != lease_owner:
+            return False
+        entry["lease_expires_at"] = 0 if release else now + lease_seconds
+        if release:
+            entry["lease_owner"] = None
+        entry["last_used_at"] = now
+        return True
 
 
 def create_worktree(

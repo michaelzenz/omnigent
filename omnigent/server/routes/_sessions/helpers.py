@@ -5612,6 +5612,8 @@ async def _stop_session_host_runner(
     host_id: str,
     runner_id: str,
     host_registry: Any,
+    *,
+    missing_ok: bool = False,
 ) -> bool:
     """
     Terminate the host-launched runner backing a host-spawned session.
@@ -5674,7 +5676,11 @@ async def _stop_session_host_runner(
     future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()
     conn.pending_stops[request_id] = future
     stop_frame = encode_host_frame(
-        HostStopRunnerFrame(request_id=request_id, runner_id=runner_id),
+        HostStopRunnerFrame(
+            request_id=request_id,
+            runner_id=runner_id,
+            missing_ok=missing_ok,
+        ),
     )
     try:
         host_registry.send_text(conn, stop_frame)
@@ -7918,8 +7924,14 @@ async def _create_session_worktree(
             "git worktree creation requires a source repository workspace",
             code=ErrorCode.INVALID_INPUT,
         )
+    if git.auto_create or git.branch_name is None:
+        raise OmnigentError(
+            "auto worktree creation must be handled by session orchestration",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    branch_name = git.branch_name
     try:
-        validate_branch_name(git.branch_name)
+        validate_branch_name(branch_name)
     except WorktreeError as exc:
         raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
 
@@ -7930,7 +7942,7 @@ async def _create_session_worktree(
             host_registry=host_registry,
             host_conn=host_conn,
             repo_path=source_repo,
-            branch_name=git.branch_name,
+            branch_name=branch_name,
             base_branch=git.base_branch,
             auto_fetch_base=git.auto_fetch_base,
         )
@@ -8408,6 +8420,15 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     """
     if not labels:
         return
+    auto_worktree_key = next(
+        (key for key in labels if key == "omnigent.auto_worktree" or key.startswith("omnigent.auto_worktree.")),
+        None,
+    )
+    if auto_worktree_key is not None:
+        raise OmnigentError(
+            f"label {auto_worktree_key!r} is server-internal and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
     if _TURN_ACTOR_LABEL in labels:
         raise OmnigentError(
             f"label {_TURN_ACTOR_LABEL!r} is server-internal and cannot be set by clients",

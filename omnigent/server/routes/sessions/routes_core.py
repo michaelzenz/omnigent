@@ -374,6 +374,19 @@ def register_core_routes(
             and conv is not None
             and conv.workspace is not None
         ):
+            initial_prompt = body.git.branch_name_prompt or next(
+                (
+                    text
+                    for item in body.initial_items
+                    if item.type == "message"
+                    for part in item.data.get("content", [])
+                    if isinstance(part, dict)
+                    and part.get("type") == "input_text"
+                    and isinstance((text := part.get("text")), str)
+                    and text.strip()
+                ),
+                None,
+            )
             _spawn_worktree_creation_task(
                 session_id=conv.id,
                 host_id=body.host_id,
@@ -381,6 +394,8 @@ def register_core_routes(
                 branch_name=body.git.branch_name,
                 base_branch=body.git.base_branch,
                 auto_fetch_base=body.git.auto_fetch_base,
+                auto_create=body.git.auto_create,
+                initial_prompt=initial_prompt,
                 user_id=user_id,
                 conversation_store=conversation_store,
                 request=request,

@@ -18,6 +18,7 @@ from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostListWorktreesFrame,
     HostRemoveWorktreeFrame,
+    HostRenewWorktreeLeaseFrame,
     encode_host_frame,
 )
 from omnigent.server.host_registry import HostConnection, HostRegistry
@@ -87,6 +88,7 @@ async def _await_host_worktree_result(
     request_id: str,
     frame: str,
     op: str,
+    timeout_s: float | None = None,
 ) -> dict[str, object]:
     """
     Send a worktree frame and await its matching result over the tunnel.
@@ -109,6 +111,7 @@ async def _await_host_worktree_result(
     """
     future: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
     pending[request_id] = future
+    effective_timeout = _WORKTREE_TIMEOUT_S if timeout_s is None else timeout_s
     try:
         try:
             host_registry.send_text(host_conn, frame)
@@ -117,13 +120,13 @@ async def _await_host_worktree_result(
                 f"host '{host_conn.host_id}' connection lost during {op}"
             ) from exc
         try:
-            if _WORKTREE_TIMEOUT_S is None:
+            if effective_timeout is None:
                 return await future
-            return await asyncio.wait_for(future, timeout=_WORKTREE_TIMEOUT_S)
+            return await asyncio.wait_for(future, timeout=effective_timeout)
         except asyncio.TimeoutError as exc:
             raise WorktreeHostUnavailableError(
                 f"host '{host_conn.host_id}' did not respond to {op} within "
-                f"{_WORKTREE_TIMEOUT_S:.0f}s"
+                f"{effective_timeout:.0f}s"
             ) from exc
         except ConnectionError as exc:
             raise WorktreeHostUnavailableError(
@@ -142,6 +145,10 @@ async def create_worktree_on_host(
     base_branch: str | None,
     auto_fetch_base: bool = False,
     on_log: Callable[[str], None] | None = None,
+    auto_reuse: bool = False,
+    reuse_existing_branch: bool = False,
+    lease_owner: str | None = None,
+    lease_seconds: int = 86_400,
 ) -> CreatedWorktree:
     """Send a ``host.create_worktree`` frame and await the result.
 
@@ -174,6 +181,10 @@ async def create_worktree_on_host(
                 branch_name=branch_name,
                 base_branch=base_branch,
                 auto_fetch_base=auto_fetch_base,
+                auto_reuse=auto_reuse,
+                reuse_existing_branch=reuse_existing_branch,
+                lease_owner=lease_owner,
+                lease_seconds=lease_seconds,
             )
         )
         result = await _await_host_worktree_result(
@@ -287,3 +298,56 @@ async def list_worktrees_on_host(
     if not isinstance(worktrees, list):
         raise WorktreeProxyError("host returned an incomplete worktree list")
     return worktrees
+
+
+async def renew_worktree_lease_on_host(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    worktree_path: str,
+    lease_owner: str,
+    lease_seconds: int = 86_400,
+    release: bool = False,
+) -> bool:
+    """Renew a managed worktree lease when ``lease_owner`` still owns it."""
+    request_id = secrets.token_hex(8)
+    frame = encode_host_frame(
+        HostRenewWorktreeLeaseFrame(
+            request_id=request_id,
+            worktree_path=worktree_path,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+            release=release,
+        )
+    )
+    result = await _await_host_worktree_result(
+        host_registry=host_registry,
+        host_conn=host_conn,
+        pending=host_conn.pending_renew_worktree_leases,
+        request_id=request_id,
+        frame=frame,
+        op="worktree lease renewal",
+        timeout_s=10.0,
+    )
+    if result.get("status") != "ok":
+        raise WorktreeProxyError(
+            f"worktree lease renewal failed: {result.get('error') or 'host reported no detail'}"
+        )
+    return result.get("renewed") is True
+
+
+async def release_worktree_lease_on_host(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    worktree_path: str,
+    lease_owner: str,
+) -> bool:
+    """Release a managed lease after explicit session deletion."""
+    return await renew_worktree_lease_on_host(
+        host_registry=host_registry,
+        host_conn=host_conn,
+        worktree_path=worktree_path,
+        lease_owner=lease_owner,
+        release=True,
+    )
