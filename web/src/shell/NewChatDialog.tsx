@@ -227,7 +227,9 @@ import { ComposerMicButton } from "@/components/ComposerMicButton";
 import type { CostControlMode } from "@/components/CostRoutingControl";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentRowTooltip } from "@/components/AgentHoverCard";
-import type { AgentBundleInput } from "@/lib/agentBundle";
+import { CreateAgentDialog } from "./CreateAgentDialog";
+import { buildAgentBundle, type AgentBundleInput } from "@/lib/agentBundle";
+import { createBundledSession, launchRunner } from "@/lib/sessionsApi";
 import { PromptProfileConfigControl, type ProfileSelection } from "./ProfileControls";
 import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles";
 
@@ -2328,6 +2330,9 @@ export function NewChatLandingScreen() {
   const omniharnessBaseAgent = harnessEntries.find(
     (agent) => agent.name === OMNIHARNESS_AGENT_NAME,
   );
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
+  const [pendingAgent, setPendingAgent] = useState<AgentBundleInput | null>(null);
+  const PENDING_AGENT_ID = "__pending_custom_agent__";
   // Surface element backing the iOS native server switcher overlay, which
   // the in-session view shows too — the picker stays reachable while starting
   // a new session. The hook hides it whenever the sidebar covers the surface.
@@ -3063,11 +3068,27 @@ export function NewChatLandingScreen() {
   ]);
 
   // A target pick only wins while it exists in the execution-target catalog.
+  // Pending custom bundles are local virtual entries and cannot run in a
+  // managed sandbox, whose create path does not provision uploaded bundles.
+  const pendingAgentAllowedOnTarget = !sandboxSelected;
   const pickedAgentExists = agentList.some((agent) => agent.id === pickedAgentId);
-  const effectiveAgentId = (pickedAgentExists ? pickedAgentId : agentList[0]?.id) ?? null;
+  const effectiveAgentId =
+    pickedAgentId === PENDING_AGENT_ID && pendingAgentAllowedOnTarget
+      ? PENDING_AGENT_ID
+      : (pickedAgentExists ? pickedAgentId : agentList[0]?.id) ?? null;
   const selectedAgent = useMemo(
-    () => agentList.find((agent) => agent.id === effectiveAgentId),
-    [agentList, effectiveAgentId],
+    () =>
+      effectiveAgentId === PENDING_AGENT_ID && pendingAgent
+        ? ({
+            id: PENDING_AGENT_ID,
+            name: pendingAgent.name,
+            display_name: pendingAgent.name,
+            description: pendingAgent.description ?? null,
+            harness: pendingAgent.harness ?? null,
+            skills: [],
+          } satisfies AvailableAgent)
+        : agentList.find((agent) => agent.id === effectiveAgentId),
+    [agentList, effectiveAgentId, pendingAgent],
   );
   const selectedNativeHarness = nativeCodingAgentForAvailableAgent(selectedAgent)?.harness ?? null;
   const omniharnessSelected = selectedAgent?.id === omniharnessBaseAgent?.id;
@@ -4087,6 +4108,10 @@ export function NewChatLandingScreen() {
     setPickedAgentId(agent.id);
     writeLastAgentId(agent.id);
   };
+  const handleSelectPending = () => {
+    setPickedAgentId(PENDING_AGENT_ID);
+    setPickedHarness(null);
+  };
 
   function selectHost(hostId: string) {
     // Persist the explicit pick even when it matches the current selection, so
@@ -4272,7 +4297,29 @@ export function NewChatLandingScreen() {
         ? { ...(baseLabels ?? {}), [PROJECT_LABEL_KEY]: selectedProject }
         : baseLabels;
       let data: { id: string };
-      {
+
+      if (effectiveAgentId === PENDING_AGENT_ID && pendingAgent) {
+        const bundle = await buildAgentBundle(pendingAgent);
+        const metadata: Record<string, unknown> = {};
+        if (workspaceTrimmed) metadata.workspace = workspaceTrimmed;
+        if (selectedProject) metadata.labels = { [PROJECT_LABEL_KEY]: selectedProject };
+        data = await createBundledSession(
+          bundle,
+          metadata as Parameters<typeof createBundledSession>[1],
+        );
+        if (!sandboxSelected && selectedHostId && workspaceTrimmed) {
+          const gitOpts = shouldCreateManualWorktree
+            ? {
+                branchName: trimmedBranch,
+                baseBranch: baseBranch.trim() || undefined,
+              }
+            : startInExistingWorktree
+              ? { branchName: trimmedBranch, existingWorktree: true }
+              : undefined;
+          await launchRunner(selectedHostId, data.id, workspaceTrimmed, gitOpts);
+        }
+        setPendingAgent(null);
+      } else {
         // Bind to the selected registered profile or harness agent.
         // Which pushed row is ours: the one this tab has never seen, bound
         // to the agent and host we're about to ask for. Sub-agent children
@@ -4919,11 +4966,10 @@ export function NewChatLandingScreen() {
                     hasAgents={agentList.length > 0}
                     host={harnessWarningHost}
                     onSelectAgent={handleSelectAgent}
-                    pendingAgent={null}
-                    pendingAgentId="__unused_pending_profile__"
-                    onSelectPending={() => {}}
-                    onCreateCustomAgent={() => {}}
-                    allowCreateCustomAgent={false}
+                    pendingAgent={pendingAgentAllowedOnTarget ? pendingAgent : null}
+                    pendingAgentId={PENDING_AGENT_ID}
+                    onSelectPending={handleSelectPending}
+                    onCreateCustomAgent={() => setCreateAgentOpen(true)}
                     sandboxSelected={sandboxSelected}
                     triggerTooltip={
                       smartRoutingHarnessSelected ? AUTO_HARNESS_DESCRIPTION : undefined
@@ -5725,6 +5771,16 @@ export function NewChatLandingScreen() {
         agentName={setupTarget?.agentName}
         harness={setupTarget?.harness ?? null}
         host={setupTarget?.host}
+      />
+
+      <CreateAgentDialog
+        open={createAgentOpen}
+        onOpenChange={setCreateAgentOpen}
+        onCreate={(input) => {
+          setPendingAgent(input);
+          setPickedAgentId(PENDING_AGENT_ID);
+          setPickedHarness(null);
+        }}
       />
     </div>
   );

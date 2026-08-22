@@ -3459,6 +3459,22 @@ describe("NewChatLandingScreen agent picker + config gear", () => {
     // opencode-native has no knobs and isn't routable → no gear.
     expect(screen.queryByTestId("new-chat-landing-config-gear")).toBeNull();
   });
+
+  it("offers custom-agent creation on a connected host", async () => {
+    renderLanding();
+    openPicker();
+    fireEvent.click(screen.getByTestId("new-chat-landing-create-agent"));
+    await waitFor(() => expect(screen.getByTestId("create-agent-dialog")).toBeTruthy());
+  });
+
+  it("hides custom-agent creation for managed sandboxes", async () => {
+    renderLanding({ managed_sandboxes_enabled: true });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain("New Sandbox"),
+    );
+    openPicker();
+    expect(screen.queryByTestId("new-chat-landing-create-agent")).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
