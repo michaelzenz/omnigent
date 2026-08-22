@@ -173,6 +173,17 @@ interface ElectronDesktopApi extends NativeShellApi {
   /** Clear the CLI-path override (revert to auto-detection); resolves status. */
   resetCliPath?: () => Promise<CliStatus | null>;
   /**
+   * Detect whether Cursor and/or VS Code are installed so the SPA can
+   * show/hide the "Open project" button. Returns null on older shells.
+   */
+  getEditorCapabilities?: () => Promise<ProjectEditorCapabilities | null>;
+  /**
+   * Open a workspace in the given editor. For remote hosts, pass `sshAlias`
+   * (the SSH config alias) to launch via `--remote ssh-remote+<alias>`.
+   * Absent on older shells.
+   */
+  openProject?: (params: OpenProjectParams) => Promise<OpenProjectResult>;
+  /**
    * Open/navigate a conversation's embedded browser view. Present only on
    * desktop shells new enough to ship the embedded browser feature — its
    * presence is the capability marker the whole `browser*` suite ships with.
@@ -221,6 +232,30 @@ export interface HostIdentity {
   cliInstalled: boolean;
   /** This machine's host id, or null if it has none yet. */
   hostId: string | null;
+}
+
+/** Which editor CLIs are detected on the desktop machine. */
+export interface ProjectEditorCapabilities {
+  cursor: boolean;
+  vscode: boolean;
+}
+
+/** Editor to launch when opening a project. */
+export type ProjectEditor = "cursor" | "vscode";
+
+/** Parameters for opening a workspace in an external editor. */
+export interface OpenProjectParams {
+  editor: ProjectEditor;
+  /** Absolute path to the workspace directory. */
+  workspace: string;
+  /** SSH config alias for a remote host; omit/null for a local workspace. */
+  sshAlias?: string | null;
+}
+
+/** Result of an open-project launch from the desktop shell. */
+export interface OpenProjectResult {
+  ok: boolean;
+  error?: string;
 }
 
 /** Result of a host control action from the desktop shell. */
@@ -809,5 +844,38 @@ export async function resetCliPath(): Promise<CliStatus | null> {
   } catch (err) {
     console.warn("[nativeBridge] electron resetCliPath failed:", err);
     return null;
+  }
+}
+
+/**
+ * Detect whether the Cursor and/or VS Code editor CLIs are installed on the
+ * desktop machine. Resolves `null` outside the Electron shell or under a
+ * shell too old to support the editor bridge.
+ */
+export async function getEditorCapabilities(): Promise<ProjectEditorCapabilities | null> {
+  const electron = electronApi();
+  if (!electron?.getEditorCapabilities) return null;
+  try {
+    return await electron.getEditorCapabilities();
+  } catch (err) {
+    console.warn("[nativeBridge] electron getEditorCapabilities failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Open a workspace in the given editor (Cursor or VS Code) via the desktop
+ * shell. For remote hosts, pass `sshAlias` (the SSH config alias) to launch
+ * via `--remote ssh-remote+<alias>`; omit it for a local workspace. Resolves
+ * `{ ok: false, error }` on failure (editor not found, bad path).
+ */
+export async function openProject(params: OpenProjectParams): Promise<OpenProjectResult> {
+  const electron = electronApi();
+  if (!electron?.openProject) return { ok: false, error: "not running under the desktop shell" };
+  try {
+    return await electron.openProject(params);
+  } catch (err) {
+    console.warn("[nativeBridge] electron openProject failed:", err);
+    return { ok: false, error: String(err) };
   }
 }

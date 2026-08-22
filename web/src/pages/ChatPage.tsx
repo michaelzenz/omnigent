@@ -14,7 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@/lib/routing";
 import {
   ArrowUpIcon,
@@ -27,6 +27,7 @@ import {
   CopyIcon,
   FileTextIcon,
   FolderIcon,
+  FolderOpenIcon,
   GitBranchIcon,
   GitForkIcon,
   ImageIcon,
@@ -114,7 +115,13 @@ import {
   onNativeViewModeChanged,
   setNativeServerSwitcherHidden,
   setNativeViewMode,
+  getEditorCapabilities,
+  getHostIdentity,
+  isElectronShell,
+  openProject,
 } from "@/lib/nativeBridge";
+import { fetchSshConnections } from "@/lib/sshApi";
+import type { SshConnection } from "@/lib/sshConnectionPreferences";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { agentRootName, switchTargetCarriesHistory } from "@/lib/forkHarness";
@@ -5465,6 +5472,123 @@ export function composerHarnessLabel(
 }
 
 /**
+ * "Open project" dropdown button for the composer status line.
+ *
+ * Shows a small dropdown that lets the user open the session's workspace in
+ * Cursor or VS Code. Only rendered inside the Electron desktop shell, and
+ * only when at least one editor is detected and a workspace is bound.
+ *
+ * For remote hosts, the button matches the session's `hostId` against the
+ * server's SSH connections and uses the matching connection's SSH alias to
+ * launch via `--remote ssh-remote+<alias>`. For the local host (or sessions
+ * with no host), the workspace opens directly.
+ */
+function OpenProjectButton({
+  hostId,
+  workspace,
+}: {
+  hostId: string | null | undefined;
+  workspace: string | null | undefined;
+}) {
+  const [capabilities, setCapabilities] = useState<{
+    cursor: boolean;
+    vscode: boolean;
+  } | null>(null);
+  const [localHostId, setLocalHostId] = useState<string | null>(null);
+  const [launching, setLaunching] = useState(false);
+
+  // Fetch editor capabilities + local host identity once from the Electron shell.
+  useEffect(() => {
+    if (!isElectronShell()) return;
+    void getEditorCapabilities().then((caps) => {
+      if (caps) setCapabilities(caps);
+    });
+    void getHostIdentity().then((identity) => {
+      if (identity) setLocalHostId(identity.hostId);
+    });
+  }, []);
+
+  // Fetch SSH connections from the server (TanStack cache).
+  const { data: sshData } = useQuery({
+    queryKey: ["ssh-connections"],
+    queryFn: () => fetchSshConnections(),
+    staleTime: 30_000,
+    enabled: isElectronShell(),
+  });
+
+  // Resolve the SSH alias for this session's remote host, if any.
+  const sshAlias = useMemo(() => {
+    if (!hostId || !sshData) return null;
+    // Local host → no SSH alias needed.
+    if (localHostId && hostId === localHostId) return null;
+    // Session has no host → local, no SSH needed.
+    if (!hostId) return null;
+    // Find a matching online SSH connection for this host.
+    const conn = sshData.connections.find(
+      (c: SshConnection) => c.hostId === hostId && c.status === "online",
+    );
+    return conn?.alias ?? null;
+  }, [hostId, sshData, localHostId]);
+
+  const hasWorkspace = typeof workspace === "string" && workspace.length > 0;
+  const hasEditor = capabilities && (capabilities.cursor || capabilities.vscode);
+  // For remote hosts, a matching SSH connection is required. For local hosts
+  // (no hostId, or hostId === localHostId), no SSH connection is needed.
+  const isRemote = Boolean(hostId) && (!localHostId || hostId !== localHostId);
+  const remoteReady = !isRemote || sshAlias !== null;
+  const visible = isElectronShell() && hasWorkspace && hasEditor && remoteReady;
+
+  if (!visible) return null;
+
+  const handleOpen = async (editor: "cursor" | "vscode") => {
+    setLaunching(true);
+    try {
+      const result = await openProject({
+        editor,
+        workspace: workspace!,
+        sshAlias: sshAlias ?? undefined,
+      });
+      if (!result.ok && result.error) {
+        showToast(result.error);
+      }
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={launching}
+          className="h-6 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+          data-testid="open-project-trigger"
+        >
+          <FolderOpenIcon className="size-3.5" />
+          <span>Open</span>
+          <ChevronDownIcon className="size-3 opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-40">
+        {capabilities?.cursor && (
+          <DropdownMenuItem onSelect={() => void handleOpen("cursor")}>
+            <span className="flex items-center gap-2">Open in Cursor</span>
+          </DropdownMenuItem>
+        )}
+        {capabilities?.vscode && (
+          <DropdownMenuItem onSelect={() => void handleOpen("vscode")}>
+            <span className="flex items-center gap-2">Open in VS Code</span>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
  * Status tray under the composer: branch left, model/context right.
  * Pulled up behind the card so a shelf peeks below; skips render when empty.
  * Session cost lives in the header agent-info popover, not here.
@@ -5517,7 +5641,19 @@ function ComposerStatusLine({
   // the badge is where it lives and an unreachable session often has no
   // branch/ring at all.
   const showHostBadge = showHost && isHostBound;
-  if (!showBranch && !showPlanMode && !showGoal && !showRing && !showHostBadge) return null;
+  // The Open Project button needs Electron + a workspace; the button self-hides
+  // for the remaining conditions (editor detection, SSH match), but the tray
+  // must still render so the button has a place to appear.
+  const showOpenProject = isElectronShell() && !!conversationId && !!session?.workspace;
+  if (
+    !showBranch &&
+    !showPlanMode &&
+    !showGoal &&
+    !showRing &&
+    !showHostBadge &&
+    !showOpenProject
+  )
+    return null;
 
   return (
     <div
@@ -5540,6 +5676,9 @@ function ComposerStatusLine({
               {gitBranch}
             </span>
           </span>
+        )}
+        {conversationId && (
+          <OpenProjectButton hostId={session?.hostId} workspace={session?.workspace} />
         )}
       </div>
       {/* Right: model/effort and context ring, never shrinks. */}
