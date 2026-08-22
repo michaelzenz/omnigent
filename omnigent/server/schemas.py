@@ -2223,6 +2223,12 @@ class UpdateSessionRequest(BaseModel):
         legacy ``omni_project`` label, which is set via ``labels``.
     :param prompt_profile: Typed prompt-profile selection. Omitted leaves
         selection unchanged; null clears it.
+    :param workspace: New workspace directory (absolute or tilde-prefixed
+        path on the session's host). The directory must already exist and
+        must be within the agent's ``os_env.cwd`` boundary. Only supported
+        for OmniHarness sessions — native terminal harnesses cannot change
+        their process cwd at runtime. Owner-only. ``None`` (omitted)
+        leaves the workspace unchanged; an explicit ``null`` is rejected.
     """
 
     runner_id: str | None = None
@@ -2238,6 +2244,7 @@ class UpdateSessionRequest(BaseModel):
     terminal_launch_args: list[str] | None = None
     archived: bool | None = None
     project_id: str | None = None
+    workspace: str | None = None
     prompt_profile: PromptProfileSelection | None = None
     silent: bool = False
 

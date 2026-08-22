@@ -70,3 +70,12 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
             )
             rows = session.scalars(stmt).all()
             return [_asset_to_entity(row) for row in rows]
+
+    def delete_asset(self, task_id: str, asset_id: int) -> bool:
+        with self._session() as session:
+            row = session.get(SqlTaskAsset, (current_workspace_id(), asset_id))
+            if row is None or row.task_id != task_id:
+                return False
+            session.delete(row)
+            session.flush()
+            return True

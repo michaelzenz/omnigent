@@ -14,8 +14,9 @@ from omnigent.errors import OmnigentError
 from omnigent.llms.context_window import ModelPricing
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.server.routes._sessions.orchestration import (
+    PendingOmniHarnessUsage,
     _accumulate_session_usage,
-    _pending_omniharness_workloads,
+    _pending_omniharness_usage,
 )
 from omnigent.server.routes.statistics import create_statistics_router
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -207,7 +208,11 @@ def test_omnigent_completion_writes_one_ledger_row(
         "omnigent.usage_ledger.get_omniharness_model_metadata",
         lambda _model: metadata,
     )
-    _pending_omniharness_workloads[conv.id] = ("turn_abc", "code_review")
+    _pending_omniharness_usage[conv.id] = PendingOmniHarnessUsage(
+        turn_id="turn_abc",
+        workload="code_review",
+        purpose="user_interaction",
+    )
 
     _accumulate_session_usage(
         {
@@ -230,6 +235,52 @@ def test_omnigent_completion_writes_one_ledger_row(
     assert rows[0]["workload"] == "code_review"
     assert rows[0]["cost_usd"] == 0.02
     assert store.get_conversation(conv.id).session_usage["total_tokens"] == 15
+
+
+def test_accumulate_session_usage_records_task_event_routing_purpose(
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PuppyGarden queue-injected turns record purpose=task_event_routing."""
+    store = SqlAlchemyConversationStore(db_uri)
+    conv = store.create_conversation(title="broker-routing")
+    store.update_conversation(conv.id, harness_override="openai-agents")
+    pricing = ModelPricing(input_per_token=0.001, output_per_token=0.002)
+    metadata = SimpleNamespace(pricing=pricing, pricing_source="mlflow")
+    monkeypatch.setattr(
+        "omnigent.omniharness_model_catalog.find_omniharness_model_metadata",
+        lambda _model: metadata,
+    )
+    monkeypatch.setattr(
+        "omnigent.usage_ledger.get_omniharness_model_metadata",
+        lambda _model: metadata,
+    )
+    _pending_omniharness_usage[conv.id] = PendingOmniHarnessUsage(
+        turn_id="turn_routing_1",
+        workload=None,
+        purpose="task_event_routing",
+    )
+
+    _accumulate_session_usage(
+        {
+            "usage": {
+                "model": "model-a",
+                "input_tokens": 20,
+                "output_tokens": 10,
+                "total_tokens": 30,
+            }
+        },
+        conv.id,
+        store,
+    )
+
+    month = store.list_usage_ledger_months(RESERVED_USER_LOCAL)[0]
+    rows = store.list_usage_ledger_month(RESERVED_USER_LOCAL, month)
+    assert len(rows) == 1
+    assert rows[0]["purpose"] == "task_event_routing"
+    assert rows[0]["turn_id"] == "turn_routing_1"
+    assert rows[0]["cost_usd"] == 0.04
+    assert store.get_conversation(conv.id).session_usage["total_tokens"] == 30
 
 
 def test_model_pricing_crud_is_user_scoped_and_reset_restores_service(

@@ -33,9 +33,10 @@ const { autoUpdater } = require("electron-updater");
 const { createDesktopUpdater } = require("./desktop_updater");
 const { createUpdateOverlay } = require("./update_overlay");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { execFile } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 const { registerLocalhostCors } = require("./localhost_cors");
 const {
   normalizeUrl,
@@ -2101,6 +2102,65 @@ function isPinnedOriginSender(event) {
   return originOf(event.sender.getURL()) === pinned;
 }
 
+/**
+ * Detect whether the Cursor and VS Code editor CLIs are installed.
+ * Checks PATH and (on macOS) the standard /Applications locations.
+ * Returns `{ cursor: boolean, vscode: boolean }`.
+ */
+function detectEditorCapabilities() {
+  const result = { cursor: false, vscode: false };
+  const isMac = process.platform === "darwin";
+
+  function checkCli(name) {
+    try {
+      execFileSync(name, ["--version"], { stdio: "pipe", timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // 1. CLI on PATH
+  if (checkCli("cursor")) result.cursor = true;
+  if (checkCli("code")) result.vscode = true;
+
+  // 2. macOS .app bundles (CLI may not be on PATH even if the app is installed)
+  if (isMac) {
+    if (!result.cursor) {
+      for (const p of [
+        "/Applications/Cursor.app",
+        path.join(os.homedir(), "Applications", "Cursor.app"),
+      ]) {
+        try {
+          if (fs.existsSync(p)) {
+            result.cursor = true;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    if (!result.vscode) {
+      for (const p of [
+        "/Applications/Visual Studio Code.app",
+        path.join(os.homedir(), "Applications", "Visual Studio Code.app"),
+      ]) {
+        try {
+          if (fs.existsSync(p)) {
+            result.vscode = true;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Embedded browser pane
 //
@@ -2511,10 +2571,63 @@ function registerIpc() {
     return serverManager.startLocalServer(cliPath);
   });
 
-  // SPA → this machine's identity: is the CLI installed, and its host id. Both
-  // come from local config (no `omnigent host status` subprocess), so this is
-  // instant — it lets the new-session picker tag/connect "this machine" without
-  // waiting on the slow runner-status check.
+  // SPA → detect whether Cursor and/or VS Code are installed so the
+  // "Open project" button can show / hide and populate its menu.
+  // Checks PATH + standard app locations (macOS). Pinned-origin gated.
+  ipcMain.handle("omnigent:get-editor-capabilities", async (event) => {
+    if (!isPinnedOriginSender(event)) {
+      console.warn("[omnigent] get-editor-capabilities from untrusted sender dropped");
+      return null;
+    }
+    return detectEditorCapabilities();
+  });
+
+  // SPA → open a workspace in Cursor or VS Code, locally or over SSH remote.
+  // `editor` is validated to one of the two known values (no shell injection).
+  // `workspace` is passed as a single argv element via execFile (not a shell).
+  // `sshAlias` is optional: present → remote SSH launch, absent → local.
+  ipcMain.handle("omnigent:open-project", async (event, { editor, workspace, sshAlias }) => {
+    if (!isPinnedOriginSender(event)) {
+      throw new Error("open-project is only available to a connected server page");
+    }
+    if (editor !== "cursor" && editor !== "vscode") {
+      return { ok: false, error: `Unknown editor: ${editor}` };
+    }
+    if (typeof workspace !== "string" || workspace.length === 0) {
+      return { ok: false, error: "No workspace path provided." };
+    }
+    const cli = editor === "cursor" ? "cursor" : "code";
+    const args = ["--new-window"];
+    if (typeof sshAlias === "string" && sshAlias.length > 0) {
+      args.push("--remote", `ssh-remote+${sshAlias}`);
+    }
+    args.push(workspace);
+    try {
+      const child = execFile(cli, args, (err) => {
+        if (err) {
+          console.warn(`[omnigent] open-project ${cli} failed:`, err.message);
+        }
+      });
+      // Give the process a brief moment to fail fast (not installed / bad path)
+      // so we can return a meaningful error rather than a silent no-op.
+      return new Promise((resolve) => {
+        child.on("error", () => {
+          resolve({
+            ok: false,
+            error: `${editor === "cursor" ? "Cursor" : "VS Code"} was not found. Is the CLI command "${cli}" on your PATH?`,
+          });
+        });
+        // If the process started without error, resolve success after a tick.
+        setTimeout(() => resolve({ ok: true }), 1500);
+      });
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  // SPA → this machine's identity — `{ cliInstalled, hostId }` — read from local
+  // config with no subprocess, so it's instant. Lets the SPA recognize "this
+  // machine" in the server's host list.
   ipcMain.handle("omnigent:host-get-identity", (event) => {
     if (!isPinnedOriginSender(event)) {
       console.warn("[omnigent] host-get-identity from untrusted sender dropped");

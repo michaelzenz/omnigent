@@ -1431,6 +1431,31 @@ class SqlAlchemyConversationStore(ConversationStore):
             )
             return result.rowcount > 0
 
+    def set_conversation_workspace(
+        self,
+        conversation_id: str,
+        workspace: str,
+    ) -> Conversation | None:
+        """Update the workspace path without changing the host binding."""
+        with self._session("set_conversation_workspace") as session:
+            meta = session.get(
+                SqlConversationMetadata,
+                (current_workspace_id(), conversation_id),
+            )
+            if meta is None:
+                return None
+            meta.workspace = workspace
+        with self._conv_session("set_conversation_workspace") as ap_sess:
+            ap_row = ap_sess.get(
+                SqlConversation,
+                (current_workspace_id(), conversation_id),
+            )
+            if ap_row is None:
+                return None
+            ap_row.updated_at = now_epoch()
+            labels = _fetch_labels(ap_sess, conversation_id)
+        return _to_conversation(ap_row, meta, labels)
+
     def increment_session_usage(
         self,
         conversation_id: str,

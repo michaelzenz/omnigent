@@ -8721,6 +8721,21 @@ def create_runner_app(
             return Path(workspace.strip()).expanduser().resolve()
         return runner_workspace.resolve() if runner_workspace is not None else None
 
+    async def _set_live_session_workspace(session_id: str, workspace: str) -> None:
+        """Update the runner's live workspace cache for a session.
+
+        Called after the server confirms a workspace change so
+        subsequent filesystem tool calls resolve to the new directory.
+        Updates both the workspace cache and the snapshot cache so
+        `_session_runtime_cwd` returns the new path immediately.
+        """
+        _session_workspace_cache[session_id] = workspace
+        cached = _session_snapshot_cache.get(session_id)
+        if cached is not None:
+            _session_snapshot_cache[session_id] = dataclasses.replace(
+                cached, workspace=workspace
+            )
+
     async def _load_legacy_session_init_context() -> _SessionInitContext:
         await _get_server_version(server_client)
         return _SessionInitContext(envelope=None)
@@ -13028,6 +13043,7 @@ def create_runner_app(
                                                     ),
                                                     publish_event=_publish_event,
                                                     filesystem_registry=filesystem_registry,
+                                                    set_live_session_workspace=_set_live_session_workspace,
                                                 )
                                             )
                                         )
@@ -15742,6 +15758,7 @@ def create_runner_app(
                         harness_client=None,
                         publish_event=_publish_event,
                         filesystem_registry=filesystem_registry,
+                        set_live_session_workspace=_set_live_session_workspace,
                     )
                 except Exception as exc:  # noqa: BLE001
                     return JSONResponse(

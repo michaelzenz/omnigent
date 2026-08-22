@@ -14,6 +14,7 @@ import re
 import secrets
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import httpx
@@ -350,7 +351,23 @@ from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedE
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.telemetry.surface import classify_surface as _classify_surface
 
-_pending_omniharness_workloads: dict[str, tuple[str, str | None]] = {}
+
+@dataclass(frozen=True)
+class PendingOmniHarnessUsage:
+    """In-flight cost-attribution metadata for one OmniHarness turn.
+
+    Set at dispatch time, consumed when the turn's ``response.completed``
+    arrives, and removed in between. Carries the turn's purpose so the
+    ledger row reflects *why* the turn ran (user message vs. task-event
+    routing), not which session executed it.
+    """
+
+    turn_id: str
+    workload: str | None
+    purpose: str
+
+
+_pending_omniharness_usage: dict[str, PendingOmniHarnessUsage] = {}
 
 
 async def _publish_and_wait_for_harness_elicitation(
@@ -1278,18 +1295,18 @@ def _accumulate_session_usage(
                 # prices them at their own (cheaper read / pricier write) rates.
                 cost_delta = compute_llm_cost(usage_obj, pricing)
 
-    pending_turn = _pending_omniharness_workloads.pop(session_id, None)
-    if pending_turn is not None and conv is not None:
+    pending = _pending_omniharness_usage.pop(session_id, None)
+    if pending is not None and conv is not None:
         try:
             from omnigent.usage_ledger import record_omniharness_usage
 
             record_omniharness_usage(
                 conversation_store,
                 session_id=session_id,
-                turn_id=pending_turn[0],
-                purpose="user_interaction",
+                turn_id=pending.turn_id,
+                purpose=pending.purpose,
                 model=llm_model,
-                workload=pending_turn[1],
+                workload=pending.workload,
                 usage=usage_obj,
                 provider_cost=(
                     float(provider_cost) if isinstance(provider_cost, (int, float)) else None
@@ -4708,6 +4725,7 @@ async def _forward_event_to_runner(
     uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
+    usage_purpose: str = "user_interaction",
 ) -> str:
     """
     Persist a user event and forward it to the runner.
@@ -5447,7 +5465,11 @@ async def _forward_event_to_runner(
         runner_body["execution_context"] = _execution_context
 
     if _uses_omniharness and body.data.get("role") == "user":
-        _pending_omniharness_workloads[session_id] = (turn_id, _selected_workload)
+        _pending_omniharness_usage[session_id] = PendingOmniHarnessUsage(
+            turn_id=turn_id,
+            workload=_selected_workload,
+            purpose=usage_purpose,
+        )
 
     # Keep invariant I1 (persist before forwarding), while delaying the append
     # until routing has supplied the turn's effective model.
@@ -5504,6 +5526,11 @@ async def _forward_event_to_runner(
                 session_id, _reject_error, conversation_store
             )
             _publish_status(session_id, "failed", _reject_error)
+            # Drop the pending attribution so a rejected turn does not leak
+            # its purpose onto the next successful turn for this session.
+            _pending = _pending_omniharness_usage.get(session_id)
+            if _pending is not None and _pending.turn_id == turn_id:
+                _pending_omniharness_usage.pop(session_id, None)
             raise OmnigentError(
                 f"Runner rejected the message: {_reject_detail}",
                 code=ErrorCode.RUNNER_UNAVAILABLE,
@@ -5607,6 +5634,11 @@ async def _forward_event_to_runner(
             "Forward to runner failed for session=%s",
             session_id,
         )
+        # Drop the pending attribution so a failed turn does not leak its
+        # purpose onto the next successful turn for this session.
+        _pending = _pending_omniharness_usage.get(session_id)
+        if _pending is not None and _pending.turn_id == turn_id:
+            _pending_omniharness_usage.pop(session_id, None)
         _publish_status(session_id, "idle")
         raise OmnigentError(
             "Runner is unreachable; message was persisted but could not be delivered. "
@@ -5718,6 +5750,7 @@ async def _dispatch_session_event_to_runner_impl(
     uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
+    usage_purpose: str = "user_interaction",
 ) -> _SessionEventDispatchResult:
     """
     Forward an item-event to the runner with harness-aware dispatch.
@@ -6022,6 +6055,7 @@ async def _dispatch_session_event_to_runner_impl(
         uses_omniharness=uses_omniharness,
         profile_instructions=profile_instructions,
         memory_instructions=memory_instructions,
+        usage_purpose=usage_purpose,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
 
@@ -7217,6 +7251,7 @@ async def _wake_parent_for_blocked_child(
     *,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    usage_purpose: str = "user_interaction",
 ) -> bool:
     """
     Deliver a parent-wake notice when a sub-agent blocks on an approval.
@@ -7290,6 +7325,7 @@ async def _wake_parent_for_blocked_child(
             file_store=None,
             artifact_store=None,
             runner_router=runner_router,
+            usage_purpose=usage_purpose,
         )
     except (httpx.HTTPError, OmnigentError):
         _logger.warning(

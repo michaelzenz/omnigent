@@ -1,7 +1,7 @@
 """Drop the archived column from prompt_profiles.
 
-Revision ID: b9c0d1e2f3a4
-Revises: zp1q2r3s4t5u
+Revision ID: b9d0e1f2a3b4
+Revises: ab3c4d5e6f7g
 Create Date: 2026-08-20 10:00:00.000000
 
 Prompt profiles now use hard-delete instead of soft-delete tombstones.
@@ -16,8 +16,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "b9c0d1e2f3a4"
-down_revision: str | None = "zp1q2r3s4t5u"
+revision: str = "b9d0e1f2a3b4"
+down_revision: str | None = "ab3c4d5e6f7g"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

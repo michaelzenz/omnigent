@@ -3191,10 +3191,6 @@
       "PromptProfileObject": {
         "description": "API representation of a plain-text prompt profile.",
         "properties": {
-          "archived": {
-            "title": "Archived",
-            "type": "boolean"
-          },
           "created_at": {
             "title": "Created At",
             "type": "integer"
@@ -3254,7 +3250,6 @@
           "instructions",
           "enabled",
           "visible",
-          "archived",
           "created_at"
         ],
         "title": "PromptProfileObject",

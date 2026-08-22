@@ -57,6 +57,7 @@ async def _inject_notice(
     conversation is gone, or the runner refuses the injection.
     """
     from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
+    from omnigent.usage_ledger import TASK_EVENT_ROUTING_PURPOSE
 
     if not item.payload:
         raise DispatchFailed("notice item has no payload to deliver")
@@ -74,6 +75,7 @@ async def _inject_notice(
         item.payload,
         conversation_store=conversation_store,
         runner_router=runner_router,
+        usage_purpose=TASK_EVENT_ROUTING_PURPOSE,
     )
     if not ok:
         raise DispatchFailed(f"notice delivery to {target.session_id} returned false")
