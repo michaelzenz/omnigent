@@ -113,7 +113,7 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
 const promptProfileMocks = vi.hoisted(() => ({ rows: [] as PromptProfile[] }));
 vi.mock("@/hooks/usePromptProfiles", () => ({
   usePromptProfiles: () => ({ data: promptProfileMocks.rows }),
-  useArchivePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeletePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));

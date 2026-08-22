@@ -29,7 +29,6 @@ def _to_object(profile: PromptProfile) -> PromptProfileObject:
         instructions=profile.instructions,
         enabled=profile.enabled,
         visible=profile.visible,
-        archived=profile.archived,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
@@ -114,8 +113,8 @@ def create_prompt_profiles_router(
                 "Internal prompt profiles cannot be deleted directly",
                 code=ErrorCode.CONFLICT,
             )
-        profile = await asyncio.to_thread(store.archive, profile_id)
-        if profile is None:
+        deleted = await asyncio.to_thread(store.delete, profile_id)
+        if not deleted:
             raise OmnigentError(
                 f"Prompt profile not found: {profile_id!r}",
                 code=ErrorCode.NOT_FOUND,

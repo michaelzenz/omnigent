@@ -1231,7 +1231,7 @@ def create_agent_tasks_router(
             profile = await asyncio.to_thread(task_role_profile_store.get, role)
             deleted = await asyncio.to_thread(task_role_profile_store.delete, role)
             if deleted and profile and profile.prompt_profile_id and prompt_profile_store:
-                await asyncio.to_thread(prompt_profile_store.archive, profile.prompt_profile_id)
+                await asyncio.to_thread(prompt_profile_store.delete, profile.prompt_profile_id)
             if not deleted:
                 raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
             return {"object": "agent.task.role_profile", "role": role, "deleted": True}

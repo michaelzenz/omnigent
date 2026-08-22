@@ -43,7 +43,6 @@ def sql_prompt_profile_to_entity(row: SqlPromptProfile) -> PromptProfile:
         instructions=row.instructions,
         enabled=row.enabled,
         visible=row.visible,
-        archived=row.archived,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

@@ -8,7 +8,6 @@ export interface PromptProfile {
   instructions: string;
   enabled: boolean;
   visible?: boolean;
-  archived: boolean;
   created_at: number;
   updated_at: number | null;
 }
@@ -63,7 +62,7 @@ async function updatePromptProfile(
   return (await response.json()) as PromptProfile;
 }
 
-async function archivePromptProfile(id: string): Promise<void> {
+async function deletePromptProfile(id: string): Promise<void> {
   const response = await authenticatedFetch(`/v1/prompt-profiles/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
@@ -101,10 +100,10 @@ export function useUpdatePromptProfile() {
   });
 }
 
-export function useArchivePromptProfile() {
+export function useDeletePromptProfile() {
   const invalidate = useInvalidatePromptProfiles();
   return useMutation({
-    mutationFn: archivePromptProfile,
+    mutationFn: deletePromptProfile,
     onSuccess: invalidate,
   });
 }

@@ -33,18 +33,18 @@ def test_prompt_profile_crud_and_active_filters(db_uri: str) -> None:
         disabled.id,
     }
 
-    archived = store.archive(enabled.id)
-    assert archived is not None and archived.archived and not archived.enabled
+    deleted = store.delete(enabled.id)
+    assert deleted is True
     assert store.list() == [updated]
 
 
-def test_prompt_profile_name_remains_unique_after_archive(db_uri: str) -> None:
+def test_prompt_profile_name_can_be_reused_after_delete(db_uri: str) -> None:
     store = SqlAlchemyPromptProfileStore(db_uri)
     first = store.create("33" * 16, "Focused", "First")
 
     with pytest.raises(OmnigentError, match="name already exists"):
         store.create("44" * 16, "Focused", "Second")
 
-    store.archive(first.id)
-    with pytest.raises(OmnigentError, match="name already exists"):
-        store.create("44" * 16, "Focused", "Second")
+    assert store.delete(first.id) is True
+    second = store.create("44" * 16, "Focused", "Second")
+    assert second is not None

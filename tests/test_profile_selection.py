@@ -32,7 +32,7 @@ class _Store:
         return [
             profile
             for profile in self.profiles
-            if not profile.archived and (not enabled_only or profile.enabled)
+            if not enabled_only or profile.enabled
         ]
 
 
@@ -58,8 +58,8 @@ def test_existing_fixed_selection_may_read_disabled_profile() -> None:
     )
 
 
-@pytest.mark.parametrize("profile", [None, _profile(archived=True)])
-def test_existing_fixed_selection_rejects_missing_or_archived(
+@pytest.mark.parametrize("profile", [None])
+def test_existing_fixed_selection_rejects_missing(
     profile: PromptProfile | None,
 ) -> None:
     with pytest.raises(OmnigentError, match="not found or unavailable"):

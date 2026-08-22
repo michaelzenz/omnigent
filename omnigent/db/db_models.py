@@ -329,7 +329,6 @@ class SqlPromptProfile(OmnigentBase):
     instructions: Mapped[str] = mapped_column(CompressedText, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
     visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
-    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -338,7 +337,6 @@ class SqlPromptProfile(OmnigentBase):
         Index(
             "ix_prompt_profiles_active",
             "workspace_id",
-            "archived",
             "enabled",
             "created_at",
             "id",

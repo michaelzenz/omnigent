@@ -60,7 +60,6 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
                 instructions=instructions,
                 enabled=enabled,
                 visible=visible,
-                archived=False,
                 created_at=now_epoch(),
                 updated_at=None,
             )
@@ -81,7 +80,6 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
         with self._session("list_active_prompt_profiles") as session:
             stmt = select(SqlPromptProfile).where(
                 SqlPromptProfile.workspace_id == current_workspace_id(),
-                SqlPromptProfile.archived.is_(False),
             )
             if enabled_only:
                 stmt = stmt.where(SqlPromptProfile.enabled.is_(True))
@@ -98,7 +96,7 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
             raise TypeError(f"Unexpected prompt profile fields: {sorted(unexpected)!r}")
         with self._session("update_prompt_profile") as session:
             row = session.get(SqlPromptProfile, (current_workspace_id(), profile_id))
-            if row is None or row.archived:
+            if row is None:
                 return None
             name = fields.get("name")
             if (
@@ -116,12 +114,10 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
                 row.updated_at = now_epoch()
             return sql_prompt_profile_to_entity(row)
 
-    def archive(self, profile_id: str) -> PromptProfile | None:
-        with self._session("archive_prompt_profile") as session:
+    def delete(self, profile_id: str) -> bool:
+        with self._session("delete_prompt_profile") as session:
             row = session.get(SqlPromptProfile, (current_workspace_id(), profile_id))
-            if row is None or row.archived:
-                return None
-            row.archived = True
-            row.enabled = False
-            row.updated_at = now_epoch()
-            return sql_prompt_profile_to_entity(row)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
