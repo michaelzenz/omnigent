@@ -55,6 +55,17 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | PATCH | `/v1/task-items/{id}` |
 | POST | `/v1/task-items/{id}/dispatch` |
 
+## Agent queues
+
+| Method | Path |
+|--------|------|
+| GET | `/v1/agent-queues` |
+| GET | `/v1/agent-queues/{role}/items` |
+| POST | `/v1/agent-queues/{role}/pause` |
+| POST | `/v1/agent-queues/{role}/resume` |
+| PATCH | `/v1/agent-queue-items/{id}` |
+| POST | `/v1/agent-queue-items/{id}/cancel` |
+
 ## Task workers
 
 Workers are durable per-task handles created from Worker Providers. Creation
@@ -118,3 +129,12 @@ does not route the user's response back to the external application.
 | POST | `/v1/agent-tasks/external-sessions/propose-adoption` |
 | POST | `/v1/agent-tasks/external-sessions/{session_hint}/adopt` |
 | POST | `/v1/agent-tasks/external-sessions/{session_hint}/reject-adoption` |
+
+## Poller integration
+
+| Method | Path |
+|--------|------|
+| POST | `/v1/session-watcher/update` |
+| GET | `/v1/agent-tasks/script-plugins/health` |
+| POST | `/v1/agent-tasks/script-plugins/health` |
+| PUT | `/v1/agent-tasks/script-plugins/hosts/{host_id}/{plugin_name}` |

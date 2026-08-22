@@ -443,8 +443,8 @@ _BROWSER_TOOLS = frozenset(
 
 # Priority 5n: PuppyGarden task-API proxy — ``puppygarden_api``.
 # Auto-registered by ToolManager. The runner proxies the Omnigent server's
-# task REST endpoints (``/v1/agent-tasks`` / ``/v1/task-events`` /
-# ``/v1/task-items``) over ``server_client`` so agents call the API with a
+# task REST endpoints (tasks, events, items, workers, providers, queues, and
+# triage) over ``server_client`` so agents call the API with a
 # typed function call instead of curl. Execution lives HERE (not in
 # Tool.invoke) because it needs the runner's ``server_client`` that
 # ``ToolContext`` does not carry — same posture as _COMMENT_TOOLS /
@@ -3885,8 +3885,7 @@ async def _execute_puppygarden_api_tool(
     """
     Runner-local handler for ``puppygarden_api``.
 
-    Proxies any PuppyGarden task REST endpoint (``/v1/agent-tasks`` /
-    ``/v1/task-events`` / ``/v1/task-items``) over ``server_client`` so an
+    Proxies any PuppyGarden task REST endpoint over ``server_client`` so an
     agent calls the API with a typed function call instead of curling. The
     path is validated against the task-API prefixes so a misbehaving model
     can't use this tool as an arbitrary server proxy. Same posture as
@@ -3894,7 +3893,7 @@ async def _execute_puppygarden_api_tool(
 
     :param tool_name: ``"puppygarden_api"``.
     :param arguments: JSON-encoded arguments string from the LLM, with
-        ``method`` (GET/POST/PATCH/DELETE), ``path`` (``/v1/...``), and
+        ``method`` (GET/POST/PUT/PATCH/DELETE), ``path`` (``/v1/...``), and
         optional ``body`` / ``query`` objects.
     :param server_client: HTTP client pointed at the Omnigent server; ``None``
         returns an error string.
@@ -3910,16 +3909,17 @@ async def _execute_puppygarden_api_tool(
 
     method = args.get("method")
     path = args.get("path")
-    if not isinstance(method, str) or method not in ("GET", "POST", "PATCH", "DELETE"):
-        return json.dumps({"error": f"{tool_name} requires 'method' (GET/POST/PATCH/DELETE)"})
+    if not isinstance(method, str) or method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        return json.dumps(
+            {"error": f"{tool_name} requires 'method' (GET/POST/PUT/PATCH/DELETE)"}
+        )
     if not isinstance(path, str) or not path:
         return json.dumps({"error": f"{tool_name} requires 'path' (e.g. /v1/agent-tasks/<id>)"})
     if not is_task_api_path(path):
         return json.dumps(
             {
                 "error": (
-                    f"{tool_name} only proxies task API paths "
-                    "(/v1/agent-tasks, /v1/task-events, /v1/task-items)"
+                    f"{tool_name} only proxies PuppyGarden API paths"
                 )
             }
         )
@@ -3929,7 +3929,7 @@ async def _execute_puppygarden_api_tool(
     kwargs: dict[str, Any] = {"timeout": 30.0}
     if isinstance(query, dict) and query:
         kwargs["params"] = query
-    if isinstance(body, dict) and method in ("POST", "PATCH"):
+    if isinstance(body, dict) and method in ("POST", "PUT", "PATCH"):
         kwargs["json"] = body
 
     try:

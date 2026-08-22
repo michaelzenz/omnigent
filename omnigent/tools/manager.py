@@ -606,8 +606,7 @@ class ToolManager:
         Auto-register ``puppygarden_api``.
 
         Framework-owned and always available so any agent can call the
-        PuppyGarden task REST API (``/v1/agent-tasks`` / ``/v1/task-events`` /
-        ``/v1/task-items``) without shelling out to curl. The class is
+        PuppyGarden task REST API without shelling out to curl. The class is
         schema-only; execution lives in the runner's
         ``_PUPPYGARDEN_API_TOOLS`` dispatch branch
         (``omnigent/runner/tool_dispatch.py``), which needs the runner's

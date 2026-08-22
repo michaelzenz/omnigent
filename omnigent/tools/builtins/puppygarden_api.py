@@ -14,6 +14,7 @@ catalogue.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import unquote
 
 from omnigent.tools.base import Tool
 
@@ -22,8 +23,14 @@ from omnigent.tools.base import Tool
 # tool as an arbitrary server proxy.
 _TASK_API_PREFIXES: tuple[str, ...] = (
     "/v1/agent-tasks",
+    "/v1/agent-queues",
+    "/v1/agent-queue-items",
+    "/v1/fyi-clusters",
+    "/v1/session-watcher",
     "/v1/task-events",
     "/v1/task-items",
+    "/v1/task-workers",
+    "/v1/worker-providers",
 )
 
 
@@ -33,7 +40,14 @@ def is_task_api_path(path: str) -> bool:
     :param path: A request path, e.g. ``"/v1/agent-tasks/abc/items"``.
     :returns: ``True`` when the path starts with one of the task-API prefixes.
     """
-    return path.startswith(_TASK_API_PREFIXES)
+    decoded = unquote(path)
+    if "?" in decoded or "#" in decoded or "\\" in decoded:
+        return False
+    if any(segment in {".", ".."} for segment in decoded.split("/")):
+        return False
+    return any(
+        decoded == prefix or decoded.startswith(f"{prefix}/") for prefix in _TASK_API_PREFIXES
+    )
 
 
 class PuppyGardenApiTool(Tool):
@@ -76,7 +90,7 @@ class PuppyGardenApiTool(Tool):
                     "properties": {
                         "method": {
                             "type": "string",
-                            "enum": ["GET", "POST", "PATCH", "DELETE"],
+                            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
                             "description": "HTTP method for the request.",
                         },
                         "path": {
@@ -90,7 +104,7 @@ class PuppyGardenApiTool(Tool):
                         "body": {
                             "type": "object",
                             "description": (
-                                "Optional JSON body for POST/PATCH requests."
+                                "Optional JSON body for POST/PUT/PATCH requests."
                             ),
                         },
                         "query": {

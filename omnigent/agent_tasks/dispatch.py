@@ -10,7 +10,13 @@ from typing import Any
 from omnigent.agent_tasks.executions import mark_execution_running, start_execution_for_item
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.workers import worker_for_item
-from omnigent.entities import Task, TaskEventExecution, TaskItem
+from omnigent.entities import (
+    MessageData,
+    NewConversationItem,
+    Task,
+    TaskEventExecution,
+    TaskItem,
+)
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
@@ -76,7 +82,20 @@ def resolve_dispatch_params(
             "instructions are required",
             code=ErrorCode.INVALID_INPUT,
         )
-    return DispatchParams(instructions=str(resolved_instructions))
+    return DispatchParams(instructions=resolved_instructions)
+
+
+def _worker_instruction_item(instructions: str, response_id: str) -> NewConversationItem:
+    """Build the visible user message that starts one worker turn."""
+    return NewConversationItem(
+        type="message",
+        response_id=response_id,
+        data=MessageData(
+            role="user",
+            content=[{"type": "input_text", "text": instructions}],
+            is_meta=False,
+        ),
+    )
 
 
 async def dispatch_worker_for_item(
@@ -149,15 +168,10 @@ async def dispatch_worker_for_item(
     # Send the instructions as a real user message (not meta) so the worker
     # picks them up as its next turn.
     from omnigent.db.utils import generate_task_id
-    from omnigent.entities import MessageData, NewConversationItem
 
-    message_item = NewConversationItem(
-        type="message",
-        response_id=idempotency_key or generate_task_id(),
-        data=MessageData(
-            role="user",
-            content=[{"type": "input_text", "text": params.instructions}],
-        ),
+    message_item = _worker_instruction_item(
+        params.instructions,
+        idempotency_key or generate_task_id(),
     )
     already_sent = False
     if idempotency_key is not None:
@@ -169,11 +183,17 @@ async def dispatch_worker_for_item(
         )
         already_sent = any(item.response_id == idempotency_key for item in recent.data)
     if not already_sent:
-        await asyncio.to_thread(
+        persisted = await asyncio.to_thread(
             conversation_store.append,
             worker_conv_id,
             [message_item],
         )
+        if persisted:
+            # Direct worker dispatch bypasses POST /sessions/{id}/events, so
+            # publish the accepted input explicitly for an already-open chat.
+            from omnigent.server.routes.sessions import _publish_input_consumed
+
+            _publish_input_consumed(worker_conv_id, persisted[0])
     await asyncio.to_thread(
         worker_store.update_worker,
         worker.id,

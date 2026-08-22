@@ -117,6 +117,51 @@ async def test_patch_passes_body() -> None:
 
 
 @pytest.mark.asyncio
+async def test_put_passes_body() -> None:
+    client = _RecordingClient(_Resp(body={"role": "manager:default"}))
+    await _execute_puppygarden_api_tool(
+        _TOOL_NAME,
+        json.dumps(
+            {
+                "method": "PUT",
+                "path": "/v1/agent-tasks/roles/manager:default/profile",
+                "body": {"host_id": "host-1"},
+            }
+        ),
+        server_client=client,
+    )
+    method, url, kwargs = client.calls[0]
+    assert (method, url) == ("PUT", "/v1/agent-tasks/roles/manager:default/profile")
+    assert kwargs["json"] == {"host_id": "host-1"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/agent-tasks",
+        "/v1/agent-queues",
+        "/v1/agent-queue-items/item-1",
+        "/v1/fyi-clusters/cluster-1/resolve",
+        "/v1/session-watcher/update",
+        "/v1/task-events",
+        "/v1/task-items/item-1",
+        "/v1/task-workers/worker-1/initialize",
+        "/v1/worker-providers",
+        "/v1/worker-providers/provider-1",
+    ],
+)
+async def test_proxies_every_puppygarden_api_family(path: str) -> None:
+    client = _RecordingClient()
+    await _execute_puppygarden_api_tool(
+        _TOOL_NAME,
+        json.dumps({"method": "GET", "path": path}),
+        server_client=client,
+    )
+    assert client.calls[0][1] == path
+
+
+@pytest.mark.asyncio
 async def test_delete_handles_no_content() -> None:
     client = _RecordingClient(_Resp(status_code=204, body=None))
     out = await _execute_puppygarden_api_tool(
@@ -135,8 +180,28 @@ async def test_rejects_non_task_path() -> None:
         json.dumps({"method": "GET", "path": "/v1/sessions/abc"}),
         server_client=client,
     )
-    assert "only proxies task API paths" in json.loads(out)["error"]
+    assert "only proxies PuppyGarden API paths" in json.loads(out)["error"]
     assert client.calls == []  # never hit the server
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/agent-tasks-admin",
+        "/v1/agent-tasks/../sessions",
+        "/v1/agent-tasks/%2e%2e/sessions",
+    ],
+)
+async def test_rejects_paths_outside_exact_api_families(path: str) -> None:
+    client = _RecordingClient()
+    out = await _execute_puppygarden_api_tool(
+        _TOOL_NAME,
+        json.dumps({"method": "GET", "path": path}),
+        server_client=client,
+    )
+    assert "only proxies PuppyGarden API paths" in json.loads(out)["error"]
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
@@ -144,7 +209,7 @@ async def test_rejects_bad_method() -> None:
     client = _RecordingClient()
     out = await _execute_puppygarden_api_tool(
         _TOOL_NAME,
-        json.dumps({"method": "PUT", "path": "/v1/agent-tasks/abc"}),
+        json.dumps({"method": "TRACE", "path": "/v1/agent-tasks/abc"}),
         server_client=client,
     )
     assert "method" in json.loads(out)["error"]
@@ -200,4 +265,4 @@ def test_tool_in_dispatch_and_relay_sets() -> None:
 def test_schema_requires_method_and_path() -> None:
     schema = PuppyGardenApiTool().get_schema()["function"]["parameters"]
     assert set(schema["required"]) == {"method", "path"}
-    assert schema["properties"]["method"]["enum"] == ["GET", "POST", "PATCH", "DELETE"]
+    assert schema["properties"]["method"]["enum"] == ["GET", "POST", "PUT", "PATCH", "DELETE"]
