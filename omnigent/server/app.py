@@ -1547,6 +1547,9 @@ def create_app(
             # cancel. Only the per-job scheduler holds timers that need stopping.
             if ssh_host_manager is not None:
                 await ssh_host_manager.stop()
+                from omnigent.ssh_session import shutdown_ssh_pool
+
+                await shutdown_ssh_pool()
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
             if event_gc_task is not None:
@@ -1604,6 +1607,7 @@ def create_app(
     app.state.background_title_coordinator = background_title_coordinator
     app.state.host_registry = host_registry
     app.state.host_store = host_store
+    app.state.ssh_host_installation_store = ssh_host_installation_store
     app.state.agent_store = agent_store
     app.state.prompt_profile_store = prompt_profile_store
     app.state.model_settings_store = model_settings_store
@@ -2532,6 +2536,7 @@ def create_app(
     )
     app.include_router(
         create_ssh_connections_router(
+            ssh_store=ssh_host_installation_store,
             auth_provider=auth_provider,
             permission_store=permission_store,
         ),

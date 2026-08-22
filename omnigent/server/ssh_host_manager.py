@@ -16,18 +16,13 @@ from functools import partial
 from pathlib import Path
 
 from omnigent.db.utils import now_epoch
-from omnigent.ssh_connections_store import (
-    SshConnectionProfile,
-    read_ssh_connections,
-    read_ssh_settings,
-)
+from omnigent.entities import SshConnectionProfile, SshSettings
 from omnigent.ssh_remote import ssh_run
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.ssh_host_installation_store import (
     SshHostInstallation,
     SshHostInstallationStore,
 )
-from omnigent.version import VERSION
 
 _logger = logging.getLogger(__name__)
 _LEASE_SECONDS = 30
@@ -39,7 +34,7 @@ _MAX_BACKOFF_SECONDS = 15 * 60
 
 CommandRunner = Callable[[list[str], float], Awaitable[tuple[int, bytes, bytes]]]
 InstallCommandBuilder = Callable[
-    [str, str | None, str | None, str | None, str | None],
+    [str, str | None, str | None, str | None, str | None, str],
     str,
 ]
 
@@ -102,6 +97,7 @@ def build_install_command(
     bundle_sha256: str | None = None,
     index_url: str | None = None,
     find_links: str | None = None,
+    remote_namespace: str = "",
 ) -> str:
     """Build the idempotent remote installation command."""
     quoted_version = shlex.quote(version)
@@ -118,7 +114,7 @@ def build_install_command(
         checksum_write = f'printf %s {quoted_checksum} > "$target/.bundle-sha256"; '
     return (
         "set -eu; "
-        'root="$HOME/.omnigent/host"; '
+        f'root="$HOME/.omnigent/host/{shlex.quote(remote_namespace)}"; '
         f"version={quoted_version}; "
         'target="$root/versions/$version"; '
         'mkdir -p "$root/versions"; '
@@ -153,21 +149,24 @@ class SshHostOperations:
         command_runner: CommandRunner = _run_local_command,
         install_command_builder: InstallCommandBuilder = build_install_command,
         control_dir: Path | None = None,
-        python_index_url: str | None = None,
+        settings_reader: Callable[[], SshSettings] | None = None,
+        remote_namespace: str,
     ) -> None:
         self._local_host = local_host
         self._local_port = local_port
         self._run = command_runner
         self._install_command_builder = install_command_builder
-        self._python_index_url_override = python_index_url
-        self._control_dir = control_dir or Path.home() / ".omnigent" / "host" / "ssh-control"
-        self._bundle_dir = self._control_dir.parent / "bundles"
+        self._settings_reader = settings_reader or (lambda: SshSettings())
+        self._remote_namespace = remote_namespace
+        self._control_dir = (
+            control_dir
+            or Path.home() / ".omnigent" / "ssh" / remote_namespace
+        )
+        self._bundle_dir = self._control_dir / "bundles"
         self._local_bundles: dict[str, list[Path] | None] = {}
 
     def _python_index_url(self) -> str | None:
-        if self._python_index_url_override is not None:
-            return self._python_index_url_override
-        return read_ssh_settings().package_index_url
+        return self._settings_reader().package_index_url
 
     async def remote_home(self, profile: SshConnectionProfile) -> str:
         """Resolve the remote account's absolute home directory."""
@@ -191,11 +190,14 @@ class SshHostOperations:
         OpenSSH doesn't shell-expand ``~`` in stream-local ``-R`` paths, so the
         remote home has to be resolved before constructing the forward.
         """
-        return f"{await self.remote_home(profile)}/.omnigent/server-{profile.id}.sock"
+        return (
+            f"{await self.remote_home(profile)}/.omnigent/"
+            f"server-{self._remote_namespace}-{profile.id}.sock"
+        )
 
     def _control_path(self, connection_id: str, alias: str) -> Path:
         identity = f"{connection_id}\0{alias}\0{self._local_host}\0{self._local_port}"
-        digest = hashlib.sha256(identity.encode()).hexdigest()[:32]
+        digest = hashlib.sha256(identity.encode()).hexdigest()[:20]
         return self._control_dir / f"{digest}.sock"
 
     async def check_reachable(self, profile: SshConnectionProfile) -> None:
@@ -210,7 +212,10 @@ class SshHostOperations:
         local_bundles = await self._local_bundle(version)
         if local_bundles is not None:
             main_bundle = _main_wheel(local_bundles)
-            remote_package_dir = f"{await self.remote_home(profile)}/.omnigent/host/packages"
+            remote_package_dir = (
+                f"{await self.remote_home(profile)}/.omnigent/host/"
+                f"{self._remote_namespace}/packages"
+            )
             bundle_hashes = [
                 await asyncio.to_thread(_file_sha256, bundle) for bundle in local_bundles
             ]
@@ -225,6 +230,7 @@ class SshHostOperations:
             bundle_sha256,
             self._python_index_url(),
             find_links,
+            self._remote_namespace,
         )
         code, stdout, stderr = await ssh_run(profile, command, timeout_s=600)
         if code != 0:
@@ -242,7 +248,7 @@ class SshHostOperations:
         wheels the remote already has.
         """
         command = (
-            'root="$HOME/.omnigent/host"; '
+            f'root="$HOME/.omnigent/host/{self._remote_namespace}"; '
             f"version={shlex.quote(version)}; "
             'target="$root/versions/$version"; '
             '[ -f "$target/.complete" ] && '
@@ -412,9 +418,9 @@ class SshHostOperations:
             "OMNIGENT_HOST_NAME": host_name,
         }
         env = " ".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
-        runtime_name = shlex.quote(profile.id)
+        runtime_name = shlex.quote(f"{self._remote_namespace}-{profile.id}")
         command = (
-            'set -eu; root="$HOME/.omnigent/host"; '
+            f'set -eu; root="$HOME/.omnigent/host/{self._remote_namespace}"; '
             f'runtime="$root/runtimes"/{runtime_name}; mkdir -p "$runtime"; '
             'if [ -f "$runtime/host.pid" ]; then '
             'pid="$(cat "$runtime/host.pid" 2>/dev/null || true)"; '
@@ -435,9 +441,9 @@ class SshHostOperations:
         await self._run(["ssh", "-S", str(control_path), "-O", "exit", profile.alias], 10)
         with suppress(FileNotFoundError):
             control_path.unlink()
-        runtime_name = shlex.quote(connection_id)
+        runtime_name = shlex.quote(f"{self._remote_namespace}-{connection_id}")
         command = (
-            'root="$HOME/.omnigent/host"; '
+            f'root="$HOME/.omnigent/host/{self._remote_namespace}"; '
             f'runtime="$root/runtimes"/{runtime_name}; '
             'if [ -f "$runtime/host.pid" ]; then '
             'pid="$(cat "$runtime/host.pid" 2>/dev/null || true)"; '
@@ -445,7 +451,7 @@ class SshHostOperations:
             '| grep -F "$root/current/venv/bin/omnigent host" >/dev/null; '
             'then kill "$pid" 2>/dev/null || true; fi; '
             'rm -f "$runtime/host.pid"; fi; '
-            f'rm -f "$HOME/.omnigent/server-{connection_id}.sock"'
+            f'rm -f "$HOME/.omnigent/server-{self._remote_namespace}-{connection_id}.sock"'
         )
         with suppress(Exception):
             await ssh_run(profile, command, timeout_s=15)
@@ -464,17 +470,20 @@ class SshHostInstallationManager:
         operations: SshHostOperations | None = None,
         default_owner: str = "local",
         scan_interval_s: float = 2.0,
-        profile_reader: Callable[[], list[SshConnectionProfile]] = read_ssh_connections,
+        profile_reader: Callable[[], list[SshConnectionProfile]] | None = None,
     ) -> None:
         self.store = store
         self.host_store = host_store
+        settings = store.get_settings()
         self.operations = operations or SshHostOperations(
             local_host=local_host,
             local_port=local_port,
+            settings_reader=store.get_settings,
+            remote_namespace=settings.remote_namespace,
         )
         self.default_owner = default_owner
         self.scan_interval_s = scan_interval_s
-        self.profile_reader = profile_reader
+        self.profile_reader = profile_reader or store.profiles
         self.worker_id = uuid.uuid4().hex
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -488,7 +497,7 @@ class SshHostInstallationManager:
         if self._task is not None:
             return
         self._loop = asyncio.get_running_loop()
-        self.sync_profiles(self.profile_reader())
+        self.refresh_profiles()
         self._stopping = False
         self._task = asyncio.create_task(self._run(), name="ssh-host-installation-manager")
 
@@ -514,23 +523,18 @@ class SshHostInstallationManager:
         else:
             self._wake.set()
 
-    def sync_profiles(
-        self,
-        profiles: list[SshConnectionProfile],
-        *,
-        owner: str | None = None,
-    ) -> None:
+    def refresh_profiles(self) -> None:
+        """Reload active profile intent from the database and wake reconciliation."""
+        profiles = self.profile_reader()
         self._profiles = {profile.id: profile for profile in profiles}
-        existing = self.store.snapshots()
+        snapshots = self.store.snapshots()
         for profile in profiles:
-            row = existing.get(profile.id)
-            if profile.owner is not None and row is not None and row.owner != profile.owner:
-                self.host_store.reassign_ssh_host_owner(row.host_id, profile.owner)
-        self.store.sync_connections(
-            self._profiles,
-            bundle_version=VERSION,
-            owner=owner or self.default_owner,
-        )
+            row = snapshots.get(profile.id)
+            if row is not None:
+                self.host_store.reassign_ssh_host_owner(
+                    row.host_id,
+                    profile.owner or self.default_owner,
+                )
         self.wake()
 
     def retry(self, connection_id: str) -> bool:
@@ -675,7 +679,7 @@ class SshHostInstallationManager:
             if row.desired_state == "detached" or profile is None:
                 detached_profile = profile or SshConnectionProfile(
                     id=row.connection_id,
-                    label=row.ssh_alias,
+                    label=row.label,
                     alias=row.ssh_alias,
                     created_at="",
                 )

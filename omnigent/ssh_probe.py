@@ -11,7 +11,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 
-from omnigent.ssh_connections_store import validate_ssh_alias
+from omnigent.entities.ssh_connection import validate_ssh_alias
 
 _PROBE_ECHO = "omnigent-ssh-ok"
 _DEFAULT_TIMEOUT_S = 15.0

@@ -47,6 +47,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -614,6 +615,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         user_role_session_store=SqlAlchemyUserRoleSessionStore(db_uri),
         agent_queue_store=SqlAlchemyAgentQueueStore(db_uri),
         host_store=HostStore(db_uri),
+        ssh_host_installation_store=SshHostInstallationStore(db_uri),
     )
 
 

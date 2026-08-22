@@ -3,28 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from omnigent.server.auth import AuthProvider
-from omnigent.server.routes._auth_helpers import require_user
-from omnigent.ssh_connections_store import (
-    SshConnectionProfile,
-    SshSettings,
+from omnigent.entities import SshConnectionProfile, SshSettings
+from omnigent.entities.ssh_connection import (
     new_ssh_connection_id,
     profile_to_api_dict,
-    read_ssh_connections,
-    read_ssh_settings,
     validate_package_index_url,
     validate_ssh_alias,
     validate_ssh_connection_id,
-    write_ssh_connections,
-    write_ssh_settings,
 )
+from omnigent.server.auth import AuthProvider
+from omnigent.server.routes._auth_helpers import require_user
 from omnigent.ssh_probe import SshProbeRequest, probe_ssh
 from omnigent.stores.permission_store import PermissionStore
+from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
+from omnigent.version import VERSION
 
 
 class SshConnectionBody(BaseModel):
@@ -57,11 +55,11 @@ def _normalize_package_index_url(raw: str | None) -> str | None:
 def _connections_response(
     profiles: list[SshConnectionProfile],
     *,
-    snapshots: dict[str, object],
+    settings: SshSettings,
+    snapshots: Mapping[str, object],
     host_store: object | None,
     online_by_host_id: dict[str, bool] | None = None,
 ) -> dict[str, object]:
-    settings = read_ssh_settings()
     result: list[dict[str, object]] = []
     for profile in profiles:
         item = profile_to_api_dict(profile)
@@ -112,9 +110,11 @@ def _connections_response(
 async def _build_connections_payload(
     profiles: list[SshConnectionProfile],
     request: Request,
+    store: SshHostInstallationStore,
 ) -> dict[str, object]:
     manager = getattr(request.app.state, "ssh_host_manager", None)
-    snapshots = await asyncio.to_thread(manager.snapshot) if manager is not None else {}
+    snapshots = await asyncio.to_thread(store.snapshots)
+    settings = await asyncio.to_thread(store.get_settings)
     host_store = getattr(request.app.state, "host_store", None)
     online_by_host_id: dict[str, bool] = {}
     if host_store is not None:
@@ -123,6 +123,7 @@ async def _build_connections_payload(
             online_by_host_id[host_id] = await asyncio.to_thread(host_store.is_online, host_id)
     return _connections_response(
         profiles,
+        settings=settings,
         snapshots=snapshots,
         host_store=host_store,
         online_by_host_id=online_by_host_id,
@@ -146,9 +147,10 @@ class SshTestResponse(BaseModel):
 def _parse_profiles(
     body: SshConnectionsPutRequest,
     *,
+    existing_profiles: list[SshConnectionProfile],
     owner: str,
 ) -> list[SshConnectionProfile]:
-    existing = {profile.id: profile for profile in read_ssh_connections()}
+    existing = {profile.id: profile for profile in existing_profiles}
     profiles: list[SshConnectionProfile] = []
     seen_ids: set[str] = set()
     seen_aliases: set[str] = set()
@@ -195,11 +197,17 @@ def _parse_profiles(
 
 def create_ssh_connections_router(
     *,
+    ssh_store: SshHostInstallationStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
 ) -> APIRouter:
     """Build the router for SSH settings helpers."""
     router = APIRouter()
+
+    def _store() -> SshHostInstallationStore:
+        if ssh_store is None:
+            raise HTTPException(status_code=503, detail="SSH storage is unavailable")
+        return ssh_store
 
     async def _require_admin(request: Request) -> str | None:
         user_id = require_user(request, auth_provider)
@@ -211,29 +219,45 @@ def create_ssh_connections_router(
 
     @router.get("/ssh/connections")
     async def list_ssh_connections(request: Request) -> dict[str, object]:
-        """List SSH connection profiles stored on this host."""
+        """List SSH connection profiles stored by this server."""
         require_user(request, auth_provider)
-        profiles = read_ssh_connections()
-        return await _build_connections_payload(profiles, request)
+        store = _store()
+        profiles = await asyncio.to_thread(store.profiles)
+        return await _build_connections_payload(profiles, request, store)
 
     @router.put("/ssh/connections")
     async def put_ssh_connections(
         body: SshConnectionsPutRequest,
         request: Request,
     ) -> dict[str, object]:
-        """Replace SSH connection profiles stored on this host."""
+        """Replace SSH connection profiles stored by this server."""
         user_id = await _require_admin(request)
-        profiles = _parse_profiles(body, owner=user_id or "local")
-        prior_index_url = read_ssh_settings().package_index_url
+        store = _store()
+        existing = await asyncio.to_thread(store.profiles)
+        profiles = _parse_profiles(
+            body,
+            existing_profiles=existing,
+            owner=user_id or "local",
+        )
+        prior_index_url = (await asyncio.to_thread(store.get_settings)).package_index_url
         package_index_url = _normalize_package_index_url(body.package_index_url)
-        write_ssh_connections(profiles)
-        write_ssh_settings(SshSettings(package_index_url=package_index_url))
+        await asyncio.to_thread(
+            store.sync_connections,
+            {profile.id: profile for profile in profiles},
+            bundle_version=VERSION,
+            owner=user_id or "local",
+        )
+        await asyncio.to_thread(
+            store.update_settings,
+            package_index_url=package_index_url,
+            updated_by=user_id,
+        )
         manager = getattr(request.app.state, "ssh_host_manager", None)
         if manager is not None:
-            await asyncio.to_thread(manager.sync_profiles, profiles, owner=user_id or "local")
+            await asyncio.to_thread(manager.refresh_profiles)
             if package_index_url != prior_index_url:
                 await asyncio.to_thread(manager.requeue_connected_installations)
-        return await _build_connections_payload(profiles, request)
+        return await _build_connections_payload(profiles, request, store)
 
     @router.post("/ssh/connections/{connection_id}/retry")
     async def retry_ssh_connection(connection_id: str, request: Request) -> dict[str, bool]:

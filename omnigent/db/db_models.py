@@ -1491,6 +1491,7 @@ class SqlSshHostInstallation(OmnigentBase):
         default=current_workspace_id,
     )
     connection_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
     ssh_alias: Mapped[str] = mapped_column(String(128), nullable=False)
     host_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     owner: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -1525,6 +1526,24 @@ class SqlSshHostInstallation(OmnigentBase):
             "lease_expires_at",
         ),
     )
+
+
+class SqlSshSettings(OmnigentBase):
+    """Workspace-level SSH provisioning settings."""
+
+    __tablename__ = "ssh_settings"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    package_index_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    remote_namespace: Mapped[str] = mapped_column(String(16), nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 
 class SqlUserDailyCost(OmnigentBase):

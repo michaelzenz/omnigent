@@ -10,12 +10,12 @@ import pytest
 
 from omnigent.db.db_models import OmnigentBase
 from omnigent.db.utils import get_or_create_engine
+from omnigent.entities import SshConnectionProfile
 from omnigent.server.ssh_host_manager import (
     SshHostInstallationManager,
     SshHostOperations,
     build_install_command,
 )
-from omnigent.ssh_connections_store import SshConnectionProfile
 from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 from omnigent.version import VERSION
 
@@ -156,6 +156,9 @@ class _FakeHostStore:
 
     def delete_host(self, host_id: str) -> None:
         self.deleted.append(host_id)
+
+    def reassign_ssh_host_owner(self, _host_id: str, _owner: str) -> None:
+        pass
 
 
 class _FakeOperations:
@@ -377,6 +380,7 @@ async def test_matching_remote_bundle_skips_wheel_upload(
         local_port=6767,
         command_runner=fake_local_run,
         control_dir=tmp_path / "control",
+        remote_namespace="server-a",
     )
     monkeypatch.setattr(operations, "_local_bundle", AsyncMock(return_value=[wheel]))
 
@@ -386,10 +390,10 @@ async def test_matching_remote_bundle_skips_wheel_upload(
 
 
 def test_install_command_pins_python_and_uses_versioned_home_path() -> None:
-    command = build_install_command("1.2.3")
+    command = build_install_command("1.2.3", remote_namespace="server-a")
     assert '"$uv_bin" python install 3.12' in command
     assert '"$uv_bin" venv --python 3.12 "$target/venv"' in command
-    assert 'root="$HOME/.omnigent/host"' in command
+    assert 'root="$HOME/.omnigent/host/server-a"' in command
     assert "omnigent==1.2.3" in command
 
 
@@ -428,13 +432,14 @@ async def test_tunnel_resolves_remote_home_and_verifies_socket(
         local_port=6767,
         command_runner=fake_local_run,
         control_dir=tmp_path,
+        remote_namespace="server-a",
     )
 
     socket_path = await operations.ensure_tunnel(profile)
 
-    assert socket_path == "/home/test/.omnigent/server-connection-1.sock"
+    assert socket_path == "/home/test/.omnigent/server-server-a-connection-1.sock"
     start = next(args for args in local_commands if "-fN" in args)
-    assert "/home/test/.omnigent/server-connection-1.sock:127.0.0.1:6767" in start
+    assert "/home/test/.omnigent/server-server-a-connection-1.sock:127.0.0.1:6767" in start
     assert any(command.startswith("rm -f /home/test/") for command in remote_commands)
     assert any(command.startswith("test -S /home/test/") for command in remote_commands)
 
@@ -470,6 +475,7 @@ async def test_tunnel_restarts_existing_control_master(
         local_port=6767,
         command_runner=fake_local_run,
         control_dir=tmp_path,
+        remote_namespace="server-a",
     )
 
     await operations.ensure_tunnel(profile)

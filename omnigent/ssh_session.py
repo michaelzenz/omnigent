@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from omnigent.ssh_connections_store import validate_ssh_alias
+from omnigent.entities.ssh_connection import validate_ssh_alias
 
 _logger = logging.getLogger(__name__)
 
@@ -234,12 +234,7 @@ def get_ssh_pool() -> SshSessionPool:
     """Return the process-wide pool of multiplexed SSH sessions."""
     global _global_pool
     if _global_pool is None:
-        from omnigent.host.ssh_config import load_ssh_pool_config
-
-        config = load_ssh_pool_config()
-        _global_pool = SshSessionPool(
-            max_concurrent_commands=config.max_concurrent_commands,
-        )
+        _global_pool = SshSessionPool()
     return _global_pool
 
 

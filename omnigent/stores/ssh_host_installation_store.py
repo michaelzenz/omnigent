@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import Engine, and_, or_, select, update
 from sqlalchemy.engine import CursorResult
 
-from omnigent.db.db_models import SqlSshHostInstallation, current_workspace_id
+from omnigent.db.db_models import SqlSshHostInstallation, SqlSshSettings, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
-from omnigent.ssh_connections_store import SshConnectionProfile
+from omnigent.entities import SshConnectionProfile, SshSettings
 
 
 @dataclass(frozen=True)
 class SshHostInstallation:
     connection_id: str
+    label: str
     ssh_alias: str
     host_id: str
     owner: str
@@ -36,6 +39,7 @@ class SshHostInstallation:
 def _entity(row: SqlSshHostInstallation) -> SshHostInstallation:
     return SshHostInstallation(
         connection_id=row.connection_id,
+        label=row.label,
         ssh_alias=row.ssh_alias,
         host_id=row.host_id,
         owner=row.owner,
@@ -60,6 +64,79 @@ class SshHostInstallationStore:
         self._engine: Engine = get_or_create_engine(storage_location)
         self._session = make_managed_session_maker(self._engine, immediate=True)
 
+    def profiles(self) -> list[SshConnectionProfile]:
+        """Return active SSH profiles in creation order."""
+        with self._session() as session:
+            rows = (
+                session.execute(
+                    select(SqlSshHostInstallation)
+                    .where(
+                        SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                        SqlSshHostInstallation.desired_state == "connected",
+                    )
+                    .order_by(SqlSshHostInstallation.created_at, SqlSshHostInstallation.connection_id)
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                SshConnectionProfile(
+                    id=row.connection_id,
+                    label=row.label,
+                    alias=row.ssh_alias,
+                    created_at=datetime.fromtimestamp(row.created_at, UTC).isoformat(),
+                    owner=row.owner,
+                )
+                for row in rows
+            ]
+
+    def get_settings(self) -> SshSettings:
+        """Return workspace SSH settings, creating their stable namespace."""
+        with self._session() as session:
+            workspace_id = current_workspace_id()
+            row = session.get(SqlSshSettings, workspace_id)
+            if row is None:
+                row = SqlSshSettings(
+                    workspace_id=workspace_id,
+                    package_index_url=None,
+                    remote_namespace=secrets.token_hex(6),
+                    updated_at=now_epoch(),
+                )
+                session.add(row)
+            return SshSettings(
+                package_index_url=row.package_index_url,
+                remote_namespace=row.remote_namespace,
+            )
+
+    def update_settings(
+        self,
+        *,
+        package_index_url: str | None,
+        updated_by: str | None = None,
+    ) -> SshSettings:
+        """Persist workspace SSH settings without changing their namespace."""
+        with self._session() as session:
+            workspace_id = current_workspace_id()
+            row = session.execute(
+                select(SqlSshSettings)
+                .where(SqlSshSettings.workspace_id == workspace_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if row is None:
+                row = SqlSshSettings(
+                    workspace_id=workspace_id,
+                    remote_namespace=secrets.token_hex(6),
+                    updated_at=now_epoch(),
+                )
+                session.add(row)
+            row.package_index_url = package_index_url
+            row.updated_at = now_epoch()
+            row.updated_by = updated_by
+            return SshSettings(
+                package_index_url=row.package_index_url,
+                remote_namespace=row.remote_namespace,
+            )
+
     def sync_connections(
         self,
         profiles: dict[str, SshConnectionProfile],
@@ -82,11 +159,18 @@ class SshHostInstallationStore:
             existing = {row.connection_id: row for row in rows}
             for connection_id, profile in profiles.items():
                 profile_owner = profile.owner or owner
+                try:
+                    profile_created_at = int(
+                        datetime.fromisoformat(profile.created_at).timestamp()
+                    )
+                except ValueError:
+                    profile_created_at = now
                 row = existing.get(connection_id)
                 if row is None:
                     session.add(
                         SqlSshHostInstallation(
                             connection_id=connection_id,
+                            label=profile.label,
                             ssh_alias=profile.alias,
                             host_id=uuid.uuid4().hex,
                             owner=profile_owner,
@@ -96,7 +180,7 @@ class SshHostInstallationStore:
                             bundle_version=bundle_version,
                             attempt=0,
                             next_attempt_at=now,
-                            created_at=now,
+                            created_at=profile_created_at,
                             updated_at=now,
                         )
                     )
@@ -104,6 +188,12 @@ class SshHostInstallationStore:
                     changed = False
                     if row.owner != profile_owner:
                         row.owner = profile_owner
+                        changed = True
+                    if row.label != profile.label:
+                        row.label = profile.label
+                        changed = True
+                    if row.created_at != profile_created_at:
+                        row.created_at = profile_created_at
                         changed = True
                     if row.ssh_alias != profile.alias:
                         row.ssh_alias = profile.alias

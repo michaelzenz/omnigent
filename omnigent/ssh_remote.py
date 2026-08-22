@@ -11,7 +11,7 @@ import shlex
 import tempfile
 from pathlib import Path
 
-from omnigent.ssh_connections_store import SshConnectionProfile
+from omnigent.entities import SshConnectionProfile
 from omnigent.ssh_session import get_ssh_pool
 
 _DEFAULT_TIMEOUT_S = 30.0

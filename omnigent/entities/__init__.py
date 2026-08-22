@@ -46,6 +46,7 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
+from omnigent.entities.ssh_connection import SshConnectionProfile, SshSettings
 from omnigent.entities.task import (
     EventTag,
     FyiCluster,
@@ -103,6 +104,8 @@ __all__ = [
     "SessionResourceView",
     "SlashCommandData",
     "StoredFile",
+    "SshConnectionProfile",
+    "SshSettings",
     "Task",
     "TaskAsset",
     "TaskEvent",

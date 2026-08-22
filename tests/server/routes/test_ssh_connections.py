@@ -8,11 +8,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi import FastAPI
 
+from omnigent.entities import SshConnectionProfile, SshSettings
 from omnigent.server.routes.ssh_connections import create_ssh_connections_router
-from omnigent.ssh_connections_store import (
-    SshConnectionProfile,
-    SshSettings,
-)
 from omnigent.ssh_probe import SshProbeResult
 
 
@@ -30,68 +27,50 @@ async def test_ssh_test_route_returns_probe_result(client: httpx.AsyncClient) ->
     assert body == {"ok": True, "message": "Connected", "latency_ms": 42}
 
 
-async def test_put_ssh_connections_persists_profiles(client: httpx.AsyncClient) -> None:
-    stored: list[SshConnectionProfile] = []
-
-    def _write(profiles: list[SshConnectionProfile]) -> None:
-        stored.clear()
-        stored.extend(profiles)
-
-    with patch(
-        "omnigent.server.routes.ssh_connections.read_ssh_connections",
-        return_value=[],
-    ):
-        with patch(
-            "omnigent.server.routes.ssh_connections.write_ssh_connections",
-            side_effect=_write,
-        ):
-            with patch(
-                "omnigent.server.routes.ssh_connections.write_ssh_settings",
-            ) as write_settings:
-                resp = await client.put(
-                    "/v1/ssh/connections",
-                    json={"connections": [{"label": "Arca", "alias": "arca.ssh"}]},
-                )
+async def test_put_ssh_connections_persists_profiles(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+) -> None:
+    resp = await client.put(
+        "/v1/ssh/connections",
+        json={"connections": [{"label": "Arca", "alias": "arca.ssh"}]},
+    )
     assert resp.status_code == 200
-    assert len(stored) == 1
-    assert stored[0].alias == "arca.ssh"
-    assert stored[0].label == "Arca"
-    write_settings.assert_called_once_with(SshSettings(package_index_url=None))
+    ssh_store = app.state.ssh_host_installation_store
+    profiles = ssh_store.profiles()
+    assert len(profiles) == 1
+    assert profiles[0].alias == "arca.ssh"
+    assert profiles[0].label == "Arca"
+    assert ssh_store.get_settings().package_index_url is None
 
 
 async def test_put_ssh_connections_keeps_created_at_of_existing_profile(
     client: httpx.AsyncClient,
+    app: FastAPI,
 ) -> None:
     """Re-saving a profile must not reset when it was first added."""
-    stored: list[SshConnectionProfile] = []
-
-    def _write(profiles: list[SshConnectionProfile]) -> None:
-        stored.clear()
-        stored.extend(profiles)
-
+    ssh_store = app.state.ssh_host_installation_store
     existing = SshConnectionProfile(
         id="profile-1",
         label="Arca",
         alias="arca.ssh",
         created_at="2026-01-01T00:00:00+00:00",
     )
-    with patch(
-        "omnigent.server.routes.ssh_connections.read_ssh_connections",
-        return_value=[existing],
-    ):
-        with patch(
-            "omnigent.server.routes.ssh_connections.write_ssh_connections",
-            side_effect=_write,
-        ):
-            resp = await client.put(
-                "/v1/ssh/connections",
-                json={
-                    "connections": [{"id": "profile-1", "label": "Arca II", "alias": "arca.ssh"}]
-                },
-            )
+    ssh_store.sync_connections(
+        {existing.id: existing},
+        bundle_version="test",
+        owner="local",
+    )
+    resp = await client.put(
+        "/v1/ssh/connections",
+        json={
+            "connections": [{"id": "profile-1", "label": "Arca II", "alias": "arca.ssh"}]
+        },
+    )
     assert resp.status_code == 200
-    assert stored[0].created_at == "2026-01-01T00:00:00+00:00"
-    assert stored[0].label == "Arca II"
+    stored = ssh_store.profiles()[0]
+    assert stored.created_at == "2026-01-01T00:00:00+00:00"
+    assert stored.label == "Arca II"
 
 
 async def test_get_includes_lifecycle_and_host_status(
@@ -115,15 +94,11 @@ async def test_get_includes_lifecycle_and_host_status(
     )
     app.state.ssh_host_manager = SimpleNamespace(snapshot=lambda: {"profile-1": state})
     app.state.host_store = SimpleNamespace(is_online=lambda _host_id: True)
-    with patch(
-        "omnigent.server.routes.ssh_connections.read_ssh_connections",
-        return_value=[profile],
-    ):
-        with patch(
-            "omnigent.server.routes.ssh_connections.read_ssh_settings",
-            return_value=SshSettings(package_index_url="https://pypi.example.com/simple"),
-        ):
-            response = await client.get("/v1/ssh/connections")
+    ssh_store = app.state.ssh_host_installation_store
+    ssh_store.sync_connections({profile.id: profile}, bundle_version="test", owner="local")
+    ssh_store.update_settings(package_index_url="https://pypi.example.com/simple")
+    with patch.object(ssh_store, "snapshots", return_value={"profile-1": state}):
+        response = await client.get("/v1/ssh/connections")
     assert response.status_code == 200
     body = response.json()
     connection = body["connections"][0]
@@ -231,9 +206,15 @@ async def test_non_admins_can_read_but_not_provision_ssh_targets() -> None:
     """
     auth_provider = SimpleNamespace(get_user_id=lambda _request: "member@example.com")
     permission_store = SimpleNamespace(is_admin=lambda _user_id: False)
+    ssh_store = SimpleNamespace(
+        profiles=lambda: [],
+        snapshots=lambda: {},
+        get_settings=lambda: SshSettings(remote_namespace="test"),
+    )
     app = FastAPI()
     app.include_router(
         create_ssh_connections_router(
+            ssh_store=ssh_store,
             auth_provider=auth_provider,
             permission_store=permission_store,
         ),
@@ -243,11 +224,7 @@ async def test_non_admins_can_read_but_not_provision_ssh_targets() -> None:
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
     ) as local_client:
-        with patch(
-            "omnigent.server.routes.ssh_connections.read_ssh_connections",
-            return_value=[],
-        ):
-            readable = await local_client.get("/v1/ssh/connections")
+        readable = await local_client.get("/v1/ssh/connections")
         written = await local_client.put(
             "/v1/ssh/connections",
             json={"connections": [{"label": "Arca", "alias": "arca.ssh"}]},
