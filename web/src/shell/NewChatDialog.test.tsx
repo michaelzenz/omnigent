@@ -1370,9 +1370,15 @@ describe("NewChatLandingScreen", () => {
     renderLanding();
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
     expect(screen.getByTestId("new-chat-landing-agent-a1")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-configured-a1")).toHaveTextContent(
+      "Configured",
+    );
     expect(screen.queryByTestId("new-chat-landing-agent-a_cursor")).toBeNull();
     fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
     expect(screen.getByTestId("new-chat-landing-agent-a_cursor")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-warning-a_cursor")).toHaveTextContent(
+      "needs setup",
+    );
   });
 
   it("hides harnesses unconfigured on the selected host when the preference is on", () => {
@@ -1386,6 +1392,17 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByTestId("new-chat-landing-agent-a1")).toBeTruthy();
     expect(screen.queryByTestId("new-chat-landing-agent-a_cursor")).toBeNull();
     expect(screen.queryByTestId("new-chat-landing-harness-more")).toBeNull();
+  });
+
+  it("falls back when the remembered harness is unconfigured and hidden", () => {
+    writeHideUnconfiguredHarnesses(true);
+    localStorage.setItem(LAST_AGENT_KEY, "a_cursor");
+    mockHostWithHarnessReadiness();
+    renderLanding();
+
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("Claude Code");
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    expect(screen.queryByTestId("new-chat-landing-agent-a_cursor")).toBeNull();
   });
 
   it("leads with fully supported harnesses even when they need setup on the host", () => {

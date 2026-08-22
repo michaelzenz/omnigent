@@ -1121,19 +1121,34 @@ export function AgentHarnessPicker({
     return withTooltip ? <AgentRowTooltip agent={agent}>{inner}</AgentRowTooltip> : inner;
   };
 
-  const renderBadge = (agent: AvailableAgent) =>
-    harnessUnconfiguredOnHost(agent.harness, host) ? (
+  const harnessEntryIds = useMemo(
+    () => new Set(harnessEntries.map((agent) => agent.id)),
+    [harnessEntries],
+  );
+  const renderBadge = (agent: AvailableAgent) => {
+    const unavailableReason = harnessUnavailableReasonOnHost(agent.harness, host);
+    if (unavailableReason !== null) {
+      return (
+        <Badge
+          variant="outline"
+          className="ml-auto self-center border-amber-300 bg-amber-50 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400"
+          data-testid={`new-chat-landing-agent-warning-${agent.id}`}
+        >
+          {harnessWarningBadgeText(unavailableReason, collapsedBadge)}
+        </Badge>
+      );
+    }
+    const availability = agent.harness ? host?.configured_harnesses?.[agent.harness] : undefined;
+    return harnessEntryIds.has(agent.id) && availability === true ? (
       <Badge
         variant="outline"
-        className="ml-auto self-center border-amber-300 bg-amber-50 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400"
-        data-testid={`new-chat-landing-agent-warning-${agent.id}`}
+        className="ml-auto self-center border-emerald-300 bg-emerald-50 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
+        data-testid={`new-chat-landing-agent-configured-${agent.id}`}
       >
-        {harnessWarningBadgeText(
-          harnessUnavailableReasonOnHost(agent.harness, host),
-          collapsedBadge,
-        )}
+        Configured
       </Badge>
     ) : null;
+  };
 
   // Each entry is a plain selectable row — selecting commits the pick and
   // closes the menu. Run-config knobs moved to the gear-icon config modal.
@@ -1163,17 +1178,18 @@ export function AgentHarnessPicker({
   const { recentHarnesses } = useRecentHarnesses();
   // Split harnesses by support level: the fully supported ones lead the primary
   // list, and every other harness folds into "More" whether or not it is
-  // configured here. Also promoted out of "More": the selected harness (never
-  // bury the active pick) and any the user has launched before, so a regular
-  // Pi / Cursor user gets theirs one click away instead of one hover.
+  // configured here. Also promoted out of "More": the selected visible harness
+  // and any the user has launched before, so a regular Pi / Cursor user gets
+  // theirs one click away instead of one hover.
   const { readyHarnessEntries, moreHarnessEntries } = useMemo(() => {
     const ready: AvailableAgent[] = [];
     const more: AvailableAgent[] = [];
     for (const a of harnessEntries) {
       const selected = a.id === effectiveAgentId;
-      // The preference hides harnesses that can't launch here — it outranks
-      // both support level and recency, but never buries the active pick.
-      if (!selected && hideUnconfigured && harnessUnconfiguredOnHost(a.harness, host)) continue;
+      // The preference strictly hides harnesses that can't launch here. The
+      // parent screen also rejects a stale active pick, so no hidden target
+      // remains selected through the trigger.
+      if (hideUnconfigured && harnessUnconfiguredOnHost(a.harness, host)) continue;
       if (
         selected ||
         a.name === OMNIHARNESS_AGENT_NAME ||
@@ -3067,15 +3083,32 @@ export function NewChatLandingScreen() {
     generateBranchName,
   ]);
 
-  // A target pick only wins while it exists in the execution-target catalog.
+  const hideUnconfiguredHarnesses = useMemo(() => readHideUnconfiguredHarnesses(), []);
+  const selectedHost = allHosts.find((host) => host.host_id === selectedHostId);
+  const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
+  const harnessEntryIds = useMemo(
+    () => new Set(harnessEntries.map((agent) => agent.id)),
+    [harnessEntries],
+  );
+  const targetIsVisible = (agent: AvailableAgent) =>
+    !hideUnconfiguredHarnesses ||
+    !harnessEntryIds.has(agent.id) ||
+    !harnessUnconfiguredOnHost(agent.harness, harnessWarningHost);
+
+  // A target pick only wins while it exists in the visible execution-target
+  // catalog. With unconfigured harnesses hidden, a stale remembered pick falls
+  // through to the first target that can launch on the selected host.
   // Pending custom bundles are local virtual entries and cannot run in a
   // managed sandbox, whose create path does not provision uploaded bundles.
   const pendingAgentAllowedOnTarget = !sandboxSelected;
-  const pickedAgentExists = agentList.some((agent) => agent.id === pickedAgentId);
+  const pickedAgentExists = agentList.some(
+    (agent) => agent.id === pickedAgentId && targetIsVisible(agent),
+  );
+  const firstVisibleAgent = agentList.find(targetIsVisible);
   const effectiveAgentId =
     pickedAgentId === PENDING_AGENT_ID && pendingAgentAllowedOnTarget
       ? PENDING_AGENT_ID
-      : (pickedAgentExists ? pickedAgentId : agentList[0]?.id) ?? null;
+      : (pickedAgentExists ? pickedAgentId : firstVisibleAgent?.id) ?? null;
   const selectedAgent = useMemo(
     () =>
       effectiveAgentId === PENDING_AGENT_ID && pendingAgent
@@ -3112,16 +3145,13 @@ export function NewChatLandingScreen() {
   const supportsAgySkipPermissions = nativeAgentHasCapability(selectedAgent, "skipPermissions");
   const supportsModelPicker = nativeAgentHasCapability(selectedAgent, "modelPicker");
   const selectedAgentUsesOmniHarness = selectedAgent?.name === OMNIHARNESS_AGENT_NAME;
-  const hideUnconfiguredHarnesses = useMemo(() => readHideUnconfiguredHarnesses(), []);
   // The selected native harness, used to persist/seed its option knobs (mode /
   // model / effort), which are harness-specific. null for non-native agents,
   // which have no knobs to remember.
-  const selectedHost = allHosts.find((h) => h.host_id === selectedHostId);
   // Warn-only readiness signal for the agent picker: only meaningful when
   // a connected host is selected (a sandbox provisions its own tooling).
-  // Selection stays allowed — the host re-checks at launch and the create
-  // call surfaces a specific error if the harness really can't run.
-  const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
+  // When hiding is off, selection stays allowed and the host re-checks at
+  // launch; when hiding is on, targetIsVisible removes not-ready harnesses.
   // Smart Routing as a Model choice is offered on OmniHarness and the
   // two native harnesses whose running CLI accepts a model switch.
   // Each family gates on its OWN source: the external router's apply layer
