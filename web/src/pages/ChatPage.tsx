@@ -2339,7 +2339,10 @@ export function MainAgentSurface({
                 {/* Scroll helpers — must live inside StickToBottom to access context. */}
                 <BottomLockController enabled={bottomLockEnabled} />
                 <ScrollToBottomOnSend nonce={sendScrollNonce} enabled={bottomLockEnabled} />
-                <ReleaseBottomLockOnResponseEnd status={status} />
+                <ReleaseBottomLockOnResponseEnd
+                  status={status}
+                  enabled={bottomLockEnabled}
+                />
                 {bottomLockEnabled && <KeepBottomOnViewportResize />}
                 <ConversationScrollRefBridge onScroller={setScroller} />
                 <HistoryAutoLoader scrollElement={scroller?.el ?? null} />
@@ -2810,8 +2813,14 @@ export function ConversationScrollPosition({
   return null;
 }
 
-/** Prevent the final streaming resize from pulling a reader back to the end. */
-export function ReleaseBottomLockOnResponseEnd({ status }: { status: "idle" | "streaming" }) {
+/** Prevent completion-time resizes from moving readers when bottom locking is disabled. */
+export function ReleaseBottomLockOnResponseEnd({
+  status,
+  enabled,
+}: {
+  status: "idle" | "streaming";
+  enabled: boolean;
+}) {
   const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
     scrollRef?: React.RefObject<HTMLElement>;
     state: { isAtBottom: boolean; escapedFromLock: boolean };
@@ -2822,18 +2831,30 @@ export function ReleaseBottomLockOnResponseEnd({ status }: { status: "idle" | "s
   useLayoutEffect(() => {
     const previousStatus = previousStatusRef.current;
     previousStatusRef.current = status;
-    if (previousStatus !== "streaming" || status !== "idle") return;
+    if (enabled || previousStatus !== "streaming" || status !== "idle") return;
     const scrollElement = ctx.scrollRef?.current;
     if (!scrollElement) return;
     const scrollTop = scrollElement.scrollTop;
     const physicallyAtBottom =
       scrollElement.scrollHeight - scrollElement.clientHeight - scrollTop <= 1;
     if (physicallyAtBottom) return;
-    ctx.stopScroll();
-    ctx.state.isAtBottom = false;
-    ctx.state.escapedFromLock = true;
-    scrollElement.scrollTop = scrollTop;
-  }, [ctx.scrollRef, ctx.state, ctx.stopScroll, status]);
+    const preserve = () => {
+      ctx.stopScroll();
+      ctx.state.isAtBottom = false;
+      ctx.state.escapedFromLock = true;
+      scrollElement.scrollTop = scrollTop;
+    };
+    preserve();
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      preserve();
+      secondFrame = requestAnimationFrame(preserve);
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [ctx.scrollRef, ctx.state, ctx.stopScroll, enabled, status]);
 
   return null;
 }

@@ -157,8 +157,10 @@ describe("ReleaseBottomLockOnResponseEnd", () => {
     const stopScroll = vi.fn();
     stickContext.stopScroll = stopScroll;
 
-    const { rerender } = render(<ReleaseBottomLockOnResponseEnd status="streaming" />);
-    rerender(<ReleaseBottomLockOnResponseEnd status="idle" />);
+    const { rerender } = render(
+      <ReleaseBottomLockOnResponseEnd status="streaming" enabled={false} />,
+    );
+    rerender(<ReleaseBottomLockOnResponseEnd status="idle" enabled={false} />);
 
     expect(stopScroll).toHaveBeenCalledOnce();
     expect(stickContext.state).toEqual({ isAtBottom: false, escapedFromLock: true });
@@ -174,8 +176,28 @@ describe("ReleaseBottomLockOnResponseEnd", () => {
     const stopScroll = vi.fn();
     stickContext.stopScroll = stopScroll;
 
-    const { rerender } = render(<ReleaseBottomLockOnResponseEnd status="streaming" />);
-    rerender(<ReleaseBottomLockOnResponseEnd status="idle" />);
+    const { rerender } = render(
+      <ReleaseBottomLockOnResponseEnd status="streaming" enabled={false} />,
+    );
+    rerender(<ReleaseBottomLockOnResponseEnd status="idle" enabled={false} />);
+
+    expect(stopScroll).not.toHaveBeenCalled();
+    expect(stickContext.state).toEqual({ isAtBottom: true, escapedFromLock: false });
+  });
+
+  it("allows completion to follow the response when bottom locking is enabled", () => {
+    const scrollRoot = document.createElement("div");
+    setScrollMetrics(scrollRoot, { scrollTop: 640, scrollHeight: 2400, clientHeight: 800 });
+    stickContext.scrollRef.current = scrollRoot;
+    stickContext.state.isAtBottom = true;
+    stickContext.state.escapedFromLock = false;
+    const stopScroll = vi.fn();
+    stickContext.stopScroll = stopScroll;
+
+    const { rerender } = render(
+      <ReleaseBottomLockOnResponseEnd status="streaming" enabled />,
+    );
+    rerender(<ReleaseBottomLockOnResponseEnd status="idle" enabled />);
 
     expect(stopScroll).not.toHaveBeenCalled();
     expect(stickContext.state).toEqual({ isAtBottom: true, escapedFromLock: false });
