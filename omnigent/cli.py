@@ -4017,6 +4017,10 @@ def server(
     comment_store = SqlAlchemyCommentStore(db_uri)
     policy_store = SqlAlchemyPolicyStore(db_uri)
     model_settings_store = SqlAlchemyModelSettingsStore(db_uri)
+    from omnigent.stores.tool_preferences_store.sqlalchemy_store import (
+        SqlAlchemyToolPreferencesStore,
+    )
+    tool_preferences_store = SqlAlchemyToolPreferencesStore(db_uri)
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     memory_store = SqlAlchemyMemoryStore(db_uri)
@@ -4183,6 +4187,7 @@ def server(
         comment_store=comment_store,
         policy_store=policy_store,
         model_settings_store=model_settings_store,
+        tool_preferences_store=tool_preferences_store,
         artifact_store=artifact_store,
         agent_cache=agent_cache,
         runner_tunnel_tokens=_runner_tunnel_tokens,

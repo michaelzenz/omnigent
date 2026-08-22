@@ -5601,6 +5601,13 @@ async def execute_tool(
         not tracked — shell side-effects cannot be attributed to a session.
     :returns: Tool output string.
     """
+    # Dispatch guard: reject calls to globally disabled tools.
+    from omnigent.tools.preferences import get_disabled_tools_sync
+
+    _disabled = get_disabled_tools_sync()
+    if tool_name in _disabled:
+        return json.dumps({"error": f"Tool '{tool_name}' is unavailable."})
+
     if not arguments.strip():
         return json.dumps({"error": "malformed JSON arguments"})
     args, error = parse_json_object_arguments(arguments)

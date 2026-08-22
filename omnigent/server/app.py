@@ -98,6 +98,7 @@ from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.server.routes.statistics import create_statistics_router
 from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
+from omnigent.server.routes.tool_preferences import create_tool_preferences_router
 from omnigent.server.routes.usage import create_usage_router
 from omnigent.server.runner_session_init import RunnerSessionInitializer
 from omnigent.server.scheduled import ScheduledTaskScheduler
@@ -115,6 +116,7 @@ from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.model_settings_store import ModelSettingsStore
+from omnigent.stores.tool_preferences_store import ToolPreferencesStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
@@ -1055,6 +1057,7 @@ def create_app(
     comment_store: CommentStore | None = None,
     policy_store: PolicyStore | None = None,
     model_settings_store: ModelSettingsStore | None = None,
+    tool_preferences_store: ToolPreferencesStore | None = None,
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
@@ -1771,6 +1774,7 @@ def create_app(
     app.state.agent_store = agent_store
     app.state.prompt_profile_store = prompt_profile_store
     app.state.model_settings_store = model_settings_store
+    app.state.tool_preferences_store = tool_preferences_store
     app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
     app.state.branding_snapshot = branding_snapshot
@@ -2942,6 +2946,16 @@ def create_app(
             ),
             prefix="/v1",
             tags=["models"],
+        )
+    if tool_preferences_store is not None:
+        app.include_router(
+            create_tool_preferences_router(
+                tool_preferences_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+            ),
+            prefix="/v1",
+            tags=["tool_preferences"],
         )
     if scheduled_task_store is not None:
         app.include_router(

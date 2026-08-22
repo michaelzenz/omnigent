@@ -1381,6 +1381,30 @@ class SqlModelSettings(OmnigentBase):
     )
 
 
+class SqlToolPreferences(OmnigentBase):
+    """Deployment-wide admin tool preferences (singleton)."""
+
+    __tablename__ = "tool_preferences"
+
+    id: Mapped[int] = mapped_column(
+        SmallInteger,
+        primary_key=True,
+        default=1,
+        server_default="1",
+    )
+    disabled_tools: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="[]",
+    )
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_tool_preferences_singleton"),
+    )
+
+
 class SqlHost(OmnigentBase):
     """
     SQLAlchemy model for the ``hosts`` table.
