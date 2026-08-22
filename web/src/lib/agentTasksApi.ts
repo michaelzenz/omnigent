@@ -520,6 +520,7 @@ export interface ScriptPluginHealthRow {
   name: string;
   kind: ScriptPluginKind;
   outcome: string;
+  enabled: boolean;
   last_run_at: number | null;
   last_success_at: number | null;
   last_failure_at: number | null;
@@ -540,4 +541,23 @@ export async function fetchScriptPluginHealth(
   const res = await authenticatedFetch(`/v1/agent-tasks/script-plugins/health${qs}`);
   const body = await readJson<{ plugins: ScriptPluginHealthRow[] }>(res);
   return body.plugins;
+}
+
+export async function updateScriptPollPlugin(
+  hostId: string,
+  name: string,
+  enabled: boolean,
+): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/script-plugins/hosts/${encodeURIComponent(hostId)}/${encodeURIComponent(name)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+  }
 }

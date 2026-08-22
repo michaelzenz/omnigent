@@ -1,3 +1,6 @@
+# Whether this poller runs on its assigned host.
+enabled: true
+
 # How often the host runs this plugin's run.py (seconds).
 interval_s: 60
 

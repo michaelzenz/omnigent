@@ -2817,7 +2817,11 @@ def create_app(
         )
 
         app.include_router(
-            create_script_plugin_health_router(auth_provider=auth_provider),
+            create_script_plugin_health_router(
+                host_registry=host_registry,
+                host_store=host_store,
+                auth_provider=auth_provider,
+            ),
             prefix="/v1",
             tags=["script_plugin_health"],
         )

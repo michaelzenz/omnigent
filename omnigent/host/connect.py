@@ -83,7 +83,7 @@ from omnigent.host.git_worktree import (
     remove_worktree,
     renew_auto_worktree_lease,
 )
-from omnigent.host.identity import HostIdentity, load_or_create_host_identity
+from omnigent.host.identity import CONFIG_PATH, HostIdentity, load_or_create_host_identity
 from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
 from omnigent.inner import _proc
 from omnigent.onboarding.harness_auth import (
@@ -2332,6 +2332,59 @@ class HostProcess:
                     status="error",
                     error_status=500,
                     error_code="skill_operation_failed",
+                    error=str(exc),
+                )
+        if frame.op == "poll_plugin.settings":
+            try:
+                from omnigent.host.polling.poll_plugins_paths import iter_plugin_dirs
+                from omnigent.host.polling.pollers.script_plugins_config import (
+                    write_plugin_poll_enabled,
+                )
+
+                params = frame.params or {}
+                name = params.get("name")
+                enabled = params.get("enabled")
+                if not isinstance(name, str) or not isinstance(enabled, bool):
+                    raise ValueError("poll plugin settings require name and enabled")
+                plugin_dir = next(
+                    (
+                        path
+                        for path in iter_plugin_dirs(config_path=CONFIG_PATH)
+                        if path.name == name
+                    ),
+                    None,
+                )
+                if plugin_dir is None:
+                    raise FileNotFoundError(f"poll plugin {name!r} was not found")
+                write_plugin_poll_enabled(plugin_dir, enabled)
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="ok",
+                    payload={"name": name, "enabled": enabled},
+                )
+            except FileNotFoundError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=404,
+                    error_code="not_found",
+                    error=str(exc),
+                )
+            except ValueError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=400,
+                    error_code="invalid_request",
+                    error=str(exc),
+                )
+            except Exception as exc:
+                _logger.exception("host poll plugin settings update failed")
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=500,
+                    error_code="poll_plugin_settings_failed",
                     error=str(exc),
                 )
 

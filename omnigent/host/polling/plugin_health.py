@@ -39,6 +39,7 @@ Outcome = Literal[
     "start_failed",
     "skipped_singleton",
     "skipped_config",
+    "disabled",
     # timer-only, non-firing states (no failure accounting):
     "scheduled",
     "already_fired",
@@ -52,6 +53,7 @@ class PluginHealthRecord:
     name: str
     kind: PluginKind
     outcome: Outcome
+    enabled: bool = True
     last_run_at: float | None = None
     last_success_at: float | None = None
     last_failure_at: float | None = None
@@ -163,18 +165,42 @@ class PluginHealthTracker:
             fired_at=prev.fired_at if prev else None,
         )
 
-    def record_config_skip(self, name: str) -> None:
-        """Record that a plugin was skipped due to invalid singleton config."""
+    def record_disabled(
+        self,
+        name: str,
+        *,
+        interval_s: float,
+    ) -> None:
+        """Record that this poll plugin is disabled in its own config."""
+        prev = self._records.get(name)
+        self._records[name] = PluginHealthRecord(
+            name=name,
+            kind=self.kind,
+            outcome="disabled",
+            enabled=False,
+            last_run_at=prev.last_run_at if prev else None,
+            last_success_at=prev.last_success_at if prev else None,
+            last_failure_at=prev.last_failure_at if prev else None,
+            last_error=None,
+            consecutive_failures=prev.consecutive_failures if prev else 0,
+            singleton_skipped=False,
+            warning=self._warnings.get(name),
+            interval_s=interval_s,
+        )
+
+    def record_config_skip(self, name: str, *, error: str = "invalid plugin config") -> None:
+        """Record that a plugin was skipped due to invalid configuration."""
         now = time.time()
         prev = self._records.get(name)
         self._records[name] = PluginHealthRecord(
             name=name,
             kind=self.kind,
             outcome="skipped_config",
+            enabled=False,
             last_run_at=now,
             last_success_at=prev.last_success_at if prev else None,
             last_failure_at=prev.last_failure_at if prev else None,
-            last_error="invalid singleton config",
+            last_error=_truncate(error),
             consecutive_failures=prev.consecutive_failures if prev else 0,
             singleton_skipped=False,
             warning=self._warnings.get(name),

@@ -15,9 +15,11 @@ from omnigent.host.polling.poll_plugins_paths import (
 )
 from omnigent.host.polling.pollers.script_plugins import ScriptPollPluginsPoller
 from omnigent.host.polling.pollers.script_plugins_config import (
+    PluginPollConfigError,
     ScriptPollPluginsDefaults,
     load_plugin_poll_config,
     load_script_poll_plugins_defaults,
+    write_plugin_poll_enabled,
 )
 
 
@@ -55,7 +57,7 @@ def test_plugin_poll_config_uses_plugin_yaml(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "github_pr"
     plugin_dir.mkdir()
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(
-        "interval_s: 30\ntimeout_s: 15\nsingleton: false\n"
+        "enabled: true\ninterval_s: 30\ntimeout_s: 15\nsingleton: false\n"
     )
     defaults = ScriptPollPluginsDefaults(
         default_interval_s=60.0,
@@ -70,7 +72,7 @@ def test_plugin_poll_config_uses_plugin_yaml(tmp_path: Path) -> None:
 def test_plugin_poll_config_falls_back_to_defaults(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "bare"
     plugin_dir.mkdir()
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("singleton: false\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("enabled: true\nsingleton: false\n")
     defaults = ScriptPollPluginsDefaults(
         default_interval_s=60.0,
         default_timeout_s=120.0,
@@ -81,11 +83,38 @@ def test_plugin_poll_config_falls_back_to_defaults(tmp_path: Path) -> None:
     assert config.timeout_s == 120.0
 
 
+def test_plugin_poll_config_requires_enabled(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "bare"
+    plugin_dir.mkdir()
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("singleton: false\n")
+    defaults = ScriptPollPluginsDefaults(
+        default_interval_s=60.0,
+        default_timeout_s=120.0,
+        tick_s=5.0,
+    )
+
+    with pytest.raises(PluginPollConfigError):
+        load_plugin_poll_config(plugin_dir, defaults)
+
+
+def test_write_plugin_poll_enabled_preserves_other_config(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "demo"
+    plugin_dir.mkdir()
+    config_path = plugin_dir / PLUGIN_CONFIG_NAME
+    config_path.write_text("# poll interval\nenabled: true\ninterval_s: 60\nsingleton: false\n")
+
+    write_plugin_poll_enabled(plugin_dir, False)
+
+    assert config_path.read_text() == (
+        "# poll interval\nenabled: false\ninterval_s: 60\nsingleton: false\n"
+    )
+
+
 def test_plugin_poll_config_parses_singleton(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "slack_watch"
     plugin_dir.mkdir()
     (plugin_dir / PLUGIN_CONFIG_NAME).write_text(
-        "interval_s: 180\nsingleton: true\nbound_role: secretary\n"
+        "enabled: true\ninterval_s: 180\nsingleton: true\nbound_role: secretary\n"
     )
     defaults = ScriptPollPluginsDefaults(
         default_interval_s=60.0,
@@ -100,7 +129,7 @@ def test_plugin_poll_config_parses_singleton(tmp_path: Path) -> None:
 def test_plugin_poll_config_singleton_false_explicit(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "bare"
     plugin_dir.mkdir()
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("singleton: false\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("enabled: true\nsingleton: false\n")
     defaults = ScriptPollPluginsDefaults(
         default_interval_s=60.0,
         default_timeout_s=120.0,
@@ -116,7 +145,7 @@ def test_plugin_poll_config_missing_singleton_raises(tmp_path: Path) -> None:
 
     plugin_dir = tmp_path / "broken"
     plugin_dir.mkdir()
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 30\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("enabled: true\ninterval_s: 30\n")
     defaults = ScriptPollPluginsDefaults(
         default_interval_s=60.0,
         default_timeout_s=120.0,
@@ -131,7 +160,7 @@ def test_plugin_poll_config_singleton_true_without_bound_role_raises(tmp_path: P
 
     plugin_dir = tmp_path / "broken"
     plugin_dir.mkdir()
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("singleton: true\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("enabled: true\nsingleton: true\n")
     defaults = ScriptPollPluginsDefaults(
         default_interval_s=60.0,
         default_timeout_s=120.0,
@@ -176,7 +205,9 @@ async def test_poll_once_skips_plugin_until_interval_elapsed(
         "import os\n"
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 60\nsingleton: false\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text(
+        "enabled: true\ninterval_s: 60\nsingleton: false\n"
+    )
     (plugin_dir / README_NAME).write_text("# demo\nDocumented poll plugin.\n")
 
     import omnigent.host.polling.pollers.script_plugins as script_plugins_module
@@ -210,7 +241,9 @@ async def test_poll_once_skips_plugin_missing_readme(tmp_path: Path, monkeypatch
         "import os\n"
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 1\nsingleton: false\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text(
+        "enabled: true\ninterval_s: 1\nsingleton: false\n"
+    )
 
     import omnigent.host.polling.pollers.script_plugins as script_plugins_module
 
@@ -239,7 +272,9 @@ async def test_poll_once_runs_plugin_that_has_readme(tmp_path: Path, monkeypatch
         "import os\n"
         "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
     )
-    (plugin_dir / PLUGIN_CONFIG_NAME).write_text("interval_s: 1\nsingleton: false\n")
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text(
+        "enabled: true\ninterval_s: 1\nsingleton: false\n"
+    )
     (plugin_dir / README_NAME).write_text("# withdoc\nDocumented plugin.\n")
 
     import omnigent.host.polling.pollers.script_plugins as script_plugins_module
@@ -258,3 +293,37 @@ async def test_poll_once_runs_plugin_that_has_readme(tmp_path: Path, monkeypatch
     poller._last_run["withdoc"] = 0.0
     await poller.poll_once(_Ctx())  # type: ignore[arg-type]
     assert (plugin_dir / "ran.txt").read_text() == "1"
+
+
+async def test_poll_once_does_not_run_disabled_plugin(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "poll_plugins" / "disabled"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / RUN_SCRIPT_NAME).write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['OMNIGENT_PLUGIN_DIR']).joinpath('ran.txt').write_text('1')\n"
+    )
+    (plugin_dir / PLUGIN_CONFIG_NAME).write_text(
+        "enabled: false\ninterval_s: 1\nsingleton: false\n"
+    )
+    (plugin_dir / README_NAME).write_text("# disabled\nDocumented plugin.\n")
+
+    import omnigent.host.polling.pollers.script_plugins as script_plugins_module
+
+    monkeypatch.setattr(
+        script_plugins_module,
+        "iter_plugin_dirs_with_collisions",
+        lambda root=None, **kwargs: ([plugin_dir], set()),
+    )
+
+    class _Ctx:
+        server_url = "http://127.0.0.1:8123"
+        host_id = "host_test"
+
+    poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
+    await poller.poll_once(_Ctx())  # type: ignore[arg-type]
+
+    assert not (plugin_dir / "ran.txt").exists()
+    [health] = poller._health.snapshot()
+    assert health.enabled is False
+    assert health.outcome == "disabled"

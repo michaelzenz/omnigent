@@ -18,6 +18,7 @@ from omnigent.host.polling.poll_plugins_paths import (
     iter_plugin_dirs_with_collisions,
 )
 from omnigent.host.polling.pollers.script_plugins_config import (
+    PluginPollConfigError,
     load_plugin_poll_config,
     load_script_poll_plugins_defaults,
 )
@@ -85,13 +86,20 @@ class ScriptPollPluginsPoller:
                 continue
             try:
                 plugin_config = load_plugin_poll_config(plugin_dir, defaults)
-            except SingletonConfigError as exc:
+            except (PluginPollConfigError, SingletonConfigError) as exc:
                 _logger.warning(
-                    "Poll plugin %s skipped — invalid singleton config: %s",
+                    "Poll plugin %s skipped — invalid config: %s",
                     plugin_dir.name,
                     exc,
                 )
-                self._health.record_config_skip(plugin_dir.name)
+                self._health.record_config_skip(plugin_dir.name, error=str(exc))
+                continue
+            if not plugin_config.enabled:
+                self._last_run.pop(plugin_dir.name, None)
+                self._health.record_disabled(
+                    plugin_dir.name,
+                    interval_s=plugin_config.interval_s,
+                )
                 continue
             last_run = self._last_run.get(plugin_dir.name, 0.0)
             if now - last_run < plugin_config.interval_s:

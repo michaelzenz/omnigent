@@ -1,13 +1,17 @@
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { useScriptPluginHealth } from "@/hooks/useScriptPluginHealth";
+import {
+  useScriptPluginHealth,
+  useUpdateScriptPollPlugin,
+} from "@/hooks/useScriptPluginHealth";
 import type { ScriptPluginHealthRow, ScriptPluginKind } from "@/lib/agentTasksApi";
 
 interface ScriptPluginsBoardProps {
@@ -19,6 +23,7 @@ interface ScriptPluginsBoardProps {
 interface BoardRow {
   host_id: string;
   name: string;
+  enabled: boolean;
   status: HealthStatus;
   last_run_at: number | null;
   last_failure_at: number | null;
@@ -38,6 +43,7 @@ type HealthStatus =
   | "stale"
   | "unknown"
   | "skipped"
+  | "disabled"
   // timer-only:
   | "fired"
   | "past_due"
@@ -55,6 +61,8 @@ const POLL_STATUS: Record<string, HealthStatus> = {
 const TIMER_FAIL = new Set(["exit_nonzero", "timeout", "start_failed", "skipped_config"]);
 
 function deriveStatus(row: ScriptPluginHealthRow, nowMs: number): HealthStatus {
+  if (row.outcome === "skipped_config") return "failing";
+  if (row.kind === "poll" && !row.enabled) return "disabled";
   if (row.singleton_skipped) return "skipped";
   if (row.outcome === "skipped_singleton") return "skipped";
   if (row.kind === "timer") {
@@ -84,6 +92,7 @@ const STATUS_META: Record<HealthStatus, { label: string; className: string }> = 
   stale: { label: "stale", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
   unknown: { label: "unknown", className: "bg-muted text-muted-foreground" },
   skipped: { label: "skipped", className: "bg-muted text-muted-foreground" },
+  disabled: { label: "off", className: "bg-muted text-muted-foreground" },
   fired: { label: "fired", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
   past_due: { label: "past due", className: "bg-destructive/15 text-destructive" },
   scheduled: { label: "scheduled", className: "bg-sky-500/15 text-sky-600 dark:text-sky-400" },
@@ -115,6 +124,7 @@ function humanize(secs: number): string {
 
 function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: ScriptPluginKind }) {
   const [open, setOpen] = useState(false);
+  const update = useUpdateScriptPollPlugin();
   const hasError = Boolean(row.last_error);
   const hasWarning = Boolean(row.warning);
   const detail = hasError ? "error" : hasWarning ? "warn" : null;
@@ -122,7 +132,10 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
         className="grid items-center gap-2 px-3 py-2 text-sm odd:bg-muted/30"
-        style={{ gridTemplateColumns: "minmax(0,1fr) auto auto auto" }}
+        style={{
+          gridTemplateColumns:
+            kind === "poll" ? "minmax(0,1fr) auto auto auto auto" : "minmax(0,1fr) auto auto auto",
+        }}
       >
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -153,6 +166,18 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
         <div className="text-xs text-muted-foreground tabular-nums">
           {kind === "timer" ? formatTime(row.fired_at) : relative(row.last_failure_at, nowMs)}
         </div>
+        {kind === "poll" && (
+          <div className="flex justify-center">
+            <Switch
+              checked={row.enabled}
+              disabled={update.isPending}
+              aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name} on ${row.host_id}`}
+              onCheckedChange={(enabled) =>
+                update.mutate({ hostId: row.host_id, name: row.name, enabled })
+              }
+            />
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {row.consecutive_failures > 0 && (
             <span className="text-xs text-destructive tabular-nums">
@@ -215,6 +240,7 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
     const rows: BoardRow[] = (query.data ?? []).map((r) => ({
       host_id: r.host_id,
       name: r.name,
+      enabled: r.enabled,
       status: deriveStatus(r, nowMs),
       last_run_at: r.last_run_at,
       last_failure_at: r.last_failure_at,
@@ -237,14 +263,17 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
   }, [query.data, nowMs]);
 
   const headerColumns = kind === "poll"
-    ? ["plugin", "interval", "last fail", "status"]
+    ? ["plugin", "interval", "last fail", "enabled", "status"]
     : ["plugin", "fire at", "fired at", "status"];
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-3" data-testid={testId}>
       <div
         className="grid gap-2 px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-        style={{ gridTemplateColumns: "minmax(0,1fr) auto auto auto" }}
+        style={{
+          gridTemplateColumns:
+            kind === "poll" ? "minmax(0,1fr) auto auto auto auto" : "minmax(0,1fr) auto auto auto",
+        }}
       >
         {headerColumns.map((c) => (
           <span key={c} className={c === "status" ? "text-right" : ""}>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,11 @@ from omnigent.host.polling.singleton_gate import parse_singleton_config
 _DEFAULT_INTERVAL_S = 60.0
 _DEFAULT_TIMEOUT_S = 120.0
 _DEFAULT_TICK_S = 5.0
+_ENABLED_LINE_RE = re.compile(r"^enabled\s*:\s*.*$", re.MULTILINE)
+
+
+class PluginPollConfigError(ValueError):
+    """A poll plugin has an invalid or incomplete config."""
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,7 @@ class PluginPollConfig:
 
     interval_s: float
     timeout_s: float
+    enabled: bool = True
     singleton: bool = False
     bound_role: str | None = None
 
@@ -39,6 +46,28 @@ def _positive_float(value: object) -> float | None:
     if isinstance(value, (int, float)) and value > 0:
         return float(value)
     return None
+
+
+def write_plugin_poll_enabled(plugin_dir: Path, enabled: bool) -> None:
+    """Update ``enabled`` in one poll plugin's own config, preserving comments."""
+    path = plugin_dir / PLUGIN_CONFIG_NAME
+    try:
+        text = path.read_text(encoding="utf-8")
+        cfg = yaml.safe_load(text)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"poll plugin {plugin_dir.name!r} has no config.yaml") from None
+    except (OSError, yaml.YAMLError) as exc:
+        raise PluginPollConfigError(f"invalid config for poll plugin {plugin_dir.name!r}") from exc
+    if not isinstance(cfg, dict):
+        raise PluginPollConfigError(f"invalid config for poll plugin {plugin_dir.name!r}")
+    replacement = f"enabled: {'true' if enabled else 'false'}"
+    if _ENABLED_LINE_RE.search(text):
+        updated = _ENABLED_LINE_RE.sub(replacement, text, count=1)
+    else:
+        updated = f"{replacement}\n\n{text}"
+    temp = path.with_suffix(".tmp")
+    temp.write_text(updated, encoding="utf-8")
+    temp.replace(path)
 
 
 def load_script_poll_plugins_defaults(
@@ -102,8 +131,10 @@ def load_plugin_poll_config(
         try:
             with config_path.open(encoding="utf-8") as handle:
                 cfg = yaml.safe_load(handle) or {}
-        except OSError:
-            cfg = {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise PluginPollConfigError(
+                f"poll plugin {plugin_dir.name!r} has invalid config.yaml"
+            ) from exc
         if isinstance(cfg, dict):
             configured_interval = _positive_float(cfg.get("interval_s"))
             if configured_interval is not None:
@@ -111,10 +142,15 @@ def load_plugin_poll_config(
             configured_timeout = _positive_float(cfg.get("timeout_s"))
             if configured_timeout is not None:
                 timeout_s = configured_timeout
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("enabled"), bool):
+        raise PluginPollConfigError(
+            f"poll plugin {plugin_dir.name!r} config.yaml requires boolean enabled"
+        )
     singleton_cfg = parse_singleton_config(cfg)
     return PluginPollConfig(
         interval_s=interval_s,
         timeout_s=timeout_s,
+        enabled=cfg["enabled"],
         singleton=singleton_cfg.singleton,
         bound_role=singleton_cfg.bound_role,
     )
