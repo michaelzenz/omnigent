@@ -3,6 +3,7 @@ import {
   acceptAgentTaskPackage,
   initializeWorker,
   cancelAgentQueueItem,
+  deleteTaskAsset,
   ensureBrokerSession,
   ensureSecretarySession,
   fetchAgentTasks,
@@ -27,6 +28,7 @@ import { useChatStore } from "@/store/chatStore";
 import { FIXTURE_TASK_LIST } from "@/shell/puppyGarden/fixtures/mockTaskDashboard";
 import { isPuppyGardenFixtureMode } from "@/shell/puppyGarden/fixtures/puppyGardenFixtureMode";
 import {
+  fixtureRemoveAsset,
   fixtureRemoveItem,
   fixtureResolveInboxItem,
   fixtureRetryItem,
@@ -330,6 +332,22 @@ export function useInitializeWorker(taskId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (workerId: string) => initializeWorker(workerId),
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+export function useDeleteTaskAsset(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (assetId: number) => {
+      if (fixtureEnabled) {
+        fixtureRemoveAsset(taskId, assetId);
+        return;
+      }
+      await deleteTaskAsset(taskId, assetId);
+    },
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
     },

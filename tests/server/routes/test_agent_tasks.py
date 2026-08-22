@@ -896,3 +896,32 @@ async def test_ensure_secretary_session_fails_when_no_host_available(
     ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_resp.status_code == 400
     assert ensure_resp.json()["error"]["message"] == NO_HOST_AVAILABLE_MESSAGE
+
+
+async def test_create_and_delete_task_asset(client: httpx.AsyncClient) -> None:
+    """Assets attach to a task and the DELETE route removes them."""
+    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
+
+    create_resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/assets",
+        json={"kind": "url", "title": "PR #123", "url": "https://example.com/pr/123"},
+    )
+    assert create_resp.status_code == 200
+    asset = create_resp.json()
+    assert asset["object"] == "agent.task.asset"
+    assert asset["title"] == "PR #123"
+    asset_id = asset["id"]
+
+    dashboard = (await client.get(f"/v1/agent-tasks/{task_id}/dashboard")).json()
+    assert [a["id"] for a in dashboard["assets"]] == [asset_id]
+
+    delete_resp = await client.delete(f"/v1/agent-tasks/{task_id}/assets/{asset_id}")
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["deleted"] is True
+
+    dashboard = (await client.get(f"/v1/agent-tasks/{task_id}/dashboard")).json()
+    assert dashboard["assets"] == []
+
+    # Deleting a missing asset is a 404.
+    missing = await client.delete(f"/v1/agent-tasks/{task_id}/assets/{asset_id}")
+    assert missing.status_code == 404

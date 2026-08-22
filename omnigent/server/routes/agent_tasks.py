@@ -1789,6 +1789,29 @@ def create_agent_tasks_router(
             created = await asyncio.to_thread(_create)
             return _asset_to_response(created)
 
+        @router.delete("/agent-tasks/{task_id}/assets/{asset_id}")
+        async def delete_task_asset_route(
+            request: Request,
+            task_id: str,
+            asset_id: int,
+        ) -> dict[str, Any]:
+            """Detach an asset from one managed task."""
+            user_id = require_user(request, auth_provider)
+            await _get_task_or_404(task_id, user_id)
+
+            def _delete() -> bool:
+                return task_asset_store.delete_asset(task_id, asset_id)
+
+            deleted = await asyncio.to_thread(_delete)
+            if not deleted:
+                raise OmnigentError("Task asset not found", code=ErrorCode.NOT_FOUND)
+            return {
+                "object": "agent.task.asset",
+                "id": asset_id,
+                "task_id": task_id,
+                "deleted": True,
+            }
+
         @router.get("/agent-tasks/{task_id}/items")
         async def list_task_items(
             request: Request,
