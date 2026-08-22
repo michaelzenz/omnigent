@@ -18,6 +18,7 @@ from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
 )
+from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import ensure_task_manager_for_dispatch
 from omnigent.agent_tasks.manager_role_profile import load_manager_role_profile
 from omnigent.agent_tasks.queue.dispatcher import (
@@ -240,11 +241,42 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         )
         if worker is None:
             raise DispatchFailed(f"worker slot {item.key.scope_id} not found")
+        # Accepted proposals initialize on the worker queue so the HTTP request
+        # stays fast and each worker slot serializes its own launch.
+        if worker.target_id is None and worker.state in {
+            "uninitialized",
+            "initialization_failed",
+        }:
+            if self._session_creator is None or self._app_state is None:
+                raise DispatchFailed("worker initialization is unavailable")
+            claimed = await asyncio.to_thread(
+                self._worker_store.claim_initialization,
+                worker.id,
+            )
+            if claimed is not None:
+                worker = await initialize_internal_worker(
+                    claimed,
+                    worker_store=self._worker_store,
+                    session_creator=self._session_creator,
+                    app_state=self._app_state,
+                    user_id=(
+                        None
+                        if item.key.owner_user_id == "__anonymous__"
+                        else item.key.owner_user_id
+                    ),
+                )
+            else:
+                worker = await asyncio.to_thread(self._worker_store.get_worker, worker.id)
+                if worker is None:
+                    raise DispatchFailed("worker disappeared during initialization")
+        if worker.target_id is None and worker.state == "initializing":
+            return DispatchTarget(session_id=None, ready=False)
         # The session-status gate remains the dispatch authority for internal
         # providers; the adapter mirrors the same observation onto worker.state.
         session_id = worker.target_id
         if session_id is None:
-            raise DispatchFailed(f"worker {worker.id} has no initialized target")
+            reason = worker.failure_reason or f"worker {worker.id} has no initialized target"
+            raise DispatchFailed(reason)
         harness: str | None = None
         if session_id is not None:
             conv = await asyncio.to_thread(

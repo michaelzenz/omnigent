@@ -13,7 +13,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.stores.agent_store import AgentStore
-from omnigent.stores.host_store import HostStore, host_is_live
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
 
 _DEFAULT_PROVIDER_NAME = "Default Worker"
@@ -50,12 +50,21 @@ def _decode_configuration(raw: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _internal_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: configuration.get(key)
+        for key in ("agent_id", "model")
+        if configuration.get(key) is not None
+    }
+
+
 def _provider_response(
     provider: Any,
     agent_store: AgentStore,
-    host_store: HostStore | None,
 ) -> dict[str, Any]:
     configuration = _decode_configuration(provider.configuration)
+    if provider.kind == "internal":
+        configuration = _internal_configuration(configuration)
     available = True
     unavailable_reason: str | None = None
     if provider.kind == "external":
@@ -73,16 +82,6 @@ def _provider_response(
         elif not agent.enabled or agent.archived:
             available = False
             unavailable_reason = "The selected execution target is unavailable"
-        host_id = configuration.get("host_id")
-        if available and not isinstance(host_id, str):
-            available = False
-            unavailable_reason = "Select a connected host"
-        elif available and host_store is not None:
-            assert isinstance(host_id, str)
-            host = host_store.get_host(host_id)
-            if host is None or not host_is_live(host):
-                available = False
-                unavailable_reason = "The selected host is offline"
     return {
         "id": provider.id,
         "object": "worker_provider",
@@ -99,16 +98,21 @@ def _provider_response(
     }
 
 
-def ensure_default_worker_provider(store: WorkerProviderStore) -> None:
+def ensure_default_worker_provider(
+    store: WorkerProviderStore,
+    agent_store: AgentStore | None = None,
+) -> None:
     """Seed the protected internal provider once per workspace."""
     if store.get(_DEFAULT_PROVIDER_ID) is not None:
         return
+    omni_harness = agent_store.get_by_name("omniharness") if agent_store is not None else None
+    configuration = {"agent_id": omni_harness.id} if omni_harness is not None else {}
     store.create(
         _DEFAULT_PROVIDER_ID,
         _DEFAULT_PROVIDER_NAME,
         "internal",
-        "{}",
-        description="Creates an internal worker using an Omnigent execution target.",
+        json.dumps(configuration, sort_keys=True),
+        description="Creates an internal worker using a selected harness and model.",
         built_in=True,
     )
 
@@ -125,11 +129,11 @@ def create_worker_providers_router(
     @router.get("/worker-providers")
     async def list_worker_providers(request: Request) -> dict[str, Any]:
         require_user(request, auth_provider)
-        ensure_default_worker_provider(store)
+        ensure_default_worker_provider(store, agent_store)
         return {
             "object": "list",
             "data": [
-                _provider_response(provider, agent_store, host_store) for provider in store.list()
+                _provider_response(provider, agent_store) for provider in store.list()
             ],
         }
 
@@ -142,7 +146,7 @@ def create_worker_providers_router(
         provider = store.get(provider_id)
         if provider is None:
             raise OmnigentError("Worker provider not found", code=ErrorCode.NOT_FOUND)
-        return _provider_response(provider, agent_store, host_store)
+        return _provider_response(provider, agent_store)
 
     @router.post("/worker-providers", status_code=201)
     async def create_worker_provider(
@@ -159,10 +163,10 @@ def create_worker_providers_router(
             uuid.uuid4().hex,
             body.name.strip(),
             body.kind,
-            json.dumps(body.configuration, sort_keys=True),
+            json.dumps(_internal_configuration(body.configuration), sort_keys=True),
             description=body.description,
         )
-        return _provider_response(provider, agent_store, host_store)
+        return _provider_response(provider, agent_store)
 
     @router.patch("/worker-providers/{provider_id}")
     async def update_worker_provider(
@@ -171,17 +175,22 @@ def create_worker_providers_router(
         body: WorkerProviderUpdateRequest,
     ) -> dict[str, Any]:
         require_user(request, auth_provider)
+        existing = store.get(provider_id)
+        if existing is None:
+            raise OmnigentError("Worker provider not found", code=ErrorCode.NOT_FOUND)
         fields: dict[str, Any] = {}
         if "name" in body.model_fields_set:
             fields["name"] = body.name.strip() if body.name else body.name
         if "description" in body.model_fields_set:
             fields["description"] = body.description
         if "configuration" in body.model_fields_set:
-            fields["configuration"] = json.dumps(body.configuration or {}, sort_keys=True)
+            configuration = body.configuration or {}
+            if existing.kind == "internal":
+                configuration = _internal_configuration(configuration)
+            fields["configuration"] = json.dumps(configuration, sort_keys=True)
         provider = store.update(provider_id, **fields)
-        if provider is None:
-            raise OmnigentError("Worker provider not found", code=ErrorCode.NOT_FOUND)
-        return _provider_response(provider, agent_store, host_store)
+        assert provider is not None
+        return _provider_response(provider, agent_store)
 
     @router.delete("/worker-providers/{provider_id}", status_code=204)
     async def delete_worker_provider(request: Request, provider_id: str) -> Response:

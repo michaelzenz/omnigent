@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, select
+from sqlalchemy import asc, select, update
 
 from omnigent.db.db_models import SqlWorker, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
@@ -100,6 +100,26 @@ class SqlAlchemyWorkerStore(WorkerStore):
             )
             rows = session.execute(stmt).scalars().all()
             return [_worker_to_entity(row) for row in rows]
+
+    def claim_initialization(self, worker_id: str) -> Worker | None:
+        with self._session() as session:
+            stmt = (
+                update(SqlWorker)
+                .where(SqlWorker.workspace_id == current_workspace_id())
+                .where(SqlWorker.id == worker_id)
+                .where(SqlWorker.state.in_(("uninitialized", "initialization_failed")))
+                .values(
+                    state="initializing",
+                    failure_reason=None,
+                    updated_at=now_epoch(),
+                )
+            )
+            result = session.execute(stmt)
+            if result.rowcount != 1:
+                return None
+            row = session.get(SqlWorker, (current_workspace_id(), worker_id))
+            assert row is not None
+            return _worker_to_entity(row)
 
     def update_worker(
         self,

@@ -81,6 +81,8 @@ export interface TaskWorkerLane {
     | "terminated";
   needs_response?: boolean;
   provider_name?: string | null;
+  host_id?: string | null;
+  workspace?: string | null;
   failure_reason?: string | null;
   situation: string;
   rows: TaskWorkerRow[];

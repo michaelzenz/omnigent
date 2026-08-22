@@ -88,6 +88,7 @@ export function TaskCardItemEditor({
       ) : null}
       <p className="text-xs text-muted-foreground">
         Worker: {worker?.provider_name ?? (item.worker_id ? "Assigned" : "Unassigned")}
+        {worker?.workspace ? ` · ${worker.workspace}` : ""}
       </p>
       <div className="flex flex-col gap-0.5">
         <span className="text-xs leading-none text-muted-foreground">Title</span>

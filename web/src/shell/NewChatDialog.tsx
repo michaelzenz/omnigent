@@ -252,6 +252,25 @@ export function isNewSessionHarnessAgent(agent: AvailableAgent): boolean {
   );
 }
 
+export function groupNewSessionAgents(agents: readonly AvailableAgent[]): {
+  agentList: AvailableAgent[];
+  agentEntries: AvailableAgent[];
+  harnessEntries: AvailableAgent[];
+} {
+  const visible = sortAgentsForDisplay(
+    agents.filter((agent) => !NEW_SESSION_HIDDEN_AGENTS.has(agent.name)),
+  );
+  const harnesses = visible.filter(isNewSessionHarnessAgent);
+  return {
+    agentList: visible,
+    agentEntries: visible.filter((agent) => !isNewSessionHarnessAgent(agent)),
+    harnessEntries: [
+      ...harnesses.filter((agent) => agent.name === OMNIHARNESS_AGENT_NAME),
+      ...harnesses.filter((agent) => agent.name !== OMNIHARNESS_AGENT_NAME),
+    ],
+  };
+}
+
 // Agents whose bundled skills render as always-visible pills under the
 // landing composer. Deliberately an allowlist while the pattern proves
 // out — other agents keep the "/" menu as the only skill surface.
@@ -997,6 +1016,7 @@ export function AgentHarnessPicker({
   onCreateCustomAgent,
   sandboxSelected,
   allowCreateCustomAgent = true,
+  disabled = false,
   onOpenChange,
   dropdownModal = true,
   contentClassName,
@@ -1029,6 +1049,7 @@ export function AgentHarnessPicker({
    *  embedder that only picks an existing agent (e.g. project settings) can
    *  hide it since it has no interactive create flow. */
   allowCreateCustomAgent?: boolean;
+  disabled?: boolean;
   // ── Optional reuse hooks (all default-undefined) ─────────────────────────
   // These let a host OTHER than the composer footer embed the picker without
   // changing its default behavior. The interactive New Chat call site passes
@@ -1253,7 +1274,7 @@ export function AgentHarnessPicker({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={!hasAgents}
+          disabled={disabled || !hasAgents}
           data-testid={triggerTestId}
           title={triggerTooltip}
           // Drop the Button's focus-visible ring/border that otherwise shows
@@ -2286,9 +2307,8 @@ export function NewChatLandingScreen() {
   // readiness badge even if the live push was missed while the tab was hidden.
   const { data: hosts, isLoading: hostsLoading } = useHosts({ refetchOnFocus: true });
 
-  const agentList = useMemo(
-    () =>
-      sortAgentsForDisplay((agents ?? []).filter((a) => !NEW_SESSION_HIDDEN_AGENTS.has(a.name))),
+  const { agentList, agentEntries, harnessEntries } = useMemo(
+    () => groupNewSessionAgents(agents ?? []),
     [agents],
   );
 
@@ -2296,17 +2316,6 @@ export function NewChatLandingScreen() {
   // integrations, and the profile-driven OmniHarness target) and
   // "Agents" (SDK / bundle agents like Polly & Debby plus any custom
   // user-registered agents). OmniHarness leads the harness group.
-  const harnessEntries = useMemo(() => {
-    const entries = agentList.filter((a) => isNewSessionHarnessAgent(a));
-    return [
-      ...entries.filter((a) => a.name === OMNIHARNESS_AGENT_NAME),
-      ...entries.filter((a) => a.name !== OMNIHARNESS_AGENT_NAME),
-    ];
-  }, [agentList]);
-  const agentEntries = useMemo(
-    () => agentList.filter((a) => !isNewSessionHarnessAgent(a)),
-    [agentList],
-  );
   const omniharnessBaseAgent = harnessEntries.find(
     (agent) => agent.name === OMNIHARNESS_AGENT_NAME,
   );

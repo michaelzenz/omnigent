@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem, Worker
@@ -164,6 +165,13 @@ def _worker_lane(
         item_by_id,
         has_ever_executed=has_ever_executed,
     )
+    try:
+        snapshot = json.loads(worker.provider_configuration or "{}")
+    except (TypeError, ValueError):
+        snapshot = {}
+    launch = snapshot.get("launch") if isinstance(snapshot, dict) else None
+    if not isinstance(launch, dict):
+        launch = {}
 
     return {
         "worker_id": worker.id,
@@ -173,6 +181,8 @@ def _worker_lane(
         "target_id": worker.target_id,
         "needs_response": worker.needs_response,
         "provider_name": worker.provider_name,
+        "host_id": launch.get("host_id"),
+        "workspace": launch.get("workspace"),
         "failure_reason": worker.failure_reason,
         "situation": situation,
         "rows": rows,

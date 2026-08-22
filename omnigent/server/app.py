@@ -1342,6 +1342,10 @@ def create_app(
         set_runner_router(runner_router)
 
         _ensure_default_agents(agent_store, artifact_store, agent_cache)
+        if worker_provider_store is not None:
+            from omnigent.server.routes.worker_providers import ensure_default_worker_provider
+
+            ensure_default_worker_provider(worker_provider_store, agent_store)
         if task_role_profile_store is not None and prompt_profile_store is not None:
             from omnigent.agent_tasks.broker_session import ensure_role_profile
             from omnigent.agent_tasks.role_keys import SYSTEM_ROLE_KEYS
@@ -1727,10 +1731,6 @@ def create_app(
         prompt_profile_store = SqlAlchemyPromptProfileStore(agent_store.storage_location)
     app = FastAPI(title="Omnigent Server", lifespan=_lifespan)
 
-    if worker_provider_store is not None:
-        from omnigent.server.routes.worker_providers import ensure_default_worker_provider
-
-        ensure_default_worker_provider(worker_provider_store)
     from omnigent.runtime import telemetry
 
     telemetry.instrument_fastapi_app(app)
@@ -2214,6 +2214,7 @@ def create_app(
         liveness_lookup=_bulk_session_liveness,
         file_store=file_store,
         artifact_store=artifact_store,
+        prompt_profile_store=prompt_profile_store,
     )
 
     @app.get("/health")

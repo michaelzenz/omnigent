@@ -22,7 +22,7 @@ from omnigent.agent_tasks.queue.dispatcher import DispatchFailed, DispatchTarget
 from omnigent.agent_tasks.queue.handlers import WorkerDispatchHandler
 from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import generate_agent_id, now_epoch
-from omnigent.entities import AgentQueueItem, AgentQueueKey
+from omnigent.entities import AgentQueueItem, AgentQueueKey, Worker
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.server.routes.agent_queues import create_agent_queues_router
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
@@ -213,6 +213,38 @@ async def test_resolve_target_fails_when_worker_missing(worker_setup: dict) -> N
     )
     with pytest.raises(DispatchFailed):
         await handler.resolve_target(_queue_item(key, source_id=worker_setup["item"].id))
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_waits_while_worker_initializes() -> None:
+    worker = Worker(
+        id=_uid("initializing-worker"),
+        task_id=_uid("initializing-task"),
+        kind="managed",
+        state="initializing",
+        created_at=now_epoch(),
+    )
+    worker_store = SimpleNamespace(get_worker=lambda _worker_id: worker)
+    session_creator = AsyncMock()
+    handler = WorkerDispatchHandler(
+        store=SimpleNamespace(),
+        task_store=SimpleNamespace(),
+        task_item_store=SimpleNamespace(),
+        task_event_store=SimpleNamespace(),
+        worker_store=worker_store,
+        conversation_store=SimpleNamespace(),
+        agent_store=SimpleNamespace(),
+        task_role_profile_store=SimpleNamespace(),
+        runner_router=None,
+        session_creator=session_creator,
+        app_state=SimpleNamespace(),
+    )
+    key = AgentQueueKey(role="worker", owner_user_id="user-w", scope_id=worker.id)
+
+    target = await handler.resolve_target(_queue_item(key, source_id=_uid("initializing-item")))
+
+    assert target == DispatchTarget(session_id=None, ready=False)
+    session_creator.assert_not_awaited()
 
 
 @pytest.mark.asyncio

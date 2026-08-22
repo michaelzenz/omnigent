@@ -46,6 +46,7 @@ from omnigent.agent_tasks.fyi_clusters import (
     list_fyi_board_cards,
     resolve_fyi_cluster,
 )
+from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import (
     create_task_item,
     patch_task_item,
@@ -356,7 +357,9 @@ class ResolveTaskItemRequest(BaseModel):
 class CreateWorkerRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/{task_id}/workers``."""
 
-    provider_id: str
+    provider_id: str = Field(min_length=1)
+    host_id: str = Field(min_length=1)
+    workspace: str = Field(min_length=1)
 
 
 class WorkerAssignmentInput(BaseModel):
@@ -365,11 +368,20 @@ class WorkerAssignmentInput(BaseModel):
     item_id: str
     provider_id: str | None = None
     worker_id: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> WorkerAssignmentInput:
         if self.provider_id is None and self.worker_id is None:
             raise ValueError("provide either provider_id or worker_id")
+        if self.provider_id is not None and (
+            not self.host_id
+            or not self.host_id.strip()
+            or not self.workspace
+            or not self.workspace.strip()
+        ):
+            raise ValueError("host_id and workspace are required with provider_id")
         return self
 
 
@@ -614,6 +626,13 @@ def _tag_to_response(tag: TaskTag) -> dict[str, str]:
 
 
 def _worker_to_response(worker: Worker) -> dict[str, Any]:
+    try:
+        snapshot = json.loads(worker.provider_configuration or "{}")
+    except (TypeError, ValueError):
+        snapshot = {}
+    launch = snapshot.get("launch") if isinstance(snapshot, dict) else None
+    if not isinstance(launch, dict):
+        launch = {}
     return {
         "object": "agent.task.worker",
         "id": worker.id,
@@ -624,6 +643,8 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
         "state": worker.state,
         "needs_response": worker.needs_response,
         "provider_name": worker.provider_name,
+        "host_id": launch.get("host_id"),
+        "workspace": launch.get("workspace"),
         "failure_reason": worker.failure_reason,
         "last_observed_at": worker.last_observed_at,
     }
@@ -1539,7 +1560,13 @@ def create_agent_tasks_router(
                 "data": [_worker_to_response(w) for w in workers],
             }
 
-        def _create_worker_from_provider(task_id: str, provider_id: str) -> Worker:
+        def _create_worker_from_provider(
+            task_id: str,
+            provider_id: str,
+            *,
+            host_id: str,
+            workspace: str,
+        ) -> Worker:
             if worker_provider_store is None:
                 raise OmnigentError(
                     "Worker providers are unavailable", code=ErrorCode.INTERNAL_ERROR
@@ -1548,12 +1575,19 @@ def create_agent_tasks_router(
             if provider is None:
                 raise OmnigentError("Worker provider not found", code=ErrorCode.NOT_FOUND)
             configuration = json.loads(provider.configuration)
+            if provider.kind == "internal":
+                configuration = {
+                    key: configuration.get(key)
+                    for key in ("agent_id", "model")
+                    if configuration.get(key) is not None
+                }
             snapshot = json.dumps(
                 {
-                    "version": 1,
+                    "version": 2,
                     "provider_id": provider.id,
                     "kind": provider.kind,
                     "configuration": configuration,
+                    "launch": {"host_id": host_id.strip(), "workspace": workspace.strip()},
                 },
                 sort_keys=True,
             )
@@ -1583,6 +1617,8 @@ def create_agent_tasks_router(
                 _create_worker_from_provider,
                 task_id,
                 body.provider_id,
+                host_id=body.host_id,
+                workspace=body.workspace,
             )
             return _worker_to_response(worker)
 
@@ -1606,7 +1642,12 @@ def create_agent_tasks_router(
                     worker = (
                         worker_store.get_worker(assignment.worker_id)
                         if assignment.worker_id
-                        else _create_worker_from_provider(task_id, assignment.provider_id or "")
+                        else _create_worker_from_provider(
+                            task_id,
+                            assignment.provider_id or "",
+                            host_id=assignment.host_id or "",
+                            workspace=assignment.workspace or "",
+                        )
                     )
                     if worker is None or worker.task_id != task_id:
                         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
@@ -1618,52 +1659,15 @@ def create_agent_tasks_router(
 
         async def _initialize_internal_worker(
             worker: Worker, *, user_id: str | None, app_state: Any
-        ) -> None:
+        ) -> Worker:
             assert session_creator is not None
-            try:
-                snapshot = json.loads(worker.provider_configuration or "{}")
-                if snapshot.get("kind") != "internal":
-                    raise ValueError("External Worker adapters are not installed")
-                configuration = snapshot.get("configuration") or {}
-                agent_id = configuration.get("agent_id")
-                if not isinstance(agent_id, str) or not agent_id:
-                    raise ValueError("The Worker Provider has no execution target")
-                from omnigent.server.routes.sessions import _make_internal_request
-                from omnigent.server.schemas import SessionCreateRequest
-
-                response = await asyncio.wait_for(
-                    session_creator(
-                        body=SessionCreateRequest(
-                            agent_id=agent_id,
-                            title=worker.provider_name or "PuppyGarden worker",
-                            host_id=configuration.get("host_id"),
-                            workspace=configuration.get("workspace"),
-                            harness_override=configuration.get("harness"),
-                            model_override=configuration.get("model"),
-                        ),
-                        request=_make_internal_request(app_state),
-                        user_id=user_id,
-                    ),
-                    timeout=120.0,
-                )
-                current = await asyncio.to_thread(worker_store.get_worker, worker.id)
-                if current is not None and current.state == "initializing":
-                    await asyncio.to_thread(
-                        worker_store.update_worker,
-                        worker.id,
-                        target_id=response.id,
-                        state="idle",
-                        failure_reason=None,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                current = await asyncio.to_thread(worker_store.get_worker, worker.id)
-                if current is not None and current.state == "initializing":
-                    await asyncio.to_thread(
-                        worker_store.update_worker,
-                        worker.id,
-                        state="initialization_failed",
-                        failure_reason=str(exc),
-                    )
+            return await initialize_internal_worker(
+                worker,
+                worker_store=worker_store,
+                session_creator=session_creator,
+                app_state=app_state,
+                user_id=user_id,
+            )
 
         @router.post("/task-workers/{worker_id}/initialize", status_code=202)
         async def initialize_worker(request: Request, worker_id: str) -> dict[str, Any]:
@@ -1683,15 +1687,17 @@ def create_agent_tasks_router(
                 raise OmnigentError(
                     "Worker initialization is unavailable", code=ErrorCode.INTERNAL_ERROR
                 )
-            worker = await asyncio.to_thread(
-                worker_store.update_worker, worker.id, state="initializing"
-            )
-            assert worker is not None
+            claimed = await asyncio.to_thread(worker_store.claim_initialization, worker.id)
+            if claimed is None:
+                current = await asyncio.to_thread(worker_store.get_worker, worker.id)
+                if current is None:
+                    raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                return _worker_to_response(current)
             task = asyncio.create_task(
-                _initialize_internal_worker(worker, user_id=user_id, app_state=request.app.state)
+                _initialize_internal_worker(claimed, user_id=user_id, app_state=request.app.state)
             )
             task.add_done_callback(lambda completed: completed.exception())
-            return _worker_to_response(worker)
+            return _worker_to_response(claimed)
 
         async def _control_worker(worker: Worker, event_type: str, request: Request) -> None:
             if worker.target_id is None:
@@ -1894,17 +1900,43 @@ def create_agent_tasks_router(
                     task_item_store=task_item_store,
                 )
                 return _item_to_response(updated)
-            task = await _get_task_or_404(item.task_id, user_id)
-            worker = worker_for_item(item, worker_store=worker_store)
-            if worker is None or worker.target_id is None:
-                raise OmnigentError(
-                    "Item must have an initialized Worker before dispatch",
-                    code=ErrorCode.CONFLICT,
-                )
-            worker_profile = await _manager_role_profile_for_task(task, user_id)
-            manager_profile = await _manager_role_profile_for_task(task, user_id)
             if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
                 raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
+            task = await _get_task_or_404(item.task_id, user_id)
+            worker = worker_for_item(item, worker_store=worker_store)
+            if worker is None:
+                raise OmnigentError(
+                    "Item must have an assigned Worker Provider before dispatch",
+                    code=ErrorCode.CONFLICT,
+                )
+            if agent_queue_store is None and worker.target_id is None:
+                if session_creator is None:
+                    raise OmnigentError(
+                        "Worker initialization is unavailable",
+                        code=ErrorCode.INTERNAL_ERROR,
+                    )
+                claimed = await asyncio.to_thread(worker_store.claim_initialization, worker.id)
+                if claimed is None:
+                    current = await asyncio.to_thread(worker_store.get_worker, worker.id)
+                    if current is None or current.target_id is None:
+                        raise OmnigentError(
+                            "Worker initialization is already in progress",
+                            code=ErrorCode.CONFLICT,
+                        )
+                    worker = current
+                else:
+                    worker = await _initialize_internal_worker(
+                        claimed,
+                        user_id=user_id,
+                        app_state=request.app.state,
+                    )
+                if worker.target_id is None:
+                    raise OmnigentError(
+                        worker.failure_reason or "Worker initialization failed",
+                        code=ErrorCode.CONFLICT,
+                    )
+            worker_profile = await _manager_role_profile_for_task(task, user_id)
+            manager_profile = await _manager_role_profile_for_task(task, user_id)
 
             updated, execution = await resolve_task_item(
                 item=item,

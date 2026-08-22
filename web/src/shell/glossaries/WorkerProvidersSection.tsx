@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Trash2Icon } from "lucide-react";
+import { SettingsIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -10,8 +18,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useAvailableAgents } from "@/hooks/useAvailableAgents";
-import { useHosts } from "@/hooks/useHosts";
+import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
+import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
 import {
   useCreateWorkerProvider,
   useDeleteWorkerProvider,
@@ -19,26 +27,144 @@ import {
   useWorkerProviders,
 } from "@/hooks/useWorkerProviders";
 import type { InternalWorkerProviderConfiguration, WorkerProvider } from "@/lib/workerProvidersApi";
-import { WorkspacePathField } from "@/shell/WorkspacePathField";
-import { RoleHarnessPicker } from "./RoleHarnessPicker";
+import { OMNIHARNESS_AGENT_NAME } from "@/lib/omniharnessModels";
+import { AgentHarnessPicker, groupNewSessionAgents } from "@/shell/NewChatDialog";
 
+const DEFAULT_MODEL = "__default__";
 const EMPTY_CONFIG: InternalWorkerProviderConfiguration = {
   agent_id: null,
-  host_id: null,
-  workspace: null,
-  harness: null,
   model: null,
 };
 
 function internalConfiguration(provider: WorkerProvider): InternalWorkerProviderConfiguration {
-  return { ...EMPTY_CONFIG, ...provider.configuration } as InternalWorkerProviderConfiguration;
+  const raw = provider.configuration as Partial<InternalWorkerProviderConfiguration>;
+  return {
+    agent_id: raw.agent_id ?? null,
+    model: raw.model ?? null,
+  };
+}
+
+function ProviderLaunchControls({
+  configuration,
+  agents,
+  disabled,
+  onChange,
+}: {
+  configuration: InternalWorkerProviderConfiguration;
+  agents: readonly AvailableAgent[];
+  disabled: boolean;
+  onChange: (patch: Partial<InternalWorkerProviderConfiguration>) => void;
+}) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const modelOptions = useOmniHarnessModelOptions().data ?? [];
+  const { agentList, agentEntries, harnessEntries } = useMemo(
+    () => groupNewSessionAgents(agents),
+    [agents],
+  );
+  const selectedAgent =
+    configuration.agent_id === null
+      ? (agentList[0] ?? null)
+      : (agentList.find((agent) => agent.id === configuration.agent_id) ?? null);
+  const omniHarnessSelected = selectedAgent?.name === OMNIHARNESS_AGENT_NAME;
+
+  useEffect(() => {
+    if (configuration.agent_id === null && selectedAgent !== null) {
+      onChange({ agent_id: selectedAgent.id });
+    }
+  }, [configuration.agent_id, onChange, selectedAgent]);
+
+  return (
+    <>
+      <div className="flex items-end justify-end gap-2">
+        {omniHarnessSelected ? (
+          <label className="w-52 space-y-1 text-xs text-muted-foreground">
+            Model
+            <Select
+              value={configuration.model ?? DEFAULT_MODEL}
+              onValueChange={(value) => onChange({ model: value === DEFAULT_MODEL ? null : value })}
+              disabled={disabled}
+            >
+              <SelectTrigger data-testid="worker-provider-model-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={DEFAULT_MODEL}>Default</SelectItem>
+                {modelOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.displayName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+        ) : null}
+        <div className="space-y-1 text-xs text-muted-foreground">
+          Harness
+          <div className="flex items-center rounded-md border bg-background [&>button]:bg-transparent!">
+            <AgentHarnessPicker
+              agentEntries={agentEntries}
+              harnessEntries={harnessEntries}
+              effectiveAgentId={selectedAgent?.id ?? null}
+              agentLabel={selectedAgent?.display_name ?? "Select harness"}
+              hasAgents={agentList.length > 0}
+              disabled={disabled}
+              host={null}
+              onSelectAgent={(agent) => onChange({ agent_id: agent.id, model: null })}
+              pendingAgent={null}
+              pendingAgentId="__worker_provider_pending__"
+              onSelectPending={() => {}}
+              onCreateCustomAgent={() => {}}
+              allowCreateCustomAgent={false}
+              triggerClassName="h-9 min-w-40 justify-between rounded-r-none"
+              triggerTestId="worker-provider-harness-select"
+            />
+            <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-9 rounded-l-none text-muted-foreground"
+              disabled={disabled || selectedAgent === null}
+              onClick={() => setSettingsOpen(true)}
+              aria-label={`Configure ${selectedAgent?.display_name ?? "harness"}`}
+              data-testid="worker-provider-config-gear"
+            >
+              <SettingsIcon className="size-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Configure {selectedAgent?.display_name ?? "worker"}</DialogTitle>
+            <DialogDescription>
+              Advanced launch overrides for workers created from this provider.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {omniHarnessSelected
+                ? "Choose the OmniHarness model with the selector beside the harness."
+                : "Host-specific harness settings are resolved when the manager proposes a workspace."}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setSettingsOpen(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 function WorkerProviderCard({ provider }: { provider: WorkerProvider }) {
   const updateProvider = useUpdateWorkerProvider(provider.id);
   const deleteProvider = useDeleteWorkerProvider();
   const { data: agents = [] } = useAvailableAgents();
-  const { data: hosts = [] } = useHosts();
   const [name, setName] = useState(provider.name);
   const [description, setDescription] = useState(provider.description ?? "");
   const [configuration, setConfiguration] = useState(() => internalConfiguration(provider));
@@ -48,11 +174,6 @@ function WorkerProviderCard({ provider }: { provider: WorkerProvider }) {
     setDescription(provider.description ?? "");
     setConfiguration(internalConfiguration(provider));
   }, [provider]);
-
-  const selectedHost = useMemo(
-    () => hosts.find((host) => host.host_id === configuration.host_id) ?? null,
-    [configuration.host_id, hosts],
-  );
 
   if (provider.kind === "external") {
     return (
@@ -97,36 +218,10 @@ function WorkerProviderCard({ provider }: { provider: WorkerProvider }) {
       data-testid={`worker-provider-${provider.id}`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
-          <label className="space-y-1 text-xs text-muted-foreground">
-            Display name
-            <Input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label className="space-y-1 text-xs text-muted-foreground">
-            Execution target
-            <Select
-              value={configuration.agent_id ?? undefined}
-              onValueChange={(agent_id) => {
-                patchConfiguration({
-                  agent_id,
-                  harness: null,
-                  model: null,
-                });
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select execution target" />
-              </SelectTrigger>
-              <SelectContent>
-                {agents.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>
-                    {agent.display_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-        </div>
+        <label className="min-w-0 flex-1 space-y-1 text-xs text-muted-foreground">
+          Display name
+          <Input value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
         {!provider.built_in ? (
           <Button
             variant="ghost"
@@ -146,52 +241,20 @@ function WorkerProviderCard({ provider }: { provider: WorkerProvider }) {
           onChange={(event) => setDescription(event.target.value)}
         />
       </label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-xs text-muted-foreground">
-          Host
-          <Select
-            value={configuration.host_id ?? undefined}
-            onValueChange={(host_id) => patchConfiguration({ host_id })}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select host" />
-            </SelectTrigger>
-            <SelectContent>
-              {hosts.map((host) => (
-                <SelectItem key={host.host_id} value={host.host_id}>
-                  {host.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="space-y-1 text-xs text-muted-foreground">
-          Workspace
-          <WorkspacePathField
-            hostId={configuration.host_id}
-            value={configuration.workspace ?? ""}
-            onChange={(workspace) => patchConfiguration({ workspace: workspace || null })}
-            onBrowse={() => {}}
-            recent={[]}
-          />
-        </label>
-        <div className="space-y-1 text-xs text-muted-foreground sm:col-span-2">
-          Harness and model
-          <RoleHarnessPicker
-            host={selectedHost}
-            agents={agents}
-            harness={configuration.harness ?? ""}
-            model={configuration.model ?? ""}
-            testId={`worker-provider-harness-${provider.id}`}
-            onChange={({ harness, model }) => patchConfiguration({ harness, model })}
-          />
-        </div>
-      </div>
+      <ProviderLaunchControls
+        configuration={configuration}
+        agents={agents}
+        disabled={updateProvider.isPending}
+        onChange={patchConfiguration}
+      />
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs text-muted-foreground">
           {provider.available ? "Available" : (provider.unavailable_reason ?? "Unavailable")}
         </span>
-        <Button disabled={!name.trim() || updateProvider.isPending} onClick={save}>
+        <Button
+          disabled={!name.trim() || !configuration.agent_id || updateProvider.isPending}
+          onClick={save}
+        >
           {updateProvider.isPending ? "Saving…" : "Save provider"}
         </Button>
       </div>

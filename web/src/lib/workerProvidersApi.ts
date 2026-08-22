@@ -4,9 +4,6 @@ export type WorkerProviderKind = "internal" | "external";
 
 export interface InternalWorkerProviderConfiguration {
   agent_id: string | null;
-  host_id: string | null;
-  workspace: string | null;
-  harness: string | null;
   model: string | null;
 }
 
