@@ -99,10 +99,31 @@ contextBridge.exposeInMainWorld("omnigentDesktop", {
    * from getServerPicker's recentServers list; anything else rejects).
    */
   switchServer: (url) => ipcRenderer.invoke("omnigent:switch-server", url),
-  /** Return this window to the bundled "connect to server" setup page. */
+  /**
+   * Return this window to the bundled "connect to server" setup page.
+   */
   openServerSetup: () => {
     ipcRenderer.send("omnigent:open-server-setup");
   },
+  /**
+   * Detect whether Cursor and/or VS Code are installed so the SPA can
+   * show/hide the "Open project" button. Returns
+   * `{ cursor: boolean, vscode: boolean }` or null outside the shell.
+   */
+  getEditorCapabilities: () => ipcRenderer.invoke("omnigent:get-editor-capabilities"),
+  /**
+   * Open a workspace in the given editor. For remote hosts, pass `sshAlias`
+   * (the SSH config alias, e.g. "arca.ssh") to launch via `--remote
+   * ssh-remote+<alias>`. Omit `sshAlias` for a local workspace.
+   * @param {{ editor: "cursor" | "vscode", workspace: string, sshAlias?: string }} params
+   * @returns {Promise<{ ok: boolean, error?: string }>}
+   */
+  openProject: (params) =>
+    ipcRenderer.invoke("omnigent:open-project", {
+      editor: params?.editor,
+      workspace: params?.workspace,
+      sshAlias: params?.sshAlias,
+    }),
   /**
    * This machine's identity — `{ cliInstalled, hostId }` — read from local
    * config with no subprocess, so it's instant. Lets the SPA recognize "this
