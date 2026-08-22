@@ -45,7 +45,7 @@ def _merge_payload(base: dict[str, Any], overrides: dict[str, Any] | None) -> di
     return merged
 
 
-def _item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
+def item_dispatch_payload(item: TaskItem) -> dict[str, Any]:
     return {
         "instructions": item.instructions or "",
         "internal_note": item.internal_note,
@@ -205,7 +205,7 @@ async def resolve_task_item(
         )
         return updated, None
 
-    payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
+    payload = _merge_payload(item_dispatch_payload(item), edited_payload)
     task = await ensure_task_manager_for_dispatch(
         task=task,
         task_store=task_store,
@@ -232,7 +232,7 @@ async def resolve_task_item(
         refreshed = await asyncio.to_thread(task_item_store.get_item, item.id)
         assert refreshed is not None
         item = refreshed
-        payload = _merge_payload(_item_dispatch_payload(item), edited_payload)
+        payload = _merge_payload(item_dispatch_payload(item), edited_payload)
 
     worker = worker_for_item(item, worker_store=worker_store)
     if worker is None:

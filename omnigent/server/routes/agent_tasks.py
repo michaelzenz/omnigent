@@ -49,6 +49,7 @@ from omnigent.agent_tasks.fyi_clusters import (
 from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import (
     create_task_item,
+    item_dispatch_payload,
     patch_task_item,
     reconcile_events,
     reject_task_item,
@@ -96,7 +97,9 @@ from omnigent.entities import (
     Worker,
 )
 from omnigent.entities.task_role_profile import TaskRoleProfile
+from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_access, require_user
 from omnigent.server.routes.task_events import _event_to_response
@@ -802,6 +805,7 @@ def _execution_to_response(execution: TaskEventExecution) -> dict[str, Any]:
         "object": "agent.task.execution",
         "task_item_id": execution.task_item_id,
         "task_id": execution.task_id,
+        "agent_queue_item_id": execution.agent_queue_item_id,
         "status": execution.status,
         "attempt_no": execution.attempt_no,
         "conversation_id": execution.conversation_id,
@@ -864,6 +868,7 @@ def create_agent_tasks_router(
     agent_cache: Any | None = None,
     prompt_profile_store: PromptProfileStore | None = None,
     worker_provider_store: WorkerProviderStore | None = None,
+    runner_router: RunnerRouter | None = None,
 ) -> APIRouter:
     """Build the managed-task router.
 
@@ -1985,6 +1990,84 @@ def create_agent_tasks_router(
 
             updated = await asyncio.to_thread(_patch)
             return _item_to_response(updated)
+
+        @router.post("/task-items/{item_id}/retry-dispatch")
+        async def retry_task_item_dispatch(
+            request: Request,
+            item_id: str,
+        ) -> dict[str, Any]:
+            """Create a new queue delivery for a failed execution attempt."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            task = await _get_task_or_404(item.task_id, user_id)
+            if agent_queue_store is None:
+                raise OmnigentError(
+                    "Agent queue is unavailable",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            if item.state != "queued":
+                raise OmnigentError(
+                    f"Cannot retry item in state {item.state!r}",
+                    code=ErrorCode.CONFLICT,
+                )
+            attempts = await asyncio.to_thread(
+                task_event_store.list_executions_for_item,
+                item.id,
+            )
+            if not attempts or attempts[-1].status != "failed":
+                raise OmnigentError(
+                    "Only a failed execution can be retried",
+                    code=ErrorCode.CONFLICT,
+                )
+            worker = worker_for_item(item, worker_store=worker_store)
+            if worker is None or worker.target_id is None:
+                raise OmnigentError(
+                    "Item must have an initialized Worker before retry",
+                    code=ErrorCode.CONFLICT,
+                )
+
+            from omnigent.server.routes.sessions.routes_events import (
+                _retry_session_single_flight,
+            )
+
+            await _retry_session_single_flight(
+                request=request,
+                session_id=worker.target_id,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
+            from omnigent.server.routes.sessions import _session_status_cache
+
+            _session_status_cache[worker.target_id] = "idle"
+            await asyncio.to_thread(
+                conversation_store.set_session_live_status,
+                worker.target_id,
+                "idle",
+            )
+            await asyncio.to_thread(
+                worker_store.update_worker,
+                worker.id,
+                state="idle",
+                needs_response=False,
+                failure_reason=None,
+            )
+            queue_item = await asyncio.to_thread(
+                agent_queue_store.enqueue,
+                uuid.uuid4().hex,
+                AgentQueueKey(
+                    role="worker",
+                    owner_user_id=_effective_user_id(user_id),
+                    scope_id=worker.id,
+                ),
+                kind="item.dispatch",
+                source_ids=[item.id],
+                payload=json.dumps(item_dispatch_payload(item)),
+            )
+            return {
+                "object": "agent.task.retry",
+                "task_item_id": item.id,
+                "agent_queue_item_id": queue_item.id,
+            }
 
         @router.post("/task-items/{item_id}/dispatch")
         async def dispatch_task_item(

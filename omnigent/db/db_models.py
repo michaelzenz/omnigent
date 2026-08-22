@@ -2346,6 +2346,7 @@ class SqlTaskEventExecution(OmnigentBase):
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_item_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_queue_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     attempt_no: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
@@ -2381,6 +2382,19 @@ class SqlTaskEventExecution(OmnigentBase):
             "ix_task_event_executions_conversation_id",
             "workspace_id",
             "conversation_id",
+            "id",
+        ),
+        Index(
+            "uq_task_event_executions_agent_queue_item",
+            "workspace_id",
+            "agent_queue_item_id",
+            unique=True,
+        ),
+        Index(
+            "ix_task_event_executions_status",
+            "workspace_id",
+            "status",
+            "created_at",
             "id",
         ),
     )

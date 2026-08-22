@@ -239,6 +239,7 @@ class TaskEventExecution:
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param task_item_id: Backlog item being executed.
     :param task_id: Task the item belongs to.
+    :param agent_queue_item_id: Queue delivery that created this attempt.
     :param status: One of ``"queued"``, ``"running"``, ``"succeeded"``,
         ``"failed"``, ``"cancelled"``.
     :param attempt_no: Monotonic attempt number for this event.
@@ -256,6 +257,7 @@ class TaskEventExecution:
     id: str
     task_item_id: str
     task_id: str
+    agent_queue_item_id: str | None
     status: str
     attempt_no: int
     assigned_at: int

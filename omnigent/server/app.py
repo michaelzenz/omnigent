@@ -1648,6 +1648,26 @@ def create_app(
             )
             app_inst.state.event_gc_task = event_gc_task
 
+        execution_reconciler_task: asyncio.Task | None = None
+        if (
+            task_store is not None
+            and task_event_store is not None
+            and task_item_store is not None
+            and worker_store is not None
+        ):
+            from omnigent.agent_tasks.execution_reconciler import (
+                run_execution_reconciler,
+            )
+
+            execution_reconciler_task = asyncio.create_task(
+                run_execution_reconciler(
+                    task_event_store,
+                    conversation_store,
+                ),
+                name="worker-execution-reconciler",
+            )
+            app_inst.state.execution_reconciler_task = execution_reconciler_task
+
         ssh_host_manager = None
         # The reverse tunnel forwards to this server's own listener, so without a
         # known port there is nothing valid to point remote hosts at.
@@ -1691,6 +1711,10 @@ def create_app(
                 event_gc_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await event_gc_task
+            if execution_reconciler_task is not None:
+                execution_reconciler_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await execution_reconciler_task
             metrics_publish_task.cancel()
             with suppress(asyncio.CancelledError):
                 await metrics_publish_task
@@ -2794,6 +2818,7 @@ def create_app(
                 agent_cache=agent_cache,
                 prompt_profile_store=prompt_profile_store,
                 worker_provider_store=worker_provider_store,
+                runner_router=runner_router,
             ),
             prefix="/v1",
             tags=["agent_tasks"],

@@ -54,6 +54,7 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/task-items/{id}/resolve` |
 | PATCH | `/v1/task-items/{id}` |
 | POST | `/v1/task-items/{id}/dispatch` |
+| POST | `/v1/task-items/{id}/retry-dispatch` |
 
 ## Agent queues
 

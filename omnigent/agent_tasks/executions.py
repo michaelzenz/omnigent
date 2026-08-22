@@ -29,6 +29,7 @@ def start_execution_for_item(
     task: Task,
     item: TaskItem,
     task_event_store: TaskEventStore,
+    agent_queue_item_id: str | None = None,
     conversation_id: str | None = None,
     status: str = "queued",
 ) -> TaskEventExecution:
@@ -46,6 +47,7 @@ def start_execution_for_item(
         task.id,
         status=status,
         attempt_no=attempt_no,
+        agent_queue_item_id=agent_queue_item_id,
         conversation_id=conversation_id,
         assigned_at=now,
     )

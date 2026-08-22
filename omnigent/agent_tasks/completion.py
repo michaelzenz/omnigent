@@ -117,8 +117,33 @@ async def notify_worker_session_status(
             session_id,
         )
         return False
-    terminal_status = "succeeded" if status == "idle" else "failed"
+    return await notify_worker_execution_status(execution.id, status, output=output)
+
+
+async def notify_worker_execution_status(
+    execution_id: str,
+    status: TerminalStatus,
+    *,
+    output: str | None = None,
+) -> bool:
+    """Complete one exact managed-worker execution."""
+    if _context is None or status not in {"idle", "failed"}:
+        return False
+    execution = _context.task_event_store.get_execution(execution_id)
+    if execution is None or execution.conversation_id is None:
+        return False
+    worker = _context.worker_store.get_by_target_id(execution.conversation_id)
+    if worker is None or worker.kind != WORKER_KIND_MANAGED:
+        return False
+    if execution.status in {"succeeded", "failed", "cancelled"}:
+        return True
     summary = (output or "").strip() or None
+    await observe_worker_session_status(
+        execution.conversation_id,
+        status,
+        failure_reason=summary if status == "failed" else None,
+    )
+    terminal_status = "succeeded" if status == "idle" else "failed"
     completed = complete_execution(
         _context.task_event_store,
         execution.id,
@@ -129,6 +154,19 @@ async def notify_worker_session_status(
     )
     if completed is None:
         return True
+    if (
+        _context.agent_queue_store is not None
+        and execution.agent_queue_item_id is not None
+    ):
+        queue_item = _context.agent_queue_store.get_item(
+            execution.agent_queue_item_id,
+        )
+        if queue_item is not None:
+            _context.agent_queue_store.complete_inflight(
+                queue_item.key,
+                item_id=queue_item.id,
+                now=now_epoch(),
+            )
 
     item_state = "done" if terminal_status == "succeeded" else "queued"
     _context.task_item_store.update_item(execution.task_item_id, state=item_state)

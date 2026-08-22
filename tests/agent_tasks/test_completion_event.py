@@ -21,9 +21,13 @@ from omnigent.agent_tasks.completion import (
 )
 from omnigent.agent_tasks.event_gc import EventGcConfig, run_event_gc
 from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
+from omnigent.agent_tasks.execution_reconciler import (
+    reconcile_running_executions_once,
+)
 from omnigent.agent_tasks.notices import _format_worker_notice
 from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import generate_agent_id
+from omnigent.entities import MessageData, NewConversationItem
 from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -50,7 +54,13 @@ def _build_stores(db_uri: str) -> dict:
     }
 
 
-def _seed_task(stores: dict, *, task_seed: str, owner: str | None) -> dict:
+def _seed_task(
+    stores: dict,
+    *,
+    task_seed: str,
+    owner: str | None,
+    with_worker_queue: bool = False,
+) -> dict:
     agent_store = stores["agent_store"]
     task_store = stores["task_store"]
     item_store = stores["item_store"]
@@ -100,11 +110,32 @@ def _seed_task(stores: dict, *, task_seed: str, owner: str | None) -> dict:
         workspace="/tmp/worker",
     )
     worker_store.update_worker(worker.id, session_id=worker_conv.id)
+    queue_item_id = None
+    if with_worker_queue:
+        queue_item_id = _uid("queue_" + task_seed)
+        key = AgentQueueKey(
+            role="worker",
+            owner_user_id=owner or "__anonymous__",
+            scope_id=worker.id,
+        )
+        stores["queue_store"].enqueue(
+            queue_item_id,
+            key,
+            kind="item.dispatch",
+            source_ids=[task_item_id],
+        )
+        stores["queue_store"].mark_dispatched(
+            queue_item_id,
+            key,
+            now=int(time.time()),
+        )
+        stores["queue_store"].set_queue_conversation(key, worker_conv.id)
     execution = stores["event_store"].create_execution(
         _uid("exec_" + task_seed),
         task_item_id,
         task_id,
         status="running",
+        agent_queue_item_id=queue_item_id,
         conversation_id=worker_conv.id,
     )
     return {
@@ -112,6 +143,7 @@ def _seed_task(stores: dict, *, task_seed: str, owner: str | None) -> dict:
         "owner": owner or "__anonymous__",
         "task_item_id": task_item_id,
         "execution_id": execution.id,
+        "queue_item_id": queue_item_id,
         "worker_conv_id": worker_conv.id,
     }
 
@@ -136,7 +168,12 @@ def completion_setup(db_uri: str) -> dict:
 @pytest.fixture
 def completion_setup_with_queue(db_uri: str) -> dict:
     stores = _build_stores(db_uri)
-    seeded = _seed_task(stores, task_seed="comp_q", owner="user-comp")
+    seeded = _seed_task(
+        stores,
+        task_seed="comp_q",
+        owner="user-comp",
+        with_worker_queue=True,
+    )
     configure_task_completion(
         TaskCompletionContext(
             task_store=stores["task_store"],
@@ -192,6 +229,55 @@ async def test_idle_emits_routed_worker_finished_event(completion_setup: dict) -
     assert payload["result_summary"] == "Root cause was a stale credential."
     assert payload["instructions"] == "Run the auth tests and report failures."
     assert payload["output"] == "Root cause was a stale credential."
+
+
+@pytest.mark.asyncio
+async def test_reconciler_completes_response_after_missed_idle(
+    completion_setup_with_queue: dict,
+) -> None:
+    completion_setup = completion_setup_with_queue
+    conversation_store = completion_setup["conversation_store"]
+    conversation_id = completion_setup["worker_conv_id"]
+    execution_id = completion_setup["execution_id"]
+    conversation_store.append(
+        conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id=execution_id,
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "Do the work"}],
+                ),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_worker",
+                data=MessageData(
+                    role="assistant",
+                    content=[{"type": "output_text", "text": "Done"}],
+                ),
+            ),
+        ],
+    )
+    conversation_store.set_session_live_status(conversation_id, "idle")
+
+    reconciled = await reconcile_running_executions_once(
+        completion_setup["event_store"],
+        conversation_store,
+    )
+
+    assert reconciled == 1
+    execution = completion_setup["event_store"].get_execution(execution_id)
+    assert execution is not None and execution.status == "succeeded"
+    item = completion_setup["item_store"].get_item(completion_setup["task_item_id"])
+    assert item is not None and item.state == "done"
+    queue_item = completion_setup["queue_store"].get_item(
+        completion_setup["queue_item_id"],
+    )
+    assert queue_item is not None and queue_item.state == "done"
+    worker = completion_setup["worker_store"].get_by_target_id(conversation_id)
+    assert worker is not None and worker.state == "idle"
 
 
 @pytest.mark.asyncio

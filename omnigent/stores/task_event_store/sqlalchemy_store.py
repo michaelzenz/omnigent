@@ -68,6 +68,7 @@ def _execution_to_entity(row: SqlTaskEventExecution) -> TaskEventExecution:
         id=row.id,
         task_item_id=row.task_item_id,
         task_id=row.task_id,
+        agent_queue_item_id=row.agent_queue_item_id,
         status=decode_task_event_execution_status(row.status),
         attempt_no=row.attempt_no,
         assigned_at=row.assigned_at,
@@ -279,6 +280,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         status: str = "queued",
         attempt_no: int = 1,
+        agent_queue_item_id: str | None = None,
         conversation_id: str | None = None,
         assigned_at: int | None = None,
     ) -> TaskEventExecution:
@@ -287,6 +289,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             id=execution_id,
             task_item_id=task_item_id,
             task_id=task_id,
+            agent_queue_item_id=agent_queue_item_id,
             conversation_id=conversation_id,
             status=encode_task_event_execution_status(status),
             attempt_no=attempt_no,
@@ -305,6 +308,20 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             if row is None:
                 return None
             return _execution_to_entity(row)
+
+    def get_execution_by_agent_queue_item_id(
+        self,
+        agent_queue_item_id: str,
+    ) -> TaskEventExecution | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEventExecution)
+                .where(SqlTaskEventExecution.workspace_id == current_workspace_id())
+                .where(SqlTaskEventExecution.agent_queue_item_id == agent_queue_item_id)
+                .limit(1)
+            )
+            row = session.execute(stmt).scalars().first()
+            return _execution_to_entity(row) if row is not None else None
 
     def get_execution_by_conversation_id(
         self,
@@ -386,6 +403,18 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 .where(SqlTaskEventExecution.workspace_id == current_workspace_id())
                 .where(SqlTaskEventExecution.task_item_id == task_item_id)
                 .order_by(asc(SqlTaskEventExecution.attempt_no), asc(SqlTaskEventExecution.id))
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_execution_to_entity(row) for row in rows]
+
+    def list_executions_by_status(self, status: str) -> list[TaskEventExecution]:
+        encoded = encode_task_event_execution_status(status)
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEventExecution)
+                .where(SqlTaskEventExecution.workspace_id == current_workspace_id())
+                .where(SqlTaskEventExecution.status == encoded)
+                .order_by(asc(SqlTaskEventExecution.created_at), asc(SqlTaskEventExecution.id))
             )
             rows = session.execute(stmt).scalars().all()
             return [_execution_to_entity(row) for row in rows]

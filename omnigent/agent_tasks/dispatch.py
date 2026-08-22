@@ -165,23 +165,36 @@ async def dispatch_worker_for_item(
             code=ErrorCode.CONFLICT,
         )
 
-    # Send the instructions as a real user message (not meta) so the worker
-    # picks them up as its next turn.
-    from omnigent.db.utils import generate_task_id
-
-    message_item = _worker_instruction_item(
-        params.instructions,
-        idempotency_key or generate_task_id(),
+    execution = (
+        await asyncio.to_thread(
+            task_event_store.get_execution_by_agent_queue_item_id,
+            idempotency_key,
+        )
+        if idempotency_key is not None
+        else None
     )
+    if execution is None:
+        execution = start_execution_for_item(
+            task=task,
+            item=item,
+            task_event_store=task_event_store,
+            agent_queue_item_id=idempotency_key,
+            conversation_id=worker_conv_id,
+            status="queued",
+        )
+
+    # Persist the attempt before exposing its instruction. A fast worker can
+    # otherwise settle before the completion hook has an execution to update.
+    message_item = _worker_instruction_item(params.instructions, execution.id)
     already_sent = False
-    if idempotency_key is not None:
+    if execution.agent_queue_item_id is not None:
         recent = await asyncio.to_thread(
             conversation_store.list_items,
             worker_conv_id,
             limit=100,
             order="desc",
         )
-        already_sent = any(item.response_id == idempotency_key for item in recent.data)
+        already_sent = any(item.response_id == execution.id for item in recent.data)
     if not already_sent:
         persisted = await asyncio.to_thread(
             conversation_store.append,
@@ -201,24 +214,18 @@ async def dispatch_worker_for_item(
         needs_response=False,
     )
 
-    execution = start_execution_for_item(
-        task=task,
-        item=item,
-        task_event_store=task_event_store,
-        conversation_id=worker_conv_id,
-        status="running",
-    )
-    mark_execution_running(
-        task_event_store,
-        execution.id,
-        conversation_id=worker_conv_id,
-    )
+    if execution.status == "queued":
+        marked = mark_execution_running(
+            task_event_store,
+            execution.id,
+            conversation_id=worker_conv_id,
+        )
+        if marked is not None:
+            execution = marked
     await asyncio.to_thread(task_item_store.update_item, item.id, state="running")
     sync_task_activity_state(
         task,
         task_store=task_store,
         task_item_store=task_item_store,
     )
-    refreshed = await asyncio.to_thread(task_event_store.get_execution, execution.id)
-    assert refreshed is not None
-    return refreshed, worker_conv_id
+    return execution, worker_conv_id

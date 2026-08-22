@@ -157,6 +157,7 @@ def worker_setup(db_uri: str) -> dict:
         "handler": handler,
         "queue_store": queue_store,
         "task_store": task_store,
+        "event_store": event_store,
         "item_store": item_store,
         "worker_store": worker_store,
         "conversation_store": conversation_store,
@@ -285,12 +286,23 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
     refreshed_item = item_store.get_item(item.id)
     assert refreshed_item is not None
     assert refreshed_item.state == "running"
+    execution = worker_setup["event_store"].get_execution_by_agent_queue_item_id(
+        queue_item.id,
+    )
+    assert execution is not None
+    assert execution.status == "running"
     queue = queue_store.get_queue(key)
     assert queue is not None and queue.conversation_id is not None
     worker_conv = worker_setup["conversation_store"].get_conversation(queue.conversation_id)
     assert worker_conv is not None
     assert worker_conv.kind == "default"
     assert worker_conv.parent_conversation_id is None
+    messages = worker_setup["conversation_store"].list_items(
+        queue.conversation_id,
+        limit=10,
+        order="asc",
+    )
+    assert [message.response_id for message in messages.data] == [execution.id]
     worker_setup["ensure_runner"].assert_called_once()
     # The runner was ensured for the freshly created worker conversation.
     assert worker_setup["ensure_runner"].call_args.args[0] == queue.conversation_id

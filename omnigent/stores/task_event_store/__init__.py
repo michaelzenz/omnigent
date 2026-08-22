@@ -118,6 +118,7 @@ class TaskEventStore(ABC):
         *,
         status: str = "queued",
         attempt_no: int = 1,
+        agent_queue_item_id: str | None = None,
         conversation_id: str | None = None,
         assigned_at: int | None = None,
     ) -> TaskEventExecution:
@@ -126,6 +127,13 @@ class TaskEventStore(ABC):
     @abstractmethod
     def get_execution(self, execution_id: str) -> TaskEventExecution | None:
         """Return an execution by id."""
+
+    @abstractmethod
+    def get_execution_by_agent_queue_item_id(
+        self,
+        agent_queue_item_id: str,
+    ) -> TaskEventExecution | None:
+        """Return the execution created by one queue delivery."""
 
     @abstractmethod
     def get_execution_by_conversation_id(
@@ -156,6 +164,10 @@ class TaskEventStore(ABC):
     @abstractmethod
     def list_executions_for_item(self, task_item_id: str) -> list[TaskEventExecution]:
         """List executions for a task item ordered by ``attempt_no ASC, id ASC``."""
+
+    @abstractmethod
+    def list_executions_by_status(self, status: str) -> list[TaskEventExecution]:
+        """List executions in one lifecycle state."""
 
     # ── GC ─────────────────────────────────────────────────────
 

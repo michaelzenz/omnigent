@@ -18,6 +18,7 @@ from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
 )
+from omnigent.agent_tasks.executions import complete_execution
 from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import ensure_task_manager_for_dispatch
 from omnigent.agent_tasks.manager_role_profile import load_manager_role_profile
@@ -342,6 +343,14 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             model=_opt_str("model"),
         )
 
+        if self._ensure_runner is not None and worker.target_id is not None:
+            try:
+                await self._ensure_runner(worker.target_id)
+            except Exception as exc:
+                raise DispatchFailed(
+                    f"worker runner ensure failed for {worker.target_id}: {exc}"
+                ) from exc
+
         _execution, worker_conv_id = await dispatch_worker_for_item(
             task=task,
             item=task_item,
@@ -358,15 +367,58 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         # Cache the conversation so the status feed can complete this item
         # when the worker session settles.
         self._store.set_queue_conversation(item.key, worker_conv_id)
-        if self._ensure_runner is not None:
-            try:
-                await self._ensure_runner(worker_conv_id)
-            except Exception:
-                _logger.exception(
-                    "worker dispatch: runner ensure failed for %s; the worker "
-                    "session was created but may not be live",
-                    worker_conv_id,
-                )
+        if self._runner_router is None:
+            return
+        conversation = await asyncio.to_thread(
+            self._conversation_store.get_conversation,
+            worker_conv_id,
+        )
+        if conversation is None:
+            raise DispatchFailed(f"worker conversation {worker_conv_id} disappeared")
+        messages = await asyncio.to_thread(
+            self._conversation_store.list_items,
+            worker_conv_id,
+            limit=100,
+            order="desc",
+        )
+        persisted = next(
+            (message for message in messages.data if message.response_id == _execution.id),
+            None,
+        )
+        if persisted is None:
+            raise DispatchFailed(
+                f"worker instruction for execution {_execution.id} was not persisted"
+            )
+        try:
+            routed = self._runner_router.client_for_session_resources(
+                worker_conv_id,
+                conversation=conversation,
+            )
+            response = await routed.client.post(
+                f"/v1/sessions/{worker_conv_id}/events",
+                json={
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": params.instructions}],
+                    "agent_id": conversation.agent_id,
+                    "model": conversation.agent_id or "",
+                    "persisted_item_id": persisted.id,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            await asyncio.to_thread(
+                complete_execution,
+                self._task_event_store,
+                _execution.id,
+                status="failed",
+                error=str(exc),
+                error_code="dispatch_failed",
+            )
+            raise DispatchFailed(
+                f"worker instruction delivery failed for {worker_conv_id}: {exc}"
+            ) from exc
 
     async def on_parked(self, item: AgentQueueItem, state: str) -> None:
         """Mirror the park onto the task item the queue entry was carrying.
