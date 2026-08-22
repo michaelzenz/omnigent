@@ -13,7 +13,7 @@ from omnigent.entities import PromptProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.prompt_profile_store import PromptProfileStore
 
-_EDITABLE_FIELDS = frozenset({"name", "description", "instructions", "enabled"})
+_EDITABLE_FIELDS = frozenset({"name", "description", "instructions", "enabled", "visible"})
 
 
 class SqlAlchemyPromptProfileStore(PromptProfileStore):
@@ -45,6 +45,7 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
         *,
         description: str | None = None,
         enabled: bool = True,
+        visible: bool = True,
     ) -> PromptProfile:
         with self._session("create_prompt_profile") as session:
             if self._name_taken(session, name):
@@ -58,6 +59,7 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
                 description=description,
                 instructions=instructions,
                 enabled=enabled,
+                visible=visible,
                 archived=False,
                 created_at=now_epoch(),
                 updated_at=None,
@@ -70,7 +72,12 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
             row = session.get(SqlPromptProfile, (current_workspace_id(), profile_id))
             return sql_prompt_profile_to_entity(row) if row is not None else None
 
-    def list(self, *, enabled_only: bool = False) -> list[PromptProfile]:
+    def list(
+        self,
+        *,
+        enabled_only: bool = False,
+        visible_only: bool = True,
+    ) -> list[PromptProfile]:
         with self._session("list_active_prompt_profiles") as session:
             stmt = select(SqlPromptProfile).where(
                 SqlPromptProfile.workspace_id == current_workspace_id(),
@@ -78,6 +85,8 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
             )
             if enabled_only:
                 stmt = stmt.where(SqlPromptProfile.enabled.is_(True))
+            if visible_only:
+                stmt = stmt.where(SqlPromptProfile.visible.is_(True))
             rows = session.execute(
                 stmt.order_by(SqlPromptProfile.created_at.asc(), SqlPromptProfile.id.asc())
             ).scalars()
@@ -92,8 +101,10 @@ class SqlAlchemyPromptProfileStore(PromptProfileStore):
             if row is None or row.archived:
                 return None
             name = fields.get("name")
-            if name is not None and name != row.name and self._name_taken(
-                session, name, exclude_id=profile_id
+            if (
+                name is not None
+                and name != row.name
+                and self._name_taken(session, name, exclude_id=profile_id)
             ):
                 raise OmnigentError(
                     f"Prompt profile name already exists: {name!r}",

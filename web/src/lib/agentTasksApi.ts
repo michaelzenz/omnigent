@@ -6,7 +6,6 @@ export interface AgentTaskSummary {
   description: string | null;
   state: string;
   manager_role_key: string;
-  worker_role_key: string;
   manager_conversation_id: string | null;
 }
 
@@ -69,13 +68,20 @@ export type TaskWorkerLaneState = "new" | "active" | "idle";
 
 export interface TaskWorkerLane {
   worker_id: string;
-  /** The worker role this lane runs. Null for externally adopted lanes. */
-  role_key: string | null;
-  /** Set only for externally adopted lanes, which have no role. */
-  agent_profile_id: string | null;
   kind: string;
-  session_id: string | null;
+  target_id: string | null;
   state: TaskWorkerLaneState;
+  worker_state?:
+    | "uninitialized"
+    | "initializing"
+    | "idle"
+    | "busy"
+    | "disconnected"
+    | "initialization_failed"
+    | "terminated";
+  needs_response?: boolean;
+  provider_name?: string | null;
+  failure_reason?: string | null;
   situation: string;
   rows: TaskWorkerRow[];
   executions: TaskExecutionSummary[];
@@ -107,7 +113,6 @@ export interface TaskDashboard {
 }
 
 export interface DispatchPayload {
-  worker_role_key?: string;
   title?: string;
   description?: string;
   instructions?: string;
@@ -121,8 +126,6 @@ export const TASK_SECRETARY_ROLE = "secretary";
 export const TASK_BROKER_ROLE = "broker";
 export const MANAGER_DEFAULT_ROLE_KEY = "manager:default";
 export const MANAGER_ROLE_PREFIX = "manager:";
-export const WORKER_DEFAULT_ROLE_KEY = "worker:default";
-export const WORKER_ROLE_PREFIX = "worker:";
 
 // Conversation label marking a PuppyGarden role session. Mirrors the backend
 // ``omnigent.agent_tasks.session_labels`` constants. ``task_broker`` is a
@@ -175,6 +178,7 @@ export type RoleProfileSummary = SecretaryProfile & { role: string };
 
 export interface CreateManagerRoleProfileRequest {
   slug: string;
+  description?: string | null;
   agent_profile_id?: string;
   harness?: string | null;
   model?: string | null;
@@ -182,11 +186,8 @@ export interface CreateManagerRoleProfileRequest {
   workspace?: string | null;
 }
 
-export type CreateWorkerRoleProfileRequest = CreateManagerRoleProfileRequest;
-
 export interface UpdateAgentTaskRequest {
   manager_role_key?: string;
-  worker_role_key?: string;
 }
 
 export interface SecretarySession {
@@ -256,34 +257,24 @@ export interface WorkerLaneSummary {
   id: string;
   task_id: string;
   kind: string;
-  role_key: string | null;
-  agent_profile_id: string | null;
-  session_id: string | null;
+  target_id: string | null;
+  state: string;
+  needs_response: boolean;
+  provider_name: string | null;
+  failure_reason: string | null;
 }
 
-/** Re-point a worker lane at another worker role. Only valid before it has a session. */
-export async function updateWorkerLaneRole(
-  workerId: string,
-  roleKey: string,
-): Promise<WorkerLaneSummary> {
-  const res = await authenticatedFetch(`/v1/task-workers/${encodeURIComponent(workerId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role_key: roleKey }),
-  });
-  return readJsonOrApiError<WorkerLaneSummary>(res);
-}
-
-/** Start a worker sub-agent session for a lane that has not run yet. */
-export async function activateWorkerLane(workerId: string): Promise<WorkerLaneSummary> {
+/** Initialize a Worker asynchronously. */
+export async function initializeWorker(workerId: string): Promise<WorkerLaneSummary> {
   const res = await authenticatedFetch(
-    `/v1/task-workers/${encodeURIComponent(workerId)}/activate`,
+    `/v1/task-workers/${encodeURIComponent(workerId)}/initialize`,
     { method: "POST" },
   );
   return readJsonOrApiError<WorkerLaneSummary>(res);
 }
 
 export interface UpdateAgentRoleProfileRequest {
+  name?: string;
   agent_profile_id?: string;
   harness?: string | null;
   model?: string | null;
@@ -303,17 +294,6 @@ export async function createManagerRoleProfile(
   body: CreateManagerRoleProfileRequest,
 ): Promise<RoleProfileSummary> {
   const res = await authenticatedFetch("/v1/agent-tasks/roles/manager", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return readJsonOrApiError<RoleProfileSummary>(res);
-}
-
-export async function createWorkerRoleProfile(
-  body: CreateWorkerRoleProfileRequest,
-): Promise<RoleProfileSummary> {
-  const res = await authenticatedFetch("/v1/agent-tasks/roles/worker", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -371,15 +351,6 @@ export async function updateAgentRoleProfile(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-  return readJsonOrApiError<SecretaryProfile>(res);
-}
-
-export async function importRoleAgent(role: string, agentId: string): Promise<SecretaryProfile> {
-  const res = await authenticatedFetch(agentRolePath(role, "import-agent"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agent_id: agentId }),
   });
   return readJsonOrApiError<SecretaryProfile>(res);
 }

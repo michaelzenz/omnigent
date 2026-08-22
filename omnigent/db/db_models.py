@@ -328,6 +328,7 @@ class SqlPromptProfile(OmnigentBase):
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     instructions: Mapped[str] = mapped_column(CompressedText, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+    visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1933,11 +1934,6 @@ class SqlTask(OmnigentBase):
         nullable=False,
         server_default="manager:default",
     )
-    worker_role_key: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        server_default="worker:default",
-    )
     manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -2072,29 +2068,28 @@ class SqlWorker(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
-    # Managed lanes resolve their agent through ``role_key``. Adopted sessions
-    # were never spawned from a role, so they carry the agent id directly.
-    role_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="managed")
-    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     # Stable identifier from the watcher plugin for adopted external sessions.
     # Used by ingress to auto-route ``external.session.updated`` events.
-    external_session_hint: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, server_default="uninitialized")
+    needs_response: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider_configuration: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_observed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         CheckConstraint("kind IN ('managed', 'external')", name="ck_workers_kind"),
         CheckConstraint(
-            "(kind = 'managed' AND role_key IS NOT NULL AND agent_profile_id IS NULL) "
-            "OR (kind = 'external' AND role_key IS NULL)",
-            name="ck_workers_role_or_agent",
+            "state IN ('uninitialized', 'initializing', 'idle', 'busy', "
+            "'disconnected', 'initialization_failed', 'terminated')",
+            name="ck_workers_state",
         ),
         Index("ix_workers_task", "workspace_id", "task_id", "id"),
-        Index("ix_workers_role_key", "workspace_id", "role_key", "task_id"),
-        Index("ix_workers_session", "workspace_id", "session_id"),
-        Index("ix_workers_external_hint", "workspace_id", "external_session_hint"),
+        Index("ix_workers_target", "workspace_id", "target_id"),
     )
 
 
@@ -2198,14 +2193,38 @@ class SqlFyiClusterEvent(OmnigentBase):
     event_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
 
 
-class SqlTaskRoleProfile(OmnigentBase):
-    """
-    SQLAlchemy model for a task agent role definition.
+class SqlWorkerProvider(OmnigentBase):
+    """Reusable, prompt-free definition for initializing a PuppyGarden worker."""
 
-    A role names an agent profile together with where it runs (host,
-    workspace) and what drives it (harness, model). Everything but the key
-    and kind is optional so externally-defined roles, which carry their own
-    metadata, can omit the fields Omnigent would otherwise resolve.
+    __tablename__ = "worker_providers"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    configuration: Mapped[str] = mapped_column(Text, nullable=False, server_default="{}")
+    built_in: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('internal', 'external')", name="ck_worker_providers_kind"),
+        Index("ix_worker_providers_kind", "workspace_id", "kind", "id"),
+    )
+
+
+class SqlTaskRoleProfile(OmnigentBase):
+    """PuppyGarden role binding to a hidden PromptProfile manual.
+
+    Launch fields are resolved placement for the fixed OmniHarness target;
+    role identity and instructions come from ``role`` and ``prompt_profile_id``.
     """
 
     __tablename__ = "task_role_profiles"
@@ -2220,21 +2239,21 @@ class SqlTaskRoleProfile(OmnigentBase):
     role: Mapped[str] = mapped_column(String(64), primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    prompt_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     harness: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # NULL when the harness resolves its own model (e.g. Codex, OpenCode).
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # What the role specializes in; surfaced to the manager when it lists
-    # worker roles to pick one for a new lane. NULL for externally-defined
-    # roles that carry their own metadata.
+    # Legacy resolved metadata; user-facing role description lives on the
+    # bound PromptProfile.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('manager', 'worker', 'broker', 'secretary', 'external')",
+            "kind IN ('manager', 'broker', 'secretary', 'external')",
             name="ck_task_role_profiles_kind",
         ),
         Index("ix_task_role_profiles_kind", "workspace_id", "kind", "role"),

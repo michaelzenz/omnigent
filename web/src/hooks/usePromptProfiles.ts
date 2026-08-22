@@ -7,6 +7,7 @@ export interface PromptProfile {
   description: string | null;
   instructions: string;
   enabled: boolean;
+  visible?: boolean;
   archived: boolean;
   created_at: number;
   updated_at: number | null;

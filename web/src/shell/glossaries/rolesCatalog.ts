@@ -30,6 +30,3 @@ export const STATIC_ROLE_CATALOG: RoleCatalogEntry[] = [
 
 export const MANAGER_ROLE_DEFINITION =
   "You are a task manager for one managed task. Read host.puppygarden.root from ~/.omnigent/config.yaml and follow <host.puppygarden.root>/docs/TASK_MANAGER.md. Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.";
-
-export const WORKER_ROLE_DEFINITION =
-  "You are a task worker. Execute the instructions provided to you.";

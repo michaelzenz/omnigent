@@ -80,8 +80,8 @@ def resolve_owner_user_id(
     """Map a session to the broker owner user."""
     if host_id and host_store is not None:
         host = host_store.get_host(host_id)
-        if host is not None and host.owner:
-            return host.owner
+        if host is not None and host.user_id:
+            return host.user_id
     if user_id is not None:
         return user_id
     return "__anonymous__"
@@ -303,8 +303,9 @@ async def adopt_session(
         _generate_worker_id(),
         task.id,
         kind=WORKER_KIND_EXTERNAL,
-        agent_profile_id=conv.agent_id,
-        session_id=session_id,
+        target_id=session_id,
+        state="idle",
+        provider_name="Adopted session",
     )
     adopted_event_id = uuid.uuid4().hex
     adopted_event = task_event_store.create_event(
@@ -473,8 +474,8 @@ async def adopt_external_session(
 ) -> tuple[TaskEvent, TaskEvent]:
     """Bind a watcher-discovered external session to a task.
 
-    Creates a ``WORKER_KIND_EXTERNAL`` worker with ``external_session_hint``
-    so future ``external.session.updated`` events auto-route to this task.
+    Creates a ``WORKER_KIND_EXTERNAL`` Worker whose target id is the watcher
+    session hint, so future updates auto-route to this task.
     """
     task = task_store.get(task_id)
     if task is None:
@@ -484,9 +485,9 @@ async def adopt_external_session(
         _generate_worker_id(),
         task.id,
         kind=WORKER_KIND_EXTERNAL,
-        agent_profile_id=None,
-        session_id=None,
-        external_session_hint=session_hint,
+        target_id=session_hint,
+        state="idle",
+        provider_name="External session",
     )
     adopted_event = task_event_store.create_event(
         uuid.uuid4().hex,

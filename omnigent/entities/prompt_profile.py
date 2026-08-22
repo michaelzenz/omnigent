@@ -15,5 +15,6 @@ class PromptProfile:
     created_at: int
     description: str | None = None
     enabled: bool = True
+    visible: bool = True
     archived: bool = False
     updated_at: int | None = None

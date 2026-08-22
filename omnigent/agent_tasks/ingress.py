@@ -51,7 +51,7 @@ def _task_for_external_hint(
     hint = payload.get("session_hint")
     if not hint:
         return None
-    worker = worker_store.get_by_external_hint(hint)
+    worker = worker_store.get_by_target_id(hint)
     if worker is None:
         return None
     return task_store.get(worker.task_id)
@@ -153,7 +153,9 @@ async def ingress_event(
             )
 
     if event.event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
-        bound_task = _task_for_external_hint(event, worker_store=worker_store, task_store=task_store)
+        bound_task = _task_for_external_hint(
+            event, worker_store=worker_store, task_store=task_store
+        )
         if bound_task is not None:
             params = _bootstrap_params(
                 bound_task,

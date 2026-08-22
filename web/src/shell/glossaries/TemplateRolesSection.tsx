@@ -9,7 +9,7 @@ import {
 } from "@/hooks/useRoleProfiles";
 import { RoleDefinitionCard } from "./RoleDefinitionCard";
 import { RoleDefaultsForm } from "./RoleDefaultsForm";
-import { RoleAgentPicker, RoleDescriptionField } from "./RoleHeaderControls";
+import { RoleDescriptionField } from "./RoleHeaderControls";
 
 interface TemplateRolesSectionProps {
   rolePrefix: string;
@@ -106,7 +106,6 @@ export function TemplateRolesSection({
             onSelect={() => setSelectedRole(profile.role)}
             headerActions={
               <div className="flex items-center gap-1.5">
-                <RoleAgentPicker roleId={profile.role} />
                 {profile.deletable ? (
                   <Button
                     type="button"

@@ -61,6 +61,7 @@ from omnigent.entities.task import (
     Worker,
 )
 from omnigent.entities.task_role_profile import TaskRoleProfile, UserRoleSession
+from omnigent.entities.worker_provider import WorkerProvider
 
 __all__ = [
     "AGENT_QUEUE_ITEM_KINDS",
@@ -103,9 +104,9 @@ __all__ = [
     "SessionPermission",
     "SessionResourceView",
     "SlashCommandData",
-    "StoredFile",
     "SshConnectionProfile",
     "SshSettings",
+    "StoredFile",
     "Task",
     "TaskAsset",
     "TaskEvent",
@@ -118,6 +119,7 @@ __all__ = [
     "TerminalCommandData",
     "UserRoleSession",
     "Worker",
+    "WorkerProvider",
     "filter_resources_by_type",
     "get_resource_by_id",
     "parse_item_data",

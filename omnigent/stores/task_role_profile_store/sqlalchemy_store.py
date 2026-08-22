@@ -18,6 +18,7 @@ def _to_entity(row: SqlTaskRoleProfile) -> TaskRoleProfile:
         role=row.role,
         kind=row.kind,
         agent_profile_id=row.agent_profile_id,
+        prompt_profile_id=row.prompt_profile_id,
         harness=row.harness,
         model=row.model,
         host_id=row.host_id,
@@ -69,6 +70,7 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
         *,
         kind: str | None = None,
         agent_profile_id: str | None = None,
+        prompt_profile_id: str | None = None,
         harness: str | None = None,
         model: str | None = None,
         host_id: str | None = None,
@@ -85,6 +87,7 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     role=role,
                     kind=kind or role_kind_from_key(role),
                     agent_profile_id=agent_profile_id,
+                    prompt_profile_id=prompt_profile_id,
                     harness=harness or (defaults.harness if defaults else None),
                     model=(
                         None if clear_model else model or (defaults.model if defaults else None)
@@ -105,6 +108,8 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     row.kind = kind
                 if agent_profile_id is not None:
                     row.agent_profile_id = agent_profile_id
+                if prompt_profile_id is not None:
+                    row.prompt_profile_id = prompt_profile_id
                 if harness is not None:
                     row.harness = harness
                 if clear_model:

@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAgentRoleProfile,
-  importRoleAgent,
   updateAgentRoleProfile,
   updateRolePrompt,
   type SecretaryProfile,
@@ -24,16 +23,6 @@ export function useUpdateAgentRoleProfile(role: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateAgentRoleProfileRequest) => updateAgentRoleProfile(role, body),
-    onSuccess: (data: SecretaryProfile) => {
-      queryClient.setQueryData(agentRoleProfileQueryKey(role), data);
-    },
-  });
-}
-
-export function useImportRoleAgent(role: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (agentId: string) => importRoleAgent(role, agentId),
     onSuccess: (data: SecretaryProfile) => {
       queryClient.setQueryData(agentRoleProfileQueryKey(role), data);
     },

@@ -126,6 +126,7 @@ from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
+from omnigent.stores.worker_provider_store import WorkerProviderStore
 from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
@@ -522,7 +523,6 @@ def _ensure_default_agents(
     _ensure_default_omniharness_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_task_agents(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
 
 
@@ -664,54 +664,6 @@ def _ensure_default_native_agents(
             agent_cache,
             name=agent.agent_name,
             bundle_bytes=_build_native_bundle(provider),
-        )
-
-
-def _build_task_agent_bundle(agent_name: str) -> bytes:
-    """Build a gzipped tarball of a packaged task-role agent spec."""
-    import tempfile
-
-    import yaml
-
-    from omnigent.agent_tasks.agent_builtins import (
-        bundle_task_instruction_includes,
-        task_agent_spec_path,
-    )
-    from omnigent.spec import materialize_bundle
-
-    spec_path = task_agent_spec_path(agent_name)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        bundle_dir = materialize_bundle(spec_path, Path(tmpdir) / "bundle")
-        bundled_spec = bundle_dir / spec_path.name
-        document = yaml.safe_load(bundled_spec.read_text()) or {}
-        if not isinstance(document, dict):
-            raise ValueError(f"packaged agent {agent_name!r} is not a YAML mapping")
-        bundle_task_instruction_includes(document, bundle_dir)
-        bundled_spec.write_text(yaml.safe_dump(document, sort_keys=False))
-        return _tar_gz_dir(bundle_dir)
-
-
-def _ensure_default_task_agents(
-    agent_store: AgentStore,
-    artifact_store: ArtifactStore,
-    agent_cache: Any,
-) -> None:
-    """Register or refresh all packaged managed-task role agents.
-
-    These agents back glossary roles (broker / secretary / manager / worker),
-    so they're marked ``is_role`` and hidden from the public New Chat picker —
-    they're reached through the role profile, not the agent catalog.
-    """
-    from omnigent.agent_tasks.agent_builtins import TASK_BUILTIN_AGENT_NAMES
-
-    for agent_name in TASK_BUILTIN_AGENT_NAMES:
-        _ensure_builtin_agent(
-            agent_store,
-            artifact_store,
-            agent_cache,
-            name=agent_name,
-            bundle_bytes=_build_task_agent_bundle(agent_name),
-            is_role=True,
         )
 
 
@@ -950,6 +902,7 @@ def create_app(
     task_event_store: TaskEventStore | None = None,
     task_item_store: TaskItemStore | None = None,
     worker_store: WorkerStore | None = None,
+    worker_provider_store: WorkerProviderStore | None = None,
     task_asset_store: TaskAssetStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     user_role_session_store: UserRoleSessionStore | None = None,
@@ -1346,6 +1299,7 @@ def create_app(
                 conversation_store=conversation_store,
                 agent_store=agent_store,
                 host_store=host_store,
+                prompt_profile_store=prompt_profile_store,
                 session_creator=_session_creator,
                 app_state=app_inst.state,
             )
@@ -1595,6 +1549,28 @@ def create_app(
     if prompt_profile_store is None:
         prompt_profile_store = SqlAlchemyPromptProfileStore(agent_store.storage_location)
     app = FastAPI(title="Omnigent Server", lifespan=_lifespan)
+
+    if (
+        task_role_profile_store is not None
+        and prompt_profile_store is not None
+        and agent_store.get_by_name(OMNIHARNESS_AGENT_NAME) is not None
+    ):
+        from omnigent.agent_tasks.broker_session import ensure_role_profile
+        from omnigent.agent_tasks.role_keys import SYSTEM_ROLE_KEYS
+
+        for role in SYSTEM_ROLE_KEYS:
+            ensure_role_profile(
+                role=role,
+                auth_user_id=None,
+                task_role_profile_store=task_role_profile_store,
+                agent_store=agent_store,
+                prompt_profile_store=prompt_profile_store,
+            )
+
+    if worker_provider_store is not None:
+        from omnigent.server.routes.worker_providers import ensure_default_worker_provider
+
+        ensure_default_worker_provider(worker_provider_store)
     from omnigent.runtime import telemetry
 
     telemetry.instrument_fastapi_app(app)
@@ -2592,6 +2568,19 @@ def create_app(
         and worker_store is not None
         and task_asset_store is not None
     ):
+        if worker_provider_store is not None:
+            from omnigent.server.routes.worker_providers import create_worker_providers_router
+
+            app.include_router(
+                create_worker_providers_router(
+                    worker_provider_store,
+                    agent_store,
+                    auth_provider=auth_provider,
+                    host_store=host_store,
+                ),
+                prefix="/v1",
+                tags=["worker_providers"],
+            )
         app.include_router(
             create_agent_tasks_router(
                 task_store,
@@ -2610,6 +2599,8 @@ def create_app(
                 session_creator=_session_creator,
                 artifact_store=artifact_store,
                 agent_cache=agent_cache,
+                prompt_profile_store=prompt_profile_store,
+                worker_provider_store=worker_provider_store,
             ),
             prefix="/v1",
             tags=["agent_tasks"],

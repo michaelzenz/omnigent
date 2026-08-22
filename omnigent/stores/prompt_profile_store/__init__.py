@@ -23,13 +23,19 @@ class PromptProfileStore(ABC):
         *,
         description: str | None = None,
         enabled: bool = True,
+        visible: bool = True,
     ) -> PromptProfile: ...
 
     @abstractmethod
     def get(self, profile_id: str) -> PromptProfile | None: ...
 
     @abstractmethod
-    def list(self, *, enabled_only: bool = False) -> list[PromptProfile]: ...
+    def list(
+        self,
+        *,
+        enabled_only: bool = False,
+        visible_only: bool = True,
+    ) -> list[PromptProfile]: ...
 
     @abstractmethod
     def update(self, profile_id: str, **fields: Any) -> PromptProfile | None: ...

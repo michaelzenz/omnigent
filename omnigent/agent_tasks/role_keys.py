@@ -1,4 +1,4 @@
-"""Validation and metadata for glossary role profile keys."""
+"""Validation and metadata for PuppyGarden role keys."""
 
 from __future__ import annotations
 
@@ -8,30 +8,18 @@ from omnigent.errors import ErrorCode, OmnigentError
 
 MANAGER_ROLE_PREFIX = "manager:"
 MANAGER_DEFAULT_ROLE_KEY = "manager:default"
-WORKER_ROLE_PREFIX = "worker:"
-WORKER_DEFAULT_ROLE_KEY = "worker:default"
 TASK_BROKER_ROLE_KEY = "broker"
 TASK_SECRETARY_ROLE_KEY = "secretary"
 
 ROLE_KIND_MANAGER = "manager"
-ROLE_KIND_WORKER = "worker"
 ROLE_KIND_BROKER = "broker"
 ROLE_KIND_SECRETARY = "secretary"
 ROLE_KIND_EXTERNAL = "external"
 
-# Roles a user talks to directly, so their session is per-user rather than
-# bound to a task or worker lane.
 SINGLETON_ROLE_KINDS: frozenset[str] = frozenset({ROLE_KIND_BROKER, ROLE_KIND_SECRETARY})
-
 SYSTEM_ROLE_KEYS: frozenset[str] = frozenset(
-    {
-        TASK_BROKER_ROLE_KEY,
-        TASK_SECRETARY_ROLE_KEY,
-        MANAGER_DEFAULT_ROLE_KEY,
-        WORKER_DEFAULT_ROLE_KEY,
-    }
+    {TASK_BROKER_ROLE_KEY, TASK_SECRETARY_ROLE_KEY, MANAGER_DEFAULT_ROLE_KEY}
 )
-
 _TEMPLATE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 
 
@@ -39,12 +27,8 @@ def is_manager_role_key(role: str) -> bool:
     return role.startswith(MANAGER_ROLE_PREFIX)
 
 
-def is_worker_role_key(role: str) -> bool:
-    return role.startswith(WORKER_ROLE_PREFIX)
-
-
 def is_template_role_key(role: str) -> bool:
-    return is_manager_role_key(role) or is_worker_role_key(role)
+    return is_manager_role_key(role)
 
 
 def is_system_role_key(role: str) -> bool:
@@ -52,14 +36,12 @@ def is_system_role_key(role: str) -> bool:
 
 
 def is_deletable_role_key(role: str) -> bool:
-    return is_template_role_key(role) and not is_system_role_key(role)
+    return is_manager_role_key(role) and not is_system_role_key(role)
 
 
 def default_role_key_for_prefix(prefix: str) -> str:
     if prefix == MANAGER_ROLE_PREFIX:
         return MANAGER_DEFAULT_ROLE_KEY
-    if prefix == WORKER_ROLE_PREFIX:
-        return WORKER_DEFAULT_ROLE_KEY
     raise OmnigentError(
         f"Unsupported template role prefix: {prefix}",
         code=ErrorCode.INVALID_INPUT,
@@ -73,14 +55,8 @@ def role_profile_title(role: str) -> str:
         return "Task secretary"
     if role == MANAGER_DEFAULT_ROLE_KEY:
         return "Task manager (default)"
-    if role == WORKER_DEFAULT_ROLE_KEY:
-        return "Task worker (default)"
     if is_manager_role_key(role):
-        slug = role[len(MANAGER_ROLE_PREFIX) :]
-        return f"Task manager ({slug})"
-    if is_worker_role_key(role):
-        slug = role[len(WORKER_ROLE_PREFIX) :]
-        return f"Task worker ({slug})"
+        return f"Task manager ({role[len(MANAGER_ROLE_PREFIX) :]})"
     return role
 
 
@@ -92,10 +68,7 @@ def normalize_template_slug(slug: str) -> str:
             code=ErrorCode.INVALID_INPUT,
         )
     if normalized == "default":
-        raise OmnigentError(
-            "Role slug 'default' is reserved",
-            code=ErrorCode.INVALID_INPUT,
-        )
+        raise OmnigentError("Role slug 'default' is reserved", code=ErrorCode.INVALID_INPUT)
     return normalized
 
 
@@ -103,18 +76,10 @@ def manager_role_key_from_slug(slug: str) -> str:
     return f"{MANAGER_ROLE_PREFIX}{normalize_template_slug(slug)}"
 
 
-def worker_role_key_from_slug(slug: str) -> str:
-    return f"{WORKER_ROLE_PREFIX}{normalize_template_slug(slug)}"
-
-
 def resolve_template_defaults_role_key(role: str) -> str | None:
     if role in SYSTEM_ROLE_KEYS:
         return role
-    if is_manager_role_key(role):
-        return MANAGER_DEFAULT_ROLE_KEY
-    if is_worker_role_key(role):
-        return WORKER_DEFAULT_ROLE_KEY
-    return None
+    return MANAGER_DEFAULT_ROLE_KEY if is_manager_role_key(role) else None
 
 
 def normalize_role_profile_key(role: str) -> str:
@@ -122,34 +87,25 @@ def normalize_role_profile_key(role: str) -> str:
     if normalized in SYSTEM_ROLE_KEYS:
         return normalized
     if is_manager_role_key(normalized):
-        slug = normalized[len(MANAGER_ROLE_PREFIX) :]
-        normalize_template_slug(slug)
-        return normalized
-    if is_worker_role_key(normalized):
-        slug = normalized[len(WORKER_ROLE_PREFIX) :]
-        normalize_template_slug(slug)
+        normalize_template_slug(normalized[len(MANAGER_ROLE_PREFIX) :])
         return normalized
     raise OmnigentError(
-        f"Unsupported task agent role: {role}",
+        f"Unsupported PuppyGarden role: {role}",
         code=ErrorCode.NOT_FOUND,
     )
 
 
 def role_kind_from_key(role: str) -> str:
-    """Return the role family a key belongs to."""
     if role == TASK_BROKER_ROLE_KEY:
         return ROLE_KIND_BROKER
     if role == TASK_SECRETARY_ROLE_KEY:
         return ROLE_KIND_SECRETARY
     if is_manager_role_key(role):
         return ROLE_KIND_MANAGER
-    if is_worker_role_key(role):
-        return ROLE_KIND_WORKER
     return ROLE_KIND_EXTERNAL
 
 
 def is_singleton_role_key(role: str) -> bool:
-    """Whether the role's session is per-user rather than per task or lane."""
     return role_kind_from_key(role) in SINGLETON_ROLE_KINDS
 
 
@@ -158,4 +114,4 @@ def is_editable_role_profile_key(role: str) -> bool:
         normalized = normalize_role_profile_key(role)
     except OmnigentError:
         return False
-    return normalized in SYSTEM_ROLE_KEYS or is_template_role_key(normalized)
+    return normalized in SYSTEM_ROLE_KEYS or is_manager_role_key(normalized)

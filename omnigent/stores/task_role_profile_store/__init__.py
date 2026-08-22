@@ -32,6 +32,7 @@ class TaskRoleProfileStore(ABC):
         *,
         kind: str | None = None,
         agent_profile_id: str | None = None,
+        prompt_profile_id: str | None = None,
         harness: str | None = None,
         model: str | None = None,
         host_id: str | None = None,

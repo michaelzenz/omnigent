@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   acceptAgentTaskPackage,
-  activateWorkerLane,
+  initializeWorker,
   cancelAgentQueueItem,
   ensureBrokerSession,
   ensureSecretarySession,
@@ -18,7 +18,6 @@ import {
   resolveTaskItem,
   retryTaskItemDispatch,
   updateTaskItem,
-  updateWorkerLaneRole,
   type DispatchPayload,
   type ItemResolution,
   type TaskDashboard,
@@ -327,21 +326,10 @@ export function useRejectAgentTaskPackage(taskId: string) {
   });
 }
 
-export function useUpdateWorkerLaneRole(taskId: string) {
+export function useInitializeWorker(taskId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ workerId, roleKey }: { workerId: string; roleKey: string }) =>
-      updateWorkerLaneRole(workerId, roleKey),
-    onSuccess: async () => {
-      await invalidateTaskQueries(queryClient, taskId);
-    },
-  });
-}
-
-export function useActivateWorkerLane(taskId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (workerId: string) => activateWorkerLane(workerId),
+    mutationFn: (workerId: string) => initializeWorker(workerId),
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
     },

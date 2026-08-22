@@ -9,7 +9,6 @@ from omnigent.agent_tasks.constants import AMBIGUOUS_EVENT_STATES
 from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.role_keys import (
     MANAGER_DEFAULT_ROLE_KEY,
-    WORKER_DEFAULT_ROLE_KEY,
     is_manager_role_key,
 )
 from omnigent.agent_tasks.task_match import (
@@ -230,7 +229,6 @@ def create_task_package(
         description=description,
         internal_note=resolved_internal_note,
         manager_role_key=MANAGER_DEFAULT_ROLE_KEY,
-        worker_role_key=WORKER_DEFAULT_ROLE_KEY,
         state="pending",
         tags=resolved_tags,
     )

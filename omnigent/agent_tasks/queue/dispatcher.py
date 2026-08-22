@@ -73,6 +73,7 @@ class DispatchTarget:
 
     session_id: str | None
     harness: str | None = None
+    ready: bool = True
 
 
 class DispatchFailed(Exception):
@@ -307,6 +308,8 @@ class AgentQueueDispatcher:
 
         :raises DispatchFailed: If the target will never become quiet.
         """
+        if not target.ready:
+            return _GateResult(ready=False, next_due_at=now_epoch() + 1)
         if target.session_id is None:
             return _GateResult(ready=True)
         status = await self._context.read_status.status_for(target.session_id)

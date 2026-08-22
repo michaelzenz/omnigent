@@ -1,9 +1,4 @@
-import type {
-  DispatchPayload,
-  TaskExecutionSummary,
-  TaskItemSummary,
-  TaskWorkerLane,
-} from "@/lib/agentTasksApi";
+import type { TaskExecutionSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 
 export type WorkStateLabel = "To Run" | "Running" | "Done";
 
@@ -95,10 +90,6 @@ export function isTaskCardSparse(dashboard: {
   );
 }
 
-export interface WorkerOption {
-  workerRoleKey: string;
-}
-
 export function workStateLabel(status: string): WorkStateLabel {
   if (status === "running") return "Running";
   if (status === "queued") return "To Run";
@@ -144,56 +135,4 @@ export function findExecution(
     }
   }
   return null;
-}
-
-export function roleKeyForItem(
-  item: TaskItemSummary,
-  workers: TaskWorkerLane[],
-): string | undefined {
-  if (item.worker_id == null) return undefined;
-  return workers.find((lane) => lane.worker_id === item.worker_id)?.role_key ?? undefined;
-}
-
-export function buildWorkerOptions(
-  workerRoleKeys: string[],
-  proposalPayload: DispatchPayload,
-): WorkerOption[] {
-  const byId = new Map<string, WorkerOption>();
-
-  const add = (workerRoleKey: string | undefined) => {
-    if (!workerRoleKey) return;
-    if (byId.has(workerRoleKey)) return;
-    byId.set(workerRoleKey, { workerRoleKey });
-  };
-
-  add(proposalPayload.worker_role_key);
-  for (const workerRoleKey of workerRoleKeys) {
-    add(workerRoleKey);
-  }
-
-  return Array.from(byId.values());
-}
-
-export function workerOptionLabel(
-  workerRoleKey: string,
-  roleTitleByKey: Map<string, string>,
-): string {
-  return roleTitleByKey.get(workerRoleKey) ?? workerRoleKey;
-}
-
-export function proposalHasEdits(
-  baseline: DispatchPayload & { description?: string },
-  current: {
-    workerRoleKey: string;
-    title: string;
-    description: string;
-    instructions: string;
-  },
-): boolean {
-  return (
-    baseline.worker_role_key !== current.workerRoleKey ||
-    (baseline.title ?? "") !== current.title ||
-    (baseline.description ?? "") !== current.description ||
-    (baseline.instructions ?? "") !== current.instructions
-  );
 }

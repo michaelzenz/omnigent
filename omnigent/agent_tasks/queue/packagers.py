@@ -58,6 +58,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.prompt_profile_store import PromptProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
@@ -237,6 +238,7 @@ class BrokerPackager(Packager):
         conversation_store: ConversationStore | None = None,
         agent_store: AgentStore | None = None,
         host_store: HostStore | None = None,
+        prompt_profile_store: PromptProfileStore | None = None,
         session_creator: Any | None = None,
         app_state: Any = None,
         poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
@@ -259,6 +261,7 @@ class BrokerPackager(Packager):
         self._conversation_store = conversation_store
         self._agent_store = agent_store
         self._host_store = host_store
+        self._prompt_profile_store = prompt_profile_store
         self._session_creator = session_creator
         self._app_state = app_state
         self._similarity_threshold = similarity_threshold
@@ -281,6 +284,7 @@ class BrokerPackager(Packager):
                     host_store=self._host_store,
                     session_creator=self._session_creator,
                     app_state=self._app_state,
+                    prompt_profile_store=self._prompt_profile_store,
                 )
             except Exception:
                 # One owner's bootstrap must not abort the scan for the rest.
@@ -321,7 +325,8 @@ class BrokerPackager(Packager):
             routed = [
                 e
                 for e in unclaimed
-                if e.event_type not in (SESSION_ORPHAN_EVENT_TYPE, EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE)
+                if e.event_type
+                not in (SESSION_ORPHAN_EVENT_TYPE, EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE)
             ]
             # Each orphan is its own batch — adoption is heavy and per-session.
             for orphan in orphans:

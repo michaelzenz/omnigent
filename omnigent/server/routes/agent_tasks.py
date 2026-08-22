@@ -8,13 +8,10 @@ ingress and manager wake are handled in later phases.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import secrets
-import tarfile
+import json
 import uuid
 from typing import Any, Literal
 
-import yaml
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -32,7 +29,6 @@ from omnigent.agent_tasks.adoption import (
 from omnigent.agent_tasks.agent_builtins import (
     TASK_BROKER_ROLE,
     TASK_SECRETARY_ROLE,
-    packaged_role_agent_names_for_kind,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
@@ -61,24 +57,16 @@ from omnigent.agent_tasks.items import (
 from omnigent.agent_tasks.manager_role_profile import (
     get_or_create_manager_role_profile,
 )
-from omnigent.agent_tasks.role_backing import (
-    build_backing_bundle_from_packaged,
-    read_agent_prompt,
-    rewrite_agent_prompt,
-)
 from omnigent.agent_tasks.role_keys import (
     MANAGER_ROLE_PREFIX,
     SYSTEM_ROLE_KEYS,
-    WORKER_ROLE_PREFIX,
     is_deletable_role_key,
     is_manager_role_key,
     is_system_role_key,
-    is_worker_role_key,
     manager_role_key_from_slug,
     normalize_role_profile_key,
     role_kind_from_key,
     role_profile_title,
-    worker_role_key_from_slug,
 )
 from omnigent.agent_tasks.task_match import (
     collect_event_tags,
@@ -95,13 +83,8 @@ from omnigent.agent_tasks.task_packages import (
     reconcile_events_to_task_batch,
     reject_task_package,
 )
-from omnigent.agent_tasks.worker_role_profile import (
-    get_or_create_worker_role_profile,
-    load_worker_role_profile,
-)
-from omnigent.agent_tasks.workers import activate_worker_lane, worker_for_item
+from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.enum_codecs import TASK_STATE
-from omnigent.db.utils import generate_agent_id
 from omnigent.entities import (
     FyiCluster,
     Task,
@@ -121,12 +104,14 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
+from omnigent.stores.prompt_profile_store import PromptProfileStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
+from omnigent.stores.worker_provider_store import WorkerProviderStore
 from omnigent.stores.worker_store import WorkerStore
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
@@ -206,7 +191,6 @@ class UpdateAgentTaskRequest(BaseModel):
     internal_note: str | None = None
     goal: str | None = None
     manager_role_key: str | None = None
-    worker_role_key: str | None = None
     manager_conversation_id: str | None = None
     state: str | None = None
 
@@ -248,8 +232,9 @@ class PutTaskTagsRequest(BaseModel):
 
 
 class _RoleProfileFieldsMixin(BaseModel):
-    """Shared role-profile fields with explicit-null handling for ``model``."""
+    """Editable metadata for a PuppyGarden role manual."""
 
+    name: str | None = None
     harness: str | None = None
     model: str | None = None
     host_id: str | None = None
@@ -272,16 +257,6 @@ class PutAgentRoleProfileRequest(_RoleProfileFieldsMixin):
     agent_profile_id: str | None = None
 
 
-class ImportRoleAgentRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/roles/{role}/import-agent``.
-
-    Forks the named packaged agent into a private ``is_role`` copy bound to
-    the role, so the role's prompt is decoupled from the reseeded built-in.
-    """
-
-    agent_id: str
-
-
 class UpdateRolePromptRequest(BaseModel):
     """Request body for ``PUT /v1/agent-tasks/roles/{role}/prompt``.
 
@@ -296,13 +271,6 @@ class UpdateRolePromptRequest(BaseModel):
 
 class CreateManagerRoleProfileRequest(_RoleProfileFieldsMixin):
     """Request body for ``POST /v1/agent-tasks/roles/manager``."""
-
-    slug: str
-    agent_profile_id: str | None = None
-
-
-class CreateWorkerRoleProfileRequest(_RoleProfileFieldsMixin):
-    """Request body for ``POST /v1/agent-tasks/roles/worker``."""
 
     slug: str
     agent_profile_id: str | None = None
@@ -385,36 +353,23 @@ class ResolveTaskItemRequest(BaseModel):
     edited_payload: dict[str, Any] | None = None
 
 
-class UpdateWorkerLaneRequest(BaseModel):
-    """Request body for ``PATCH /v1/task-workers/{worker_id}``."""
-
-    role_key: str
-
-
-class WorkerLaneSpecInput(BaseModel):
-    """One role + count pair for batch worker lane creation."""
-
-    role_key: str
-    count: int = Field(default=1, ge=1)
-
-
-class CreateWorkerLaneRequest(BaseModel):
+class CreateWorkerRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/{task_id}/workers``."""
 
-    lanes: list[WorkerLaneSpecInput] = Field(min_length=1)
+    provider_id: str
 
 
 class WorkerAssignmentInput(BaseModel):
     """One item→lane assignment for batch worker assignment."""
 
     item_id: str
-    role_key: str | None = None
+    provider_id: str | None = None
     worker_id: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> WorkerAssignmentInput:
-        if self.role_key is None and self.worker_id is None:
-            raise ValueError("provide either role_key or worker_id")
+        if self.provider_id is None and self.worker_id is None:
+            raise ValueError("provide either provider_id or worker_id")
         return self
 
 
@@ -662,11 +617,15 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
     return {
         "object": "agent.task.worker",
         "id": worker.id,
+        "worker_id": worker.id,
         "task_id": worker.task_id,
         "kind": worker.kind,
-        "role_key": worker.role_key,
-        "agent_profile_id": worker.agent_profile_id,
-        "session_id": worker.session_id,
+        "target_id": worker.target_id,
+        "state": worker.state,
+        "needs_response": worker.needs_response,
+        "provider_name": worker.provider_name,
+        "failure_reason": worker.failure_reason,
+        "last_observed_at": worker.last_observed_at,
     }
 
 
@@ -675,7 +634,6 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
         "id": task.id,
         "object": "agent.task",
         "manager_role_key": task.manager_role_key,
-        "worker_role_key": task.worker_role_key,
         "manager_conversation_id": task.manager_conversation_id,
         "owner_user_id": task.owner_user_id,
         "title": task.title,
@@ -776,11 +734,13 @@ def _agent_role_profile_to_response(
     agent_name: str | None = None,
     candidate_agents: list[dict[str, str]] | None = None,
     prompt: str | None = None,
+    profile_name: str | None = None,
+    profile_description: str | None = None,
 ) -> dict[str, Any]:
     return {
         "object": "agent.task.role_profile",
         "role": role,
-        "title": role_profile_title(role),
+        "title": profile_name or role_profile_title(role),
         "kind": profile.kind,
         "system": is_system_role_key(role),
         "deletable": is_deletable_role_key(role),
@@ -793,7 +753,9 @@ def _agent_role_profile_to_response(
         "model": profile.model,
         "host_id": profile.host_id,
         "workspace": profile.workspace,
-        "description": profile.description,
+        "description": profile_description
+        if profile_description is not None
+        else profile.description,
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
     }
@@ -879,6 +841,8 @@ def create_agent_tasks_router(
     session_creator: Any | None = None,
     artifact_store: Any | None = None,
     agent_cache: Any | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
+    worker_provider_store: WorkerProviderStore | None = None,
 ) -> APIRouter:
     """Build the managed-task router.
 
@@ -890,13 +854,14 @@ def create_agent_tasks_router(
     :param task_role_profile_store: Glossary role definitions used for bootstrap.
     :param user_role_session_store: Per-user session bindings for singleton roles.
     :param host_store: Used to auto-provision role profiles with a default host.
-    :param agent_cache: Loaded agent-spec cache to warm-swap after bundle edits.
+    :param prompt_profile_store: Stores the hidden manuals bound to PuppyGarden roles.
     :param auth_provider: Auth provider for owner attribution and access
         checks. ``None`` disables auth enforcement.
     :param permission_store: Used to let admins list/view any task.
         ``None`` disables admin bypass.
     :returns: A configured :class:`APIRouter`.
     """
+    _ = (artifact_store, agent_cache)
     router = APIRouter()
 
     def _is_admin(user_id: str | None) -> bool:
@@ -917,89 +882,22 @@ def create_agent_tasks_router(
             task for task in tasks if task.owner_user_id is None or task.owner_user_id == user_id
         ]
 
-    async def _require_agent_profile(agent_profile_id: str | None) -> None:
-        if agent_profile_id is None:
-            raise OmnigentError("Agent profile is required", code=ErrorCode.INVALID_INPUT)
-        agent = await asyncio.to_thread(agent_store.get, agent_profile_id)
-        if agent is None:
-            raise OmnigentError(
-                f"Agent profile not found: {agent_profile_id!r}",
-                code=ErrorCode.NOT_FOUND,
-            )
-
-    async def _create_empty_backing_fork(kind: str) -> str:
-        """Create an empty-prompt backing fork from the kind's default packaged agent.
-
-        New custom roles get their own backing profile up front (empty prompt,
-        empty description) so the role's prompt is editable from the start
-        without mutating a shared built-in.
-        """
-        if artifact_store is None:
-            raise OmnigentError(
-                "Role creation is not available (no artifact store)",
-                code=ErrorCode.INVALID_INPUT,
-            )
-        default_name = packaged_role_agent_names_for_kind(kind)[0]
-        fork_suffix = secrets.token_hex(3)
-        fork_name = f"{default_name}-fork-{fork_suffix}"
-        bundle_bytes = await asyncio.to_thread(
-            build_backing_bundle_from_packaged,
-            default_name,
-            fork_name=fork_name,
-            prompt_override="",
-        )
-        bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
-        new_agent_id = generate_agent_id()
-        bundle_location = f"{new_agent_id}/{bundle_hash}"
-        await asyncio.to_thread(artifact_store.put, bundle_location, bundle_bytes)
-        await asyncio.to_thread(
-            agent_store.create,
-            new_agent_id,
-            fork_name,
-            bundle_location,
-            is_role=True,
-        )
-        return new_agent_id
-
     async def _resolve_role_agent_fields(
         profile: TaskRoleProfile,
         *,
         include_prompt: bool = False,
     ) -> tuple[str | None, list[dict[str, Any]], str | None]:
-        """Resolve the bound agent's name, pickable candidates, and prompt.
-
-        Candidates are the packaged agents backing this role's kind — the
-        bound profile is never listed (you can't re-import what's already
-        bound). ``prompt`` is read from the bound bundle only when
-        ``include_prompt`` is set (the single profile GET; the list path
-        skips the tar parse).
-        """
-        agent_name: str | None = None
-        bound_agent: Any | None = None
-        if profile.agent_profile_id:
-            bound_agent = await asyncio.to_thread(agent_store.get, profile.agent_profile_id)
-            agent_name = bound_agent.name if bound_agent else None
-
-        packaged_names = packaged_role_agent_names_for_kind(profile.kind)
-        candidates: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for name in packaged_names:
-            ag = await asyncio.to_thread(agent_store.get_by_name, name)
-            if ag is not None and ag.id not in seen_ids:
-                seen_ids.add(ag.id)
-                candidates.append({"id": ag.id, "name": ag.name, "packaged": True})
-
+        """Resolve the fixed OmniHarness target and the role's manual."""
+        bound_agent = (
+            await asyncio.to_thread(agent_store.get, profile.agent_profile_id)
+            if profile.agent_profile_id
+            else None
+        )
         prompt: str | None = None
-        if include_prompt and bound_agent is not None and artifact_store is not None:
-            # Best-effort: a malformed/missing bundle shouldn't 500 the
-            # profile read, just leave the prompt unset.
-            try:
-                prompt = await asyncio.to_thread(
-                    read_agent_prompt, artifact_store, bound_agent.bundle_location
-                )
-            except (OSError, KeyError, ValueError, yaml.YAMLError, tarfile.TarError):
-                prompt = None
-        return agent_name, candidates, prompt
+        if include_prompt and profile.prompt_profile_id and prompt_profile_store is not None:
+            manual = await asyncio.to_thread(prompt_profile_store.get, profile.prompt_profile_id)
+            prompt = manual.instructions if manual is not None else None
+        return bound_agent.name if bound_agent else None, [], prompt
 
     async def _get_task_or_404(task_id: str, user_id: str | None) -> Task:
         task = await asyncio.to_thread(task_store.get, task_id)
@@ -1100,6 +998,7 @@ def create_agent_tasks_router(
             agent_store=agent_store,
             auth_user_id=user_id,
             task=task,
+            prompt_profile_store=prompt_profile_store,
         )
 
     async def _bootstrap_manager_for_task(
@@ -1131,33 +1030,6 @@ def create_agent_tasks_router(
             user_id=user_id,
         )
 
-    async def _worker_role_profile_for_task(
-        task: Task,
-        user_id: str | None,
-        worker: Worker | None = None,
-    ) -> TaskRoleProfile | None:
-        if task_role_profile_store is None:
-            return None
-        existing = await asyncio.to_thread(
-            load_worker_role_profile,
-            task_role_profile_store,
-            task,
-            worker,
-        )
-        if existing is not None:
-            return existing
-        if host_store is None or agent_store is None:
-            return None
-        return await asyncio.to_thread(
-            get_or_create_worker_role_profile,
-            task_role_profile_store=task_role_profile_store,
-            host_store=host_store,
-            agent_store=agent_store,
-            auth_user_id=user_id,
-            task=task,
-            worker=worker,
-        )
-
     async def _ensure_system_role_profiles(user_id: str | None) -> None:
         if task_role_profile_store is None or agent_store is None:
             return
@@ -1169,6 +1041,7 @@ def create_agent_tasks_router(
                 task_role_profile_store=task_role_profile_store,
                 agent_store=agent_store,
                 host_store=host_store,
+                prompt_profile_store=prompt_profile_store,
             )
 
     async def _bind_role_session(
@@ -1185,6 +1058,18 @@ def create_agent_tasks_router(
             conversation_id,
         )
 
+    async def _role_profile_name(profile: TaskRoleProfile) -> str | None:
+        if profile.prompt_profile_id is None or prompt_profile_store is None:
+            return None
+        manual = await asyncio.to_thread(prompt_profile_store.get, profile.prompt_profile_id)
+        return manual.name if manual is not None else None
+
+    async def _role_profile_description(profile: TaskRoleProfile) -> str | None:
+        if profile.prompt_profile_id is None or prompt_profile_store is None:
+            return None
+        manual = await asyncio.to_thread(prompt_profile_store.get, profile.prompt_profile_id)
+        return manual.description if manual is not None else None
+
     async def _role_conversation_id(role: str, user_id: str | None) -> str | None:
         if user_role_session_store is None:
             return None
@@ -1195,55 +1080,6 @@ def create_agent_tasks_router(
         )
         return session.conversation_id if session is not None else None
 
-    async def _ensure_role_backing_fork(profile: TaskRoleProfile) -> TaskRoleProfile:
-        """Guarantee the role is bound to a private backing fork.
-
-        Only roles bound to a *packaged* built-in for their kind are migrated:
-        the packaged spec is auto-imported (preserving its prompt) into a new
-        ``is_role`` fork and the role rebound to it. Roles already bound to a
-        fork, or bound to a non-packaged/custom agent, are left as-is (the
-        former already owns its profile; the latter can't be rebuilt from a
-        packaged YAML). After a fresh start — where every system role binds
-        to its packaged agent — this means every role owns its fork from first
-        load and shared built-ins are never mutated.
-        """
-        if artifact_store is None or agent_store is None:
-            return profile
-        bound = (
-            await asyncio.to_thread(agent_store.get, profile.agent_profile_id)
-            if profile.agent_profile_id
-            else None
-        )
-        packaged_names = packaged_role_agent_names_for_kind(profile.kind)
-        if bound is not None:
-            # A fork is an is_role agent whose name isn't a packaged built-in
-            # for this kind; a non-role agent is a custom/user binding. Both
-            # are left as-is — only packaged built-ins get auto-forked.
-            if bound.is_role and bound.name not in packaged_names:
-                return profile
-            if not bound.is_role:
-                return profile
-            source_name = bound.name
-        elif packaged_names:
-            source_name = packaged_names[0]
-        else:
-            return profile
-        fork_suffix = secrets.token_hex(3)
-        fork_name = f"{source_name}-fork-{fork_suffix}"
-        bundle_bytes = await asyncio.to_thread(
-            build_backing_bundle_from_packaged, source_name, fork_name=fork_name
-        )
-        bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
-        new_agent_id = generate_agent_id()
-        bundle_location = f"{new_agent_id}/{bundle_hash}"
-        await asyncio.to_thread(artifact_store.put, bundle_location, bundle_bytes)
-        await asyncio.to_thread(
-            agent_store.create, new_agent_id, fork_name, bundle_location, is_role=True
-        )
-        return await asyncio.to_thread(
-            task_role_profile_store.upsert, profile.role, agent_profile_id=new_agent_id
-        )
-
     async def _load_role_profile(role: str, user_id: str | None) -> TaskRoleProfile:
         if task_role_profile_store is None:
             raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
@@ -1251,16 +1087,16 @@ def create_agent_tasks_router(
             profile = await asyncio.to_thread(task_role_profile_store.get, role)
             if profile is None:
                 raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
-            return await _ensure_role_backing_fork(profile)
-        profile = await asyncio.to_thread(
+            return profile
+        return await asyncio.to_thread(
             get_or_create_role_profile,
             role=role,
             auth_user_id=user_id,
             task_role_profile_store=task_role_profile_store,
             host_store=host_store,
             agent_store=agent_store,
+            prompt_profile_store=prompt_profile_store,
         )
-        return await _ensure_role_backing_fork(profile)
 
     if task_role_profile_store is not None:
 
@@ -1272,9 +1108,8 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """List the caller's glossary role profiles.
 
-            Optional filters: ``prefix`` matches the role key's prefix
-            (e.g. ``"worker:"``), ``kind`` matches the role family
-            (``broker`` / ``secretary`` / ``manager`` / ``worker``).
+            Optional filters select a manager prefix or one of the broker,
+            secretary, and manager role families.
             """
             user_id = require_user(request, auth_provider)
             await _ensure_system_role_profiles(user_id)
@@ -1285,15 +1120,16 @@ def create_agent_tasks_router(
                 profiles = [p for p in profiles if role_kind_from_key(p.role) == kind]
             items = []
             for profile in profiles:
-                forked = await _ensure_role_backing_fork(profile)
-                agent_name, candidates, _prompt = await _resolve_role_agent_fields(forked)
+                agent_name, candidates, _prompt = await _resolve_role_agent_fields(profile)
                 items.append(
                     _agent_role_profile_to_response(
-                        forked.role,
-                        forked,
-                        conversation_id=await _role_conversation_id(forked.role, user_id),
+                        profile.role,
+                        profile,
+                        conversation_id=await _role_conversation_id(profile.role, user_id),
                         agent_name=agent_name,
                         candidate_agents=candidates,
+                        profile_name=await _role_profile_name(profile),
+                        profile_description=await _role_profile_description(profile),
                     )
                 )
             return {
@@ -1306,90 +1142,40 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateManagerRoleProfileRequest,
         ) -> dict[str, Any]:
-            """Create a custom manager glossary profile."""
+            """Create a custom OmniHarness manager backed by a hidden PromptProfile."""
             user_id = require_user(request, auth_provider)
-            if agent_store is None:
-                raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
             role = manager_role_key_from_slug(body.slug)
-            existing = await asyncio.to_thread(task_role_profile_store.get, role)
-            if existing is not None:
+            if await asyncio.to_thread(task_role_profile_store.get, role) is not None:
                 raise OmnigentError(
                     f"Manager role already exists: {role}",
                     code=ErrorCode.CONFLICT,
                 )
-            agent_profile_id = body.agent_profile_id or await _create_empty_backing_fork("manager")
-            await _require_agent_profile(agent_profile_id)
-            await asyncio.to_thread(
+            profile = await asyncio.to_thread(
                 ensure_role_profile,
                 role=role,
                 auth_user_id=user_id,
                 task_role_profile_store=task_role_profile_store,
                 agent_store=agent_store,
                 host_store=host_store,
+                prompt_profile_store=prompt_profile_store,
             )
-            profile = await asyncio.to_thread(
-                task_role_profile_store.upsert,
-                role,
-                agent_profile_id=agent_profile_id,
-                harness=body.harness,
-                model=body.model,
-                clear_model=body.clears_model,
-                host_id=body.host_id,
-                workspace=body.workspace,
-                description=body.description,
-            )
-            agent_name, candidates, _prompt = await _resolve_role_agent_fields(profile)
-            return _agent_role_profile_to_response(
-                role,
-                profile,
-                agent_name=agent_name,
-                candidate_agents=candidates,
-            )
-
-        @router.post("/agent-tasks/roles/worker")
-        async def create_worker_role_profile(
-            request: Request,
-            body: CreateWorkerRoleProfileRequest,
-        ) -> dict[str, Any]:
-            """Create a custom worker glossary profile."""
-            user_id = require_user(request, auth_provider)
-            if agent_store is None:
-                raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
-
-            role = worker_role_key_from_slug(body.slug)
-            existing = await asyncio.to_thread(task_role_profile_store.get, role)
-            if existing is not None:
-                raise OmnigentError(
-                    f"Worker role already exists: {role}",
-                    code=ErrorCode.CONFLICT,
+            if body.description is not None and profile.prompt_profile_id and prompt_profile_store:
+                await asyncio.to_thread(
+                    prompt_profile_store.update,
+                    profile.prompt_profile_id,
+                    description=body.description,
                 )
-            agent_profile_id = body.agent_profile_id or await _create_empty_backing_fork("worker")
-            await _require_agent_profile(agent_profile_id)
-            await asyncio.to_thread(
-                ensure_role_profile,
-                role=role,
-                auth_user_id=user_id,
-                task_role_profile_store=task_role_profile_store,
-                agent_store=agent_store,
-                host_store=host_store,
+            agent_name, _candidates, prompt = await _resolve_role_agent_fields(
+                profile, include_prompt=True
             )
-            profile = await asyncio.to_thread(
-                task_role_profile_store.upsert,
-                role,
-                agent_profile_id=agent_profile_id,
-                harness=body.harness,
-                model=body.model,
-                clear_model=body.clears_model,
-                host_id=body.host_id,
-                workspace=body.workspace,
-                description=body.description,
-            )
-            agent_name, candidates, _prompt = await _resolve_role_agent_fields(profile)
             return _agent_role_profile_to_response(
                 role,
                 profile,
                 agent_name=agent_name,
-                candidate_agents=candidates,
+                candidate_agents=[],
+                prompt=prompt,
+                profile_name=await _role_profile_name(profile),
+                profile_description=await _role_profile_description(profile),
             )
 
         @router.delete("/agent-tasks/roles/{role}")
@@ -1406,16 +1192,8 @@ def create_agent_tasks_router(
                 in_use = await asyncio.to_thread(
                     task_store.count_by_manager_role_key,
                     role,
-                    state="pending",
                 )
-                conflict_message = "Manager role is assigned to pending tasks"
-            elif is_worker_role_key(role):
-                in_use = await asyncio.to_thread(
-                    task_store.count_by_worker_role_key,
-                    role,
-                    state="pending",
-                )
-                conflict_message = "Worker role is assigned to pending tasks"
+                conflict_message = "Manager role is assigned to tasks"
             else:
                 in_use = 0
                 conflict_message = "Role is assigned to pending tasks"
@@ -1424,7 +1202,10 @@ def create_agent_tasks_router(
                     conflict_message,
                     code=ErrorCode.CONFLICT,
                 )
+            profile = await asyncio.to_thread(task_role_profile_store.get, role)
             deleted = await asyncio.to_thread(task_role_profile_store.delete, role)
+            if deleted and profile and profile.prompt_profile_id and prompt_profile_store:
+                await asyncio.to_thread(prompt_profile_store.archive, profile.prompt_profile_id)
             if not deleted:
                 raise OmnigentError("Task role profile not found", code=ErrorCode.NOT_FOUND)
             return {"object": "agent.task.role_profile", "role": role, "deleted": True}
@@ -1445,6 +1226,8 @@ def create_agent_tasks_router(
                 agent_name=agent_name,
                 candidate_agents=candidates,
                 prompt=prompt,
+                profile_name=await _role_profile_name(profile),
+                profile_description=await _role_profile_description(profile),
             )
 
         @router.put("/agent-tasks/roles/{role}/profile")
@@ -1453,105 +1236,22 @@ def create_agent_tasks_router(
             role: str,
             body: PutAgentRoleProfileRequest,
         ) -> dict[str, Any]:
-            """Create or update the caller's profile for a managed task agent role."""
-            role = _require_task_agent_role(role)
-            user_id = require_user(request, auth_provider)
-            if body.agent_profile_id is not None:
-                agent_profile_id = body.agent_profile_id
-                await _require_agent_profile(agent_profile_id)
-            else:
-                # Preserve the current binding; the prompt/import endpoints
-                # own rebinds now. Loading here also auto-provisions the row
-                # on first use, so only do it when the caller omits the id.
-                existing = await _load_role_profile(role, user_id)
-                agent_profile_id = existing.agent_profile_id
-                if agent_profile_id is None:
-                    raise OmnigentError("Agent profile is required", code=ErrorCode.INVALID_INPUT)
-            profile = await asyncio.to_thread(
-                task_role_profile_store.upsert,
-                role,
-                agent_profile_id=agent_profile_id,
-                harness=body.harness,
-                model=body.model,
-                clear_model=body.clears_model,
-                host_id=body.host_id,
-                workspace=body.workspace,
-                description=body.description,
-            )
-            agent_name, candidates, prompt = await _resolve_role_agent_fields(
-                profile, include_prompt=True
-            )
-            return _agent_role_profile_to_response(
-                role,
-                profile,
-                conversation_id=await _role_conversation_id(role, user_id),
-                agent_name=agent_name,
-                candidate_agents=candidates,
-                prompt=prompt,
-            )
-
-        @router.post("/agent-tasks/roles/{role}/import-agent")
-        async def import_role_agent(
-            request: Request,
-            role: str,
-            body: ImportRoleAgentRequest,
-        ) -> dict[str, Any]:
-            """Copy a packaged role agent's spec into this role's bound backing fork.
-
-            The source must be one of the packaged agents backing this role's
-            kind (listed as ``candidate_agents`` on the profile). The bound
-            fork's bundle is rebuilt from the packaged YAML in place (same
-            agent id, no rebind), so the role's prompt/spec is decoupled from
-            the reseeded built-in.
-            """
-            if artifact_store is None:
-                raise OmnigentError(
-                    "Agent import is not available (no artifact store)",
-                    code=ErrorCode.INVALID_INPUT,
-                )
+            """Update the hidden PromptProfile that defines a PuppyGarden role."""
             role = _require_task_agent_role(role)
             user_id = require_user(request, auth_provider)
             profile = await _load_role_profile(role, user_id)
-
-            source = await asyncio.to_thread(agent_store.get, body.agent_id)
-            if source is None:
-                raise OmnigentError(
-                    f"Agent profile not found: {body.agent_id!r}",
-                    code=ErrorCode.NOT_FOUND,
-                )
-            packaged_names = packaged_role_agent_names_for_kind(profile.kind)
-            if source.name not in packaged_names:
-                raise OmnigentError(
-                    f"Agent {source.name!r} is not a packaged {profile.kind} role agent",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-
-            bound_agent = await asyncio.to_thread(agent_store.get, profile.agent_profile_id)
-            if bound_agent is None:
-                raise OmnigentError(
-                    "Role has no bound backing profile to import into",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            # Copy the source spec into the bound fork in place: same agent
-            # id, no rebind. The fork keeps its name; only its bundle changes.
-            bundle_bytes = await asyncio.to_thread(
-                build_backing_bundle_from_packaged,
-                source.name,
-                fork_name=bound_agent.name,
-            )
-            bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
-            bundle_location = f"{bound_agent.id}/{bundle_hash}"
-            await asyncio.to_thread(artifact_store.put, bundle_location, bundle_bytes)
-            await asyncio.to_thread(agent_store.update, bound_agent.id, bundle_location)
-            if agent_cache is not None:
+            if profile.prompt_profile_id is None or prompt_profile_store is None:
+                raise OmnigentError("Role manual is unavailable", code=ErrorCode.INTERNAL_ERROR)
+            fields: dict[str, Any] = {}
+            if "name" in body.model_fields_set and body.name is not None:
+                fields["name"] = body.name.strip()
+            if "description" in body.model_fields_set:
+                fields["description"] = body.description
+            if fields:
                 await asyncio.to_thread(
-                    agent_cache.replace,
-                    bound_agent.id,
-                    bundle_location,
-                    bundle_bytes,
-                    expand_env=True,
+                    prompt_profile_store.update, profile.prompt_profile_id, **fields
                 )
-            agent_name, candidates, prompt = await _resolve_role_agent_fields(
+            agent_name, _candidates, prompt = await _resolve_role_agent_fields(
                 profile, include_prompt=True
             )
             return _agent_role_profile_to_response(
@@ -1559,8 +1259,10 @@ def create_agent_tasks_router(
                 profile,
                 conversation_id=await _role_conversation_id(role, user_id),
                 agent_name=agent_name,
-                candidate_agents=candidates,
+                candidate_agents=[],
                 prompt=prompt,
+                profile_name=await _role_profile_name(profile),
+                profile_description=await _role_profile_description(profile),
             )
 
         @router.put("/agent-tasks/roles/{role}/prompt")
@@ -1569,45 +1271,18 @@ def create_agent_tasks_router(
             role: str,
             body: UpdateRolePromptRequest,
         ) -> dict[str, Any]:
-            """Set the role's prompt by editing its bound backing fork in place.
-
-            ``_load_role_profile`` guarantees the role is bound to a private
-            fork, so this never mutates a shared built-in.
-            """
-            if artifact_store is None:
-                raise OmnigentError(
-                    "Role prompt editing is not available (no artifact store)",
-                    code=ErrorCode.INVALID_INPUT,
-                )
+            """Update the role manual without mutating an agent bundle."""
             role = _require_task_agent_role(role)
             user_id = require_user(request, auth_provider)
             profile = await _load_role_profile(role, user_id)
-
-            bound_agent = await asyncio.to_thread(agent_store.get, profile.agent_profile_id)
-            if bound_agent is None:
-                raise OmnigentError(
-                    "Role has no bound backing profile to edit",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            bundle_bytes = await asyncio.to_thread(
-                rewrite_agent_prompt,
-                artifact_store,
-                bound_agent.bundle_location,
-                new_prompt=body.prompt,
+            if profile.prompt_profile_id is None or prompt_profile_store is None:
+                raise OmnigentError("Role manual is unavailable", code=ErrorCode.INTERNAL_ERROR)
+            await asyncio.to_thread(
+                prompt_profile_store.update,
+                profile.prompt_profile_id,
+                instructions=body.prompt,
             )
-            bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
-            bundle_location = f"{bound_agent.id}/{bundle_hash}"
-            await asyncio.to_thread(artifact_store.put, bundle_location, bundle_bytes)
-            await asyncio.to_thread(agent_store.update, bound_agent.id, bundle_location)
-            if agent_cache is not None:
-                await asyncio.to_thread(
-                    agent_cache.replace,
-                    bound_agent.id,
-                    bundle_location,
-                    bundle_bytes,
-                    expand_env=True,
-                )
-            agent_name, candidates, prompt = await _resolve_role_agent_fields(
+            agent_name, _candidates, prompt = await _resolve_role_agent_fields(
                 profile, include_prompt=True
             )
             return _agent_role_profile_to_response(
@@ -1615,8 +1290,10 @@ def create_agent_tasks_router(
                 profile,
                 conversation_id=await _role_conversation_id(role, user_id),
                 agent_name=agent_name,
-                candidate_agents=candidates,
+                candidate_agents=[],
                 prompt=prompt,
+                profile_name=await _role_profile_name(profile),
+                profile_description=await _role_profile_description(profile),
             )
 
         if conversation_store is not None:
@@ -1747,29 +1424,6 @@ def create_agent_tasks_router(
                         code=ErrorCode.NOT_FOUND,
                     )
             update_kwargs["manager_role_key"] = manager_role_key
-        if "worker_role_key" in body.model_fields_set:
-            if task.state != "pending":
-                raise OmnigentError(
-                    "worker_role_key can only be changed while the task is pending",
-                    code=ErrorCode.CONFLICT,
-                )
-            worker_role_key = normalize_role_profile_key(body.worker_role_key or "")
-            if not worker_role_key.startswith(WORKER_ROLE_PREFIX):
-                raise OmnigentError(
-                    "worker_role_key must be a worker glossary role",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            if task_role_profile_store is not None:
-                profile = await asyncio.to_thread(
-                    task_role_profile_store.get,
-                    worker_role_key,
-                )
-                if profile is None:
-                    raise OmnigentError(
-                        f"Task role profile not found: {worker_role_key}",
-                        code=ErrorCode.NOT_FOUND,
-                    )
-            update_kwargs["worker_role_key"] = worker_role_key
         if not update_kwargs:
             task = await asyncio.to_thread(task_store.get, task_id)
             assert task is not None
@@ -1878,153 +1532,223 @@ def create_agent_tasks_router(
                 "data": [_worker_to_response(w) for w in workers],
             }
 
+        def _create_worker_from_provider(task_id: str, provider_id: str) -> Worker:
+            if worker_provider_store is None:
+                raise OmnigentError(
+                    "Worker providers are unavailable", code=ErrorCode.INTERNAL_ERROR
+                )
+            provider = worker_provider_store.get(provider_id)
+            if provider is None:
+                raise OmnigentError("Worker provider not found", code=ErrorCode.NOT_FOUND)
+            configuration = json.loads(provider.configuration)
+            snapshot = json.dumps(
+                {
+                    "version": 1,
+                    "provider_id": provider.id,
+                    "kind": provider.kind,
+                    "configuration": configuration,
+                },
+                sort_keys=True,
+            )
+            return worker_store.create_worker(
+                uuid.uuid4().hex,
+                task_id,
+                kind="managed",
+                provider_name=provider.name,
+                provider_configuration=snapshot,
+                state="uninitialized",
+            )
+
         @router.post("/agent-tasks/{task_id}/workers")
-        async def create_worker_lane(
+        async def create_worker(
             request: Request,
             task_id: str,
-            body: CreateWorkerLaneRequest,
+            body: CreateWorkerRequest,
         ) -> dict[str, Any]:
-            """Create worker lanes (pending, no session yet). Batch by role+count."""
+            """Create one durable, uninitialized Worker from a provider snapshot."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
             if task.state == "pending":
                 raise OmnigentError(
-                    "Cannot create worker lanes on a pending task; accept the package first",
-                    code=ErrorCode.CONFLICT,
+                    "Cannot create workers on a pending task", code=ErrorCode.CONFLICT
                 )
-
-            def _create() -> dict[str, list[str]]:
-                result: dict[str, list[str]] = {}
-                for spec in body.lanes:
-                    role = _require_task_agent_role(spec.role_key)
-                    if not is_worker_role_key(role):
-                        raise OmnigentError(
-                            f"Not a worker role: {role}",
-                            code=ErrorCode.INVALID_INPUT,
-                        )
-                    ids: list[str] = []
-                    for _ in range(spec.count):
-                        worker = worker_store.create_worker(
-                            uuid.uuid4().hex,
-                            task_id,
-                            role_key=role,
-                            kind="managed",
-                        )
-                        ids.append(worker.id)
-                    result[role] = ids
-                return result
-
-            lanes = await asyncio.to_thread(_create)
-            return {"object": "agent.task.worker_lanes", "lanes": lanes}
+            worker = await asyncio.to_thread(
+                _create_worker_from_provider,
+                task_id,
+                body.provider_id,
+            )
+            return _worker_to_response(worker)
 
         @router.post("/agent-tasks/{task_id}/workers/assign")
         async def batch_assign_workers(
-            request: Request,
-            task_id: str,
-            body: BatchAssignWorkersRequest,
+            request: Request, task_id: str, body: BatchAssignWorkersRequest
         ) -> dict[str, Any]:
-            """Batch-create worker lanes and/or assign items to existing lanes."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
             if task.state == "pending":
                 raise OmnigentError(
-                    "Cannot assign worker lanes on a pending task; accept the package first",
-                    code=ErrorCode.CONFLICT,
+                    "Cannot assign workers on a pending task", code=ErrorCode.CONFLICT
                 )
 
             def _assign() -> list[dict[str, Any]]:
-                results: list[dict[str, Any]] = []
-                for a in body.assignments:
-                    item = task_item_store.get_item(a.item_id)
+                result = []
+                for assignment in body.assignments:
+                    item = task_item_store.get_item(assignment.item_id)
                     if item is None or item.task_id != task_id:
                         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
-                    if a.worker_id is not None:
-                        worker = worker_store.get_worker(a.worker_id)
-                        if worker is None or worker.task_id != task_id:
-                            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-                    else:
-                        role = _require_task_agent_role(a.role_key or "")
-                        if not is_worker_role_key(role):
-                            raise OmnigentError(
-                                f"Not a worker role: {role}",
-                                code=ErrorCode.INVALID_INPUT,
-                            )
-                        worker = worker_store.create_worker(
-                            uuid.uuid4().hex,
-                            task_id,
-                            role_key=role,
-                            kind="managed",
-                        )
-                    task_item_store.update_item(a.item_id, worker_id=worker.id)
-                    results.append({"item_id": a.item_id, "worker_id": worker.id})
-                return results
+                    worker = (
+                        worker_store.get_worker(assignment.worker_id)
+                        if assignment.worker_id
+                        else _create_worker_from_provider(task_id, assignment.provider_id or "")
+                    )
+                    if worker is None or worker.task_id != task_id:
+                        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    task_item_store.update_item(item.id, worker_id=worker.id)
+                    result.append({"item_id": item.id, "worker_id": worker.id})
+                return result
 
-            results = await asyncio.to_thread(_assign)
-            return {"object": "list", "data": results}
+            return {"object": "list", "data": await asyncio.to_thread(_assign)}
 
-        @router.patch("/task-workers/{worker_id}")
-        async def update_worker_lane_role(
-            request: Request,
-            worker_id: str,
-            body: UpdateWorkerLaneRequest,
-        ) -> dict[str, Any]:
-            """Point one worker lane at a different worker role."""
-            user_id = get_user_id(request, auth_provider)
+        async def _initialize_internal_worker(
+            worker: Worker, *, user_id: str | None, app_state: Any
+        ) -> None:
+            assert session_creator is not None
+            try:
+                snapshot = json.loads(worker.provider_configuration or "{}")
+                if snapshot.get("kind") != "internal":
+                    raise ValueError("External Worker adapters are not installed")
+                configuration = snapshot.get("configuration") or {}
+                agent_id = configuration.get("agent_id")
+                if not isinstance(agent_id, str) or not agent_id:
+                    raise ValueError("The Worker Provider has no execution target")
+                from omnigent.server.routes.sessions import _make_internal_request
+                from omnigent.server.schemas import SessionCreateRequest
+
+                response = await asyncio.wait_for(
+                    session_creator(
+                        body=SessionCreateRequest(
+                            agent_id=agent_id,
+                            title=worker.provider_name or "PuppyGarden worker",
+                            host_id=configuration.get("host_id"),
+                            workspace=configuration.get("workspace"),
+                            harness_override=configuration.get("harness"),
+                            model_override=configuration.get("model"),
+                        ),
+                        request=_make_internal_request(app_state),
+                        user_id=user_id,
+                    ),
+                    timeout=120.0,
+                )
+                current = await asyncio.to_thread(worker_store.get_worker, worker.id)
+                if current is not None and current.state == "initializing":
+                    await asyncio.to_thread(
+                        worker_store.update_worker,
+                        worker.id,
+                        target_id=response.id,
+                        state="idle",
+                        failure_reason=None,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                current = await asyncio.to_thread(worker_store.get_worker, worker.id)
+                if current is not None and current.state == "initializing":
+                    await asyncio.to_thread(
+                        worker_store.update_worker,
+                        worker.id,
+                        state="initialization_failed",
+                        failure_reason=str(exc),
+                    )
+
+        @router.post("/task-workers/{worker_id}/initialize", status_code=202)
+        async def initialize_worker(request: Request, worker_id: str) -> dict[str, Any]:
+            user_id = require_user(request, auth_provider)
             worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
             if worker is None:
                 raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
             await _get_task_or_404(worker.task_id, user_id)
-            role = _require_task_agent_role(body.role_key)
-            if not is_worker_role_key(role):
+            if worker.state in {"initializing", "idle", "busy"}:
+                return _worker_to_response(worker)
+            if worker.state not in {"uninitialized", "initialization_failed"}:
                 raise OmnigentError(
-                    f"Not a worker role: {role}",
-                    code=ErrorCode.INVALID_INPUT,
-                )
-            # A lane that already ran keeps its history under the old role.
-            if worker.session_id is not None:
-                raise OmnigentError(
-                    "Worker lane already has a session; its role is fixed",
+                    f"Worker cannot initialize from state {worker.state}",
                     code=ErrorCode.CONFLICT,
                 )
-            updated = await asyncio.to_thread(worker_store.update_worker, worker_id, role_key=role)
-            if updated is None:
-                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-            return _worker_to_response(updated)
+            if session_creator is None:
+                raise OmnigentError(
+                    "Worker initialization is unavailable", code=ErrorCode.INTERNAL_ERROR
+                )
+            worker = await asyncio.to_thread(
+                worker_store.update_worker, worker.id, state="initializing"
+            )
+            assert worker is not None
+            task = asyncio.create_task(
+                _initialize_internal_worker(worker, user_id=user_id, app_state=request.app.state)
+            )
+            task.add_done_callback(lambda completed: completed.exception())
+            return _worker_to_response(worker)
 
-        @router.post("/task-workers/{worker_id}/activate")
-        async def activate_worker_lane_route(
-            request: Request,
-            worker_id: str,
-        ) -> dict[str, Any]:
-            """Start a worker sub-agent session for a lane that has not run yet."""
+        async def _control_worker(worker: Worker, event_type: str, request: Request) -> None:
+            if worker.target_id is None:
+                raise OmnigentError("Worker is not initialized", code=ErrorCode.CONFLICT)
+            runner_router = getattr(request.app.state, "runner_router", None)
+            routed = (
+                runner_router.client_for_existing_conversation(worker.target_id)
+                if runner_router is not None
+                else None
+            )
+            if routed is None:
+                raise OmnigentError("Worker runner is unavailable", code=ErrorCode.CONFLICT)
+            response = await routed.client.post(
+                f"/v1/sessions/{worker.target_id}/events", json={"type": event_type}, timeout=5.0
+            )
+            if response.status_code >= 400:
+                raise OmnigentError("Worker control request failed", code=ErrorCode.CONFLICT)
+
+        @router.post("/task-workers/{worker_id}/rebind")
+        async def rebind_worker(request: Request, worker_id: str) -> dict[str, Any]:
+            """Reconnect an internal Worker to its durable target session."""
             user_id = require_user(request, auth_provider)
             worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
             if worker is None:
                 raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-            task = await _get_task_or_404(worker.task_id, user_id)
-            manager_profile = await _manager_role_profile_for_task(task, user_id)
-            worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
-            had_session = worker.session_id is not None
-
-            activated, _conversation_id = await activate_worker_lane(
-                task=task,
-                worker=worker,
-                task_store=task_store,
-                worker_store=worker_store,
-                conversation_store=conversation_store,
-                manager_role_profile=manager_profile,
-                worker_role_profile=worker_profile,
-                session_creator=session_creator,
-                app_state=request.app.state,
-                user_id=user_id,
+            await _get_task_or_404(worker.task_id, user_id)
+            if worker.target_id is None:
+                raise OmnigentError("Worker is not initialized", code=ErrorCode.CONFLICT)
+            await _best_effort_ensure_conversation_runner(
+                request,
+                worker.target_id,
+                conversation_store,
             )
-            if had_session and activated.session_id is not None:
-                await _best_effort_ensure_conversation_runner(
-                    request,
-                    activated.session_id,
-                    conversation_store,
-                )
-            return _worker_to_response(activated)
+            refreshed = await asyncio.to_thread(worker_store.get_worker, worker.id)
+            assert refreshed is not None
+            return _worker_to_response(refreshed)
+
+        @router.post("/task-workers/{worker_id}/interrupt")
+        async def interrupt_worker(request: Request, worker_id: str) -> dict[str, Any]:
+            user_id = require_user(request, auth_provider)
+            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
+            if worker is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            await _get_task_or_404(worker.task_id, user_id)
+            await _control_worker(worker, "interrupt", request)
+            return _worker_to_response(worker)
+
+        @router.delete("/task-workers/{worker_id}")
+        async def terminate_worker(request: Request, worker_id: str) -> dict[str, Any]:
+            user_id = require_user(request, auth_provider)
+            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
+            if worker is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            await _get_task_or_404(worker.task_id, user_id)
+            if worker.target_id is not None:
+                await _control_worker(worker, "stop_session", request)
+            updated = await asyncio.to_thread(
+                worker_store.update_worker,
+                worker.id,
+                state="terminated",
+                needs_response=False,
+            )
+            assert updated is not None
+            return _worker_to_response(updated)
 
         @router.post("/agent-tasks/{task_id}/assets")
         async def create_task_asset_route(
@@ -2165,7 +1889,12 @@ def create_agent_tasks_router(
                 return _item_to_response(updated)
             task = await _get_task_or_404(item.task_id, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
-            worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
+            if worker is None or worker.target_id is None:
+                raise OmnigentError(
+                    "Item must have an initialized Worker before dispatch",
+                    code=ErrorCode.CONFLICT,
+                )
+            worker_profile = await _manager_role_profile_for_task(task, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
             if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
                 raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
@@ -2230,14 +1959,13 @@ def create_agent_tasks_router(
             task = await _get_task_or_404(item.task_id, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
-            if worker is None:
+            if worker is None or worker.target_id is None:
                 raise OmnigentError(
-                    "Item has no worker lane; assign one before dispatching",
+                    "Item must have an initialized Worker before dispatch",
                     code=ErrorCode.CONFLICT,
                 )
-            worker_profile = await _worker_role_profile_for_task(task, user_id, worker)
+            worker_profile = await _manager_role_profile_for_task(task, user_id)
             payload = {
-                "worker_role_key": worker.role_key,
                 "instructions": body.instructions or item.instructions or "",
                 "internal_note": item.internal_note,
             }
@@ -2594,7 +2322,7 @@ def create_agent_tasks_router(
                 app_state=request.app.state,
                 user_id=user_id,
             )
-            worker = await asyncio.to_thread(worker_store.get_by_session_id, session_id)
+            worker = await asyncio.to_thread(worker_store.get_by_target_id, session_id)
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,
@@ -2710,7 +2438,7 @@ def create_agent_tasks_router(
                 app_state=request.app.state,
                 user_id=user_id,
             )
-            worker = await asyncio.to_thread(worker_store.get_by_external_hint, session_hint)
+            worker = await asyncio.to_thread(worker_store.get_by_target_id, session_hint)
             return {
                 "object": "agent.task.external_session_adoption",
                 "session_hint": session_hint,

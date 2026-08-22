@@ -28,6 +28,7 @@ class BootstrapParams:
     harness: str
     model: str | None
     agent_profile_id: str
+    prompt_profile_id: str | None = None
 
 
 def resolve_bootstrap_params(
@@ -66,6 +67,7 @@ def resolve_bootstrap_params(
         harness=resolved_harness,
         model=resolved_model,
         agent_profile_id=resolved_agent_id,
+        prompt_profile_id=role_profile.prompt_profile_id if role_profile else None,
     )
 
 
@@ -117,6 +119,11 @@ def build_role_session_request(
         labels=labels or {},
         parent_session_id=parent_session_id,
         sub_agent_name=sub_agent_name,
+        prompt_profile=(
+            {"mode": "fixed", "profile_id": profile.prompt_profile_id}
+            if profile.prompt_profile_id
+            else None
+        ),
     )
     if overrides:
         for key, value in overrides.items():
@@ -156,9 +163,9 @@ async def bootstrap_task_manager(
             )
         return task
 
+    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
     from omnigent.server.routes.sessions import _make_internal_request
     from omnigent.server.schemas import SessionCreateRequest
-    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
 
     body = SessionCreateRequest(
         agent_id=params.agent_profile_id,
@@ -171,6 +178,11 @@ async def bootstrap_task_manager(
         # the composer's model picker opts the session in. Empty for the SDK
         # harness — the dock surfaces its own switcher there.
         labels=presentation_labels_for_harness(params.harness),
+        prompt_profile=(
+            {"mode": "fixed", "profile_id": params.prompt_profile_id}
+            if params.prompt_profile_id
+            else None
+        ),
     )
     request = _make_internal_request(app_state)
     resp = await session_creator(

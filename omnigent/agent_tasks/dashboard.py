@@ -167,11 +167,13 @@ def _worker_lane(
 
     return {
         "worker_id": worker.id,
-        "role_key": worker.role_key,
-        "agent_profile_id": worker.agent_profile_id,
-        "session_id": worker.session_id,
         "kind": worker.kind,
         "state": state,
+        "worker_state": worker.state,
+        "target_id": worker.target_id,
+        "needs_response": worker.needs_response,
+        "provider_name": worker.provider_name,
+        "failure_reason": worker.failure_reason,
         "situation": situation,
         "rows": rows,
         "executions": [

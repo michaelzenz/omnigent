@@ -7,6 +7,7 @@ from omnigent.entities import Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.prompt_profile_store import PromptProfileStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 
 
@@ -25,10 +26,15 @@ def get_or_create_manager_role_profile(
     agent_store: AgentStore,
     auth_user_id: str | None,
     task: Task,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> TaskRoleProfile | None:
     """Load or auto-provision the manager role for ``task``."""
     existing = load_manager_role_profile(task_role_profile_store, task)
-    if existing is not None:
+    if (
+        existing is not None
+        and (existing.prompt_profile_id or prompt_profile_store is None)
+        and existing.host_id is not None
+    ):
         return existing
     return get_or_create_role_profile(
         role=task.manager_role_key,
@@ -36,4 +42,5 @@ def get_or_create_manager_role_profile(
         task_role_profile_store=task_role_profile_store,
         host_store=host_store,
         agent_store=agent_store,
+        prompt_profile_store=prompt_profile_store,
     )

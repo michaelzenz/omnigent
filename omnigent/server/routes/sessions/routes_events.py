@@ -1173,9 +1173,18 @@ def register_events_routes(
                 background_task_count=bg_count,
                 blocked_on=blocked_on,
             )
-            from omnigent.agent_tasks.completion import notify_worker_session_status
+            from omnigent.agent_tasks.completion import (
+                notify_worker_session_status,
+                observe_worker_session_status,
+            )
 
             output_text = output if isinstance(output, str) else None
+            await observe_worker_session_status(
+                session_id,
+                status,
+                needs_response=blocked_on is not None,
+                failure_reason=output_text if status == "failed" else None,
+            )
             if status in {"idle", "failed"}:
                 await notify_worker_session_status(
                     session_id,

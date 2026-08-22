@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { TaskWorkerLane } from "@/lib/agentTasksApi";
 import {
-  buildWorkerOptions,
   getFoldedExecutions,
   findExecution,
   isExecutionEditable,
   isDoneTaskItem,
-  proposalHasEdits,
   sortExecutions,
   taskCardBodyStyle,
   TASK_CARD_BODY_MAX_PX,
@@ -201,10 +199,9 @@ describe("taskCardUtils", () => {
     const workers: TaskWorkerLane[] = [
       {
         worker_id: "w1",
-        role_key: "worker:default",
-        agent_profile_id: null,
         kind: "managed",
-        session_id: null,
+        target_id: null,
+        worker_state: "uninitialized",
         state: "new",
         situation: "New",
         rows: [],
@@ -234,39 +231,6 @@ describe("taskCardUtils", () => {
   it("marks queued executions as editable", () => {
     expect(isExecutionEditable("queued")).toBe(true);
     expect(isExecutionEditable("running")).toBe(false);
-  });
-
-  it("builds worker options from proposal and task history", () => {
-    const options = buildWorkerOptions(["worker:reviewer"], { worker_role_key: "worker:default" });
-    expect(options).toEqual([
-      { workerRoleKey: "worker:default" },
-      { workerRoleKey: "worker:reviewer" },
-    ]);
-  });
-
-  it("detects proposal edits", () => {
-    const baseline = {
-      worker_role_key: "worker:default",
-      title: "Title",
-      description: "",
-      instructions: "Do thing",
-    };
-    expect(
-      proposalHasEdits(baseline, {
-        workerRoleKey: "worker:default",
-        title: "Title",
-        description: "",
-        instructions: "Do thing",
-      }),
-    ).toBe(false);
-    expect(
-      proposalHasEdits(baseline, {
-        workerRoleKey: "worker:reviewer",
-        title: "Title",
-        description: "",
-        instructions: "Do thing",
-      }),
-    ).toBe(true);
   });
 
   it("exposes body max height for task card layout", () => {

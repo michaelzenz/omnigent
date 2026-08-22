@@ -55,6 +55,35 @@ def get_task_completion_context() -> TaskCompletionContext | None:
     return _context
 
 
+async def observe_worker_session_status(
+    session_id: str,
+    status: str,
+    *,
+    needs_response: bool = False,
+    failure_reason: str | None = None,
+) -> bool:
+    """Mirror target activity onto the durable Worker without completing a dispatch."""
+    if _context is None:
+        return False
+    worker = _context.worker_store.get_by_target_id(session_id)
+    if worker is None or worker.kind != WORKER_KIND_MANAGED:
+        return False
+    if status == "idle":
+        state = "idle"
+    elif status == "failed":
+        state = "disconnected"
+    else:
+        state = "busy"
+    _context.worker_store.update_worker(
+        worker.id,
+        state=state,
+        needs_response=needs_response,
+        failure_reason=failure_reason if status == "failed" else None,
+        last_observed_at=now_epoch(),
+    )
+    return True
+
+
 async def notify_worker_session_status(
     session_id: str,
     status: TerminalStatus,
@@ -78,7 +107,7 @@ async def notify_worker_session_status(
     """
     if _context is None or status not in {"idle", "failed"}:
         return False
-    worker = _context.worker_store.get_by_session_id(session_id)
+    worker = _context.worker_store.get_by_target_id(session_id)
     if worker is None or worker.kind != WORKER_KIND_MANAGED:
         return False
     execution = _context.task_event_store.get_execution_by_conversation_id(session_id)
@@ -197,7 +226,7 @@ async def _emit_worker_execution_finished_event(
                 state="reconciled",
                 processed_at=now_epoch(),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             _logger.warning(
                 "failed to enqueue manager notice for event %s; "
                 "packager will pick it up on next poll",

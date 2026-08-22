@@ -162,7 +162,7 @@ async def select_omniharness_turn(
     if select_profile and prompt_profile_store is None:
         raise ValueError("prompt_profile_store is required when selecting a profile")
     profiles = (
-        prompt_profile_store.list(enabled_only=True)
+        prompt_profile_store.list(enabled_only=True, visible_only=True)
         if select_profile and prompt_profile_store is not None
         else []
     )

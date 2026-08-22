@@ -26,10 +26,11 @@ class WorkerStore(ABC):
         task_id: str,
         *,
         kind: str = WORKER_KIND_MANAGED,
-        role_key: str | None = None,
-        agent_profile_id: str | None = None,
-        session_id: str | None = None,
-        external_session_hint: str | None = None,
+        target_id: str | None = None,
+        state: str = "uninitialized",
+        needs_response: bool = False,
+        provider_name: str | None = None,
+        provider_configuration: str | None = None,
     ) -> Worker:
         """Insert a worker slot for one task."""
 
@@ -38,12 +39,8 @@ class WorkerStore(ABC):
         """Return one worker by id."""
 
     @abstractmethod
-    def get_by_session_id(self, session_id: str) -> Worker | None:
-        """Return the worker row for a live session, if any."""
-
-    @abstractmethod
-    def get_by_external_hint(self, external_session_hint: str) -> Worker | None:
-        """Return the external worker matching a watcher-provided session hint."""
+    def get_by_target_id(self, target_id: str) -> Worker | None:
+        """Return the Worker bound to a target session, if any."""
 
     @abstractmethod
     def list_workers_for_task(self, task_id: str) -> list[Worker]:
@@ -54,9 +51,11 @@ class WorkerStore(ABC):
         self,
         worker_id: str,
         *,
-        session_id: str | None = _UNSET,
-        role_key: str | None = None,
-        agent_profile_id: str | None = None,
         kind: str | None = None,
+        target_id: str | None = _UNSET,
+        state: str | None = None,
+        needs_response: bool | None = None,
+        failure_reason: str | None = _UNSET,
+        last_observed_at: int | None = _UNSET,
     ) -> Worker | None:
         """Update mutable worker fields."""

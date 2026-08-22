@@ -57,18 +57,25 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 
 ## Task workers
 
-Worker lanes are per-task sub-agent slots. A lane that has not run yet can be
-re-pointed at a different worker role or activated into a live session; once a
-session exists the role is fixed. Items reference lanes by `worker_id`; lanes
-are created explicitly (POST) or via batch assignment (POST assign).
+Workers are durable per-task handles created from Worker Providers. Creation
+returns an uninitialized `worker_id` immediately. Call `initialize` to start the
+target asynchronously; successful initialization records the target system's
+`target_id`. Items reference Workers by `worker_id`.
 
 | Method | Path |
 |--------|------|
+| GET | `/v1/worker-providers` |
+| GET | `/v1/worker-providers/{provider_id}` |
+| POST | `/v1/worker-providers` |
+| PATCH | `/v1/worker-providers/{provider_id}` |
+| DELETE | `/v1/worker-providers/{provider_id}` |
 | GET | `/v1/agent-tasks/{task_id}/workers` |
 | POST | `/v1/agent-tasks/{task_id}/workers` |
 | POST | `/v1/agent-tasks/{task_id}/workers/assign` |
-| PATCH | `/v1/task-workers/{worker_id}` |
-| POST | `/v1/task-workers/{worker_id}/activate` |
+| POST | `/v1/task-workers/{worker_id}/initialize` |
+| POST | `/v1/task-workers/{worker_id}/rebind` |
+| POST | `/v1/task-workers/{worker_id}/interrupt` |
+| DELETE | `/v1/task-workers/{worker_id}` |
 
 ## Board triage
 
@@ -79,22 +86,18 @@ are created explicitly (POST) or via batch assignment (POST assign).
 
 ## Task agent roles
 
-`{role}` is a managed task agent role slug. Profile GET/PUT endpoints accept any
-supported role (`broker`, `secretary`, `manager`, `worker`). Session bootstrap
-(`session` / `session/reset`) is supported for `broker` and `secretary` only.
-Custom manager and worker roles are created via the dedicated `roles/manager`
-and `roles/worker` endpoints and deleted via `DELETE roles/{role}` (system roles
-cannot be deleted).
+`{role}` is a PuppyGarden role slug. Broker, secretary, and manager roles always
+run on OmniHarness and reference hidden PromptProfile manuals. Custom manager
+roles are created through `roles/manager`; the seeded default manager cannot be
+deleted. Worker configuration belongs to Worker Providers, not roles.
 
 | Method | Path |
 |--------|------|
 | GET | `/v1/agent-tasks/roles/profiles` |
 | GET | `/v1/agent-tasks/roles/{role}/profile` |
 | PUT | `/v1/agent-tasks/roles/{role}/profile` |
-| POST | `/v1/agent-tasks/roles/{role}/import-agent` |
 | PUT | `/v1/agent-tasks/roles/{role}/prompt` |
 | POST | `/v1/agent-tasks/roles/manager` |
-| POST | `/v1/agent-tasks/roles/worker` |
 | DELETE | `/v1/agent-tasks/roles/{role}` |
 | POST | `/v1/agent-tasks/roles/{role}/session` |
 | POST | `/v1/agent-tasks/roles/{role}/session/reset` |
@@ -102,9 +105,10 @@ cannot be deleted).
 ## Session adoption
 
 Internal sessions (`sessions/{session_id}`) are adopted by conversation id.
-External, watcher-discovered sessions (`external-sessions/{session_hint}`) are
-adopted by the session hint the watcher reported; the broker proposes adoption
-and the user accepts or rejects each hint.
+External, watcher-discovered sessions (`external-sessions/{session_hint}`) use
+the hint as their target id. Watcher updates may report `activity`, `connected`,
+`needs_response`, and `failure_reason`; PuppyGarden observes those fields but
+does not route the user's response back to the external application.
 
 | Method | Path |
 |--------|------|

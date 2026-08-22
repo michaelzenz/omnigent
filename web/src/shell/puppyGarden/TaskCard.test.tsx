@@ -43,11 +43,7 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutate: vi.fn(),
     isPending: false,
   })),
-  useUpdateWorkerLaneRole: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-  })),
-  useActivateWorkerLane: vi.fn(() => ({
+  useInitializeWorker: vi.fn(() => ({
     mutate: vi.fn(),
     isPending: false,
     variables: undefined,
@@ -55,11 +51,8 @@ vi.mock("@/hooks/useAgentTasks", () => ({
 }));
 
 vi.mock("@/hooks/useRoleProfiles", () => ({
-  useRoleProfiles: vi.fn((prefix?: string) => ({
-    data:
-      prefix === "worker:"
-        ? [{ role: "worker:default", title: "Task worker (default)" }]
-        : [{ role: "manager:default", title: "Task manager (default)" }],
+  useRoleProfiles: vi.fn(() => ({
+    data: [{ role: "manager:default", title: "Task manager (default)" }],
   })),
 }));
 
@@ -122,10 +115,8 @@ describe("TaskCard", () => {
         workers: [
           {
             worker_id: "worker-1",
-            role_key: "worker:default",
-            agent_profile_id: null,
             kind: "managed",
-            session_id: null,
+            target_id: null,
             state: "active",
             situation: "Running: Investigate failure",
             rows: [
@@ -207,10 +198,8 @@ describe("TaskCard", () => {
         workers={[
           {
             worker_id: "worker-1",
-            role_key: "worker:default",
-            agent_profile_id: null,
             kind: "managed",
-            session_id: "worker-session",
+            target_id: "worker-session",
             state: "idle",
             situation: "Idle",
             rows: [
@@ -267,10 +256,8 @@ describe("TaskCard", () => {
   it("always scrolls the worker lane list", () => {
     const workers = Array.from({ length: 5 }, (_, index) => ({
       worker_id: `worker-${index}`,
-      role_key: "worker:default",
-      agent_profile_id: null,
       kind: "managed",
-      session_id: null,
+      target_id: null,
       state: "new" as const,
       situation: "New",
       rows: [],
@@ -291,10 +278,8 @@ describe("TaskCard", () => {
         workers={[
           {
             worker_id: "worker-1",
-            role_key: "worker:default",
-            agent_profile_id: null,
             kind: "managed",
-            session_id: "worker-session",
+            target_id: "worker-session",
             state: "idle",
             situation: "Idle",
             rows: [

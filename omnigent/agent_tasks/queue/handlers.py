@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from omnigent.agent_tasks.agent_builtins import (
@@ -25,7 +26,6 @@ from omnigent.agent_tasks.queue.dispatcher import (
     RoleDispatchHandler,
 )
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
-from omnigent.agent_tasks.worker_role_profile import load_worker_role_profile
 from omnigent.entities import AgentQueueItem
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -58,6 +58,8 @@ async def _inject_notice(
 
     if not item.payload:
         raise DispatchFailed("notice item has no payload to deliver")
+    if target.session_id is None:
+        raise DispatchFailed("notice target has no conversation")
     conv = await asyncio.to_thread(
         conversation_store.get_conversation,
         target.session_id,
@@ -182,7 +184,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
 # A callable that launches/reconnects a session runner for a conversation.
 # Injected so the handler does not depend on a live ``Request`` (the dispatcher
 # runs outside request scope). ``None`` means runner ensure is unavailable.
-EnsureRunner = "callable[[str], Awaitable[None]] | None"
+EnsureRunner = Callable[[str], Awaitable[None]] | None
 
 
 class WorkerDispatchHandler(RoleDispatchHandler):
@@ -190,7 +192,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
 
     The queue's ``scope_id`` is the worker id. The gate measures the slot's
     *current* session — the previous item's conversation, from
-    ``worker.session_id`` — because a worker dispatch creates a fresh
+    ``worker.target_id`` — because a worker dispatch creates a fresh
     conversation that is idle by definition. ``deliver`` creates that fresh
     conversation + execution, moves the task item to ``running``, caches the
     new conversation on the queue row (so the status feed can complete the
@@ -238,9 +240,11 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         )
         if worker is None:
             raise DispatchFailed(f"worker slot {item.key.scope_id} not found")
-        # The slot's current session is the previous item's conversation; a fresh
-        # slot has none, which the gate treats as immediately dispatchable.
-        session_id = worker.session_id
+        # The session-status gate remains the dispatch authority for internal
+        # providers; the adapter mirrors the same observation onto worker.state.
+        session_id = worker.target_id
+        if session_id is None:
+            raise DispatchFailed(f"worker {worker.id} has no initialized target")
         harness: str | None = None
         if session_id is not None:
             conv = await asyncio.to_thread(
@@ -249,7 +253,11 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             )
             if conv is not None:
                 harness = conv.harness_override
-        return DispatchTarget(session_id=session_id, harness=harness)
+        return DispatchTarget(
+            session_id=session_id,
+            harness=harness,
+            ready=worker.state == "idle" and not worker.needs_response,
+        )
 
     async def deliver(self, item: AgentQueueItem, target: DispatchTarget) -> None:
         from omnigent.agent_tasks.dispatch import parse_dispatch_payload
@@ -276,12 +284,6 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             self._task_role_profile_store,
             task,
         )
-        worker_role_profile = await asyncio.to_thread(
-            load_worker_role_profile,
-            self._task_role_profile_store,
-            task,
-            worker,
-        )
 
         def _opt_str(key: str) -> str | None:
             value = payload.get(key)
@@ -301,7 +303,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         )
         params = resolve_dispatch_params(
             payload=payload,
-            role_profile=worker_role_profile or manager_role_profile,
+            role_profile=manager_role_profile,
             host_id=_opt_str("host_id"),
             workspace=_opt_str("workspace"),
             harness=_opt_str("harness"),
@@ -319,8 +321,9 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             conversation_store=self._conversation_store,
             session_creator=self._session_creator,
             app_state=self._app_state,
+            idempotency_key=item.id,
         )
-        # Cache the new conversation so the status feed can complete this item
+        # Cache the conversation so the status feed can complete this item
         # when the worker session settles.
         self._store.set_queue_conversation(item.key, worker_conv_id)
         if self._ensure_runner is not None:

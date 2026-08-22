@@ -37,7 +37,7 @@ Work through these steps in order:
 ### Step 1 — Read the current state
 
 ```
-# Task info: internal_note, tags, state, worker_role_key
+# Task info: internal_note, tags, state, available Worker Providers
 puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>")
 
 # Existing pending/queued items — each has worker_id (may be null)
@@ -80,13 +80,12 @@ assign a worker lane at creation time. (Worker lanes can only be created and
 assigned after the task is accepted — not while it is pending.) Decide the
 lane in two sub-steps:
 
-**3a. Check existing worker lanes** — If a lane with the right role and
-related context already exists, assign the new item to it by passing
-`worker_id`:
+**3a. Check existing Workers** — If a Worker from a suitable provider already
+has related context, assign the new item to it by passing `worker_id`:
 
 ```
-# Worker lanes already on this task — each has id, role_key, session_id
-# (session_id null = not started yet)
+# Workers already on this task include worker_id, provider_name, target_id,
+# lifecycle state, and needs_response.
 puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>/workers")
 ```
 
@@ -106,28 +105,27 @@ puppygarden_api(
 )
 ```
 
-**3b. No suitable lane — create one** — first get all available worker
-profiles, pick the one that fits the work, create a lane, then create the
-item bound to it:
+**3b. No suitable Worker — create one** — list Worker Providers, choose one,
+create the Worker, and initialize it before dispatch:
 
 ```
-# Get all available worker role profiles (kind=worker filters to the
-# worker family)
-puppygarden_api(method="GET", path="/v1/agent-tasks/roles/profiles", query={"kind": "worker"})
-# → returns profiles with role keys like "worker:default", "worker:<slug>", etc.
-# Each profile carries a `description` of what that role specializes in —
-# read it to pick the lane that best fits the work. Falling back to `worker:default`
-# when no custom role is a clear fit.
+# Providers describe how a Worker is initialized; they contain no prompt.
+puppygarden_api(method="GET", path="/v1/worker-providers")
+# Pick an available provider by its stable id and description.
 
-# Create a worker lane (pending, no session yet)
 puppygarden_api(
   method="POST",
   path="/v1/agent-tasks/<task_id>/workers",
-  body={"lanes": [{"role_key": "worker:default", "count": 1}]}
+  body={"provider_id": "<provider_id>"}
 )
-# → returns { "lanes": {"worker:default": ["<new_worker_id>"]} }
+# → returns worker_id immediately with target_id=null and state=uninitialized.
 
-# Create the item bound to that lane
+puppygarden_api(
+  method="POST",
+  path="/v1/task-workers/<worker_id>/initialize"
+)
+# Initialization is asynchronous. Wait until GET workers reports state=idle.
+
 puppygarden_api(
   method="POST",
   path="/v1/agent-tasks/<task_id>/items",
@@ -135,7 +133,7 @@ puppygarden_api(
     "title": "<item title>",
     "description": "<why>",
     "instructions": "<instructions to run>",
-    "worker_id": "<new_worker_id>",
+    "worker_id": "<worker_id>",
     "state": "draft",
     "submit_for_user_ack": true
   }
@@ -144,54 +142,17 @@ puppygarden_api(
 
 ### Batch worker assignment (sweep)
 
-When a task is accepted (package → idle) and you are spawned, all items
-have `worker_id = null` — the broker creates items but cannot assign worker
-lanes while the task is pending. Worker creation and assignment are only
-allowed after the task is accepted. Sweep them in order:
-
-```
-# 1. Get all pending items — find the ones with worker_id = null
-puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>/items")
-
-# 2. Get all available worker profiles
-puppygarden_api(method="GET", path="/v1/agent-tasks/roles/profiles", query={"kind": "worker"})
-
-# 3. Create the worker lanes you need (batch: specify role + count)
-puppygarden_api(
-  method="POST",
-  path="/v1/agent-tasks/<task_id>/workers",
-  body={
-    "lanes": [
-      {"role_key": "worker:codex", "count": 2},
-      {"role_key": "worker:default", "count": 1}
-    ]
-  }
-)
-# → returns { "lanes": {"worker:codex": ["<id_1>","<id_2>"], "worker:default": ["<id_3>"]} }
-
-# 4. Sweep: assign every unassigned item to a worker_id
-puppygarden_api(
-  method="POST",
-  path="/v1/agent-tasks/<task_id>/workers/assign",
-  body={
-    "assignments": [
-      {"item_id": "<item_id_1>", "worker_id": "<new_worker_id>"},
-      {"item_id": "<item_id_2>", "worker_id": "<new_worker_id>"}
-    ]
-  }
-)
-```
-
-* Create lanes first (step 3), then assign items to them (step 4). Multiple
-  items can share the same lane by passing the same `worker_id`.
-* The assign endpoint also accepts `role_key` to create-and-assign in one
-  call, but creating lanes separately gives you full control over lane reuse.
+When a task is accepted, list providers once, create the Workers you need by
+`provider_id`, initialize them, then assign every pending item by `worker_id`.
+Multiple items may share one Worker; Agent Queue waits for that Worker to become
+idle before sending its next message. The assign endpoint also accepts
+`provider_id` to create-and-assign in one call.
 
 ### Worker assignment principle
 
 **Context affinity** — prefer reusing a lane that already has related
-context. Each lane is long-lived: the first dispatch starts its session,
-and all subsequent items dispatched to that lane reuse the same conversation.
+context. Each Worker is long-lived: initialization starts its target session,
+and all subsequently dispatched items reuse the same target conversation.
 Fewer lanes with deeper context beats many shallow lanes.
 
 # Managing the Task

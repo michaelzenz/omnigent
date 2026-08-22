@@ -20,10 +20,13 @@ def _worker_to_entity(row: SqlWorker) -> Worker:
         id=row.id,
         task_id=row.task_id,
         kind=row.kind,
-        role_key=row.role_key,
-        agent_profile_id=row.agent_profile_id,
-        session_id=row.session_id,
-        external_session_hint=row.external_session_hint,
+        target_id=row.target_id,
+        state=row.state,
+        needs_response=row.needs_response,
+        provider_name=row.provider_name,
+        provider_configuration=row.provider_configuration,
+        failure_reason=row.failure_reason,
+        last_observed_at=row.last_observed_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -43,10 +46,11 @@ class SqlAlchemyWorkerStore(WorkerStore):
         task_id: str,
         *,
         kind: str = WORKER_KIND_MANAGED,
-        role_key: str | None = None,
-        agent_profile_id: str | None = None,
-        session_id: str | None = None,
-        external_session_hint: str | None = None,
+        target_id: str | None = None,
+        state: str = "uninitialized",
+        needs_response: bool = False,
+        provider_name: str | None = None,
+        provider_configuration: str | None = None,
     ) -> Worker:
         if kind not in _WORKER_KINDS:
             raise ValueError(f"unknown worker kind: {kind!r}")
@@ -54,10 +58,11 @@ class SqlAlchemyWorkerStore(WorkerStore):
             id=worker_id,
             task_id=task_id,
             kind=kind,
-            role_key=role_key,
-            agent_profile_id=agent_profile_id,
-            session_id=session_id,
-            external_session_hint=external_session_hint,
+            target_id=target_id,
+            state=state,
+            needs_response=needs_response,
+            provider_name=provider_name,
+            provider_configuration=provider_configuration,
             created_at=now_epoch(),
             updated_at=None,
         )
@@ -73,24 +78,12 @@ class SqlAlchemyWorkerStore(WorkerStore):
                 return None
             return _worker_to_entity(row)
 
-    def get_by_session_id(self, session_id: str) -> Worker | None:
+    def get_by_target_id(self, target_id: str) -> Worker | None:
         with self._session() as session:
             stmt = (
                 select(SqlWorker)
                 .where(SqlWorker.workspace_id == current_workspace_id())
-                .where(SqlWorker.session_id == session_id)
-            )
-            row = session.execute(stmt).scalars().first()
-            if row is None:
-                return None
-            return _worker_to_entity(row)
-
-    def get_by_external_hint(self, external_session_hint: str) -> Worker | None:
-        with self._session() as session:
-            stmt = (
-                select(SqlWorker)
-                .where(SqlWorker.workspace_id == current_workspace_id())
-                .where(SqlWorker.external_session_hint == external_session_hint)
+                .where(SqlWorker.target_id == target_id)
             )
             row = session.execute(stmt).scalars().first()
             if row is None:
@@ -112,10 +105,12 @@ class SqlAlchemyWorkerStore(WorkerStore):
         self,
         worker_id: str,
         *,
-        session_id: str | None = _UNSET,
-        role_key: str | None = None,
-        agent_profile_id: str | None = None,
         kind: str | None = None,
+        target_id: str | None = _UNSET,
+        state: str | None = None,
+        needs_response: bool | None = None,
+        failure_reason: str | None = _UNSET,
+        last_observed_at: int | None = _UNSET,
     ) -> Worker | None:
         if kind is not None and kind not in _WORKER_KINDS:
             raise ValueError(f"unknown worker kind: {kind!r}")
@@ -123,14 +118,18 @@ class SqlAlchemyWorkerStore(WorkerStore):
             row = session.get(SqlWorker, (current_workspace_id(), worker_id))
             if row is None:
                 return None
-            if session_id is not _UNSET:
-                row.session_id = session_id
-            if role_key is not None:
-                row.role_key = role_key
-            if agent_profile_id is not None:
-                row.agent_profile_id = agent_profile_id
             if kind is not None:
                 row.kind = kind
+            if target_id is not _UNSET:
+                row.target_id = target_id
+            if state is not None:
+                row.state = state
+            if needs_response is not None:
+                row.needs_response = needs_response
+            if failure_reason is not _UNSET:
+                row.failure_reason = failure_reason
+            if last_observed_at is not _UNSET:
+                row.last_observed_at = last_observed_at
             row.updated_at = now_epoch()
             session.flush()
             return _worker_to_entity(row)

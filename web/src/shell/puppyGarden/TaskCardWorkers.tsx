@@ -3,12 +3,10 @@ import { ChevronDownIcon, ChevronRightIcon, MessageSquareIcon } from "lucide-rea
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useRoleProfiles } from "@/hooks/useRoleProfiles";
-import { useActivateWorkerLane } from "@/hooks/useAgentTasks";
-import { WORKER_ROLE_PREFIX, type TaskItemSummary, type TaskWorkerLane } from "@/lib/agentTasksApi";
+import { useInitializeWorker } from "@/hooks/useAgentTasks";
+import type { TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardWorkerRows } from "./TaskCardWorkerRows";
-import { WorkerLaneRolePicker } from "./WorkerLaneRolePicker";
 import { TASK_CARD_INNER_SCROLL_CLASS } from "./taskCardUtils";
 import {
   buildInboxLane,
@@ -26,21 +24,14 @@ interface TaskCardWorkersProps {
   workers: TaskWorkerLane[];
 }
 
-function laneDisplayName(lane: TaskWorkerLane, roleTitleByKey: Map<string, string>): string {
+function laneDisplayName(lane: TaskWorkerLane): string {
   if (isInboxLane(lane.worker_id)) return "Inbox";
-  if (lane.role_key == null) return lane.agent_profile_id ?? "External worker";
-  return roleTitleByKey.get(lane.role_key) ?? lane.role_key;
+  return lane.provider_name ?? "Worker";
 }
 
 export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkersProps) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
-  const activateWorkerLane = useActivateWorkerLane(taskId);
-  const { data: workerRoles = [] } = useRoleProfiles(WORKER_ROLE_PREFIX);
-  const roleTitleByKey = useMemo(
-    () => new Map(workerRoles.map((role) => [role.role, role.title ?? role.role])),
-    [workerRoles],
-  );
-
+  const initializeWorker = useInitializeWorker(taskId);
   const lanes = useMemo(() => {
     const inboxLane = buildInboxLane(inboxItems);
     return inboxLane ? [inboxLane, ...workers] : workers;
@@ -107,11 +98,11 @@ export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkers
       >
         {lanes.map((lane) => {
           const expanded = expandedLaneId === lane.worker_id;
-          const name = laneDisplayName(lane, roleTitleByKey);
+          const name = laneDisplayName(lane);
           const workerSelected = isWorkerSelected(taskId, lane.worker_id);
           // A lane without a session has nothing to chat with yet, so it offers
           // the role choice instead.
-          const awaitingRole = lane.session_id == null && lane.kind !== "external";
+          const awaitingInitialization = lane.target_id == null && lane.kind !== "external";
 
           return (
             <article
@@ -147,45 +138,47 @@ export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkers
                         {name}
                       </span>
                       <Badge variant="outline" className="shrink-0 text-[10px]">
-                        {workerLaneStateLabel(lane.state)}
+                        {lane.needs_response
+                          ? "Needs response"
+                          : lane.worker_state === "initialization_failed"
+                            ? "Failed to initialize"
+                            : lane.worker_state === "initializing"
+                              ? "Initializing"
+                              : lane.worker_state === "busy"
+                                ? "Working"
+                                : lane.worker_state === "disconnected"
+                                  ? "Disconnected"
+                                  : lane.worker_state === "terminated"
+                                    ? "Terminated"
+                                    : workerLaneStateLabel(lane.state)}
                       </Badge>
                     </div>
-                    <p className="truncate text-xs text-muted-foreground">{lane.situation}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {lane.failure_reason ?? lane.situation}
+                    </p>
                   </div>
                 </button>
-                {isInboxLane(lane.worker_id) ? null : lane.kind === "external" &&
-                  lane.session_id == null ? (
+                {isInboxLane(lane.worker_id) ? null : lane.kind === "external" ? (
                   <span className="shrink-0 px-2 text-[10px] text-muted-foreground">
-                    External — no chat yet
+                    External app
                   </span>
-                ) : awaitingRole ? (
-                  <div
-                    className="flex shrink-0 items-center gap-2"
-                    onClick={(event) => event.stopPropagation()}
+                ) : awaitingInitialization ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 shrink-0"
+                    disabled={
+                      lane.worker_state === "initializing" ||
+                      (initializeWorker.isPending && initializeWorker.variables === lane.worker_id)
+                    }
+                    data-testid={`worker-initialize-${lane.worker_id}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      initializeWorker.mutate(lane.worker_id);
+                    }}
                   >
-                    <WorkerLaneRolePicker
-                      taskId={taskId}
-                      workerId={lane.worker_id}
-                      roleKey={lane.role_key}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-7 shrink-0"
-                      disabled={
-                        !lane.role_key?.trim() ||
-                        (activateWorkerLane.isPending &&
-                          activateWorkerLane.variables === lane.worker_id)
-                      }
-                      data-testid={`worker-lane-activate-${lane.worker_id}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        activateWorkerLane.mutate(lane.worker_id);
-                      }}
-                    >
-                      Activate
-                    </Button>
-                  </div>
+                    {lane.worker_state === "initializing" ? "Initializing…" : "Initialize"}
+                  </Button>
                 ) : (
                   <Button
                     type="button"
@@ -201,7 +194,7 @@ export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkers
                     data-testid={`worker-lane-chat-${lane.worker_id}`}
                     onClick={(event) => {
                       event.stopPropagation();
-                      openWorker(taskId, lane.worker_id, lane.session_id, name);
+                      openWorker(taskId, lane.worker_id, lane.target_id, name);
                     }}
                   >
                     <MessageSquareIcon className="size-3.5" />
@@ -218,7 +211,12 @@ export function TaskCardWorkers({ taskId, inboxItems, workers }: TaskCardWorkers
                   )}
                   data-testid={`worker-lane-rows-scroll-${lane.worker_id}`}
                 >
-                  <TaskCardWorkerRows taskId={taskId} rows={lane.rows} workerLanes={workers} workerKind={lane.kind} />
+                  <TaskCardWorkerRows
+                    taskId={taskId}
+                    rows={lane.rows}
+                    workerLanes={workers}
+                    workerKind={lane.kind}
+                  />
                 </div>
               ) : null}
             </article>

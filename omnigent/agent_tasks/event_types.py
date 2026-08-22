@@ -28,7 +28,7 @@ WORKER_EXECUTION_FINISHED_EVENT_TYPE = "worker.execution.finished"
 EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE = "external.session.discovered"
 
 # An external session's transcript advanced. Auto-routed to the task bound to
-# the session (via ``external_session_hint`` on the worker row).
+# the session (via ``target_id`` on the Worker row).
 EXTERNAL_SESSION_UPDATED_EVENT_TYPE = "external.session.updated"
 
 

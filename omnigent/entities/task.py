@@ -19,8 +19,6 @@ class Task:
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param manager_role_key: Glossary manager template key, e.g. ``"manager:default"``.
         The role resolves the agent profile that runs the task manager.
-    :param worker_role_key: Glossary worker template key, e.g. ``"worker:default"``.
-        Seeds the role of each new worker lane on this task.
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param title: Human-readable task title.
     :param description: Canonical task description. ``None`` when unset.
@@ -35,7 +33,6 @@ class Task:
 
     id: str
     manager_role_key: str
-    worker_role_key: str
     owner_user_id: str | None
     title: str
     description: str | None
@@ -148,12 +145,8 @@ class Worker:
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param task_id: Parent managed task.
     :param kind: ``"managed"`` for dispatched workers, ``"external"`` for adopted sessions.
-    :param role_key: Role this lane runs, set on managed lanes only.
-    :param agent_profile_id: Agent behind an adopted session, which was never
-        spawned from a role. Set on external lanes only.
-    :param session_id: Live session id when spawned or adopted, or ``None`` before bind.
-    :param external_session_hint: Stable watcher-provided id for adopted external
-        sessions. Used by ingress to auto-route update events.
+    :param role_key: Legacy role key, retained for compatibility with old rows.
+    :param target_id: Durable session/thread id assigned by the target system.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
@@ -162,10 +155,13 @@ class Worker:
     task_id: str
     kind: str
     created_at: int
-    role_key: str | None = None
-    agent_profile_id: str | None = None
-    session_id: str | None = None
-    external_session_hint: str | None = None
+    target_id: str | None = None
+    state: str = "uninitialized"
+    needs_response: bool = False
+    provider_name: str | None = None
+    provider_configuration: str | None = None
+    failure_reason: str | None = None
+    last_observed_at: int | None = None
     updated_at: int | None = None
 
 

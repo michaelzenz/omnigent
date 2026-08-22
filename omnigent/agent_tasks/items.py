@@ -242,7 +242,7 @@ async def resolve_task_item(
         )
 
     params = resolve_dispatch_params(
-        payload={**payload, "worker_role_key": worker.role_key},
+        payload=payload,
         role_profile=role_profile,
         host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
         workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
@@ -258,7 +258,7 @@ async def resolve_task_item(
             state="queued",
         )
         assert updated is not None
-        queue_payload = {**payload, "worker_role_key": worker.role_key}
+        queue_payload = payload
         await asyncio.to_thread(
             agent_queue_store.enqueue,
             uuid.uuid4().hex,

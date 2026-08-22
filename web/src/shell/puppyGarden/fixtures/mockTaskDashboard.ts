@@ -10,7 +10,6 @@ export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
     description: "Broker package waiting for a manager",
     state: "pending",
     manager_role_key: "manager:default",
-    worker_role_key: "worker:default",
     manager_conversation_id: null,
   },
   {
@@ -19,7 +18,6 @@ export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
     description: "Fix upload retries and get CI green",
     state: "active",
     manager_role_key: "manager:default",
-    worker_role_key: "worker:default",
     manager_conversation_id: "fixture-mgr-session",
   },
 ];
@@ -82,10 +80,8 @@ export function buildFixtureDashboard(taskId: string): TaskDashboard | null {
     workers: [
       {
         worker_id: "fixture-worker-1",
-        role_key: "worker:default",
-        agent_profile_id: null,
         kind: "managed",
-        session_id: "fixture-worker-session",
+        target_id: "fixture-worker-session",
         state: "active",
         situation: "Running: Investigate CI failure",
         rows: [
@@ -222,10 +218,8 @@ export function buildFixtureDashboard(taskId: string): TaskDashboard | null {
       },
       {
         worker_id: "fixture-worker-2",
-        role_key: "worker:reviewer",
-        agent_profile_id: null,
         kind: "managed",
-        session_id: null,
+        target_id: null,
         state: "new",
         situation: "New",
         rows: [],

@@ -28,6 +28,7 @@ def _to_object(profile: PromptProfile) -> PromptProfileObject:
         description=profile.description,
         instructions=profile.instructions,
         enabled=profile.enabled,
+        visible=profile.visible,
         archived=profile.archived,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
@@ -81,6 +82,12 @@ def create_prompt_profiles_router(
         body: PromptProfilePatchRequest,
     ) -> PromptProfileObject:
         require_user(request, auth_provider)
+        current = await asyncio.to_thread(store.get, profile_id)
+        if current is not None and not current.visible:
+            raise OmnigentError(
+                "Internal prompt profiles must be edited through their owning surface",
+                code=ErrorCode.CONFLICT,
+            )
         fields = {
             name: getattr(body, name)
             for name in body.model_fields_set
@@ -101,6 +108,12 @@ def create_prompt_profiles_router(
     )
     async def delete_prompt_profile(request: Request, profile_id: str) -> Response:
         require_user(request, auth_provider)
+        current = await asyncio.to_thread(store.get, profile_id)
+        if current is not None and not current.visible:
+            raise OmnigentError(
+                "Internal prompt profiles cannot be deleted directly",
+                code=ErrorCode.CONFLICT,
+            )
         profile = await asyncio.to_thread(store.archive, profile_id)
         if profile is None:
             raise OmnigentError(

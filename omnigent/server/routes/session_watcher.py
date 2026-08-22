@@ -11,15 +11,14 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_UPDATED_EVENT_TYPE
 from omnigent.agent_tasks.ingress import ingress_event
-from omnigent.entities import EventTag
-from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.db.utils import now_epoch
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.server.routes.task_events import HOST_ID_HEADER
 from omnigent.stores.conversation_store import ConversationStore
@@ -40,6 +39,10 @@ class SessionWatcherUpdateRequest(BaseModel):
     transcript_delta: str | None = None
     transcript_snippet: str | None = None
     payload: dict[str, Any] | None = None
+    activity: Literal["idle", "busy"] | None = None
+    connected: bool = True
+    needs_response: bool = False
+    failure_reason: str | None = None
 
 
 def create_session_watcher_router(
@@ -60,7 +63,7 @@ def create_session_watcher_router(
     async def _load_broker_profile() -> Any:
         if task_role_profile_store is None:
             return None
-        from omnigent.agent_tasks.broker_role_profile import TASK_BROKER_ROLE
+        from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 
         return await asyncio.to_thread(task_role_profile_store.get, TASK_BROKER_ROLE)
 
@@ -85,9 +88,20 @@ def create_session_watcher_router(
         owner = _effective_user_id(user_id)
 
         # Check if the session is adopted (worker exists with this hint).
-        worker = await asyncio.to_thread(
-            worker_store.get_by_external_hint, body.session_hint
-        )
+        worker = await asyncio.to_thread(worker_store.get_by_target_id, body.session_hint)
+        if worker is not None:
+            observed_state = (
+                "disconnected" if not body.connected else body.activity or worker.state
+            )
+            await asyncio.to_thread(
+                worker_store.update_worker,
+                worker.id,
+                state=observed_state,
+                needs_response=body.needs_response,
+                failure_reason=body.failure_reason,
+                last_observed_at=now_epoch(),
+            )
+
         # Check if the session was rejected (dismissed adoption proposal).
         is_rejected = False
         for evt in task_event_store.list_events(
