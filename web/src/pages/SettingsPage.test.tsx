@@ -293,14 +293,14 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:sticky-user-messages")).toBe("false");
   });
 
-  it("keeps automatic bottom locking off by default", () => {
+  it("keeps automatic bottom locking on by default", () => {
     renderPage("/settings/appearance");
     const toggle = screen.getByTestId("bottom-lock-toggle");
 
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(localStorage.getItem("omnigent:bottom-lock")).toBe("true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(localStorage.getItem("omnigent:bottom-lock")).toBe("false");
   });
 
   it("configures the floating top chat button", () => {
@@ -575,7 +575,7 @@ describe("SettingsPage", () => {
       "aria-checked",
       "true",
     );
-    expect(screen.getByTestId("bottom-lock-toggle")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("bottom-lock-toggle")).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("chat-top-button-jump-to-top")).toHaveAttribute(
       "aria-checked",
       "true",
