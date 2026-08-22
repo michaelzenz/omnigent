@@ -15,6 +15,10 @@ _CACHE_READ_RATIO = 0.10
 _CACHE_WRITE_RATIO = 1.25
 _logger = logging.getLogger(__name__)
 
+# Usage-ledger purposes describing *why* a turn ran, not which session ran it.
+USER_INTERACTION_PURPOSE = "user_interaction"
+TASK_EVENT_ROUTING_PURPOSE = "task_event_routing"
+
 
 def canonical_purpose(components: Iterable[str]) -> str:
     """Return a stable purpose for one consolidated model request."""
@@ -136,6 +140,8 @@ def record_omniharness_usage(
 
 
 __all__ = [
+    "TASK_EVENT_ROUTING_PURPOSE",
+    "USER_INTERACTION_PURPOSE",
     "canonical_purpose",
     "record_omniharness_usage",
     "response_usage",

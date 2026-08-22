@@ -166,6 +166,7 @@ async def test_record_publish_delivers_wake_message_to_parent(
         # The wake passes runner_router through; without it the stub
         # TypeErrors inside the notifier task and no wake lands.
         runner_router: Any | None = None,
+        usage_purpose: str = "user_interaction",
     ) -> str:
         delivered.append(
             _DispatchCall(

@@ -140,6 +140,7 @@ async def test_deliver_calls_wake_parent(handler_setup: dict) -> None:
     wake.assert_called_once()
     assert wake.call_args.args[0] == conv_id
     assert wake.call_args.args[2] == "[System: route me]"
+    assert wake.call_args.kwargs["usage_purpose"] == "task_event_routing"
 
 
 @pytest.mark.asyncio
