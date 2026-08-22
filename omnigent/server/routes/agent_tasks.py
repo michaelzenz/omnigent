@@ -1236,7 +1236,7 @@ def create_agent_tasks_router(
             role: str,
             body: PutAgentRoleProfileRequest,
         ) -> dict[str, Any]:
-            """Update the hidden PromptProfile that defines a PuppyGarden role."""
+            """Update the hidden PromptProfile and launch settings for a role."""
             role = _require_task_agent_role(role)
             user_id = require_user(request, auth_provider)
             profile = await _load_role_profile(role, user_id)
@@ -1250,6 +1250,13 @@ def create_agent_tasks_router(
             if fields:
                 await asyncio.to_thread(
                     prompt_profile_store.update, profile.prompt_profile_id, **fields
+                )
+            if "model" in body.model_fields_set:
+                profile = await asyncio.to_thread(
+                    task_role_profile_store.upsert,
+                    role,
+                    model=body.model,
+                    clear_model=body.clears_model,
                 )
             agent_name, _candidates, prompt = await _resolve_role_agent_fields(
                 profile, include_prompt=True

@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAgentRoleProfile,
   useUpdateAgentRoleProfile,
   useUpdateRolePrompt,
 } from "@/hooks/useAgentRoleProfile";
+import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
+
+const MODEL_DEFAULT_VALUE = "__default__";
 
 const SAVE_DEBOUNCE_MS = 1200;
 type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
@@ -23,6 +33,8 @@ export function RoleDefaultsForm({ roleId }: { roleId: string }) {
   const nameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const promptTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const { data: modelOptions } = useOmniHarnessModelOptions();
+
   useEffect(() => {
     if (!profile) return;
     const nextName = profile.title ?? roleId;
@@ -33,6 +45,32 @@ export function RoleDefaultsForm({ roleId }: { roleId: string }) {
     setPrompt(nextPrompt);
     setStatus("idle");
   }, [profile, roleId]);
+
+  const modelValue = profile?.model ?? MODEL_DEFAULT_VALUE;
+
+  const modelSelectOptions = useMemo(
+    () => [
+      { value: MODEL_DEFAULT_VALUE, label: "Default" },
+      ...(modelOptions ?? []).map((opt) => ({ value: opt.id, label: opt.displayName })),
+    ],
+    [modelOptions],
+  );
+
+  const saveModel = useCallback(
+    (value: string) => {
+      const next = value === MODEL_DEFAULT_VALUE ? null : value;
+      if (next === (profile?.model ?? null)) return;
+      setStatus("saving");
+      updateProfile.mutate(
+        { model: next },
+        {
+          onSuccess: () => setStatus("saved"),
+          onError: () => setStatus("error"),
+        },
+      );
+    },
+    [updateProfile, profile?.model],
+  );
 
   useEffect(
     () => () => {
@@ -97,18 +135,32 @@ export function RoleDefaultsForm({ roleId }: { roleId: string }) {
 
   return (
     <div className="space-y-4" data-testid={`glossary-role-defaults-${roleId}`}>
-      <label className="block space-y-1.5 text-xs text-muted-foreground">
-        Display name
-        <Input
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-            saveName(event.target.value);
-          }}
-        />
-      </label>
-      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Execution target: OmniHarness. Model selection belongs to the PuppyGarden chat sidebar.
+      <div className="flex items-end gap-3">
+        <label className="block flex-1 space-y-1.5 text-xs text-muted-foreground">
+          Display name
+          <Input
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
+              saveName(event.target.value);
+            }}
+          />
+        </label>
+        <label className="block w-40 shrink-0 space-y-1.5 text-xs text-muted-foreground">
+          Model
+          <Select value={modelValue} onValueChange={saveModel}>
+            <SelectTrigger className="w-full" data-testid={`glossary-role-model-${roleId}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              {modelSelectOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
       </div>
       <label className="block space-y-1.5 text-xs text-muted-foreground">
         Manual

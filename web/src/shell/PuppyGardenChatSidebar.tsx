@@ -5,6 +5,8 @@ import { buildBubbles, createBubbleCache, type Bubble } from "@/lib/renderItems"
 import { getCurrentAuthorId } from "@/lib/identity";
 import { isCostRoutingSession } from "@/components/CostRoutingControl";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
+import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
+import { EMPTY_OMNIHARNESS_MODEL_OPTIONS } from "@/lib/omniharnessModels";
 import { type Agent, useAgents, useSessionAgent } from "@/hooks/useAgents";
 import {
   useBrokerProfile,
@@ -22,6 +24,7 @@ import { useConversations } from "@/hooks/useConversations";
 import { useMarkConversationSeen } from "@/hooks/useUnseenConversations";
 import {
   buildPendingBubbles,
+  ComposerSdkModelSelect,
   computeIsWorking,
   computeShowsWorking,
   effortLevelsForConv,
@@ -35,6 +38,7 @@ import {
   shouldShowEffortPicker,
   shouldShowGoalControl,
   subAgentComposerLabel,
+  supportsSessionProfileSelection,
 } from "@/pages/ChatPage";
 import { useChatStore } from "@/store/chatStore";
 import {
@@ -101,6 +105,7 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
   const selectedModel = useChatStore((s) => s.selectedModel);
   const llmModel = useChatStore((s) => s.llmModel);
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
+  const sdkModelOptions = useOmniHarnessModelOptions().data ?? EMPTY_OMNIHARNESS_MODEL_OPTIONS;
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const bubbleCacheRef = useRef(createBubbleCache());
@@ -210,6 +215,15 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
         : agents?.filter((a) => a.id === boundAgentId)
     : agents;
 
+  const showProfileSelector = supportsSessionProfileSelection(activeSession);
+  const profileControls = showProfileSelector ? (
+    <ComposerSdkModelSelect
+      sdkModelOptions={sdkModelOptions}
+      costRoutingEligible={costRoutingEligible}
+      disabled={permissionLevel === 1 || readOnlyReason !== null}
+    />
+  ) : null;
+
   const terminalFirstContextValue = useMemo(
     () => terminalFirstContextForEmbeddedSession(activeSessionLabels),
     [activeSessionLabels],
@@ -254,6 +268,8 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
           showModels={modelPickerKind !== null}
           modelPickerKind={modelPickerKind}
           codexModelOptions={codexModelOptions}
+          sdkModelOptions={sdkModelOptions}
+          profileControls={profileControls}
           showCodexPlanMode={shouldShowCodexPlanModeControl(capabilitySource)}
           showGoalControl={shouldShowGoalControl(capabilitySource)}
           costRoutingEligible={costRoutingEligible}
@@ -287,6 +303,7 @@ interface RoleSessionBootstrap {
   error: string | null;
   onReload: () => void;
   resetPending: boolean;
+  resetError: string | null;
   onReset: () => void;
 }
 
@@ -316,12 +333,21 @@ function useRoleSessionBootstrap(role: PuppyGardenRole): RoleSessionBootstrap {
     reset.mutate();
   }, [reset]);
 
+  const resetErrorDetail = reset.error;
+  const resetError =
+    resetErrorDetail instanceof Error
+      ? resetErrorDetail.message
+      : resetErrorDetail
+        ? String(resetErrorDetail)
+        : null;
+
   return {
     sessionId,
     loading: profile.isLoading || session.isLoading,
     error: bootstrapError,
     onReload,
     resetPending: reset.isPending,
+    resetError,
     onReset,
   };
 }
@@ -375,8 +401,16 @@ export function PuppyGardenChatSidebar() {
 
   const handleResetConfirm = useCallback(() => {
     activeRoleBootstrap.onReset();
-    setResetOpen(false);
   }, [activeRoleBootstrap]);
+
+  // Auto-close the reset dialog once the mutation settles successfully.
+  const prevResetPending = useRef(false);
+  useEffect(() => {
+    if (prevResetPending.current && !activeRoleBootstrap.resetPending && !activeRoleBootstrap.resetError) {
+      setResetOpen(false);
+    }
+    prevResetPending.current = activeRoleBootstrap.resetPending;
+  }, [activeRoleBootstrap.resetPending, activeRoleBootstrap.resetError]);
 
   return (
     <aside
@@ -515,6 +549,11 @@ export function PuppyGardenChatSidebar() {
                 This deletes the current chat and starts a fresh session seeded with the role
                 manual.
               </DialogDescription>
+              {activeRoleBootstrap.resetError ? (
+                <p className="text-sm text-destructive" data-testid="puppy-garden-chat-reset-error">
+                  {activeRoleBootstrap.resetError}
+                </p>
+              ) : null}
             </DialogHeader>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setResetOpen(false)}>

@@ -8222,7 +8222,7 @@ function useResolvedComposerModel(
  * the first option when the session is routing-eligible, mutually exclusive
  * with a pinned model — same semantics as the modal.
  */
-function ComposerSdkModelSelect({
+export function ComposerSdkModelSelect({
   sdkModelOptions,
   costRoutingEligible,
   disabled,
