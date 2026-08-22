@@ -41,7 +41,6 @@ describe("prompt profile API hooks", () => {
             description: "Coordinate the work",
             instructions: "Delegate carefully",
             enabled: true,
-            archived: false,
             created_at: 1,
             updated_at: 2,
           },

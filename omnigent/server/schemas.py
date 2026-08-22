@@ -322,7 +322,6 @@ class PromptProfileObject(BaseModel):
     instructions: str
     enabled: bool
     visible: bool
-    archived: bool
     created_at: int
     updated_at: int | None = None
 

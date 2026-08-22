@@ -14,7 +14,7 @@ def load_prompt_profile_instructions(
 ) -> str | None:
     """Load instructions while enforcing new- versus existing-selection rules."""
     profile = prompt_profile_store.get(profile_id)
-    if profile is None or profile.archived or (require_selectable and not profile.enabled):
+    if profile is None or (require_selectable and not profile.enabled):
         raise OmnigentError(
             f"Profile not found or unavailable: {profile_id!r}",
             code=ErrorCode.NOT_FOUND,

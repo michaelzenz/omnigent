@@ -49,7 +49,7 @@ vi.mock("@/hooks/useHosts", () => ({
 vi.mock("@/hooks/useAvailableAgents", () => ({ useAvailableAgents: vi.fn() }));
 vi.mock("@/hooks/usePromptProfiles", () => ({
   usePromptProfiles: () => ({ data: [] }),
-  useArchivePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeletePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));

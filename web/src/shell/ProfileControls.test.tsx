@@ -5,7 +5,7 @@ import { ProfileControls } from "./ProfileControls";
 
 const mocks = vi.hoisted(() => ({
   update: vi.fn(),
-  archive: vi.fn(),
+  deleteProfile: vi.fn(),
   create: vi.fn(),
   updateSettings: vi.fn(),
   rows: [] as PromptProfile[],
@@ -27,8 +27,8 @@ vi.mock("@/hooks/usePromptProfiles", () => ({
     isPending: false,
     variables: undefined,
   }),
-  useArchivePromptProfile: () => ({
-    mutateAsync: mocks.archive,
+  useDeletePromptProfile: () => ({
+    mutateAsync: mocks.deleteProfile,
     isPending: false,
     variables: undefined,
   }),
@@ -45,7 +45,6 @@ function profile(overrides: Partial<PromptProfile> = {}): PromptProfile {
     description: "Investigates difficult questions",
     instructions: "Cite sources",
     enabled: true,
-    archived: false,
     created_at: 1,
     updated_at: 1,
     ...overrides,
@@ -55,7 +54,7 @@ function profile(overrides: Partial<PromptProfile> = {}): PromptProfile {
 describe("ProfileControls", () => {
   beforeEach(() => {
     mocks.update.mockReset();
-    mocks.archive.mockReset();
+    mocks.deleteProfile.mockReset();
     mocks.create.mockReset();
     mocks.updateSettings.mockReset();
     mocks.rows = [];

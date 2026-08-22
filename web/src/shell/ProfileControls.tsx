@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import {
   type PromptProfile,
-  useArchivePromptProfile,
+  useDeletePromptProfile,
   useCreatePromptProfile,
   usePromptProfiles,
   useUpdatePromptProfile,
@@ -158,7 +158,7 @@ function ManageProfilesDialog({
   const profilesQuery = usePromptProfiles({ enabled: open });
   const omniHarnessSettings = useOmniHarnessSettings(open);
   const updateOmniHarnessSettings = useUpdateOmniHarnessSettings();
-  const archive = useArchivePromptProfile();
+  const deleteProfile = useDeletePromptProfile();
   const create = useCreatePromptProfile();
   const update = useUpdatePromptProfile();
 
@@ -192,7 +192,7 @@ function ManageProfilesDialog({
     if (!deleteTarget) return;
     setActionError(null);
     try {
-      await archive.mutateAsync(deleteTarget.id);
+      await deleteProfile.mutateAsync(deleteTarget.id);
       if (deleteTarget.id === selectedProfileId) onSelectedProfileRemoved();
       setDeleteTarget(null);
     } catch (error) {
@@ -251,8 +251,8 @@ function ManageProfilesDialog({
 
   const pendingId = update.isPending
     ? update.variables?.id
-    : archive.isPending
-      ? archive.variables
+    : deleteProfile.isPending
+      ? deleteProfile.variables
       : undefined;
 
   return (
@@ -417,7 +417,7 @@ function ManageProfilesDialog({
           <DialogHeader>
             <DialogTitle>Delete profile?</DialogTitle>
             <DialogDescription>
-              {deleteTarget?.name} will be archived and removed from Profile selection.
+              {deleteTarget?.name} will be permanently deleted and removed from Profile selection.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
