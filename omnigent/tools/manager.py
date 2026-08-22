@@ -21,6 +21,7 @@ from omnigent.tools.base import Tool, ToolContext, is_valid_tool_name
 from omnigent.tools.builtins import (
     ListCommentsTool,
     LoadSkillTool,
+    PuppyGardenApiTool,
     ReadSkillFileTool,
     SysAdviseModelsTool,
     SysAgentDownloadTool,
@@ -45,6 +46,8 @@ from omnigent.tools.builtins import (
     SysTimerCancelTool,
     SysTimerSetTool,
     UpdateCommentTool,
+    UpdateSkillTool,
+    WriteSkillTool,
     any_skill_has_resources,
     get_builtin_tool,
 )
@@ -156,6 +159,7 @@ class ToolManager:
         self._os_env: OSEnvironment | None = None
         self._register_skill_tools()
         self._register_builtin_tools()
+        self._register_default_builtin_tools()
         self._register_sub_agent_tools()
         self._register_session_tools()
         self._register_agent_mgmt_tools()
@@ -172,9 +176,8 @@ class ToolManager:
         # registration only cares about the gate — no
         # construction-time wiring.
         self._register_async_inbox_tools()
-        # Step 10: register sys_timer_set / sys_timer_cancel when
-        # the spec opts in via ``timers: true``. Defaults off
-        # (matches the inner stack's ``AgentDef.timers`` default).
+        # Step 10: register sys_timer_set / sys_timer_cancel. Timers default
+        # on; ``timers: false`` is the explicit kill switch.
         # Firings ride the same ``async_work_complete`` drain path
         # as ``sys_call_async``, but with ``kind="timer"`` so they
         # don't block end-of-turn auto-collect.
@@ -196,6 +199,10 @@ class ToolManager:
         # can drive the desktop app's browser without the spec opting in
         # (framework-owned).
         self._register_browser_tools()
+        # PuppyGarden task-API proxy is always auto-registered so any agent
+        # can call the task REST endpoints without shelling out to curl
+        # (framework-owned, runner-dispatched).
+        self._register_puppygarden_api_tool()
 
     def _register_policy_tools(self) -> None:
         """
@@ -261,12 +268,10 @@ class ToolManager:
 
     def _register_timer_tools(self) -> None:
         """
-        Register the timer builtins when the agent spec opts in.
+        Register the timer builtins unless the agent explicitly disables them.
 
-        Gated on :attr:`AgentSpec.timers` (defaults to ``False`` to
-        match ``omnigent/inner/datamodel.py::AgentDef.timers``).
-        Agents that want timer scheduling declare ``timers: true``
-        at the top level of their YAML.
+        Gated on :attr:`AgentSpec.timers`, which defaults to ``True``.
+        Agents can suppress the surface with top-level ``timers: false``.
 
         Registers (in order):
 
@@ -298,7 +303,8 @@ class ToolManager:
         """
         Register built-in skill tools.
 
-        Always registers ``load_skill`` — it discovers host-scope
+        Always registers ``load_skill``, ``update_skill``, and ``write_skill``.
+        ``load_skill`` discovers host-scope
         skills (``~/.claude/skills/``, ``.agents/skills/``, etc.)
         at init time even when the agent has no bundled skills.
         Registers ``read_skill_file`` only when at least one skill
@@ -310,6 +316,8 @@ class ToolManager:
             skills_filter=self._spec.skills_filter,
         )
         self._tools[load_tool.name()] = load_tool
+        self._tools[UpdateSkillTool.name()] = UpdateSkillTool()
+        self._tools[WriteSkillTool.name()] = WriteSkillTool()
         # Combine bundled + discovered skills for resource check.
         all_skills = load_tool.skills
         if any_skill_has_resources(all_skills):
@@ -344,6 +352,20 @@ class ToolManager:
                 )
                 continue
             self._tools[tool.name()] = tool
+
+    def _register_default_builtin_tools(self) -> None:
+        """Register the portable builtins available to every agent."""
+        for name in (
+            "upload_file",
+            "list_files",
+            "download_file",
+            "search_conversations",
+            "export_agent",
+        ):
+            tool = self._create_builtin(name, None)
+            if tool is None:
+                raise RuntimeError(f"default builtin {name!r} is unavailable")
+            self._tools.setdefault(tool.name(), tool)
 
     def _create_builtin(
         self,
@@ -418,23 +440,13 @@ class ToolManager:
         ``sys_session_list`` or a prior ``sys_session_send`` handle),
         so they need no ``sub_specs`` map.
 
-        ``sys_session_share`` is gated by its OWN dedicated
-        ``agent_session_sharing:`` flag (:class:`SharePolicy`),
-        independent of the spawn grants (and unrelated to sharing via
-        the server API or CLI). Sharing MUTATES access control — it can
-        expose a session to a third party or, via ``__public__``, to
-        anonymous read of the full transcript — and the server can
-        confirm the caller holds manage-level access but cannot
-        distinguish "the owner intended this" from "the agent was
-        prompt-injected into sharing". So it is off unless the spec opts
-        in: ``none`` (default) leaves it unregistered; ``non-public``
-        registers it for granting named users; ``public`` additionally
-        lets it grant ``__public__`` (the tool advertises and enforces
-        that extra tier via ``allow_public``).
+        ``sys_session_share`` uses the dedicated
+        ``agent_session_sharing:`` flag (:class:`SharePolicy`), independent
+        of spawn grants. Named-user sharing defaults on; ``none`` disables
+        it and ``public`` additionally permits anonymous transcript access.
 
-        The spawn-lifecycle tools are a SEPARATE opt-in, gated behind
-        ``tools.agents`` (declared sub-agents) or the top-level
-        ``spawn: true`` flag:
+        Spawn-lifecycle tools are controlled by ``tools.agents`` or the
+        top-level ``spawn`` flag, which defaults to true:
 
         - ``tools.agents`` registers ``sys_session_send`` (named
           ``(agent, title)`` mode limited to the declared-type enum,
@@ -460,9 +472,9 @@ class ToolManager:
         self._tools[SysSessionGetHistoryTool.name()] = SysSessionGetHistoryTool()
         self._tools[SysSessionGetInfoTool.name()] = SysSessionGetInfoTool()
 
-        # Session sharing: opt-in via the dedicated
-        # ``agent_session_sharing`` flag, independent of spawn / declared
-        # sub-agents. ``none`` leaves it unregistered; ``public``
+        # Session sharing uses the dedicated ``agent_session_sharing`` flag,
+        # independent of spawn / declared sub-agents. ``none`` leaves it
+        # unregistered; the default ``non-public`` grants named users; ``public``
         # additionally permits __public__ grants (the tool reflects that
         # in its schema and the runner enforces it). It is its own flag —
         # not folded into the spawn grant — because letting the agent
@@ -474,7 +486,8 @@ class ToolManager:
                 allow_public=self._spec.agent_session_sharing is SharePolicy.PUBLIC,
             )
 
-        # send + close: opt-in via declared sub-agents or spawn: true.
+        # send + close: available by default through spawn, or through a
+        # declared sub-agent list when spawn is explicitly disabled.
         if not (self._spec.tools.agents or self._spec.spawn):
             return
 
@@ -494,10 +507,8 @@ class ToolManager:
         if routing_available(get_caps()):
             self._tools[SysAdviseModelsTool.name()] = SysAdviseModelsTool()
 
-        # create: spawning OUTSIDE the declared list (existing agents
-        # by id, or custom bundles via config_path) requires the
-        # explicit ``spawn: true`` grant — declaring tools.agents
-        # alone only permits the specified sub-agent types.
+        # create: spawning outside the declared list follows the spawn flag,
+        # which defaults on. ``spawn: false`` limits a spec to declared agents.
         if self._spec.spawn:
             self._tools[SysSessionCreateTool.name()] = SysSessionCreateTool()
 
@@ -590,6 +601,20 @@ class ToolManager:
         ):
             self._tools[_cls.name()] = _cls()
 
+    def _register_puppygarden_api_tool(self) -> None:
+        """
+        Auto-register ``puppygarden_api``.
+
+        Framework-owned and always available so any agent can call the
+        PuppyGarden task REST API (``/v1/agent-tasks`` / ``/v1/task-events`` /
+        ``/v1/task-items``) without shelling out to curl. The class is
+        schema-only; execution lives in the runner's
+        ``_PUPPYGARDEN_API_TOOLS`` dispatch branch
+        (``omnigent/runner/tool_dispatch.py``), which needs the runner's
+        ``server_client`` that ``ToolContext`` does not carry.
+        """
+        self._tools[PuppyGardenApiTool.name()] = PuppyGardenApiTool()
+
     def _register_os_env_tools(self) -> None:
         """
         Register ``sys_os_*`` tools when the spec declares ``os_env``.
@@ -657,7 +682,14 @@ class ToolManager:
             SysTerminalSendTool,
         )
 
-        registry = get_terminal_registry()
+        try:
+            registry = get_terminal_registry()
+        except RuntimeError:
+            _logger.warning(
+                "Default interactive terminals are unavailable because the "
+                "runtime is not initialized"
+            )
+            return
         for tool in (
             SysTerminalLaunchTool(spec=self._spec, registry=registry),
             SysTerminalSendTool(registry=registry),

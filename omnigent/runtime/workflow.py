@@ -528,10 +528,9 @@ def configure_agent_harness_with_provider(
       gateway vars. For codex, pin the built-in ``openai`` provider
       (``HARNESS_CODEX_MODEL_PROVIDER``) so a custom default in the user's
       ``~/.codex/config.toml`` cannot shadow the subscription.
-    - ``cli-config`` — pin the entry's ``model_provider``
-      (``HARNESS_CODEX_MODEL_PROVIDER``); the provider table + credential
-      come from the user's ``~/.codex/config.toml``, which the executor
-      bridges into the per-session ``CODEX_HOME``. Codex harness only.
+    - ``cli-config`` — pin the entry's ``model_provider`` for Codex. A
+      Databricks AI Gateway entry is also translated into the native gateway
+      transport for Pi and OpenAI Agents.
     - ``databricks`` — delegate to the existing ucode path keyed on the
       provider's profile, reusing :func:`configure_agent_harness_with_ucode`
       so the ``polly`` / Databricks coding-agent flow is unchanged.
@@ -595,22 +594,16 @@ def configure_agent_harness_with_provider(
         return
 
     if entry.kind == CLI_CONFIG_KIND:
-        # The pi harness consumes both families and can route a cli-config
-        # Databricks AI Gateway (the gateway's Anthropic Messages surface is one
-        # Pi speaks natively) — the same provider pi-native routes via
-        # ``_cli_config_pi_provider``. Translate it into the pi gateway
-        # transport rather than failing loud; a non-Databricks cli-config is
-        # never selected for pi (see ``default_provider_for_harness``), so it
-        # won't reach here.
         if harness_type == "pi":
             _apply_cli_config_databricks_to_pi(env, entry)
             return
+        if harness_type == "openai-agents-sdk":
+            _apply_cli_config_databricks_to_openai_agents(env, entry)
+            return
         # A custom model provider defined (and authenticated) by the codex
         # CLI's own config.toml: pin it by name; the executor's bridged
-        # config.toml carries the provider table + credential. Only the
-        # codex harness reads that file — openai-agents-sdk / claude-sdk
-        # cannot consume a codex provider table, so fail loud rather than
-        # launch them credential-less.
+        # config.toml carries the provider table + credential. Claude SDK
+        # cannot consume this OpenAI-compatible transport.
         if harness_type != "codex":
             raise OmnigentError(
                 f"provider {entry.name!r} (kind 'cli-config') pins a provider in "
@@ -891,6 +884,34 @@ def _apply_provider_to_pi(env: dict[str, str], entry: ProviderEntry) -> None:
         env["HARNESS_PI_MODEL"] = auth_source.default_model
     if "HARNESS_PI_MODEL" not in env:
         env["HARNESS_PI_MODEL"] = _catalog_default_model(auth_family)
+
+
+def _apply_cli_config_databricks_to_openai_agents(
+    env: dict[str, str],
+    entry: ProviderEntry,
+) -> None:
+    """Translate a Codex Databricks gateway provider for OpenAI Agents."""
+    from omnigent.pi_native_credentials import _cli_config_databricks_transport
+
+    transport = _cli_config_databricks_transport(entry)
+    if transport is None:
+        raise OmnigentError(
+            f"provider {entry.name!r} (kind 'cli-config') cannot drive the "
+            "'openai-agents-sdk' harness because its Codex provider table is not "
+            "a resolvable Databricks AI Gateway. Check ~/.codex/config.toml or "
+            "configure a key/gateway provider in ~/.omnigent/config.yaml.",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    assert transport.auth_command is not None
+    env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] = transport.base_url
+    env["HARNESS_OPENAI_AGENTS_GATEWAY_HOST"] = _origin_of(transport.base_url)
+    env["HARNESS_OPENAI_AGENTS_GATEWAY_AUTH_COMMAND"] = transport.auth_command
+    if "HARNESS_OPENAI_AGENTS_MODEL" not in env:
+        env["HARNESS_OPENAI_AGENTS_MODEL"] = _resolve_catalog_default_model(
+            "databricks",
+            "openai",
+            context=f"provider {entry.name!r}",
+        )
 
 
 def _apply_cli_config_databricks_to_pi(env: dict[str, str], entry: ProviderEntry) -> None:
@@ -1759,6 +1780,18 @@ def _set_openai_agents_reasoning_item_id_policy_env(
     env["HARNESS_OPENAI_AGENTS_REASONING_ITEM_ID_POLICY"] = value
 
 
+def _openai_agents_uses_responses(model: str | None, configured: object | None) -> bool:
+    """Resolve the OpenAI Agents wire protocol using the harness's defaults."""
+    if configured is not None:
+        return _config_flag_is_true(configured)
+    if model is None:
+        return True
+    normalized = model.lower()
+    if normalized.startswith("databricks/"):
+        normalized = normalized.removeprefix("databricks/")
+    return not (normalized.startswith("databricks-") and "gpt" not in normalized)
+
+
 def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     """
     Build the env-var dict the openai-agents harness wrap reads.
@@ -1793,6 +1826,14 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     env: dict[str, str] = {}
     model = _resolve_spec_model(spec)
     if model is not None:
+        # Map catalog aliases (databricks-glm-5-2) to the system.ai.* spelling
+        # the AI Gateway serves. Native harnesses do this at launch; the
+        # in-process SDK path doesn't, so apply it here. A resolved system.ai.*
+        # id also flips use_responses on (it's no longer a databricks- non-GPT
+        # model), matching the Responses-only wire system.ai.glm-5-2 speaks.
+        from omnigent.server.smart_routing import apply_servable_alias
+
+        model = apply_servable_alias(model)
         env["HARNESS_OPENAI_AGENTS_MODEL"] = model
     _set_openai_agents_reasoning_item_id_policy_env(
         env,
@@ -1810,7 +1851,13 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     #    up), so it returns early. A spec's explicit ``use_responses`` still
     #    wins over the provider's wire_api.
     provider = _resolve_provider_for_build(spec, harness_type="openai-agents-sdk", for_launch=True)
-    if provider is not None:
+    # A CLI ``subscription`` provider (claude/codex login) carries no API
+    # credentials for the in-process SDK harness — applying it leaves the env
+    # empty and short-circuits the global Databricks / api_key auth below.
+    # Only let credential-bearing providers (key/gateway/local/databricks/
+    # cli-config) take the early return; fall through for subscription so
+    # the global auth / auto-Databricks path can resolve a real endpoint.
+    if provider is not None and provider.kind != SUBSCRIPTION_KIND:
         configure_agent_harness_with_provider(env, provider, harness_type="openai-agents-sdk")
         use_responses = spec.executor.config.get("use_responses")
         if use_responses is not None:
@@ -1880,6 +1927,15 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
         ucode_profile,
         harness_type="openai-agents-sdk",
     )
+    # ucode's OpenAI Agents entry normally points at the Responses-only
+    # Codex gateway. Chat Completions models such as databricks-kimi-* need
+    # the sibling OpenAI gateway when selected as a per-session override.
+    if not _openai_agents_uses_responses(model, use_responses):
+        gateway_host = env.get("HARNESS_OPENAI_AGENTS_GATEWAY_HOST")
+        if gateway_host:
+            env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] = (
+                f"{gateway_host.rstrip('/')}/ai-gateway/openai/v1"
+            )
     return env
 
 
@@ -2750,9 +2806,9 @@ async def compact_conversation_now(
         content_cache={},
         conversation_id=conversation_id,
     )
-    from omnigent.llms.context_window import get_model_context_window
+    from omnigent.omniharness_model_catalog import get_omniharness_context_window
 
-    context_window = get_model_context_window(effective_llm_config.model)
+    context_window = get_omniharness_context_window(effective_llm_config.model)
     result = await compact(
         messages,
         history,

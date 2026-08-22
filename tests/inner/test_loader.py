@@ -667,6 +667,51 @@ class TestInstructionsField(unittest.TestCase):
             self.assertIsNone(a.instructions)
             self.assertEqual(a.prompt, "hi")
 
+    def test_instructions_include_appends_bundle_files_to_prompt(self):
+        """Included manuals become part of the resolved system instructions."""
+        yaml_content = (
+            "name: included\n"
+            "prompt: Base role prompt\n"
+            "instructions_include:\n"
+            "  - docs/README.md\n"
+            "  - docs/ROLE.md\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "docs").mkdir()
+            (root / "docs" / "README.md").write_text("Manual index")
+            (root / "docs" / "ROLE.md").write_text("Role details")
+            yaml_path = root / "agent.yaml"
+            yaml_path.write_text(yaml_content)
+
+            agent = load_agent_def(str(yaml_path))
+
+        self.assertEqual(
+            agent.instructions,
+            "Base role prompt\n\nManual index\n\nRole details",
+        )
+        self.assertEqual(agent.prompt, "Base role prompt")
+
+    def test_instructions_include_rejects_files_outside_bundle(self):
+        """Included paths cannot read files outside the agent bundle."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "secret.md").write_text("TOP SECRET")
+            bundle = root / "bundle"
+            bundle.mkdir()
+            yaml_path = bundle / "agent.yaml"
+            yaml_path.write_text(
+                "name: included\n"
+                "prompt: Base role prompt\n"
+                "instructions_include: ../secret.md\n"
+            )
+
+            agent = load_agent_def(str(yaml_path))
+
+        self.assertIsNone(agent.instructions)
+        self.assertEqual(agent.prompt, "Base role prompt")
+        self.assertNotIn("TOP SECRET", agent.instructions or "")
+
     def test_instructions_resolves_relative_to_yaml_dir_not_cwd(self):
         """Path resolution anchors on the YAML's parent dir, not os.getcwd().
 

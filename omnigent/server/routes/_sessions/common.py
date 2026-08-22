@@ -35,12 +35,14 @@ from omnigent.harness_plugins import (
     harness_capabilities,
 )
 from omnigent.runner.routing import RunnerRouter
-from omnigent.server.host_registry import HostRegistry
+from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
+from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.schemas import (
     McpServerStartup,
     SandboxStatus,
     ServerStreamEvent,
     SkillSummary,
+    WorktreeStatus,
 )
 from omnigent.spec.types import (
     StateUpdate,
@@ -515,6 +517,9 @@ _session_terminal_pending_cache: dict[str, bool] = {}
 _session_sandbox_status_cache: dict[str, SandboxStatus] = {}
 
 
+_session_worktree_status_cache: dict[str, WorktreeStatus] = {}
+
+
 _session_mcp_startup_cache: dict[str, dict[str, McpServerStartup]] = {}
 
 
@@ -658,6 +663,19 @@ _SUBAGENT_FORWARD_RECONNECT_WAIT_S = 5.0
 _managed_launch_tasks: set[asyncio.Task[None]] = set()
 
 
+# Bridge from session status changes to the agent queue system. Set by
+# ``configure_queue_status_feed`` at app startup; the publish path calls
+# ``notify`` for every status change so non-worker roles (broker, manager)
+# get their in-flight item completed when the session returns to idle/failed.
+_queue_status_feed: Any = None
+
+
+def configure_queue_status_feed(feed: Any) -> None:
+    """Register or clear the global queue status feed."""
+    global _queue_status_feed
+    _queue_status_feed = feed
+
+
 _RUNNER_SESSION_INIT_TIMEOUT_S = 10.0
 
 
@@ -792,6 +810,33 @@ def set_server_host_registry(host_registry: HostRegistry | None) -> None:
 def get_server_host_registry() -> HostRegistry | None:
     """Return the registry stashed by :func:`set_server_host_registry`."""
     return _server_host_registry
+
+
+# Bundled host/tunnel/exit-report registries for background runner launch
+# paths (broker dispatch, worker ensure) that run outside request scope.
+@dataclass(frozen=True)
+class ServerRunnerInfrastructure:
+    """Host/tunnel registries used to launch runners outside request scope."""
+
+    host_registry: HostRegistry | None = None
+    tunnel_registry: TunnelRegistry | None = None
+    runner_exit_reports: RunnerExitReports | None = None
+
+
+_server_runner_infrastructure: ServerRunnerInfrastructure | None = None
+
+
+def set_server_runner_infrastructure(
+    infrastructure: ServerRunnerInfrastructure | None,
+) -> None:
+    """Stash host/tunnel registries for background runner launch paths."""
+    global _server_runner_infrastructure
+    _server_runner_infrastructure = infrastructure
+
+
+def get_server_runner_infrastructure() -> ServerRunnerInfrastructure | None:
+    """Return the registries stashed by :func:`set_server_runner_infrastructure`."""
+    return _server_runner_infrastructure
 
 
 __all__ = [
@@ -931,6 +976,7 @@ __all__ = [
     "_UI_ADDED_AGENT_TITLE_PREFIX",
     "_UPLOAD_READ_CHUNK_BYTES",
     "_WATCHER_TASKS",
+    "ServerRunnerInfrastructure",
     "_MirroredToolCall",
     "_PendingPolicyAskWrites",
     "_RelayHandle",
@@ -957,6 +1003,7 @@ __all__ = [
     "_runner_skills_cache",
     "_runner_skills_inflight",
     "_server_host_registry",
+    "_server_runner_infrastructure",
     "_server_runner_router",
     "_session_active_response_cache",
     "_session_background_task_count_cache",
@@ -965,9 +1012,12 @@ __all__ = [
     "_session_status_cache",
     "_session_terminal_pending_cache",
     "_session_todos_cache",
+    "_session_worktree_status_cache",
     "get_server_host_registry",
+    "get_server_runner_infrastructure",
     "get_server_runner_router",
     "set_server_host_registry",
+    "set_server_runner_infrastructure",
     "set_server_runner_router",
 ]
 

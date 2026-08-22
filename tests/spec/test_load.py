@@ -427,32 +427,21 @@ def test_load_omnigent_yaml_unknown_harness_hints_at_version_skew(
     assert "this client (runner) may be older than the server" in message
 
 
-def test_load_omnigent_yaml_missing_harness_omits_version_skew_hint(
+def test_load_omnigent_yaml_without_executor_is_template_like(
     tmp_path: Path,
 ) -> None:
-    """
-    The version-skew hint is gated on a harness *enum mismatch*, not on any
-    ``executor.config.harness`` failure. A *missing* harness is a plain
-    authoring mistake — the synthesized-spec error still fires (same path),
-    but it must NOT imply the client is older than the server, since no
-    unrecognized harness value is involved.
-    """
+    """Name+prompt-only omnigent YAMLs may omit harness until launch."""
     yaml_text = textwrap.dedent("""\
         name: no-harness-test
         prompt: You are a helpful assistant.
     """)
     (tmp_path / "no-harness-test.yaml").write_text(yaml_text)
 
-    with pytest.raises(OmnigentError) as excinfo:
-        load_omnigent_yaml(tmp_path / "no-harness-test.yaml")
+    spec = load_omnigent_yaml(tmp_path / "no-harness-test.yaml")
 
-    message = str(excinfo.value)
-    # Assert the exact "required when ..." variant (not just the field path):
-    # this keeps the test from passing vacuously if the default executor type
-    # ever stops routing a harness-less spec through the missing-harness branch.
-    assert "executor.config.harness" in message
-    assert "required when" in message
-    assert "this client (runner) may be older than the server" not in message
+    assert spec.name == "no-harness-test"
+    assert spec.executor.config.get("harness") in (None, "")
+    assert spec.executor.model is None
 
 
 # ── prune_invalid_sub_agents (execution-path backwards compat) ──────────

@@ -10,6 +10,7 @@ from pathlib import Path
 from omnigent.entities import LoadedAgent
 from omnigent.spec import AgentSpec
 from omnigent.spec import load as load_spec
+from omnigent.spec import resolve_session_mcp_servers
 from omnigent.stores.artifact_store import ArtifactStore
 
 
@@ -87,17 +88,26 @@ class AgentCache:
         # derived from the agent's immutable ``session_id`` provenance,
         # which never changes for a given ``agent_id``.
         if agent_id in self._specs:
-            return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
-
+            spec = self._specs[agent_id]
         # Tier 2: disk cache (directory already extracted)
-        if workdir.is_dir():
+        elif workdir.is_dir():
             spec = load_spec(workdir, expand_env=expand_env, prune_invalid_sub_agents=True)
             self._specs[agent_id] = spec
-            return LoadedAgent(spec=spec, workdir=workdir)
-
         # Cache miss — download bundle, write to temp file, extract
-        bundle_bytes = self._artifact_store.get(bundle_location)
-        return self._extract_and_cache(agent_id, bundle_bytes, workdir, expand_env=expand_env)
+        else:
+            bundle_bytes = self._artifact_store.get(bundle_location)
+            spec = self._extract_and_cache(
+                agent_id, bundle_bytes, workdir, expand_env=expand_env
+            ).spec
+
+        # The cached spec holds only bundle-owned MCP servers (inline +
+        # discovered). The external ``tools_include`` file is re-read here so
+        # a synced ~/.omnigent/mcp-servers.yaml takes effect for new sessions
+        # without a server restart. The cached (baked) spec is not mutated.
+        return LoadedAgent(
+            spec=resolve_session_mcp_servers(spec, expand_env=expand_env),
+            workdir=workdir,
+        )
 
     def replace(
         self,
@@ -156,7 +166,10 @@ class AgentCache:
             shutil.rmtree(workdir)
         staging_dir.rename(workdir)
 
-        return LoadedAgent(spec=spec, workdir=workdir)
+        return LoadedAgent(
+            spec=resolve_session_mcp_servers(spec, expand_env=expand_env),
+            workdir=workdir,
+        )
 
     def evict(self, agent_id: str) -> None:
         """

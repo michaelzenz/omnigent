@@ -48,6 +48,10 @@ const InboxPage = withPageView(
   "inbox",
   lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage }))),
 );
+const SearchPage = withPageView(
+  "search",
+  lazy(() => import("@/pages/SearchPage").then((m) => ({ default: m.SearchPage }))),
+);
 const TasksPage = withPageView(
   "tasks",
   lazy(() => import("@/pages/TasksPage").then((m) => ({ default: m.TasksPage }))),
@@ -55,6 +59,16 @@ const TasksPage = withPageView(
 const UsagePage = withPageView(
   "usage",
   lazy(() => import("@/pages/UsagePage").then((m) => ({ default: m.UsagePage }))),
+);
+const StatisticsPage = withPageView(
+  "statistics",
+  lazy(() => import("@/pages/StatisticsPage").then((m) => ({ default: m.StatisticsPage }))),
+);
+const PuppyGardenPage = lazy(() =>
+  import("@/pages/PuppyGardenPage").then((m) => ({ default: m.PuppyGardenPage })),
+);
+const GlossariesPage = lazy(() =>
+  import("@/pages/GlossariesPage").then((m) => ({ default: m.GlossariesPage })),
 );
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
@@ -153,7 +167,11 @@ function App({ basename }: AppProps = {}) {
           <Route path={prefix || "/"} element={<ChatPage />} />
           <Route path={`${prefix}/c/:conversationId`} element={<ChatPage />} />
           <Route path={`${prefix}/inbox`} element={<InboxPage />} />
+          <Route path={`${prefix}/search`} element={<SearchPage />} />
           <Route path={`${prefix}/tasks`} element={<TasksPage />} />
+          <Route path={`${prefix}/puppy-garden`} element={<PuppyGardenPage />} />
+          <Route path={`${prefix}/glossaries`} element={<GlossariesPage />} />
+          <Route path={`${prefix}/statistics`} element={<StatisticsPage />} />
           {isFeatureEnabled(info, "usage_page") && (
             <Route path={`${prefix}/usage`} element={<UsagePage />} />
           )}

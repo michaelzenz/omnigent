@@ -22,6 +22,8 @@ export const EFFORT_SELECT_NONE = "__none__";
 // Shown in the frozen Effort row when the router picks the model per turn, so
 // no effort can apply. Rendered as the Select's placeholder (value "").
 export const EFFORT_UNAVAILABLE_PLACEHOLDER = "—";
+export const PROMPT_PROFILE_AUTO = "__auto_profile__";
+export const PROMPT_PROFILE_AUTO_INCLUDE = "__auto_include_profile__";
 
 /** One entry in the Model row's harness-model list. */
 export interface RoutingModelOption {
@@ -55,6 +57,53 @@ export function nativeModelLabel(option: NativeModelLabelFields): string {
 export function defaultModelLabel(options: readonly NativeModelLabelFields[]): string {
   const dflt = options.find((option) => option.isDefault);
   return dflt ? `Default (${nativeModelLabel(dflt)})` : "Default";
+}
+
+/** Compact PromptProfile picker shared by the two OmniHarness gear modals. */
+export function PromptProfileSelect({
+  value,
+  onValueChange,
+  profiles,
+  testId,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  profiles: readonly { id: string; name: string }[];
+  testId: string;
+}) {
+  return (
+    <Select
+      value={
+        value === "auto"
+          ? PROMPT_PROFILE_AUTO
+          : value === "auto_include"
+            ? PROMPT_PROFILE_AUTO_INCLUDE
+            : value
+      }
+      onValueChange={(next) =>
+        onValueChange(
+          next === PROMPT_PROFILE_AUTO
+            ? "auto"
+            : next === PROMPT_PROFILE_AUTO_INCLUDE
+              ? "auto_include"
+              : next,
+        )
+      }
+    >
+      <SelectTrigger className="w-full" data-testid={testId} aria-label="Prompt profile">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent position="popper" align="start">
+        <SelectItem value={PROMPT_PROFILE_AUTO}>Auto Select</SelectItem>
+        <SelectItem value={PROMPT_PROFILE_AUTO_INCLUDE}>Auto Include</SelectItem>
+        {profiles.map((profile) => (
+          <SelectItem key={profile.id} value={profile.id}>
+            {profile.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 /**

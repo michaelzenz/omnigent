@@ -493,7 +493,16 @@ export async function deleteConversation(id: string, deleteBranch = false): Prom
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(id)}${query}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (typeof body.detail === "string" && body.detail) detail = body.detail;
+    } catch {
+      // Non-JSON body — keep the status-line fallback.
+    }
+    throw new Error(detail);
+  }
   // Drop any client-side queued messages for the now-deleted session; bound to
   // a dead conversation, they could never flush.
   useChatStore.getState().clearQueuedMessages(id);
@@ -787,16 +796,15 @@ export function useStopAndDeleteConversation() {
       const snapshot = await paintConversationsDeleted(queryClient, [id]);
       return { label: row ? conversationDisplayLabel(row) : null, snapshot };
     },
-    onError: (_err, { id }, context) => {
+    onError: (err, { id, deleteBranch }, context) => {
       restoreDeletedConversations(queryClient, context?.snapshot, [id]);
       // The row is back in the sidebar but nothing else marks it as failed
       // (the row unmounted when it was spliced out, taking any in-row error
       // state with it), so the toast is the only failure signal.
-      showToast(
-        context?.label
-          ? `Couldn't delete ${context.label} — it's back in the sidebar.`
-          : "Couldn't delete the session — it's back in the sidebar.",
-      );
+      const message = context?.label
+        ? `Couldn't delete ${context.label} — it's back in the sidebar.`
+        : "Couldn't delete the session — it's back in the sidebar.";
+      showToast(deleteBranch && err instanceof Error ? `${message} ${err.message}` : message);
     },
     onSuccess: (_data, { id }) => {
       finalizeDeletedConversations(queryClient, [id]);

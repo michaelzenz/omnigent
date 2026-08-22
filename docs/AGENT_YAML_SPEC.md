@@ -45,11 +45,13 @@ of the agent YAML.
 | `tools` | Optional | MCP tools, Python function tools, sub-agents, handoffs, or inherited tools. |
 | `policies` | Optional | Guardrails that inspect requests, responses, tool calls, or tool results. |
 | `params` | Optional | Typed user parameters available to tools/skills. |
-| `os_env` | Optional | Enables local OS tools such as file reads, writes, edits, and shell commands. |
-| `terminals` | Optional | Named interactive terminal environments the agent can launch. |
+| `os_env` | Optional | Overrides the default unrestricted local OS environment. Set to `null` to disable OS tools. |
+| `terminals` | Optional | Overrides the default installed-shell terminals. Set to `{}` to disable terminal tools. |
 | `async` | Optional | Whether async work tools are exposed. Defaults to `true`. |
 | `cancellable` | Optional | Whether the session can be cancelled. Defaults to `true`. |
-| `timers` | Optional | Whether timer tools are exposed. Defaults to `false`. |
+| `timers` | Optional | Whether timer tools are exposed. Defaults to `true`. |
+| `spawn` | Optional | Whether arbitrary child-session tools are exposed. Defaults to `true`. |
+| `agent_session_sharing` | Optional | Session-sharing authority. Defaults to `non-public`; `none` disables it. |
 
 ## Executor
 
@@ -193,7 +195,10 @@ Gateway setup, and compatibility details.
 
 ## Local OS access
 
-Declare `os_env` only for agents that need local file/shell tools.
+Every agent receives `sys_os_read`, `sys_os_write`, `sys_os_edit`, and
+`sys_os_shell` backed by an unrestricted caller-process environment rooted at
+`.`. Set `os_env: null` to disable them, or declare `os_env` to replace the
+default with a sandbox:
 
 ```yaml
 os_env:
@@ -401,6 +406,9 @@ policies:
 ## Terminals
 
 Terminals are named interactive shell environments that the agent can launch.
+By default, Omnigent exposes each installed interactive shell and registers all
+five `sys_terminal_*` tools. Set `terminals: {}` to disable them, or declare
+`terminals` to replace the defaults:
 
 ```yaml
 terminals:

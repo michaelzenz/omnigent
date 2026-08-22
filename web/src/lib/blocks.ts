@@ -112,11 +112,19 @@ export interface ResponseStartBlock {
  * never produces it (its consumers — terminal frontends — render the
  * user input directly, not as a block).
  */
+export interface MessageExecutionContext {
+  profile?: string | null;
+  profiles?: string[];
+  harness?: string | null;
+  model?: string | null;
+}
+
 export interface UserMessageBlock {
   type: "user_message";
   ctx: BlockContext;
   /** Same shape as `MessageItem.content` from the items API. */
   content: MessageContentBlock[];
+  executionContext?: MessageExecutionContext;
   /**
    * Stable React key for the rendered bubble, set ONLY when this block
    * was promoted from an optimistic `pendingUserMessages` entry on

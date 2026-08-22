@@ -30,6 +30,7 @@ import {
 } from "@/lib/sessionListCache";
 import { isModalHostResolved, resolveModalHost } from "@/lib/sessionHost";
 import { type SessionUpdatesFrame, sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
+import { showToast } from "@/components/ui/toast";
 
 // Coalesce bursts of structural changes / watch-set recomputes into one
 // action. 250 ms is short enough to feel live, long enough to batch the
@@ -145,6 +146,7 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
   // socket reconnects, so changes missed while disconnected are caught by
   // the post-reconnect snapshot.
   const commentsFingerprintsRef = useRef(new Map<string, string>());
+  const duplicateDaemonWarningsRef = useRef(new Set<string>());
 
   // The frame handler is installed once (effect deps are [queryClient]) but
   // the active route changes over the socket's lifetime. Keep the current
@@ -262,6 +264,12 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
       }, DEBOUNCE_MS);
     };
 
+    const invalidateConversationLists = () => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["archived-project-names"] });
+    };
+
     // See commentsFingerprintsRef: invalidate `["comments", id]` (prefix —
     // covers the per-file variants too) when a session's fingerprint moves.
     const syncCommentsFingerprints = (items: SessionListWireItem[]) => {
@@ -283,6 +291,24 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
           return;
         case "hosts_changed":
           void queryClient.invalidateQueries({ queryKey: ["hosts"] });
+          if (frame.diagnostic === "duplicate_host_daemon") {
+            const warningKey = frame.host_id ?? frame.host_name ?? "unknown";
+            if (!duplicateDaemonWarningsRef.current.has(warningKey)) {
+              duplicateDaemonWarningsRef.current.add(warningKey);
+              const host = frame.host_name ? ` “${frame.host_name}”` : "";
+              showToast(
+                <span>
+                  <strong className="text-destructive">Duplicate host daemon detected.</strong>{" "}
+                  Multiple daemons are using host{host}. Stop the extra processes and keep only one
+                  running; competing daemons can disconnect session runners.
+                </span>,
+                { duration: 0 },
+              );
+            }
+          }
+          return;
+        case "session_added":
+          invalidateConversationLists();
           return;
         case "removed":
           for (const id of frame.ids) commentsFingerprintsRef.current.delete(id);

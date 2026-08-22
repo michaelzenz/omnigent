@@ -339,6 +339,8 @@ class ConversationStore(ABC):
         title: str | None = None,
         parent_conversation_id: str | None = None,
         agent_id: str | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
         runner_id: str | None = None,
         sub_agent_name: str | None = None,
         host_id: str | None = None,
@@ -584,6 +586,8 @@ class ConversationStore(ABC):
         self,
         conversation_id: str,
         items: list[NewConversationItem],
+        *,
+        bump_updated_at: bool = True,
     ) -> list[ConversationItem]:
         """
         Append items to a conversation. Assigns a globally unique
@@ -593,6 +597,8 @@ class ConversationStore(ABC):
             e.g. ``"conv_abc123"``.
         :param items: List of :class:`NewConversationItem` objects
             to persist.
+        :param bump_updated_at: Whether these items represent user-visible
+            activity for ordering and unread indicators.
         :returns: The persisted :class:`ConversationItem` list
             with store-assigned IDs and timestamps.
         """
@@ -777,6 +783,9 @@ class ConversationStore(ABC):
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
         reported_model: str | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
+        _unset_prompt_profile: bool = False,
     ) -> Conversation | None:
         """
         Update mutable fields on a conversation.
@@ -829,6 +838,14 @@ class ConversationStore(ABC):
         :param archived: New archived state. ``True`` archives
             (hides from the default listing), ``False`` unarchives,
             ``None`` leaves unchanged.
+        :param reported_model: Model last reported by the harness.
+            ``None`` leaves unchanged.
+        :param prompt_profile_mode: Prompt-profile selection mode.
+            A non-``None`` value updates the profile configuration.
+        :param prompt_profile_id: Profile id required by ``fixed``
+            mode and omitted by automatic modes.
+        :param _unset_prompt_profile: When ``True``, clear both
+            prompt-profile fields.
         :returns: The updated :class:`Conversation`, or ``None``
             if the conversation does not exist.
         """
@@ -1064,6 +1081,53 @@ class ConversationStore(ABC):
         """
         ...
 
+    def record_usage_ledger(self, entry: dict[str, Any]) -> None:
+        """Append one immutable Omnigent model-request usage row."""
+        raise NotImplementedError
+
+    def list_usage_ledger_month(
+        self,
+        user_id: str,
+        month: str,
+    ) -> list[dict[str, Any]]:
+        """Return the caller's ledger rows for one UTC ``YYYY-MM`` month."""
+        raise NotImplementedError
+
+    def list_usage_ledger_months(self, user_id: str) -> list[str]:
+        """Return available UTC months for the caller, newest first."""
+        raise NotImplementedError
+
+    def get_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+    ) -> dict[str, Any] | None:
+        """Return one user-scoped model pricing override."""
+        del user_id, model
+        return None
+
+    def list_model_pricing_overrides(
+        self,
+        user_id: str,
+        models: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return user-scoped pricing overrides keyed by model."""
+        del user_id, models
+        return {}
+
+    def set_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+        pricing: dict[str, float | None],
+    ) -> dict[str, Any]:
+        """Create or replace one user-scoped model pricing override."""
+        raise NotImplementedError
+
+    def delete_model_pricing_override(self, user_id: str, model: str) -> bool:
+        """Delete one user-scoped model pricing override."""
+        raise NotImplementedError
+
     @abstractmethod
     def add_daily_cost(self, user_id: str, day_utc: str, delta_usd: float) -> None:
         """
@@ -1270,7 +1334,13 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
-    def replace_runner_id(self, conversation_id: str, runner_id: str) -> Conversation:
+    def replace_runner_id(
+        self,
+        conversation_id: str,
+        runner_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Replace ``conversations.runner_id`` for a conversation.
 
@@ -1284,6 +1354,9 @@ class ConversationStore(ABC):
         :param runner_id: Runner identifier to bind to,
             e.g. ``"runner_abc123"``. Online-ness is validated
             by the route before calling the store.
+        :param bump_updated_at: When ``False``, leave the content activity
+            timestamp unchanged. Infrastructure-only runner relaunches use this
+            so they do not produce unread-message indicators.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             with ``conversation_id`` exists.
@@ -1291,7 +1364,12 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
-    def clear_runner_id(self, conversation_id: str) -> Conversation:
+    def clear_runner_id(
+        self,
+        conversation_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Null out ``conversations.runner_id``.
 
@@ -1301,6 +1379,10 @@ class ConversationStore(ABC):
 
         :param conversation_id: Session/conversation identifier,
             e.g. ``"conv_abc123"``.
+        :param bump_updated_at: When ``False``, leave ``updated_at`` untouched.
+            Used by the host-reconnect liveness sweep, which nulls a stale
+            runner pin without any content change — bumping ``updated_at``
+            there would falsely light the sidebar's unseen dot.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             with ``conversation_id`` exists.
@@ -1355,6 +1437,27 @@ class ConversationStore(ABC):
             ``"runner_token_a1b2c3d4..."``.
         :returns: List of :class:`Conversation` entities with
             ``runner_id`` matching the given value.
+        """
+        ...
+
+    @abstractmethod
+    def runner_bindings_for_host(
+        self,
+        host_id: str,
+    ) -> dict[str, str | None]:
+        """
+        Return ``{conversation_id: runner_id}`` for sessions bound to *host_id*.
+
+        A lightweight metadata-only query (no label hydration) used by the
+        host-connect path to proactively invalidate stale runner bindings:
+        after a host restart the host reports ``runners=[]``, so every
+        session still pinned to a now-dead runner token is stale. Nulling
+        those bindings lets the next message relaunch immediately instead
+        of waiting out the connect grace for a token that can never register.
+
+        :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
+        :returns: Mapping of conversation id → runner id (``None`` when the
+            session is host-bound but not yet pinned to a runner).
         """
         ...
 
@@ -1592,6 +1695,24 @@ class ConversationStore(ABC):
             *source_conversation_id* exists.
         :raises ValueError: If *up_to_response_id* is set but no item in
             the source conversation has that ``response_id``.
+        """
+        ...
+
+    @abstractmethod
+    def rewind_conversation(
+        self,
+        conversation_id: str,
+        *,
+        from_message_id: str,
+    ) -> Conversation:
+        """Delete a persisted user message and every item after it.
+
+        The operation is atomic and resets the conversation's position allocator
+        to the removed message's position. Earlier items and child sessions are
+        preserved.
+
+        :raises LookupError: If the conversation or target item does not exist.
+        :raises ValueError: If the target is not a user-authored message.
         """
         ...
 

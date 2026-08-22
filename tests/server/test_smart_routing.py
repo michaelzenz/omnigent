@@ -46,10 +46,15 @@ class _FakeMessageOutput:
 
 
 @dataclass
+class _FakeToolOutput:
+    type: str = "tool_output"
+
+
+@dataclass
 class _FakeResponse:
     """Minimal stub matching omnigent.llms.types.Response."""
 
-    output: list[_FakeMessageOutput]
+    output: list[Any]
 
 
 class _FakeLLMClient:
@@ -306,6 +311,10 @@ def test_infer_models_unknown_harness() -> None:
     assert infer_models(None) is None
 
 
+def test_infer_models_supports_omnigent_profile_harness() -> None:
+    assert infer_models("omnigent") == infer_models("openai-agents")
+
+
 def test_models_fixture_unknown_harness() -> None:
     assert _models_for("cursor") is None
     assert _models_for("antigravity") is None
@@ -528,6 +537,97 @@ async def test_route_turn_uses_caps_routing_client() -> None:
 
 
 @pytest.mark.asyncio
+async def test_route_turn_applies_omnigent_prompt_and_decision_model_to_local_judge() -> None:
+    models = infer_models("openai-agents")
+    assert models
+    captured: dict[str, Any] = {}
+
+    class _RecordingLLM:
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            captured.update(kwargs)
+            verdict = {
+                "harness": "openai-agents",
+                "model": models[0],
+                "rationale": "best fit",
+            }
+            return _FakeResponse(
+                output=[_FakeMessageOutput(content=[_FakeOutputText(text=json.dumps(verdict))])]
+            )
+
+    caps = FakeCaps(routing_client=LLMRoutingClient(_RecordingLLM()))
+    with patch("omnigent.runtime._globals._caps", new=caps):
+        await route_turn(
+            "openai-agents",
+            "summarize this",
+            decision_model="databricks-gpt-5-6-luna",
+            smart_routing_prompt="Prefer concise, low-latency models.",
+        )
+
+    assert captured["model"] == "databricks-gpt-5-6-luna"
+    task_text = captured["input"][0]["content"][0]["text"]
+    assert "User request:\nsummarize this" in task_text
+    assert "Routing guidance:\nPrefer concise, low-latency models." in task_text
+
+
+@pytest.mark.asyncio
+async def test_route_turn_uses_default_guidance_when_custom_prompt_is_empty() -> None:
+    models = infer_models("openai-agents")
+    assert models
+    captured: dict[str, Any] = {}
+
+    class _RecordingLLM:
+        async def create(self, **kwargs: Any) -> _FakeResponse:
+            captured.update(kwargs)
+            verdict = {
+                "harness": "openai-agents",
+                "model": models[0],
+                "rationale": "best fit",
+            }
+            return _FakeResponse(
+                output=[_FakeMessageOutput(content=[_FakeOutputText(text=json.dumps(verdict))])]
+            )
+
+    with patch(
+        "omnigent.runtime._globals._caps",
+        new=FakeCaps(routing_client=LLMRoutingClient(_RecordingLLM())),
+    ):
+        await route_turn(
+            "openai-agents",
+            "summarize this",
+            decision_model="databricks-gpt-5-6-luna",
+            smart_routing_prompt="",
+        )
+
+    task_text = captured["input"][0]["content"][0]["text"]
+    assert "balancing capability, latency, and cost" in task_text
+
+
+@pytest.mark.asyncio
+async def test_local_judge_skips_tool_outputs_before_the_verdict_message() -> None:
+    models = ["databricks-gpt-5-6-luna"]
+    verdict = {
+        "harness": "openai-agents",
+        "model": models[0],
+        "rationale": "simple task",
+    }
+
+    class _ToolThenMessageLLM:
+        async def create(self, **_kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(
+                output=[
+                    _FakeToolOutput(),
+                    _FakeMessageOutput(content=[_FakeOutputText(text=json.dumps(verdict))]),
+                ]
+            )
+
+    client = LLMRoutingClient(_ToolThenMessageLLM())
+    result = await client.route("hello", {"openai-agents": models})
+
+    assert result is not None
+    assert result.model == models[0]
+
+
+@pytest.mark.asyncio
 async def test_route_turn_returns_none_when_no_client() -> None:
     caps = FakeCaps(routing_client=None)
     with patch(
@@ -626,6 +726,25 @@ async def test_route_turn_prefers_the_callers_session_vocabulary() -> None:
     # in the vocabulary was still dropped.
     mock_client.get.assert_not_called()
     assert routing_client.offered == [{"claude-native": ["databricks-claude-opus-5"]}]
+
+
+@pytest.mark.asyncio
+async def test_route_turn_treats_an_empty_authoritative_catalog_as_disabled() -> None:
+    routing_client = FakeRoutingClient(
+        RoutingResult(model="databricks-gpt-5-6-sol", rationale="cheap")
+    )
+    with patch(
+        "omnigent.runtime._globals._caps",
+        new=FakeCaps(routing_client=routing_client),
+    ):
+        model, verdict = await route_turn(
+            "openai-agents",
+            "hello",
+            catalog=[],
+        )
+
+    assert (model, verdict) == (None, None)
+    assert routing_client.offered == []
 
 
 @pytest.mark.asyncio
@@ -798,6 +917,100 @@ async def test_external_routing_client_sends_snake_case_and_parses() -> None:
         {"model": "claude-opus-4-8", "harness": "claude"},
         {"model": "gpt-5-5", "harness": "codex"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_route_turn_applies_omnigent_settings_to_external_router() -> None:
+    import httpx
+
+    from omnigent.server.smart_routing import ExternalRoutingClient
+
+    models = infer_models("openai-agents")
+    assert models
+    selected = models[0]
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "route_selection": [
+                    {
+                        "route_option": {
+                            "model": selected.removeprefix("databricks-"),
+                            "harness": "openai-agents",
+                        }
+                    }
+                ],
+                "rationale": "best fit",
+            },
+        )
+
+    external = ExternalRoutingClient(
+        base_url="https://host/ai-gateway/routing/v1",
+        router_name="task_v1",
+    )
+    with (
+        patch("omnigent.runtime._globals._caps", new=FakeCaps(routing_client=external)),
+        _patch_httpx(httpx.MockTransport(handler)),
+    ):
+        await route_turn(
+            "openai-agents",
+            "write tests",
+            decision_model="databricks-gpt-5-6-luna",
+            smart_routing_prompt="Prefer stronger coding models.",
+        )
+
+    body = captured["body"]
+    assert body["route_selector"]["config"]["model"] == "databricks-gpt-5-6-luna"
+    assert "User request:\nwrite tests" in body["task"]["prompt"]
+    assert "Routing guidance:\nPrefer stronger coding models." in body["task"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_route_turn_substitutes_a_disabled_sol_pick_within_omnigent_allowlist() -> None:
+    import httpx
+
+    from omnigent.server.smart_routing import ExternalRoutingClient
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "route_selection": [
+                    {
+                        "route_option": {
+                            "model": "gpt-5-6-sol",
+                            "harness": "openai-agents",
+                        }
+                    }
+                ],
+                "rationale": "simple task",
+            },
+        )
+
+    external = ExternalRoutingClient(
+        base_url="https://host/ai-gateway/routing/v1",
+        router_name="task_v1",
+    )
+    with (
+        patch("omnigent.runtime._globals._caps", new=FakeCaps(routing_client=external)),
+        _patch_httpx(httpx.MockTransport(handler)),
+    ):
+        model, verdict = await route_turn(
+            "openai-agents",
+            "hello",
+            catalog=[
+                "databricks-gpt-5-6-luna",
+                "databricks-glm-5-2",
+                "databricks-kimi-k3",
+            ],
+        )
+
+    assert model == "databricks-gpt-5-6-luna"
+    assert verdict is not None
+    assert verdict["raw_model"] == "gpt-5-6-sol"
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import sys
 from collections.abc import Callable
@@ -1956,6 +1957,33 @@ def test_host_remote_runs_auth_preflight_before_connect(
     assert result.exit_code == 0, result.output
     assert preflight == [(_HOST_DATABRICKS_SERVER, False)]
     assert connected == [_HOST_DATABRICKS_SERVER]
+
+
+def test_host_server_unix_socket_sets_expanded_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The host CLI enables UDS dialing without changing its logical URL."""
+    from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
+
+    _capture_preflight(monkeypatch)
+    connected = _patch_foreground_host(monkeypatch, tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(OMNIGENT_SERVER_UNIX_SOCKET, raising=False)
+
+    result = CliRunner().invoke(
+        cli_group,
+        [
+            "host",
+            "--server",
+            _HOST_DATABRICKS_SERVER,
+            "--server-unix-socket",
+            "~/server.sock",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert connected == [_HOST_DATABRICKS_SERVER]
+    assert os.environ[OMNIGENT_SERVER_UNIX_SOCKET] == str(tmp_path / "server.sock")
 
 
 def test_host_non_interactive_flag_forwarded_to_preflight(

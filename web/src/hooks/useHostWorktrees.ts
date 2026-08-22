@@ -31,6 +31,35 @@ export interface HostWorktree {
 interface HostWorktreesResponse {
   object: string;
   data: HostWorktree[];
+  auto_worktrees_supported?: boolean;
+}
+
+export interface HostRepositoryInspection {
+  isGitRepository: boolean;
+  worktrees: HostWorktree[];
+  autoWorktreesSupported: boolean;
+}
+
+async function fetchHostRepository(
+  hostId: string,
+  repoPath: string,
+): Promise<HostRepositoryInspection> {
+  const params = new URLSearchParams({ path: repoPath });
+  const res = await authenticatedFetch(
+    `/v1/hosts/${encodeURIComponent(hostId)}/worktrees?${params.toString()}`,
+  );
+  if (res.status === 400) {
+    return { isGitRepository: false, worktrees: [], autoWorktreesSupported: false };
+  }
+  if (!res.ok) {
+    throw new Error(`host repository inspection failed: HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as HostWorktreesResponse;
+  return {
+    isGitRepository: true,
+    worktrees: body.data,
+    autoWorktreesSupported: body.auto_worktrees_supported === true,
+  };
 }
 
 /**
@@ -80,5 +109,19 @@ export function useHostWorktrees(hostId: string | null, repoPath: string | null)
     enabled: hostId !== null && repoPath !== null && repoPath !== "",
     staleTime: 5_000,
     placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * Inspect whether a path belongs to a Git repository and, when it does,
+ * return the repository's worktrees. Unlike {@link useHostWorktrees}, this
+ * preserves the distinction between a non-Git path and a Git repository.
+ */
+export function useHostRepository(hostId: string | null, repoPath: string | null) {
+  return useQuery({
+    queryKey: ["host-repository", hostId, repoPath],
+    queryFn: () => fetchHostRepository(hostId as string, repoPath as string),
+    enabled: hostId !== null && repoPath !== null && repoPath !== "",
+    staleTime: 5_000,
   });
 }

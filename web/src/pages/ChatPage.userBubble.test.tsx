@@ -2,7 +2,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
 import { FileViewerContext } from "@/shell/FileViewerContext";
-import { BubbleView } from "./ChatPage";
+import { useChatStore } from "@/store/chatStore";
+import {
+  BubbleView,
+  nearestCrossedUserMessageId,
+  SessionRewindContext,
+  userMessageIndexNearestRoof,
+} from "./ChatPage";
 
 // UserBubble renders its text through the same markdown renderer as the
 // assistant bubble (FilePathAwareMessageResponse → Streamdown). These tests
@@ -46,6 +52,24 @@ function renderBubble(bubble: Bubble) {
   return render(
     <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
       <BubbleView bubble={bubble} />
+    </FileViewerContext.Provider>,
+  );
+}
+
+function renderEditableBubble(
+  bubble: Bubble,
+  isStickyUser = false,
+  stickyUserMessagesEnabled = true,
+) {
+  return render(
+    <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
+      <SessionRewindContext.Provider value>
+        <BubbleView
+          bubble={bubble}
+          isStickyUser={isStickyUser}
+          stickyUserMessagesEnabled={stickyUserMessagesEnabled}
+        />
+      </SessionRewindContext.Provider>
     </FileViewerContext.Provider>,
   );
 }
@@ -192,6 +216,20 @@ describe("UserBubble copy button", () => {
     expect(screen.getByRole("button", { name: "Copy" })).toHaveAttribute("data-size", "icon-xxs");
   });
 
+  it("shows the full-row background and actions only while hovered", () => {
+    renderBubble(userBubble("hover me"));
+    const bubble = screen.getByTestId("message-bubble");
+    const actions = screen.getByTestId("user-message-actions");
+
+    expect(bubble).not.toHaveClass("bg-background/95");
+    expect(actions).toHaveClass("md:opacity-0");
+    fireEvent.pointerEnter(bubble);
+    expect(bubble).toHaveClass("bg-background/95", "backdrop-blur-md");
+    expect(actions).toHaveClass("md:opacity-100");
+    fireEvent.pointerLeave(bubble);
+    expect(bubble).not.toHaveClass("bg-background/95");
+  });
+
   it("copies the message text to the clipboard when clicked", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -248,6 +286,67 @@ describe("UserBubble copy button", () => {
     }
   });
 
+  it("jumps to the message start and clears hover chrome", () => {
+    renderBubble(userBubble("jump me"));
+    const bubble = screen.getByTestId("message-bubble");
+    bubble.style.position = "sticky";
+    const scrollIntoView = vi.fn(() => {
+      expect(bubble.style.position).toBe("static");
+    });
+    bubble.scrollIntoView = scrollIntoView;
+    fireEvent.pointerEnter(bubble);
+
+    const jump = screen.getByRole("button", { name: "Jump to turn start" });
+    jump.focus();
+    fireEvent.click(jump);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "auto" });
+    expect(bubble).not.toHaveClass("bg-background/95");
+    expect(document.activeElement).not.toBe(jump);
+  });
+
+  it("aligns a sticky message with its roof so the response remains visible", () => {
+    render(
+      <div data-testid="scroll-root" style={{ overflowY: "auto" }}>
+        <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
+          <BubbleView bubble={userBubble("jump me")} />
+        </FileViewerContext.Provider>
+      </div>,
+    );
+    const scroller = screen.getByTestId("scroll-root");
+    let scrollTop = 900;
+    Object.defineProperties(scroller, {
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+      scrollHeight: { configurable: true, get: () => 2000 },
+      clientHeight: { configurable: true, get: () => 500 },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+
+    const bubble = screen.getByTestId("message-bubble");
+    bubble.style.position = "sticky";
+    bubble.style.top = "80px";
+    vi.spyOn(bubble, "getBoundingClientRect").mockImplementation(
+      () => ({ top: bubble.style.position === "static" ? -300 : 80 }) as DOMRect,
+    );
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(performance.now() + 600);
+      return 1;
+    });
+
+    fireEvent.pointerEnter(bubble);
+    fireEvent.click(screen.getByRole("button", { name: "Jump to turn start" }));
+
+    expect(scrollTop).toBe(520);
+    expect(bubble.style.position).toBe("sticky");
+    vi.restoreAllMocks();
+  });
+
   it("does not render a copy button for an attachments-only message (no text)", () => {
     renderBubble(
       userBubble("", {
@@ -255,6 +354,172 @@ describe("UserBubble copy button", () => {
       }),
     );
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+});
+
+describe("UserBubble execution summary", () => {
+  it("shows the used profile and harness/model left of the timestamp", () => {
+    renderBubble(
+      userBubble("hello", {
+        createdAtS: 1_700_000_000,
+        executionContext: {
+          profile: "research",
+          harness: "omniharness",
+          model: "databricks-gpt-5-5",
+        },
+      }),
+    );
+
+    const summary = screen.getByTestId("message-execution-summary");
+    const timestamp = screen.getByTestId("message-timestamp");
+    expect(summary.textContent).toBe("Profile: Research · omniharness / databricks-gpt-5-5");
+    expect(summary.parentElement).toBe(timestamp.parentElement);
+    expect(summary.compareDocumentPosition(timestamp) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+      0,
+    );
+  });
+
+  it("shows every included profile when the execution line remains short", () => {
+    renderBubble(
+      userBubble("hello", {
+        executionContext: {
+          profiles: ["research", "review"],
+          harness: "omniharness",
+          model: "glm",
+        },
+      }),
+    );
+
+    expect(screen.getByTestId("message-execution-summary")).toHaveTextContent(
+      "Profile: Research, Review · omniharness / glm",
+    );
+  });
+
+  it("collapses long included-profile lists to Multiple and preserves the tooltip", () => {
+    renderBubble(
+      userBubble("hello", {
+        executionContext: {
+          profiles: [
+            "managed table migration specialist",
+            "predictive optimization reviewer",
+            "storage architecture analyst",
+          ],
+          harness: "omniharness",
+          model: "databricks-gpt-5-6-luna",
+        },
+      }),
+    );
+
+    const summary = screen.getByTestId("message-execution-summary");
+    expect(summary).toHaveTextContent(
+      "Profile: Multiple · omniharness / databricks-gpt-5-6-luna",
+    );
+    expect(summary.title).toContain("Managed Table Migration Specialist");
+    expect(summary.title).toContain("Predictive Optimization Reviewer");
+  });
+});
+
+describe("UserBubble rewind editor", () => {
+  it("opens by clicking the sent text and cancels locally without rewinding", () => {
+    const rewindAndSend = vi.fn();
+    useChatStore.setState({
+      conversationId: "conv_1",
+      sessionHarness: "openai-agents",
+      boundAgentId: "agent_1",
+      rewindAndSend,
+    });
+    renderEditableBubble(userBubble("edit me"));
+
+    expect(screen.queryByRole("button", { name: "Edit and rewind" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit sent message" }));
+
+    expect(screen.getByTestId("rewind-message-editor")).toHaveValue("edit me");
+    expect(rewindAndSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("rewind-message-editor")).toBeNull();
+    expect(screen.getByText("edit me")).toBeInTheDocument();
+  });
+
+  it("clamps a sent message outside sticky mode and expands it into a large editor", () => {
+    useChatStore.setState({
+      conversationId: "conv_1",
+      sessionHarness: "openai-agents",
+      boundAgentId: "agent_1",
+      rewindAndSend: vi.fn(),
+    });
+    renderEditableBubble(userBubble("line one\nline two\nline three\nline four"));
+
+    const message = screen.getByTestId("editable-user-message");
+    expect(screen.getByTestId("user-message-text")).toHaveClass("line-clamp-6");
+    expect(screen.getByTestId("sent-message-edit-icon")).toBeInTheDocument();
+    expect(screen.getByTestId("message-bubble")).not.toHaveClass("sticky");
+    fireEvent.click(message);
+
+    const editor = screen.getByTestId("rewind-message-editor");
+    expect(editor).toHaveValue("line one\nline two\nline three\nline four");
+    expect(editor).toHaveClass("max-h-[70vh]", "resize-y");
+    expect(editor.closest("form")).toHaveClass("w-full");
+    expect(editor.closest("form")).not.toHaveClass("max-w-[640px]");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("keeps the selected sent message pinned while collapsed", () => {
+    useChatStore.setState({
+      conversationId: "conv_1",
+      sessionHarness: "openai-agents",
+      boundAgentId: "agent_1",
+      rewindAndSend: vi.fn(),
+    });
+    renderEditableBubble(userBubble("sticky text"), true);
+
+    expect(screen.getByTestId("message-bubble")).toHaveClass("sticky");
+    expect(screen.getByTestId("user-message-text")).toHaveClass("line-clamp-6");
+  });
+
+  it("keeps click-to-edit but disables clamping and pinning with the preference off", () => {
+    useChatStore.setState({
+      conversationId: "conv_1",
+      sessionHarness: "openai-agents",
+      boundAgentId: "agent_1",
+      rewindAndSend: vi.fn(),
+    });
+    renderEditableBubble(userBubble("full message"), true, false);
+
+    expect(screen.getByTestId("message-bubble")).not.toHaveClass("sticky");
+    expect(screen.getByTestId("user-message-text")).not.toHaveClass("line-clamp-6");
+    expect(screen.getByTestId("sent-message-edit-icon")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit sent message" }));
+    expect(screen.getByTestId("rewind-message-editor")).toHaveValue("full message");
+  });
+});
+
+describe("sticky user turn selection", () => {
+  it("keeps the nearest crossed turn pinned until the next reaches the roof", () => {
+    const messages = [
+      { itemId: "first", top: 40 },
+      { itemId: "second", top: 120 },
+      { itemId: "third", top: 220 },
+    ];
+
+    expect(nearestCrossedUserMessageId(messages, 80)).toBe("first");
+    expect(nearestCrossedUserMessageId(messages, 120)).toBe("second");
+  });
+});
+
+describe("previous user turn selection", () => {
+  const messages = [{ top: 100 }, { top: 500 }, { top: 1_400 }];
+
+  it("selects the current long bubble when its top is nearest above the roof", () => {
+    expect(userMessageIndexNearestRoof(messages, 1_100)).toBe(1);
+  });
+
+  it("selects the preceding bubble when the current bubble is already aligned", () => {
+    expect(userMessageIndexNearestRoof(messages, 500)).toBe(0);
+  });
+
+  it("selects the latest crossed bubble while viewing its reply", () => {
+    expect(userMessageIndexNearestRoof(messages, 1_800)).toBe(2);
   });
 });
 

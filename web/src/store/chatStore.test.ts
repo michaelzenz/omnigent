@@ -817,6 +817,55 @@ describe("chatStore — switchTo", () => {
     expect(useChatStore.getState().blocks).toHaveLength(1);
   });
 
+  it("keeps worktree progress scoped to its conversation across warm switches", async () => {
+    seedSession("conv_worktree", []);
+    seedSession("conv_other", []);
+
+    await useChatStore.getState().switchTo("conv_worktree");
+    useChatStore.setState({
+      worktreeStatus: {
+        stage: "creating",
+        branch: "feature/logs",
+        error: null,
+      },
+    });
+    handleSessionEvent({
+      type: "session_worktree_log",
+      conversationId: "conv_worktree",
+      line: "Updating files: 42%",
+    });
+
+    await useChatStore.getState().switchTo("conv_other");
+    expect(useChatStore.getState().worktreeStatus).toBeNull();
+    expect(useChatStore.getState().worktreeLogLines).toEqual([]);
+
+    await useChatStore.getState().switchTo("conv_worktree");
+    expect(useChatStore.getState().worktreeStatus).toEqual({
+      stage: "creating",
+      branch: "feature/logs",
+      error: null,
+    });
+    expect(useChatStore.getState().worktreeLogLines).toEqual(["Updating files: 42%"]);
+  });
+
+  it("leaves worktree status to snapshot polling instead of SSE ordering", async () => {
+    seedSession("conv_worktree_status", []);
+    await useChatStore.getState().switchTo("conv_worktree_status");
+    useChatStore.setState({
+      worktreeStatus: { stage: "creating", branch: "feature/status", error: null },
+    });
+
+    handleSessionEvent({
+      type: "session_worktree_status",
+      conversationId: "conv_worktree_status",
+      stage: "ready",
+      branch: "feature/status",
+      error: null,
+    });
+
+    expect(useChatStore.getState().worktreeStatus?.stage).toBe("creating");
+  });
+
   it("hydrates pendingUserMessages from the snapshot's pending_inputs (native rebind)", async () => {
     // The core fix: a native web message that hasn't round-tripped
     // through the transcript yet is replayed by the server in
@@ -3735,29 +3784,33 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       expect(errors.map((block) => block.ctx.responseId)).toEqual(["codex_turn_1", "codex_turn_2"]);
     });
 
-    it("idle clears local streaming when no active response will send response_end", () => {
-      useChatStore.setState({
-        status: "streaming",
-        activeResponse: null,
-        pendingUserMessages: [
-          { tempId: "pend_policy_denied", content: [{ type: "input_text", text: "blocked" }] },
-        ],
-      });
+    it.each(["idle", "failed", "waiting"] as const)(
+      "%s settles local streaming without clearing a lagging optimistic bubble",
+      (terminalStatus) => {
+        useChatStore.setState({
+          status: "streaming",
+          activeResponse: null,
+          pendingUserMessages: [
+            { tempId: "pend_reconnect", content: [{ type: "input_text", text: "hello again" }] },
+          ],
+        });
 
-      handleSessionEvent({
-        type: "session_status",
-        conversationId: "conv_abc",
-        status: "idle",
-      });
+        handleSessionEvent({
+          type: "session_status",
+          conversationId: "conv_abc",
+          status: terminalStatus,
+        });
 
-      const state = useChatStore.getState();
-      // INPUT policy DENY publishes running/idle without response_end or
-      // session.input.consumed. Terminal status must therefore settle the
-      // local streaming flag and drop the dangling optimistic bubble when
-      // no active response exists.
-      expect(state.status).toBe("idle");
-      expect(state.pendingUserMessages).toEqual([]);
-    });
+        const state = useChatStore.getState();
+        // Reconnect status churn may reach idle before session.input.consumed.
+        // Settle the response lifecycle but keep the stable optimistic bubble
+        // for the consumed handler to promote without a visible gap.
+        expect(state.status).toBe("idle");
+        expect(state.pendingUserMessages).toEqual([
+          { tempId: "pend_reconnect", content: [{ type: "input_text", text: "hello again" }] },
+        ]);
+      },
+    );
 
     it("idle does NOT clear the optimistic bubble on a native-terminal session", () => {
       // Native (claude/codex-native) web messages aren't persisted at POST
@@ -6604,6 +6657,34 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it("updates the context window when a model pick settles", async () => {
+    seedSession("conv_model_window", []);
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/v1/sessions/conv_model_window" && init?.method === "PATCH") {
+        return mockResponse({
+          id: "conv_model_window",
+          agent_id: "agent_xyz",
+          status: "idle",
+          created_at: 0,
+          items: [],
+          model_override: "databricks-glm-5-2",
+          context_window: 1_000_000,
+          context_window_is_estimate: true,
+        });
+      }
+      return defaultFetchHandler(input, init);
+    });
+
+    await useChatStore.getState().switchTo("conv_model_window");
+    useChatStore.setState({ contextWindow: 128_000, tokensUsed: 117_068 });
+    await useChatStore.getState().setModel("databricks-glm-5-2");
+
+    expect(useChatStore.getState().contextWindow).toBe(1_000_000);
+    expect(useChatStore.getState().contextWindowIsEstimate).toBe(true);
+    expect(useChatStore.getState().tokensUsed).toBe(117_068);
   });
 
   it("lets only the newest model pick settle the persisted sticky preference", async () => {
@@ -10279,6 +10360,60 @@ describe("chatStore — client-side message queue", () => {
     useChatStore.setState({ conversationId: null });
     useChatStore.getState().enqueueMessage("orphan", undefined);
     expect(useChatStore.getState().queuedMessages).toEqual([]);
+  });
+
+  it("enqueueDraft keeps an idle draft in the strip without sending it", () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      conversationId: "conv_abc",
+      boundAgentId: "agent_xyz",
+      status: "idle",
+      sessionStatus: "idle",
+      send: sendSpy,
+      queuedMessages: [],
+    });
+
+    useChatStore.getState().enqueueDraft("send this later", undefined);
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queuedMessages).toMatchObject([
+      {
+        text: "send this later",
+        conversationId: "conv_abc",
+        kind: "draft",
+      },
+    ]);
+  });
+
+  it("auto-flush skips drafts and sends the first queued message behind them", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      conversationId: "conv_abc",
+      boundAgentId: "agent_xyz",
+      status: "idle",
+      sessionStatus: "idle",
+      send: sendSpy,
+      queuedMessages: [
+        {
+          queueId: "q_draft",
+          text: "hold me",
+          conversationId: "conv_abc",
+          kind: "draft",
+        },
+        {
+          queueId: "q_message",
+          text: "send me",
+          conversationId: "conv_abc",
+          kind: "message",
+        },
+      ],
+    });
+
+    useChatStore.getState().maybeFlushQueuedHead();
+    await tick();
+
+    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual(["send me", "agent_xyz"]);
+    expect(useChatStore.getState().queuedMessages.map((m) => m.queueId)).toEqual(["q_draft"]);
   });
 
   it("dequeueMessage removes the message with the given id, keeping order", () => {

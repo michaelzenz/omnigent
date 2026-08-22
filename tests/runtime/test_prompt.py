@@ -10,6 +10,7 @@ from omnigent.entities import ConversationItem, FunctionCallOutputData
 from omnigent.runtime.prompt import (
     append_framework_instructions,
     build_instructions,
+    compose_omniharness_instructions,
     history_to_input_items,
 )
 from omnigent.spec import AgentSpec
@@ -25,6 +26,14 @@ def _output_item(output: str) -> ConversationItem:
         type="function_call_output",
         data=FunctionCallOutputData(call_id="c1", output=output),
     )
+
+
+def test_omniharness_system_prompt_precedes_profile() -> None:
+    assert (
+        compose_omniharness_instructions("Global prompt", "Profile prompt")
+        == "Global prompt\n\nProfile prompt"
+    )
+    assert compose_omniharness_instructions("", None) is None
 
 
 def test_history_replay_strips_inline_base64_image() -> None:
@@ -106,6 +115,38 @@ def test_framework_instructions_append_after_custom_prompts() -> None:
     )
 
     assert result == "Agent prompt\n\nRequest prompt\n\nFramework prompt"
+
+
+def test_memory_is_after_effective_prompt_and_before_framework() -> None:
+    spec = cast(AgentSpec, SimpleNamespace(instructions="Profile prompt", skills=[]))
+
+    result = build_instructions(
+        spec,
+        None,
+        [],
+        memory_instructions="<omnigent_memory>remember</omnigent_memory>",
+        framework_instructions=("Framework prompt",),
+    )
+
+    assert result == (
+        "Profile prompt\n\n<omnigent_memory>remember</omnigent_memory>\n\nFramework prompt"
+    )
+
+
+def test_direct_profile_instructions_replace_base_without_mutating_spec() -> None:
+    spec = cast(AgentSpec, SimpleNamespace(instructions="Agent prompt", skills=[]))
+
+    result = build_instructions(
+        spec,
+        None,
+        [],
+        effective_instructions="Profile prompt",
+        memory_instructions="Memory prompt",
+        framework_instructions=("Framework prompt",),
+    )
+
+    assert result == "Profile prompt\n\nMemory prompt\n\nFramework prompt"
+    assert spec.instructions == "Agent prompt"
 
 
 def test_empty_framework_instructions_do_not_change_default() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import re
@@ -23,6 +24,8 @@ from omnigent.inner.datamodel import (
     OSEnvSandboxSpec,
     OSEnvSpec,
     TerminalEnvSpec,
+    default_os_env_spec,
+    default_terminal_env_specs,
 )
 from omnigent.spec.types import (
     DEFAULT_ASK_TIMEOUT,
@@ -238,8 +241,12 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         )
     compaction = _parse_compaction(raw.get("compaction"))
     guardrails = _parse_guardrails(raw.get("guardrails"), expand_env=expand_env)
-    os_env = _parse_os_env(raw.get("os_env"))
-    terminals = _parse_terminals(raw.get("terminals"))
+    os_env = _parse_os_env(raw.get("os_env")) if "os_env" in raw else default_os_env_spec()
+    terminals = (
+        _parse_terminals(raw.get("terminals"))
+        if "terminals" in raw
+        else default_terminal_env_specs()
+    )
     params = raw.get("params", {})
     # Top-level ``async:`` flag gates the LLM-callable async-dispatch
     # builtins (``sys_call_async``, ``sys_read_inbox``,
@@ -253,25 +260,21 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     async_enabled = bool(raw.get("async", True))
     # Top-level ``timers:`` flag gates the LLM-callable timer
     # builtins (``sys_timer_set``, ``sys_timer_cancel``).
-    # Defaults to False to match
-    # ``omnigent/inner/datamodel.py::AgentDef.timers`` — agents
-    # opt into the timer surface explicitly. See step 10 of the
-    # harness contract migration.
-    timers = bool(raw.get("timers", False))
+    # Enabled by default; ``timers: false`` remains an explicit kill switch.
+    timers = bool(raw.get("timers", True))
     # Top-level ``spawn:`` flag grants spawning OUTSIDE any declared
     # sub-agent list: ``sys_session_create`` (existing agents by id,
     # or custom bundles via config_path) plus send/close to drive the
     # children. Distinct from ``tools.agents``, which permits only
-    # the specified sub-agent types. Defaults to False — session
-    # reads stay always-on, but every write grant is explicit.
-    spawn = bool(raw.get("spawn", False))
+    # the specified sub-agent types. Enabled by default; ``spawn: false``
+    # suppresses arbitrary child creation.
+    spawn = bool(raw.get("spawn", True))
     # Top-level ``agent_session_sharing:`` flag is the SOLE enabler of
     # the ``sys_session_share`` tool, independent of ``spawn`` /
     # ``tools.agents`` (and unrelated to server-API / CLI sharing).
-    # ``none`` (default) leaves it unregistered; ``non-public`` allows
-    # granting named users; ``public`` also allows ``__public__``
-    # anonymous read.
-    agent_session_sharing = _parse_share_policy(raw.get("agent_session_sharing"))
+    # Named-user sharing is enabled by default. ``none`` disables the tool;
+    # ``public`` additionally allows ``__public__`` anonymous read.
+    agent_session_sharing = _parse_share_policy(raw.get("agent_session_sharing", "non-public"))
 
     # Honor ``prompt:`` as the legacy alias for ``instructions:`` (per
     # ``_OMNIGENT_SYSTEM_PROMPT_KEYS``); ``instructions:`` wins if both set.
@@ -279,10 +282,19 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     if raw_instructions is None:
         raw_instructions = raw.get("prompt")
     instructions = _resolve_instructions(root, raw_instructions)
+    included_instructions = _parse_included_instructions(raw.get("instructions_include"))
+    if included_instructions:
+        instructions = (
+            included_instructions
+            if not instructions
+            else f"{instructions}\n\n{included_instructions}"
+        )
     skills = _discover_skills(root / "skills")
     skills_filter = _parse_skills_filter(raw.get("skills"))
-    mcp_servers = _discover_mcp_servers(root / "tools" / "mcp", expand_env=expand_env)
-    mcp_servers = mcp_servers + _parse_inline_mcp_servers(raw_tools, expand_env=expand_env)
+    mcp_include_path = _extract_tools_include_path(raw.get("tools_include"))
+    discovered_mcp = _discover_mcp_servers(root / "tools" / "mcp", expand_env=expand_env)
+    inline_mcp = _parse_inline_mcp_servers(raw_tools, expand_env=expand_env)
+    mcp_servers = _merge_mcp_servers_by_name(discovered_mcp, inline_mcp)
     local_tools = _discover_local_tools(root / "tools")
     sub_agents = _discover_sub_agents(root / "agents", expand_env=expand_env)
 
@@ -301,6 +313,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         skills=skills,
         skills_filter=skills_filter,
         mcp_servers=mcp_servers,
+        mcp_include_path=mcp_include_path,
         local_tools=local_tools,
         sub_agents=sub_agents,
         async_enabled=async_enabled,
@@ -2057,6 +2070,43 @@ def _read_contained_file(root: Path, value: str) -> str | None:
     return None
 
 
+def _parse_included_instructions(include_paths: object) -> str | None:
+    """Read external instructions files referenced by ``instructions_include``.
+
+    Accepts either a single path string or a list of paths. Each file is
+    read and concatenated in order (with a blank line separator). ``~`` is
+    expanded. Missing files are warned about and skipped.
+
+    Unlike ``instructions:`` (which is bundle-relative for security), this
+    key reads from arbitrary paths — intended for built-in agents whose
+    manuals live outside the bundle.
+
+    :param include_paths: The raw ``instructions_include`` value — a
+        string path or a list of string paths.
+    :returns: The concatenated file contents, or ``None`` if no files
+        resolved.
+    """
+    if isinstance(include_paths, str):
+        paths = [include_paths]
+    elif isinstance(include_paths, list):
+        paths = [str(p) for p in include_paths if isinstance(p, str) and p.strip()]
+    else:
+        return None
+    if not paths:
+        return None
+    parts: list[str] = []
+    for raw_path in paths:
+        resolved = Path(os.path.expanduser(raw_path.strip()))
+        if not resolved.is_file():
+            _log.warning(
+                "instructions_include file not found: %s — skipping",
+                resolved,
+            )
+            continue
+        parts.append(resolved.read_text())
+    return "\n\n".join(parts) if parts else None
+
+
 def _resolve_instructions(root: Path, raw_value: object) -> str | None:
     """
     Resolve the instructions for an agent image.
@@ -2253,6 +2303,18 @@ def discover_host_skills(
         home_skills = Path.home() / dotdir / "skills"
         if home_skills.is_dir():
             _scan_dir(home_skills)
+
+    # Optional user override tree — only when explicitly created.
+    omnigent_override = Path.home() / ".omnigent" / "skills"
+    if omnigent_override.is_dir():
+        for spec in _discover_skills(omnigent_override, skipped=skipped):
+            if spec.name in seen_names:
+                seen_names.discard(spec.name)
+                skills = [s for s in skills if s.name != spec.name]
+            if filter_names is not None and spec.name not in filter_names:
+                continue
+            seen_names.add(spec.name)
+            skills.append(spec)
 
     if skipped:
         dest = getattr(sys.stderr, "_original_stderr", sys.stderr)
@@ -2615,6 +2677,105 @@ def _parse_inline_mcp_servers(
             )
         )
     return servers
+
+
+def _extract_tools_include_path(include_path: object) -> str | None:
+    """Return the ``~``-expanded ``tools_include`` path, or ``None``.
+
+    The path is recorded on the spec at parse time but NOT resolved — the
+    referenced file lives outside the bundle and is read fresh at session
+    load by :func:`resolve_session_mcp_servers`.
+    """
+    if not isinstance(include_path, str) or not include_path.strip():
+        return None
+    return os.path.expanduser(include_path.strip())
+
+
+def resolve_session_mcp_servers(
+    spec: AgentSpec,
+    *,
+    expand_env: bool = True,
+) -> AgentSpec:
+    """Merge default and explicit external MCP servers at session load time.
+
+    ``spec.mcp_servers`` carries only the bundle-owned inline + discovered
+    entries (immutable, cached). ``openai-agents`` specs implicitly read
+    ``~/.omnigent/mcp-servers.yaml``; an explicit ``tools_include`` is applied
+    afterward and can override matching names. External files are re-read here
+    so a sync takes effect for new sessions without a server restart.
+    """
+    include_paths: list[str] = []
+    harness = spec.executor.config.get("harness")
+    if harness == "openai-agents" or spec.executor.type == "agents_sdk":
+        default_path = Path.home() / ".omnigent" / "mcp-servers.yaml"
+        # The implicit global file is optional. An explicitly requested missing
+        # include still follows _parse_included_mcp_servers' warning path.
+        if default_path.is_file():
+            include_paths.append(str(default_path))
+    if spec.mcp_include_path and spec.mcp_include_path not in include_paths:
+        include_paths.append(spec.mcp_include_path)
+    if not include_paths:
+        return spec
+
+    layers = [spec.mcp_servers]
+    for include_path in include_paths:
+        included = _parse_included_mcp_servers(include_path, expand_env=expand_env)
+        if included:
+            layers.append(included)
+    if len(layers) == 1:
+        return spec
+    merged = _merge_mcp_servers_by_name(*layers)
+    return dataclasses.replace(spec, mcp_servers=merged)
+
+
+def _parse_included_mcp_servers(
+    include_path: object,
+    *,
+    expand_env: bool = True,
+) -> list[MCPServerConfig]:
+    """Parse MCP servers from an external file referenced by ``tools_include``.
+
+    The included file uses the same inline format as the ``tools:`` block —
+    a top-level YAML mapping whose keys are server names and values are
+    ``type: mcp`` entries. This lets multiple agent specs share one MCP
+    config file without duplicating declarations.
+
+    ``~`` is expanded so paths like ``~/.omnigent/mcp-servers.yaml`` work.
+
+    :param include_path: The raw ``tools_include`` value from config.yaml.
+        A string path to a YAML file. ``None`` or non-string returns empty.
+    :param expand_env: Whether to expand ``${VAR}`` references.
+    :returns: A list of :class:`MCPServerConfig` objects from the file,
+        or an empty list if the path is missing/invalid.
+    :raises OmnigentError: If the path is set but the file doesn't exist.
+    """
+    if not isinstance(include_path, str) or not include_path.strip():
+        return []
+    resolved = Path(os.path.expanduser(include_path.strip()))
+    if not resolved.is_file():
+        _log.warning(
+            "tools_include file not found: %s — skipping MCP server include",
+            resolved,
+        )
+        return []
+    raw = yaml.load(resolved.read_text(), Loader=_ConfigYamlLoader)
+    return _parse_inline_mcp_servers(raw, expand_env=expand_env)
+
+
+def _merge_mcp_servers_by_name(
+    *layers: list[MCPServerConfig],
+) -> list[MCPServerConfig]:
+    """Merge MCP server lists by name, later layers overriding earlier.
+
+    :param layers: Ordered lists of MCP servers (earliest = lowest priority).
+    :returns: A deduplicated list where the last definition of each
+        server name wins.
+    """
+    by_name: dict[str, MCPServerConfig] = {}
+    for layer in layers:
+        for server in layer:
+            by_name[server.name] = server
+    return list(by_name.values())
 
 
 def _discover_mcp_servers(

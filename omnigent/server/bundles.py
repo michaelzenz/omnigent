@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
+
+import yaml
 
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.spec import AgentSpec, ExtractionError, ToolRuntime, load
@@ -163,6 +167,63 @@ def validate_agent_bundle(
         _reject_uploaded_callable_tools(spec)
 
     return spec
+
+
+def edit_agent_bundle(
+    bundle_bytes: bytes,
+    *,
+    name: str,
+    description: str | None,
+    instructions: str,
+) -> bytes:
+    """Rewrite prompt-profile metadata while preserving bundle capabilities."""
+    source = io.BytesIO(bundle_bytes)
+    output = io.BytesIO()
+    with tarfile.open(fileobj=source, mode="r:gz") as archive:
+        members = archive.getmembers()
+        config_members = [
+            member
+            for member in members
+            if member.isfile() and PurePosixPath(member.name).name == "config.yaml"
+        ]
+        if len(config_members) != 1:
+            raise OmnigentError(
+                "Profile bundle must contain exactly one config.yaml",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        config_member = config_members[0]
+        config_file = archive.extractfile(config_member)
+        if config_file is None:
+            raise OmnigentError(
+                "Profile config.yaml could not be read",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        config = yaml.safe_load(config_file.read()) or {}
+        if not isinstance(config, dict):
+            raise OmnigentError(
+                "Profile config.yaml must contain a mapping",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        config["name"] = name
+        if description is None:
+            config.pop("description", None)
+        else:
+            config["description"] = description
+        if instructions:
+            config["instructions"] = instructions
+        else:
+            config.pop("instructions", None)
+        edited_config = yaml.safe_dump(config, sort_keys=False).encode()
+
+        with tarfile.open(fileobj=output, mode="w:gz") as edited:
+            for member in members:
+                if member is config_member:
+                    member.size = len(edited_config)
+                    edited.addfile(member, io.BytesIO(edited_config))
+                    continue
+                fileobj = archive.extractfile(member) if member.isfile() else None
+                edited.addfile(member, fileobj)
+    return output.getvalue()
 
 
 def bundle_location(agent_id: str, bundle_bytes: bytes) -> str:

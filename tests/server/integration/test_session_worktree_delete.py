@@ -45,6 +45,8 @@ class _FakeWebSocket:
 async def _register_fake_host(
     app: FastAPI,
     db_uri: str,
+    *,
+    remove_error: str | None = None,
 ) -> list[HostRemoveWorktreeFrame]:
     """Register a fake host and start a drain that captures remove frames.
 
@@ -75,7 +77,12 @@ async def _register_fake_host(
                 captured.append(frame)
                 fut = conn.pending_remove_worktrees.pop(frame.request_id, None)
                 if fut is not None and not fut.done():
-                    fut.set_result({"status": "ok", "error": None})
+                    fut.set_result(
+                        {
+                            "status": "error" if remove_error else "ok",
+                            "error": remove_error,
+                        }
+                    )
 
     task = asyncio.create_task(_drain())
     # Stash so the caller can stop the drain on teardown.
@@ -93,7 +100,7 @@ def _make_worktree_conversation(db_uri: str) -> str:
     conv = conv_store.create_conversation(
         agent_id=None,
         host_id=_HOST_ID,
-        workspace="/Users/alice/myrepo-worktrees/feature-login",
+        workspace="/Users/alice/.omnigent/worktrees/feature-login",
         git_branch="feature/login",
     )
     return conv.id
@@ -126,7 +133,7 @@ async def test_delete_with_flag_sends_remove_worktree(
         "0 means the delete-flow cleanup gate didn't fire; >1 means it fired twice."
     )
     frame = captured[0]
-    assert frame.worktree_path == "/Users/alice/myrepo-worktrees/feature-login"
+    assert frame.worktree_path == "/Users/alice/.omnigent/worktrees/feature-login"
     assert frame.branch == "feature/login"
     assert frame.delete_branch is True
 
@@ -151,6 +158,22 @@ async def test_delete_without_flag_sends_no_remove_worktree(
     assert resp.status_code == 200
     # Default is delete_branch=false → no cleanup.
     assert captured == []
+
+
+async def test_delete_reports_worktree_removal_failure(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A failed requested cleanup aborts deletion and preserves the session."""
+    await _register_fake_host(app, db_uri, remove_error="not a git worktree")
+    conv_id = _make_worktree_conversation(db_uri)
+
+    resp = await client.delete(f"/v1/sessions/{conv_id}?delete_branch=true")
+
+    assert resp.status_code == 409
+    assert "Failed to remove worktree" in resp.text
+    assert SqlAlchemyConversationStore(db_uri).get_conversation(conv_id) is not None
 
 
 async def test_delete_non_worktree_session_ignores_flag(

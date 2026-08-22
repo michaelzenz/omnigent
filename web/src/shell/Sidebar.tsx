@@ -17,6 +17,8 @@ import {
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BarChart3Icon,
+  BookOpenIcon,
   CheckIcon,
   CheckIcon as CheckMarkIcon,
   ChevronLeftIcon,
@@ -46,6 +48,7 @@ import {
   SmilePlusIcon,
   SquareIcon,
   SquareCheckIcon,
+  PawPrintIcon,
   SquarePenIcon,
   Trash2Icon,
   WalletIcon,
@@ -148,6 +151,7 @@ import { getCurrentUserId, resolveIdentity } from "@/lib/identity";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { getSessionState, type SessionState } from "@/hooks/useSessionState";
 import { useChatStore } from "@/store/chatStore";
+import { isBrokerSession } from "@/lib/agentTasksApi";
 import {
   isConversationUnseen,
   isExplicitlyUnread,
@@ -297,12 +301,16 @@ interface SidebarProps {
  * mount path. Instead compare the active route's last non-empty path segment,
  * which is `inbox` in both standalone and embedded modes. Conversation ids are
  * `conv_…`-prefixed, so a chat route's leaf can never collide with `inbox`.
+ * Same pattern for the PuppyGarden board at `/puppy-garden`.
  */
 function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
   isTasksPage: boolean;
   isUsagePage: boolean;
+  isStatisticsPage: boolean;
+  isPuppyGardenPage: boolean;
+  isGlossariesPage: boolean;
   newSessionProjectName: string | null;
 } {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
@@ -311,17 +319,35 @@ function useActiveNavItem(): {
   const isInboxPage = leaf === "inbox";
   const isTasksPage = leaf === "tasks";
   const isUsagePage = leaf === "usage";
+  const isStatisticsPage = leaf === "statistics";
+  const isPuppyGardenPage = leaf === "puppy-garden";
+  const isGlossariesPage = leaf === "glossaries";
   const isNewSessionRoute =
-    activeConversationId == null && !isInboxPage && !isTasksPage && !isUsagePage;
+    activeConversationId == null &&
+    !isInboxPage &&
+    !isTasksPage &&
+    !isUsagePage &&
+    !isStatisticsPage &&
+    !isPuppyGardenPage &&
+    !isGlossariesPage;
   const requestedProject = isNewSessionRoute
     ? new URLSearchParams(location.search).get("project")
     : null;
   const newSessionProjectName = requestedProject || null;
-  // Exclude inbox/tasks/usage: they also have no `:conversationId`, so they
-  // would otherwise light up the "New session" button. A project-prefilled
-  // new session belongs to that project row instead of the global nav item.
+  // Exclude inbox/tasks/usage/puppy-garden/glossaries: they also have no
+  // `:conversationId`, so they would otherwise light up the "New session"
+  // button. A project-prefilled new session belongs to that project row.
   const isNewChatPage = isNewSessionRoute && newSessionProjectName == null;
-  return { isNewChatPage, isInboxPage, isTasksPage, isUsagePage, newSessionProjectName };
+  return {
+    isNewChatPage,
+    isInboxPage,
+    isTasksPage,
+    isUsagePage,
+    isStatisticsPage,
+    isPuppyGardenPage,
+    isGlossariesPage,
+    newSessionProjectName,
+  };
 }
 
 /**
@@ -597,8 +623,16 @@ export function Sidebar({
   }
 
   // Which top-level nav button to highlight for the current route.
-  const { isNewChatPage, isInboxPage, isTasksPage, isUsagePage, newSessionProjectName } =
-    useActiveNavItem();
+  const {
+    isNewChatPage,
+    isInboxPage,
+    isTasksPage,
+    isUsagePage,
+    isStatisticsPage,
+    isPuppyGardenPage,
+    isGlossariesPage,
+    newSessionProjectName,
+  } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -936,6 +970,75 @@ export function Sidebar({
                     {inboxCount}
                   </span>
                 )}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                SIDEBAR_ROW,
+                "w-full justify-start border-0 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isPuppyGardenPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="sidebar-tab-puppy-garden"
+            >
+              <Link to="/puppy-garden" onClick={onNavClick}>
+                <PawPrintIcon
+                  className={cn(
+                    "ui-icon",
+                    isPuppyGardenPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                PuppyGarden
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                SIDEBAR_ROW,
+                "w-full justify-start border-0 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isGlossariesPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="sidebar-tab-glossaries"
+            >
+              <Link to="/glossaries" onClick={onNavClick}>
+                <BookOpenIcon
+                  className={cn(
+                    "ui-icon",
+                    isGlossariesPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                Glossaries
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                SIDEBAR_ROW,
+                "w-full justify-start border-0 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isStatisticsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="statistics-nav"
+            >
+              <Link to="/statistics" onClick={onNavClick}>
+                <BarChart3Icon
+                  className={cn(
+                    "ui-icon",
+                    isStatisticsPage
+                      ? "text-[var(--sidebar-active-foreground)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+                Statistics
               </Link>
             </Button>
             {usagePageEnabled && (
@@ -3198,6 +3301,7 @@ function ConversationRow({
   // row). The explicit override only lifts the active-row suppression, so
   // flagging the thread you're currently viewing surfaces the dot at once.
   const hasUnseenMessages =
+    !isBrokerSession(conversation.labels) &&
     isConversationUnseen(conversation.id, conversation.updated_at, conversation.status) &&
     (!isActive || isExplicitlyUnread(conversation.id));
   // "Mark as unread" is offered on any row not already showing the dot.
@@ -3699,6 +3803,10 @@ function ConversationRow({
               <p className="text-sm text-muted-foreground">
                 Optionally clean up the git worktree. These actions are{" "}
                 <span className="font-semibold text-destructive">irreversible</span>.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                You can leave this worktree in place. Omnigent will automatically reuse it the next
+                time you create a worktree.
               </p>
               <label className="flex cursor-pointer items-start gap-2 text-ui">
                 <input
@@ -4818,6 +4926,10 @@ function BulkActionBar({
               <p className="text-sm text-muted-foreground">
                 Optionally delete the local git branches for these worktree sessions. These actions
                 are <span className="font-semibold text-destructive">irreversible</span>.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                You can leave these worktrees in place. Omnigent will automatically reuse them the
+                next time you create worktrees.
               </p>
               <div className="max-h-56 overflow-y-auto">
                 <table className="w-full border-collapse text-left text-ui">

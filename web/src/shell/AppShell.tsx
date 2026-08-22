@@ -6,16 +6,18 @@ import { conversationDisplayLabel, UNTITLED_CONVERSATION_LABEL } from "./sidebar
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
 import { useSidebarToggleHotkeys } from "@/hooks/useSidebarToggleHotkeys";
-import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
+import { useCommandPaletteHotkey, useSearchHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useNewSessionHotkey } from "@/hooks/useNewSessionHotkey";
 import { useIsEmbedded } from "@/lib/embedded";
 import { AgentInfoContent, agentHasInfo } from "@/components/AgentInfo";
 import { useIdleNotifications } from "@/hooks/useIdleNotifications";
+import { PolicyConnectionWarning } from "@/hooks/PolicyConnectionWarning";
 import { useSeedReadState } from "@/hooks/useUnseenConversations";
 import { useIOSViewportLock } from "@/hooks/useIOSViewportLock";
 import { readFilesPanelPreferences, writeFilesPanelPreferences } from "@/lib/filesPanelPreferences";
 import { derivePermissionLevel, isOwnerLevel } from "@/lib/permissionsApi";
 import {
+  detachActiveBrowserView,
   isAndroidShell,
   isIOSShell,
   isMacElectronShell,
@@ -680,6 +682,15 @@ export function AppShell() {
   // browser_navigate. No-op outside Electron / with no conversation.
   useBrowserAgentRelay(conversationId);
 
+  // A native browser view paints above React. Clear it at the route boundary
+  // even if BrowserPane's own cleanup was skipped during a session switch.
+  useEffect(
+    () => () => {
+      detachActiveBrowserView();
+    },
+    [conversationId],
+  );
+
   // Clear a stale browser-view suppression left by a renderer reload/crash: the
   // main-process flag persists but this renderer's overlay count reset to 0, so
   // a dialog open across the reload would strand the pane hidden. Re-assert our
@@ -1172,6 +1183,7 @@ export function AppShell() {
   const isEmbedded = useIsEmbedded();
   useCommandPaletteHotkey(() => setCommandPaletteOpen((prev) => !prev), !isEmbedded);
   useNewSessionHotkey(!isEmbedded);
+  useSearchHotkey(() => setCommandPaletteOpen(true), !isEmbedded);
 
   // Mobile back button: close the open file and return to the files/changes
   // list. On mobile the tab strip is hidden, so a "back" should fully drop the
@@ -1944,6 +1956,7 @@ export function AppShell() {
           {/* Transient toasts (e.g. "session archived"). Mounted once here so
               any surface can fire one via showToast(). */}
           <Toaster />
+          <PolicyConnectionWarning />
         </ForkDialogContextProvider>
       </TerminalFirstContextProvider>
     </FileViewerContext.Provider>

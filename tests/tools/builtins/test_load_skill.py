@@ -131,13 +131,12 @@ def test_load_skill_rejects_non_string_name(
     assert result == "Error: 'name' must be a string"
 
 
-def test_load_skill_schema_lists_skill_names(
+def test_load_skill_schema_lists_skill_names_and_descriptions(
     skill_no_resources: SkillSpec,
     skill_with_resources: SkillSpec,
 ) -> None:
     """
-    LoadSkillTool.get_schema includes all skill names in the
-    description.
+    LoadSkillTool.get_schema includes skill names and descriptions.
     """
     tool = LoadSkillTool(
         [skill_no_resources, skill_with_resources],
@@ -145,4 +144,6 @@ def test_load_skill_schema_lists_skill_names(
     schema = tool.get_schema()
     desc = schema["function"]["description"]
     assert "summarize" in desc
+    assert "Summarizes text." in desc
     assert "code-review" in desc
+    assert "Reviews code." in desc

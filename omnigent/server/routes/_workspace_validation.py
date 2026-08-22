@@ -208,9 +208,9 @@ async def validate_workspace(
         find the live connection and send stat frames.
     :param host_id: Target host's stable id, e.g.
         ``"host_a1b2c3d4..."``.
-    :param workspace: User-supplied absolute path on the host, e.g.
-        ``"/Users/corey/universe/src/foo"``. Tilde-prefixed and
-        relative paths are rejected upstream by the request schema.
+    :param workspace: User-supplied absolute or tilde-prefixed path
+        on the host, e.g. ``"/Users/corey/universe/src/foo"`` or
+        ``"~/src/foo"``. Relative paths are rejected.
     :param spec_cwd: Value of the bound agent's ``os_env.cwd``
         from its YAML (or ``None`` when the agent has no os_env
         block). Drives boundary computation.
@@ -224,11 +224,12 @@ async def validate_workspace(
         The exception message is suitable for surfacing to the
         API caller verbatim.
     """
-    if not workspace.startswith("/") and not _is_windows_absolute_path(workspace):
-        # Belt-and-suspenders. The Pydantic schema layer also
-        # rejects this; pin it here so direct callers (tests,
-        # other server-internal paths) can't bypass.
-        raise WorkspaceValidationError("workspace must be an absolute path starting with /")
+    # Tilde-prefixed paths (e.g. "~/") are allowed — the host
+    # expands them via os.path.expanduser in its stat handler and
+    # returns the canonical absolute path. Relative paths are
+    # still rejected.
+    if not workspace.startswith(("/", "~")) and not _is_windows_absolute_path(workspace):
+        raise WorkspaceValidationError("workspace must be an absolute path or tilde-prefixed path")
 
     display_host = host_name_for_errors or host_id
 

@@ -188,13 +188,17 @@ class _ConversationStore:
         self,
         conversation_id: str,
         items: list[Any],
+        *,
+        bump_updated_at: bool = True,
     ) -> list[Any]:
         """Record appended items and return them with fake ids.
 
         :param conversation_id: The conversation id.
         :param items: Items to append.
+        :param bump_updated_at: Ignored activity marker for this in-memory stub.
         :returns: Items with fake ids assigned.
         """
+        del bump_updated_at
         import time
 
         from omnigent.entities import ConversationItem

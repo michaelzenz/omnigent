@@ -28,9 +28,12 @@ import pytest
 from omnigent.policies.builtins.routing import (
     _CACHE_KEY_PREFIX,
     _CLASSIFICATION_SCHEMA,
+    _DANGEROUS_ACTION_CHECK_PREFIX,
+    _DANGEROUS_ACTION_SCHEMA,
     _INTENT_CHECK_PREFIX,
     _INTENT_KEY,
     POLICY_REGISTRY,
+    dangerous_actions_intent_classifier,
     deny_trivial_to_expensive_model,
     intent_based_authorization,
 )
@@ -496,6 +499,7 @@ def test_registry_entry_well_formed() -> None:
     handlers = {e["handler"] for e in POLICY_REGISTRY}
     assert "omnigent.policies.builtins.routing.deny_trivial_to_expensive_model" in handlers
     assert "omnigent.policies.builtins.routing.intent_based_authorization" in handlers
+    assert "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier" in handlers
 
     trivial_entry = next(
         e
@@ -514,6 +518,19 @@ def test_registry_entry_well_formed() -> None:
     )
     assert intent_entry["kind"] == "factory"
     assert intent_entry["params_schema"]["required"] == []
+    intent_prompt = intent_entry["params_schema"]["properties"]["classification_prompt"]
+    assert intent_prompt["x-ui-widget"] == "textarea"
+    assert intent_prompt["default"]
+
+    dangerous_entry = next(
+        e
+        for e in POLICY_REGISTRY
+        if e["handler"]
+        == "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier"
+    )
+    dangerous_prompt = dangerous_entry["params_schema"]["properties"]["classification_prompt"]
+    assert dangerous_prompt["x-ui-widget"] == "textarea"
+    assert dangerous_prompt["default"]
 
 
 # ── intent_based_authorization ───────────────────────────────────────────────────────────────
@@ -618,6 +635,23 @@ async def test_intent_based_authorization_on_task_allows_and_caches() -> None:
     cache_key = next(k for k in updates if k.startswith(_INTENT_CHECK_PREFIX))
     assert updates[cache_key] == "ON_TASK"
     client._mock_create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_intent_based_authorization_forwards_custom_prompt() -> None:
+    """Installed policy instances can override the intent classifier prompt."""
+    client = _FakePolicyLLMClient(_on_task_response())
+    policy = intent_based_authorization(classification_prompt="Custom intent instructions")
+
+    await policy(
+        _tool_call_event(
+            "read_file",
+            state={_INTENT_KEY: "fix the login bug"},
+            llm_client=client,
+        )
+    )
+
+    assert client._mock_create.await_args.kwargs["instructions"] == "Custom intent instructions"
 
 
 @pytest.mark.asyncio
@@ -726,3 +760,99 @@ async def test_intent_based_authorization_classifier_failure_abstains() -> None:
         )
     )
     assert result is None
+
+
+# ── dangerous_actions_intent_classifier ─────────────────────────────────────
+
+
+def _danger_response(verdict: str, reason: str) -> _FakeResponse:
+    return _FakeResponse(json.dumps({"verdict": verdict, "reason": reason}))
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_allows_safe_call() -> None:
+    """SAFE calls proceed and cache their exact classification."""
+    client = _FakePolicyLLMClient(_danger_response("SAFE", "Read-only operation."))
+    policy = dangerous_actions_intent_classifier()
+
+    result = await policy(_tool_call_event("read_file", {"path": "/tmp/a"}, llm_client=client))
+
+    assert result is not None
+    assert result["result"] == "ALLOW"
+    update = result["state_updates"][0]
+    assert update["key"].startswith(_DANGEROUS_ACTION_CHECK_PREFIX)
+    assert update["value"]["verdict"] == "SAFE"
+    assert client._mock_create.call_args.kwargs["text"] is _DANGEROUS_ACTION_SCHEMA
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_forwards_custom_prompt() -> None:
+    """Installed policy instances can override the dangerous-action prompt."""
+    client = _FakePolicyLLMClient(_danger_response("SAFE", "Read-only operation."))
+    policy = dangerous_actions_intent_classifier(
+        classification_prompt="Custom dangerous-action instructions"
+    )
+
+    await policy(_tool_call_event("read_file", {"path": "/tmp/a"}, llm_client=client))
+
+    assert (
+        client._mock_create.await_args.kwargs["instructions"]
+        == "Custom dangerous-action instructions"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_asks_for_dangerous_call() -> None:
+    """DANGEROUS calls require approval and surface the classifier reason."""
+    client = _FakePolicyLLMClient(
+        _danger_response("DANGEROUS", "Deletes production customer records.")
+    )
+    policy = dangerous_actions_intent_classifier()
+
+    result = await policy(
+        _tool_call_event(
+            "execute_sql",
+            {"query": "DELETE FROM prod.customers"},
+            llm_client=client,
+        )
+    )
+
+    assert result is not None
+    assert result["result"] == "ASK"
+    assert result["reason"] == "Deletes production customer records."
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_fails_closed() -> None:
+    """Missing classifiers require approval instead of silently allowing."""
+    policy = dangerous_actions_intent_classifier()
+
+    result = await policy(_tool_call_event("unknown_tool", llm_client=None))
+
+    assert result is not None
+    assert result["result"] == "ASK"
+    assert "Could not assess" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_dangerous_action_classifier_uses_cached_safe_verdict() -> None:
+    """An identical cached SAFE call does not invoke the classifier again."""
+    client = _FakePolicyLLMClient(_danger_response("DANGEROUS", "Unexpected call."))
+    policy = dangerous_actions_intent_classifier()
+    tool = "read_file"
+    args = {"path": "/tmp/a"}
+    args_repr = json.dumps(args, sort_keys=True, default=str)
+    check_hash = hashlib.sha256(f"{tool}\x00{args_repr}".encode()).hexdigest()[:16]
+    cache_key = f"{_DANGEROUS_ACTION_CHECK_PREFIX}{check_hash}"
+
+    result = await policy(
+        _tool_call_event(
+            tool,
+            args,
+            state={cache_key: {"verdict": "SAFE", "reason": "Read-only."}},
+            llm_client=client,
+        )
+    )
+
+    assert result is None
+    client._mock_create.assert_not_awaited()

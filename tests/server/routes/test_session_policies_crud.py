@@ -29,6 +29,8 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
 
+_FACTORY_HANDLER = "omnigent.policies.builtins.safety.max_tool_calls_per_session"
+
 
 @pytest.fixture()
 def policy_app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
@@ -236,6 +238,69 @@ async def test_update_session_policy_toggle_enabled(
     )
     assert resp.status_code == 200
     assert resp.json()["enabled"] is False
+
+
+async def test_update_session_policy_factory_params(
+    client: httpx.AsyncClient, session_id: str
+) -> None:
+    """Factory params can be replaced, emptied, and explicitly cleared."""
+    create_resp = await client.post(
+        f"/v1/sessions/{session_id}/policies",
+        json=_policy_payload(
+            name="factory_policy",
+            type="python",
+            handler=_FACTORY_HANDLER,
+            factory_params={"limit": 10},
+        ),
+    )
+    pid = create_resp.json()["id"]
+
+    replaced = await client.patch(
+        f"/v1/sessions/{session_id}/policies/{pid}",
+        json={"factory_params": {"limit": 20}},
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["factory_params"] == {"limit": 20}
+
+    emptied = await client.patch(
+        f"/v1/sessions/{session_id}/policies/{pid}",
+        json={"factory_params": {}},
+    )
+    assert emptied.status_code == 200
+    assert emptied.json()["factory_params"] == {}
+
+    cleared = await client.patch(
+        f"/v1/sessions/{session_id}/policies/{pid}",
+        json={"factory_params": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["factory_params"] is None
+
+
+async def test_update_session_policy_rejects_invalid_factory_params_without_mutation(
+    client: httpx.AsyncClient, session_id: str
+) -> None:
+    """Invalid factory params are rejected before the stored row changes."""
+    create_resp = await client.post(
+        f"/v1/sessions/{session_id}/policies",
+        json=_policy_payload(
+            name="validated_factory_policy",
+            type="python",
+            handler=_FACTORY_HANDLER,
+            factory_params={"limit": 10},
+        ),
+    )
+    pid = create_resp.json()["id"]
+
+    response = await client.patch(
+        f"/v1/sessions/{session_id}/policies/{pid}",
+        json={"factory_params": {"limit": "many"}},
+    )
+    assert response.status_code == 400
+
+    unchanged = await client.get(f"/v1/sessions/{session_id}/policies/{pid}")
+    assert unchanged.status_code == 200
+    assert unchanged.json()["factory_params"] == {"limit": 10}
 
 
 # ── DELETE /sessions/{session_id}/policies/{policy_id} ────────────────

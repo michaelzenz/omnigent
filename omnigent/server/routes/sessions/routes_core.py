@@ -38,7 +38,9 @@ from omnigent.entities import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import conversation_uses_omniharness
 from omnigent.model_override import validate_model_override
+from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.reasoning_effort import (
     EFFORT_CLEAR_VALUES,
     EFFORT_VALUES,
@@ -137,6 +139,7 @@ from omnigent.server.routes._sessions.helpers import (
     _require_cost_control_label_authority,
     _require_permission_mode_forward,
     _reset_runner_resources_after_switch,
+    _resolve_harness,
     _same_provider_family,
     _session_status_from_cache,
     _set_read_state,
@@ -160,6 +163,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _publish_runner_recovered_status,
     _run_managed_launch,
     _spawn_archive_stop,
+    _spawn_worktree_creation_task,
 )
 from omnigent.server.schemas import (
     AutomaticSessionRenameRequest,
@@ -177,11 +181,12 @@ from omnigent.server.schemas import (
     SessionResponse,
     SessionSwitchAgentRequest,
     UpdateSessionRequest,
+    WorktreeStatus,
 )
 from omnigent.session_lifecycle import (
     labels_with_closed_status,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import (
@@ -213,6 +218,7 @@ def register_core_routes(
     host_registry: HostRegistry | None = None,
     project_store: ProjectStore | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> None:
     """Register the core session routes on router."""
 
@@ -304,6 +310,7 @@ def register_core_routes(
             file_store=file_store,
             artifact_store=artifact_store,
             background_title_coordinator=background_title_coordinator,
+            prompt_profile_store=prompt_profile_store,
         )
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
@@ -327,7 +334,14 @@ def register_core_routes(
             and body.host_id is not None
             and conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE
         )
-        if _terminal_first_create:
+        if _terminal_first_create and not (
+            body.git is not None
+            and not body.git.existing_worktree
+            and body.host_id is not None
+        ):
+            # The background worktree task sets terminal_pending right
+            # before launching the runner; setting it here would spin
+            # the Terminal pill while the worktree is still being created.
             _publish_terminal_pending(resp.id, True)
         _rc = await _get_runner_client(resp.id, runner_router)
         if _rc is not None and conv is not None:
@@ -355,6 +369,47 @@ def register_core_routes(
             await asyncio.to_thread(permission_store.ensure_user, user_id)
             await asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
             resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
+        # Start worktree creation only after the ownership grant is visible:
+        # the background task eventually calls resolve_host_launch(), which
+        # enforces that grant before launching the runner.
+        if (
+            body.git is not None
+            and not body.git.existing_worktree
+            and body.host_id is not None
+            and conv is not None
+            and conv.workspace is not None
+        ):
+            initial_prompt = body.git.branch_name_prompt or next(
+                (
+                    text
+                    for item in body.initial_items
+                    if item.type == "message"
+                    for part in item.data.get("content", [])
+                    if isinstance(part, dict)
+                    and part.get("type") == "input_text"
+                    and isinstance((text := part.get("text")), str)
+                    and text.strip()
+                ),
+                None,
+            )
+            _spawn_worktree_creation_task(
+                session_id=conv.id,
+                host_id=body.host_id,
+                source_repo=conv.workspace,
+                branch_name=body.git.branch_name,
+                base_branch=body.git.base_branch,
+                auto_fetch_base=body.git.auto_fetch_base,
+                auto_create=body.git.auto_create,
+                initial_prompt=initial_prompt,
+                user_id=user_id,
+                conversation_store=conversation_store,
+                request=request,
+            )
+            resp.worktree_status = WorktreeStatus(
+                stage="creating",
+                branch=body.git.branch_name,
+                error=None,
+            )
         # Push the new session to this user's other open tabs (see the
         # multipart path above for the rationale).
         _announce_session_added(user_id, resp.id)
@@ -448,7 +503,16 @@ def register_core_routes(
         # managed) and no runner is bound yet, authorize (caller must
         # own the host AND the session), atomically bind, then launch.
         # Same authorization path as POST /v1/hosts/{host_id}/runners.
-        if launch_host_id is not None and resp.runner_id is None:
+        # Skipped when a new worktree is being created — the background
+        # worktree task owns the runner launch in that case (the workspace
+        # isn't the worktree path yet, so launching now would run the
+        # runner in the source repo instead of the worktree).
+        _pending_worktree = (
+            body.git is not None
+            and not body.git.existing_worktree
+            and body.host_id is not None
+        )
+        if launch_host_id is not None and resp.runner_id is None and not _pending_worktree:
             host_registry = getattr(request.app.state, "host_registry", None)
             host_store_inst = getattr(request.app.state, "host_store", None)
             if host_registry is not None and host_store_inst is not None:
@@ -948,9 +1012,15 @@ def register_core_routes(
         unique_agent_ids = list({c.agent_id for c in page.data if c.agent_id is not None})
         perms_by_conv: dict[str, list[SessionPermission]]
         if permission_store is not None:
-            perms_by_conv, agent_names_by_id, child_ids_by_parent = await asyncio.gather(
+            (
+                perms_by_conv,
+                agent_names_by_id,
+                agent_role_flags_by_id,
+                child_ids_by_parent,
+            ) = await asyncio.gather(
                 asyncio.to_thread(permission_store.list_for_sessions, conv_ids),
                 asyncio.to_thread(agent_store.get_names, unique_agent_ids),
+                asyncio.to_thread(agent_store.get_role_flags, unique_agent_ids),
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
@@ -962,8 +1032,9 @@ def register_core_routes(
                 else False
             )
         else:
-            agent_names_by_id, child_ids_by_parent = await asyncio.gather(
+            agent_names_by_id, agent_role_flags_by_id, child_ids_by_parent = await asyncio.gather(
                 asyncio.to_thread(agent_store.get_names, unique_agent_ids),
+                asyncio.to_thread(agent_store.get_role_flags, unique_agent_ids),
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
@@ -979,6 +1050,7 @@ def register_core_routes(
             _build_session_list_item(
                 conv,
                 agent_names_by_id=agent_names_by_id,
+                agent_role_flags_by_id=agent_role_flags_by_id,
                 grants=perms_by_conv.get(conv.id, []),
                 user_id=user_id,
                 user_is_admin=user_is_admin,
@@ -1096,8 +1168,14 @@ def register_core_routes(
             return []
         unique_agent_ids = list({c.agent_id for c in convs if c.agent_id is not None})
         conv_ids = [c.id for c in convs]
-        agent_names_by_id, child_ids_by_parent, comments_fingerprints = await asyncio.gather(
+        (
+            agent_names_by_id,
+            agent_role_flags_by_id,
+            child_ids_by_parent,
+            comments_fingerprints,
+        ) = await asyncio.gather(
             asyncio.to_thread(agent_store.get_names, unique_agent_ids),
+            asyncio.to_thread(agent_store.get_role_flags, unique_agent_ids),
             asyncio.to_thread(
                 conversation_store.list_child_conversation_ids_by_parent,
                 conv_ids,
@@ -1109,6 +1187,7 @@ def register_core_routes(
             _build_session_list_item(
                 conv,
                 agent_names_by_id=agent_names_by_id,
+                agent_role_flags_by_id=agent_role_flags_by_id,
                 grants=perms_by_conv.get(conv.id, []),
                 user_id=user_id,
                 user_is_admin=user_is_admin,
@@ -1376,7 +1455,12 @@ def register_core_routes(
                 elif evt_type == "hosts_changed":
                     async with emit_lock:
                         try:
-                            await _send({"type": "hosts_changed"})
+                            frame: dict[str, object] = {"type": "hosts_changed"}
+                            for key in ("diagnostic", "host_id", "host_name"):
+                                value = evt.get(key)
+                                if isinstance(value, str):
+                                    frame[key] = value
+                            await _send(frame)
                         except WebSocketDisconnect:
                             raise
                         except Exception:
@@ -1802,6 +1886,30 @@ def register_core_routes(
                     code=ErrorCode.NOT_FOUND,
                 )
 
+        prompt_profile_mode: str | None = None
+        prompt_profile_id: str | None = None
+        update_prompt_profile = "prompt_profile" in body.model_fields_set
+        if update_prompt_profile and body.prompt_profile is not None:
+            if prompt_profile_store is None:
+                raise OmnigentError(
+                    "Profile selection is unavailable",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            if not conversation_uses_omniharness(conv, agent_store):
+                raise OmnigentError(
+                    "Profiles can only be changed on OmniHarness sessions",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            prompt_profile_mode = body.prompt_profile.mode
+            if body.prompt_profile.mode == "fixed":
+                prompt_profile_id = body.prompt_profile.profile_id
+                await asyncio.to_thread(
+                    load_prompt_profile_instructions,
+                    prompt_profile_id,
+                    prompt_profile_store,
+                    require_selectable=True,
+                )
+
         updated = await asyncio.to_thread(
             conversation_store.update_conversation,
             session_id,
@@ -1818,6 +1926,9 @@ def register_core_routes(
             _unset_subagent_routing_override=clear_subagent_routing,
             terminal_launch_args=terminal_launch_args,
             archived=body.archived,
+            prompt_profile_mode=prompt_profile_mode,
+            prompt_profile_id=prompt_profile_id,
+            _unset_prompt_profile=update_prompt_profile and body.prompt_profile is None,
         )
         if updated is None:
             raise _session_not_found()

@@ -1,17 +1,24 @@
 import { isNativeTerminalSession } from "@/lib/nativeCodingAgents";
+import { OMNIHARNESS_AGENT_NAME } from "@/lib/omniharnessModels";
 import type { Session } from "@/lib/types";
 
 /** Per-session cost-control switch value; `null` = unset (presents as off). */
 export type CostControlMode = "on" | "off" | null;
 
 /**
- * Whether a session is eligible for smart routing (top-level, has agent).
+ * Whether a session is eligible for per-turn smart routing.
  *
  * Callers must also check ``ServerInfo.smart_routing_enabled`` from
  * the ``/v1/info`` probe to decide whether to show the toggle — this
  * predicate only checks the session shape.
  */
 export function isCostRoutingSession(
+  session: Pick<Session, "agentName" | "parentSessionId"> | null | undefined,
+): boolean {
+  return session?.agentName === OMNIHARNESS_AGENT_NAME && session.parentSessionId == null;
+}
+
+function isTopLevelAgentSession(
   session: Pick<Session, "agentName" | "parentSessionId"> | null | undefined,
 ): boolean {
   return session?.agentName != null && session.parentSessionId == null;
@@ -75,7 +82,7 @@ export function isSubagentRoutingSession(
     | null
     | undefined,
 ): boolean {
-  if (!isCostRoutingSession(session)) return false;
+  if (!isTopLevelAgentSession(session)) return false;
   if (!isNativeTerminalSession(session)) return true;
   if (isAutoHarnessSession(session)) return true;
   return (

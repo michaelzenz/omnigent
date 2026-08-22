@@ -341,6 +341,10 @@ def build_app(resolved_config: _ResolvedConfig | None = None) -> _BuiltApp:
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
     from omnigent.stores.host_store import HostStore
+    from omnigent.stores.memory_store.sqlalchemy_store import SqlAlchemyMemoryStore
+    from omnigent.stores.model_settings_store.sqlalchemy_store import (
+        SqlAlchemyModelSettingsStore,
+    )
     from omnigent.stores.permission_store.sqlalchemy_store import (
         SqlAlchemyPermissionStore,
     )
@@ -359,7 +363,9 @@ def build_app(resolved_config: _ResolvedConfig | None = None) -> _BuiltApp:
     permission_store = SqlAlchemyPermissionStore(database_url)
     host_store = HostStore(database_url)
     policy_store = SqlAlchemyPolicyStore(database_url)
+    model_settings_store = SqlAlchemyModelSettingsStore(database_url)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(database_url)
+    memory_store = SqlAlchemyMemoryStore(database_url)
     project_store = SqlAlchemyProjectStore(database_url)
     # Fail startup loud on a malformed `sandbox:` section (an operator
     # typo should not surface as a runtime 502 on the first managed
@@ -374,7 +380,17 @@ def build_app(resolved_config: _ResolvedConfig | None = None) -> _BuiltApp:
 
     from omnigent.spec import parse_default_policies, parse_server_llm
 
-    server_llm = parse_server_llm(cfg.get("llm"))
+    model_settings = model_settings_store.get()
+    if model_settings.policy_model is None:
+        server_llm = None
+    else:
+        raw_llm = dict(cfg.get("llm")) if isinstance(cfg.get("llm"), dict) else {}
+        raw_llm["model"] = model_settings.policy_model
+        if not raw_llm.get("profile"):
+            auth = cfg.get("auth")
+            if isinstance(auth, dict) and auth.get("type") == "databricks":
+                raw_llm["profile"] = auth.get("profile")
+        server_llm = parse_server_llm(raw_llm)
 
     routing_client, routing_settings = _build_routing(cfg, server_llm)
 
@@ -422,8 +438,10 @@ def build_app(resolved_config: _ResolvedConfig | None = None) -> _BuiltApp:
         comment_store=comment_store,
         permission_store=permission_store,
         policy_store=policy_store,
+        model_settings_store=model_settings_store,
         host_store=host_store,
         scheduled_task_store=scheduled_task_store,
+        memory_store=memory_store,
         project_store=project_store,
         auth_provider=auth_provider,
         account_store=account_store,
@@ -433,6 +451,7 @@ def build_app(resolved_config: _ResolvedConfig | None = None) -> _BuiltApp:
         admins=config_str_list(cfg.get("admins")),
         allowed_domains=config_str_list(cfg.get("allowed_domains")),
         sandbox_config=sandbox_config,
+        server_config=cfg,
     )
 
     return _BuiltApp(app=app, host=resolved_config.host, port=resolved_config.port)

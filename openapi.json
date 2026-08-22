@@ -46,9 +46,48 @@
         "title": "AddCommentRequest",
         "type": "object"
       },
+      "AgentEditRequest": {
+        "description": "Editable agent-bundle fields; bundle capabilities remain unchanged.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "instructions": {
+            "maxLength": 100000,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "instructions"
+        ],
+        "title": "AgentEditRequest",
+        "type": "object"
+      },
       "AgentObject": {
         "description": "API representation of a registered agent.",
         "properties": {
+          "archived": {
+            "default": false,
+            "title": "Archived",
+            "type": "boolean"
+          },
           "builtin": {
             "default": false,
             "description": "Whether this is a server-*seeded* built-in agent (deterministic, name-derived id) as opposed to an operator/user-registered template (random id, e.g. via `omnigent server --agent`) or a session-scoped upload. The Web UI's new-session picker uses this to decide whether a same-named `omnigent run` upload may shadow the catalog entry: seeded built-ins are protected, while a user-registered template is superseded by a newer same-named upload. Always `False` for session-scoped agents.",
@@ -59,6 +98,28 @@
             "description": "Unix epoch timestamp of creation.",
             "title": "Created At",
             "type": "integer"
+          },
+          "default_harness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Harness"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
           },
           "description": {
             "anyOf": [
@@ -71,6 +132,11 @@
             ],
             "description": "Optional free-text description of the agent's purpose.",
             "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
           },
           "harness": {
             "anyOf": [
@@ -88,6 +154,22 @@
             "description": "Unique agent identifier, e.g. `\"ag_abc123\"`.",
             "title": "Id",
             "type": "string"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "is_multi_agent": {
+            "default": false,
+            "title": "Is Multi Agent",
+            "type": "boolean"
           },
           "mcp_servers": {
             "description": "MCP servers the agent is connected to (secret fields omitted). Empty list when the spec declares no MCP servers or when the bundle cannot be loaded.",
@@ -129,6 +211,11 @@
             },
             "title": "Skills",
             "type": "array"
+          },
+          "subagent_count": {
+            "default": 0,
+            "title": "Subagent Count",
+            "type": "integer"
           },
           "terminals": {
             "description": "Terminal names declared in the spec's `terminals:` block, in declaration order, e.g. `[\"shell\"]`. The Web UI gates its \"new terminal\" affordance on this list (creation is only offered for agents with terminal access) and offers these names as the launchable choices. Empty list when the spec declares no terminals or when the bundle cannot be loaded.",
@@ -221,6 +308,20 @@
           "renamed"
         ],
         "title": "AutomaticSessionRenameResponse",
+        "type": "object"
+      },
+      "Body_create_agent_v1_agents_post": {
+        "properties": {
+          "bundle": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Bundle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle"
+        ],
+        "title": "Body_create_agent_v1_agents_post",
         "type": "object"
       },
       "Body_update_session_agent_v1_sessions__session_id__agent_put": {
@@ -2251,6 +2352,16 @@
             "title": "Content",
             "type": "array"
           },
+          "execution_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageExecutionContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "interrupted": {
             "default": false,
             "description": "`True` when an assistant message is a durable partial response from an interrupted external-native turn, e.g. Codex `turn/completed` with status `\"interrupted\"`. Defaults to `False` and is omitted from serialized payloads in that case.",
@@ -2289,6 +2400,153 @@
           "content"
         ],
         "title": "MessageData",
+        "type": "object"
+      },
+      "MessageExecutionContext": {
+        "description": "Execution selections captured when a user message starts a turn.",
+        "properties": {
+          "harness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          },
+          "profiles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "title": "MessageExecutionContext",
+        "type": "object"
+      },
+      "ModelPricingOverrideRequest": {
+        "description": "Human-facing prices in USD per million tokens.",
+        "properties": {
+          "cache_read_price_per_million": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read Price Per Million"
+          },
+          "cache_write_price_per_million": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Write Price Per Million"
+          },
+          "input_price_per_million": {
+            "title": "Input Price Per Million",
+            "type": "number"
+          },
+          "output_price_per_million": {
+            "title": "Output Price Per Million",
+            "type": "number"
+          }
+        },
+        "required": [
+          "input_price_per_million",
+          "output_price_per_million"
+        ],
+        "title": "ModelPricingOverrideRequest",
+        "type": "object"
+      },
+      "ModelPricingOverrideResponse": {
+        "description": "Saved custom pricing in the same per-million units accepted by PUT.",
+        "properties": {
+          "cache_read_price_per_million": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read Price Per Million"
+          },
+          "cache_write_price_per_million": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Write Price Per Million"
+          },
+          "input_price_per_million": {
+            "title": "Input Price Per Million",
+            "type": "number"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "object": {
+            "const": "model_pricing_override",
+            "title": "Object",
+            "type": "string"
+          },
+          "output_price_per_million": {
+            "title": "Output Price Per Million",
+            "type": "number"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object",
+          "model",
+          "input_price_per_million",
+          "output_price_per_million",
+          "cache_read_price_per_million",
+          "cache_write_price_per_million",
+          "updated_at"
+        ],
+        "title": "ModelPricingOverrideResponse",
         "type": "object"
       },
       "ModelUsage": {
@@ -2835,6 +3093,226 @@
           "joined_at"
         ],
         "title": "PresenceViewer",
+        "type": "object"
+      },
+      "PromptProfileAutoIncludeSelection": {
+        "additionalProperties": false,
+        "description": "Include every suitable enabled prompt profile on each turn.",
+        "properties": {
+          "mode": {
+            "const": "auto_include",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "PromptProfileAutoIncludeSelection",
+        "type": "object"
+      },
+      "PromptProfileAutoSelection": {
+        "additionalProperties": false,
+        "description": "Select a prompt profile independently on every turn.",
+        "properties": {
+          "mode": {
+            "const": "auto",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "PromptProfileAutoSelection",
+        "type": "object"
+      },
+      "PromptProfileCreateRequest": {
+        "description": "Fields accepted when creating a prompt profile.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "instructions": {
+            "maxLength": 100000,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "instructions"
+        ],
+        "title": "PromptProfileCreateRequest",
+        "type": "object"
+      },
+      "PromptProfileFixedSelection": {
+        "additionalProperties": false,
+        "description": "Pin a session to one prompt profile.",
+        "properties": {
+          "mode": {
+            "const": "fixed",
+            "title": "Mode",
+            "type": "string"
+          },
+          "profile_id": {
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "profile_id"
+        ],
+        "title": "PromptProfileFixedSelection",
+        "type": "object"
+      },
+      "PromptProfileObject": {
+        "description": "API representation of a plain-text prompt profile.",
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instructions": {
+            "title": "Instructions",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "object": {
+            "const": "prompt_profile",
+            "default": "prompt_profile",
+            "title": "Object",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "visible": {
+            "title": "Visible",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "instructions",
+          "enabled",
+          "visible",
+          "archived",
+          "created_at"
+        ],
+        "title": "PromptProfileObject",
+        "type": "object"
+      },
+      "PromptProfilePatchRequest": {
+        "description": "Editable prompt profile fields.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "maxLength": 100000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "PromptProfilePatchRequest",
         "type": "object"
       },
       "QueuedEvent": {
@@ -3585,6 +4063,14 @@
             "title": "Needs Setup",
             "type": "boolean"
           },
+          "omniharness_model_options": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Omniharness Model Options",
+            "type": "array"
+          },
           "public_sharing_enabled": {
             "title": "Public Sharing Enabled",
             "type": "boolean"
@@ -3647,6 +4133,7 @@
           "server_version",
           "smart_routing_enabled",
           "smart_routing_sources",
+          "omniharness_model_options",
           "features",
           "harness_install_enabled",
           "installable_harnesses",
@@ -3709,6 +4196,8 @@
             "session.title": "#/components/schemas/SessionTitleEvent",
             "session.todos": "#/components/schemas/SessionTodosEvent",
             "session.usage": "#/components/schemas/SessionUsageEvent",
+            "session.worktree_log": "#/components/schemas/SessionWorktreeLogEvent",
+            "session.worktree_status": "#/components/schemas/SessionWorktreeStatusEvent",
             "turn.cancelled": "#/components/schemas/TurnCancelledEvent",
             "turn.completed": "#/components/schemas/TurnCompletedEvent",
             "turn.failed": "#/components/schemas/TurnFailedEvent",
@@ -3749,6 +4238,12 @@
           },
           {
             "$ref": "#/components/schemas/SessionSandboxStatusEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionWorktreeLogEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionWorktreeStatusEvent"
           },
           {
             "$ref": "#/components/schemas/SessionMcpStartupEvent"
@@ -4167,6 +4662,17 @@
       "SessionGitOptions": {
         "description": "Git worktree options for `POST /v1/sessions`.\n\nRequires `host_id` to be set (and therefore `workspace`, which\nis interpreted as the source repository directory). Two modes,\nselected by `existing_worktree`:\n\n- **create** (default): the server creates a git worktree on the\n  host for a new branch and starts the runner in that worktree\n  instead of the picked directory.\n- **bind** (`existing_worktree=True`): `workspace` already IS a\n  pre-existing worktree; no worktree is created. `branch_name` is\n  recorded as the session's `git_branch` for display and opt-in\n  cleanup, and `base_branch` must not be set.\n\nSee designs/SESSION_GIT_WORKTREE.md.",
         "properties": {
+          "auto_create": {
+            "default": false,
+            "title": "Auto Create",
+            "type": "boolean"
+          },
+          "auto_fetch_base": {
+            "default": false,
+            "description": "When `True`, verify `base_branch` locally and fetch once before retrying if it is unavailable. Defaults off, so Git runs directly and reports its own error.",
+            "title": "Auto Fetch Base",
+            "type": "boolean"
+          },
           "base_branch": {
             "anyOf": [
               {
@@ -4180,9 +4686,28 @@
             "title": "Base Branch"
           },
           "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "In create mode, the new branch to create and check out, e.g. `\"feature/login\"`. In bind mode, the branch already checked out in the existing worktree. Validated against git ref-format rules; invalid names fail with `invalid_input`.",
-            "title": "Branch Name",
-            "type": "string"
+            "title": "Branch Name"
+          },
+          "branch_name_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name Prompt"
           },
           "existing_worktree": {
             "default": false,
@@ -4191,9 +4716,6 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "branch_name"
-        ],
         "title": "SessionGitOptions",
         "type": "object"
       },
@@ -4463,6 +4985,12 @@
             "description": "Durable identifier of the bound agent.",
             "title": "Agent Id",
             "type": "string"
+          },
+          "agent_is_role": {
+            "default": false,
+            "description": "Whether the bound agent is reserved for a managed role profile and should be excluded from agent pickers.",
+            "title": "Agent Is Role",
+            "type": "boolean"
           },
           "agent_name": {
             "anyOf": [
@@ -5275,6 +5803,11 @@
             "description": "The model's context window size in tokens as looked up server-side from litellm's registry (or from the `AP_CONTEXT_WINDOW_OVERRIDE` env var), e.g. `200_000`. `None` when the model is not in litellm's registry and no override is set.",
             "title": "Context Window"
           },
+          "context_window_is_estimate": {
+            "default": false,
+            "title": "Context Window Is Estimate",
+            "type": "boolean"
+          },
           "cost_control_mode_override": {
             "anyOf": [
               {
@@ -5510,6 +6043,35 @@
             ],
             "title": "Project Id"
           },
+          "prompt_profile": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "auto": "#/components/schemas/PromptProfileAutoSelection",
+                    "auto_include": "#/components/schemas/PromptProfileAutoIncludeSelection",
+                    "fixed": "#/components/schemas/PromptProfileFixedSelection"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PromptProfileAutoSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromptProfileAutoIncludeSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromptProfileFixedSelection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Profile"
+          },
           "reasoning_effort": {
             "anyOf": [
               {
@@ -5704,6 +6266,16 @@
             ],
             "description": "Absolute path on disk where the runner cd's, e.g. `\"/Users/corey/universe/src/foo\"`. Set when the session was bound to a host workspace at create-time, or when the CLI captured `os.getcwd()` at session-create. Always `None` when not yet validated against a host. When a git worktree was created for the session, this is the worktree directory path.",
             "title": "Workspace"
+          },
+          "worktree_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorktreeStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5713,6 +6285,22 @@
           "created_at"
         ],
         "title": "SessionResponse",
+        "type": "object"
+      },
+      "SessionRewindRequest": {
+        "additionalProperties": false,
+        "description": "Request body for rewinding from a persisted user message.",
+        "properties": {
+          "from_message_id": {
+            "minLength": 1,
+            "title": "From Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_message_id"
+        ],
+        "title": "SessionRewindRequest",
         "type": "object"
       },
       "SessionSandboxStatusEvent": {
@@ -6323,6 +6911,119 @@
         "title": "SessionUsageEvent",
         "type": "object"
       },
+      "SessionWorktreeLogEvent": {
+        "description": "One streamed line of git output during async worktree creation.\n\nThe background worktree task relays each `HostWorktreeLogFrame` line\nto the session's SSE stream so the Web UI can append it to the\nscrolling worktree-creation log panel in real time.",
+        "properties": {
+          "conversation_id": {
+            "description": "Session identifier, e.g. `\"conv_abc123\"`.",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "line": {
+            "description": "One line of git stdout/stderr (without trailing newline). Category: **transient** (SSE-only). Not persisted; the log panel accumulates lines live and resets on session switch / reload.",
+            "title": "Line",
+            "type": "string"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "session.worktree_log",
+            "description": "Always `\"session.worktree_log\"`.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "conversation_id",
+          "line"
+        ],
+        "title": "SessionWorktreeLogEvent",
+        "type": "object"
+      },
+      "SessionWorktreeStatusEvent": {
+        "description": "Async git-worktree creation status transition.\n\nEmitted when the background worktree task starts (`creating`),\nsucceeds (`ready` \u2014 the workspace is patched and the runner is\nlaunching), or fails (`failed` + `error`).",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The branch being created, e.g. `\"feature/login\"`.",
+            "title": "Branch"
+          },
+          "conversation_id": {
+            "description": "Session identifier, e.g. `\"conv_abc123\"`.",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Failure detail when `stage == \"failed\"`. Category: **transient** (SSE + snapshot cache). A client connecting mid-creation seeds from the session snapshot's `worktree_status` field; live updates arrive off this event. `ready` evicts the cache entry.",
+            "title": "Error"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "stage": {
+            "description": "`\"creating\"`, `\"ready\"`, or `\"failed\"`.",
+            "enum": [
+              "creating",
+              "reacquiring",
+              "relocating",
+              "ready",
+              "failed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.worktree_status",
+            "description": "Always `\"session.worktree_status\"`.",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "conversation_id",
+          "stage"
+        ],
+        "title": "SessionWorktreeStatusEvent",
+        "type": "object"
+      },
       "SetCodexGoalRequest": {
         "additionalProperties": false,
         "description": "Request body for `PUT /v1/sessions/{id}/codex_goal`.",
@@ -6399,6 +7100,35 @@
         "title": "SetSharingRequest",
         "type": "object"
       },
+      "SkillCreateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "SkillCreateRequest",
+        "type": "object"
+      },
+      "SkillHarnessSettingRequest": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "SkillHarnessSettingRequest",
+        "type": "object"
+      },
       "SkillSummary": {
         "description": "Safe subset of a discovered skill for API exposure.\n\nSurfaces the skill name and one-line description so clients\n(e.g. the web composer's slash-command menu) can list which\nskills the session has access to. The full skill `content`\nis intentionally omitted \u2014 it's only loaded server-side when\nthe harness invokes the skill, and it can be large.",
         "properties": {
@@ -6418,6 +7148,92 @@
           "description"
         ],
         "title": "SkillSummary",
+        "type": "object"
+      },
+      "SkillSyncRequest": {
+        "description": "Choose one host's version and send it to the others.",
+        "properties": {
+          "source_harness": {
+            "title": "Source Harness",
+            "type": "string"
+          },
+          "source_host_id": {
+            "title": "Source Host Id",
+            "type": "string"
+          },
+          "target_host_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target host ids. Omit to sync every other registered host.",
+            "title": "Target Host Ids"
+          }
+        },
+        "required": [
+          "source_host_id",
+          "source_harness"
+        ],
+        "title": "SkillSyncRequest",
+        "type": "object"
+      },
+      "SkillVariantFilesWriteRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "SkillVariantFilesWriteRequest",
+        "type": "object"
+      },
+      "SkillVariantWriteRequest": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "SkillVariantWriteRequest",
+        "type": "object"
+      },
+      "SkillWriteRequest": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "harness": {
+            "title": "Harness",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "harness",
+          "content"
+        ],
+        "title": "SkillWriteRequest",
         "type": "object"
       },
       "SlashCommandData": {
@@ -6484,6 +7300,508 @@
           "oss"
         ],
         "title": "SmartRoutingSourcesInfo",
+        "type": "object"
+      },
+      "SshConnectionBody": {
+        "description": "One SSH connection profile in API requests.",
+        "properties": {
+          "alias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "label": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "alias"
+        ],
+        "title": "SshConnectionBody",
+        "type": "object"
+      },
+      "SshConnectionsPutRequest": {
+        "description": "Body for `PUT /v1/ssh/connections`.",
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/SshConnectionBody"
+            },
+            "title": "Connections",
+            "type": "array"
+          },
+          "package_index_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Index Url"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "SshConnectionsPutRequest",
+        "type": "object"
+      },
+      "SshTestRequest": {
+        "description": "Body for `POST /v1/ssh/test`.",
+        "properties": {
+          "alias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias"
+        ],
+        "title": "SshTestRequest",
+        "type": "object"
+      },
+      "SshTestResponse": {
+        "description": "Result of an SSH connectivity probe.",
+        "properties": {
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "SshTestResponse",
+        "type": "object"
+      },
+      "StatisticsBucket": {
+        "description": "One daily or categorical usage bucket.",
+        "properties": {
+          "cache_creation_input_tokens": {
+            "title": "Cache Creation Input Tokens",
+            "type": "integer"
+          },
+          "cache_read_input_tokens": {
+            "title": "Cache Read Input Tokens",
+            "type": "integer"
+          },
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "priced_calls": {
+            "title": "Priced Calls",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "unpriced_calls": {
+            "title": "Unpriced Calls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "calls",
+          "priced_calls",
+          "unpriced_calls",
+          "input_tokens",
+          "output_tokens",
+          "cache_read_input_tokens",
+          "cache_creation_input_tokens",
+          "total_tokens",
+          "cost_usd"
+        ],
+        "title": "StatisticsBucket",
+        "type": "object"
+      },
+      "StatisticsPricing": {
+        "description": "Current OmniHarness model price, separate from historical snapshots.",
+        "properties": {
+          "cache_read_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read Price Per Token"
+          },
+          "cache_write_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Write Price Per Token"
+          },
+          "custom_cache_read_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Cache Read Price Per Token"
+          },
+          "custom_cache_write_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Cache Write Price Per Token"
+          },
+          "custom_differs_from_service": {
+            "title": "Custom Differs From Service",
+            "type": "boolean"
+          },
+          "custom_input_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Input Price Per Token"
+          },
+          "custom_output_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Output Price Per Token"
+          },
+          "effective_cache_read_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Cache Read Price Per Token"
+          },
+          "effective_cache_write_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Cache Write Price Per Token"
+          },
+          "effective_input_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Input Price Per Token"
+          },
+          "effective_output_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Output Price Per Token"
+          },
+          "has_custom_pricing": {
+            "title": "Has Custom Pricing",
+            "type": "boolean"
+          },
+          "input_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Price Per Token"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Price Per Token"
+          },
+          "pricing_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Source"
+          },
+          "pricing_status": {
+            "enum": [
+              "known",
+              "unknown"
+            ],
+            "title": "Pricing Status",
+            "type": "string"
+          },
+          "service_cache_read_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Cache Read Price Per Token"
+          },
+          "service_cache_write_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Cache Write Price Per Token"
+          },
+          "service_input_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Input Price Per Token"
+          },
+          "service_output_price_per_token": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Output Price Per Token"
+          },
+          "service_pricing_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Pricing Source"
+          },
+          "service_pricing_status": {
+            "enum": [
+              "known",
+              "unknown"
+            ],
+            "title": "Service Pricing Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "pricing_status",
+          "pricing_source",
+          "input_price_per_token",
+          "output_price_per_token",
+          "cache_read_price_per_token",
+          "cache_write_price_per_token",
+          "service_pricing_status",
+          "service_pricing_source",
+          "service_input_price_per_token",
+          "service_output_price_per_token",
+          "service_cache_read_price_per_token",
+          "service_cache_write_price_per_token",
+          "custom_input_price_per_token",
+          "custom_output_price_per_token",
+          "custom_cache_read_price_per_token",
+          "custom_cache_write_price_per_token",
+          "effective_input_price_per_token",
+          "effective_output_price_per_token",
+          "effective_cache_read_price_per_token",
+          "effective_cache_write_price_per_token",
+          "has_custom_pricing",
+          "custom_differs_from_service"
+        ],
+        "title": "StatisticsPricing",
+        "type": "object"
+      },
+      "StatisticsResponse": {
+        "description": "Frontend contract for one UTC calendar month.",
+        "properties": {
+          "available_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Available Months",
+            "type": "array"
+          },
+          "by_model": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsBucket"
+            },
+            "title": "By Model",
+            "type": "array"
+          },
+          "by_purpose": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsBucket"
+            },
+            "title": "By Purpose",
+            "type": "array"
+          },
+          "by_workload": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsBucket"
+            },
+            "title": "By Workload",
+            "type": "array"
+          },
+          "current_pricing": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsPricing"
+            },
+            "title": "Current Pricing",
+            "type": "array"
+          },
+          "daily": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsBucket"
+            },
+            "title": "Daily",
+            "type": "array"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "object": {
+            "const": "statistics",
+            "title": "Object",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/StatisticsBucket"
+          },
+          "workload_classification_enabled": {
+            "title": "Workload Classification Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "object",
+          "month",
+          "available_months",
+          "workload_classification_enabled",
+          "totals",
+          "daily",
+          "by_model",
+          "by_purpose",
+          "by_workload",
+          "current_pricing"
+        ],
+        "title": "StatisticsResponse",
         "type": "object"
       },
       "StoreHarnessCredentialRequest": {
@@ -6851,7 +8169,7 @@
       },
       "UpdateDefaultPolicyRequest": {
         "additionalProperties": false,
-        "description": "Request body for `PATCH /v1/policies/{policy_id}`.\n\nAll fields are optional; `None` fields are left unchanged.\nUnknown fields (including `type`, which is immutable) are\nrejected with `422`.",
+        "description": "Request body for `PATCH /v1/policies/{policy_id}`.\n\nAll fields are optional. `None` leaves scalar fields unchanged;\nomitting `factory_params` leaves it unchanged while an explicit\n`null` clears it.\nUnknown fields (including `type`, which is immutable) are\nrejected with `422`.",
         "properties": {
           "enabled": {
             "anyOf": [
@@ -6864,6 +8182,19 @@
             ],
             "description": "New enabled flag. `None` leaves it unchanged.",
             "title": "Enabled"
+          },
+          "factory_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New factory kwargs. Omit to leave them unchanged, use `null` to clear them, or `{}` to set an empty mapping.",
+            "title": "Factory Params"
           },
           "handler": {
             "anyOf": [
@@ -6928,7 +8259,7 @@
       },
       "UpdateSessionPolicyRequest": {
         "additionalProperties": false,
-        "description": "Request body for `PATCH /v1/sessions/{session_id}/policies/{policy_id}`.\n\nAll fields are optional; `None` fields are left unchanged.\nUnknown fields (including `type`, which is immutable) are\nrejected with `422`.",
+        "description": "Request body for `PATCH /v1/sessions/{session_id}/policies/{policy_id}`.\n\nAll fields are optional. `None` leaves scalar fields unchanged;\nomitting `factory_params` leaves it unchanged while an explicit\n`null` clears it.\nUnknown fields (including `type`, which is immutable) are\nrejected with `422`.",
         "properties": {
           "enabled": {
             "anyOf": [
@@ -6941,6 +8272,19 @@
             ],
             "description": "New enabled flag. `None` leaves it unchanged.",
             "title": "Enabled"
+          },
+          "factory_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New factory kwargs. Omit to leave them unchanged, use `null` to clear them, or `{}` to set an empty mapping.",
+            "title": "Factory Params"
           },
           "handler": {
             "anyOf": [
@@ -7072,6 +8416,36 @@
             ],
             "description": "File this session into a first-class project (see `designs/PROJECTS_PRD.md`). A non-empty id moves the session into that project; the empty string `\"\"` unfiles it. **Omitting** the field leaves membership unchanged; an explicit `null` is rejected (400) so it can't silently unfile. Owner-only: because projects are owner-private, only the session owner may file it, and only into a project they own \u2014 the server verifies both. Independent of the legacy `omni_project` label, which is set via `labels`.",
             "title": "Project Id"
+          },
+          "prompt_profile": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "auto": "#/components/schemas/PromptProfileAutoSelection",
+                    "auto_include": "#/components/schemas/PromptProfileAutoIncludeSelection",
+                    "fixed": "#/components/schemas/PromptProfileFixedSelection"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PromptProfileAutoSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromptProfileAutoIncludeSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromptProfileFixedSelection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed prompt-profile selection. Omitted leaves selection unchanged; null clears it.",
+            "title": "Prompt Profile"
           },
           "reasoning_effort": {
             "anyOf": [
@@ -7412,6 +8786,60 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WorktreeStatus": {
+        "description": "Git-worktree creation progress for a host-bound session.\n\nCarried on the session snapshot while background worktree and runner\nlaunch is in flight or has failed; `None` for sessions without a\npending worktree and once launch succeeds.",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branch being created, e.g. `\"feature/login\"`.",
+            "title": "Branch"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Failure detail when `stage == \"failed\"`, e.g. `\"branch already exists\"`. `None` otherwise.",
+            "title": "Error"
+          },
+          "log_lines": {
+            "description": "Recent git output retained so a client that opens the session stream after creation starts does not miss early lines.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Log Lines",
+            "type": "array"
+          },
+          "stage": {
+            "description": "Current stage: `\"creating\"` while git runs on the host and its runner starts, `\"ready\"` once launch succeeds, or `\"failed\"` on a git or runner-launch error.",
+            "enum": [
+              "creating",
+              "reacquiring",
+              "relocating",
+              "ready",
+              "failed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage"
+        ],
+        "title": "WorktreeStatus",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -7616,6 +9044,16 @@
               "title": "Order",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "include_disabled",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Disabled",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7641,6 +9079,133 @@
           }
         },
         "summary": "List Builtin Agents",
+        "tags": [
+          "agents"
+        ]
+      },
+      "post": {
+        "description": "Create a durable template agent from an uploaded bundle.",
+        "operationId": "create_agent_v1_agents_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_agent_v1_agents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentObject"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/v1/agents/{agent_id}": {
+      "delete": {
+        "description": "Archive a custom template agent.",
+        "operationId": "delete_agent_v1_agents__agent_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Agent",
+        "tags": [
+          "agents"
+        ]
+      },
+      "put": {
+        "description": "Edit custom agent metadata and bundled instructions in place.",
+        "operationId": "edit_agent_v1_agents__agent_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentObject"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Agent",
         "tags": [
           "agents"
         ]
@@ -8642,7 +10207,7 @@
         ]
       },
       "patch": {
-        "description": "Update a default policy's mutable fields.\n\n`type` is immutable \u2014 the caller must delete and\nre-create to change it. Requires admin privileges.\n\n**Parameters**\n\n- `body` \u2014 Fields to update; `None` fields are left unchanged.\n\n**Returns:** The updated policy as a serialized dict.\n\n**Raises**\n\n- `OmnigentError` \u2014 401/403 if the user lacks admin privileges, or 404 if the policy is not found.",
+        "description": "Update a default policy's mutable fields.\n\n`type` is immutable \u2014 the caller must delete and\nre-create to change it. Requires admin privileges.\n\n**Parameters**\n\n- `body` \u2014 Fields to update. Omitted `factory_params` are unchanged; explicit `null` clears them.\n\n**Returns:** The updated policy as a serialized dict.\n\n**Raises**\n\n- `OmnigentError` \u2014 401/403 if the user lacks admin privileges, or 404 if the policy is not found.",
         "operationId": "update_policy_v1_policies__policy_id__patch",
         "parameters": [
           {
@@ -8927,6 +10492,177 @@
         "summary": "Update Project",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/v1/prompt-profiles": {
+      "get": {
+        "operationId": "list_prompt_profiles_v1_prompt_profiles_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "enabled_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Enabled Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PromptProfileObject"
+                  },
+                  "title": "Response List Prompt Profiles V1 Prompt Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Prompt Profiles",
+        "tags": [
+          "prompt-profiles"
+        ]
+      },
+      "post": {
+        "operationId": "create_prompt_profile_v1_prompt_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptProfileCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptProfileObject"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Prompt Profile",
+        "tags": [
+          "prompt-profiles"
+        ]
+      }
+    },
+    "/v1/prompt-profiles/{profile_id}": {
+      "delete": {
+        "operationId": "delete_prompt_profile_v1_prompt_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Prompt Profile",
+        "tags": [
+          "prompt-profiles"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_prompt_profile_v1_prompt_profiles__profile_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptProfilePatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptProfileObject"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Prompt Profile",
+        "tags": [
+          "prompt-profiles"
         ]
       }
     },
@@ -9336,7 +11072,7 @@
             }
           },
           {
-            "description": "Opt-in git cleanup, as a query param (`?delete_branch=true`). When `True` and the session has a server-created worktree (`git_branch` set), the host removes the worktree directory and deletes its branch (`git worktree remove --force` then `git branch -D`). Ignored for sessions with no worktree. Best-effort: a cleanup failure does not block the delete. Defaults to `False` (worktree and branch left untouched). See designs/SESSION_GIT_WORKTREE.md.",
+            "description": "Opt-in git cleanup, as a query param (`?delete_branch=true`). When `True` and the session has a server-created worktree (`git_branch` set), the host removes the worktree directory and deletes its branch (`git worktree remove --force` then `git branch -D`). Ignored for sessions with no worktree. A cleanup failure aborts the session deletion and is returned to the caller. Defaults to `False` (worktree and branch left untouched). See designs/SESSION_GIT_WORKTREE.md.",
             "in": "query",
             "name": "delete_branch",
             "required": false,
@@ -11133,7 +12869,7 @@
         ]
       },
       "patch": {
-        "description": "Update a session policy's mutable fields.\n\n`type` is immutable \u2014 the caller must delete and\nre-create to change it. Requires `LEVEL_EDIT`.\n\n**Parameters**\n\n- `body` \u2014 Fields to update; `None` fields are left unchanged.\n\n**Returns:** The updated policy as a serialized dict.\n\n**Raises**\n\n- `OmnigentError` \u2014 401/403 if the user lacks edit permission, 404 if the policy is not found, or 409 if renaming would collide with another policy in this session.",
+        "description": "Update a session policy's mutable fields.\n\n`type` is immutable \u2014 the caller must delete and\nre-create to change it. Requires `LEVEL_EDIT`.\n\n**Parameters**\n\n- `body` \u2014 Fields to update. Omitted `factory_params` are unchanged; explicit `null` clears them.\n\n**Returns:** The updated policy as a serialized dict.\n\n**Raises**\n\n- `OmnigentError` \u2014 401/403 if the user lacks edit permission, 404 if the policy is not found, or 409 if renaming would collide with another policy in this session.",
         "operationId": "update_policy_v1_sessions__session_id__policies__policy_id__patch",
         "parameters": [
           {
@@ -12740,6 +14476,57 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/rewind": {
+      "post": {
+        "description": "Interrupt, settle, then truncate a session from a user message.",
+        "operationId": "rewind_session_v1_sessions__session_id__rewind_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRewindRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rewind Session",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/stream": {
       "get": {
         "description": "Subscribe to the session's live SSE event stream.\n\nDoes NOT replay history; clients reconcile via the snapshot\nendpoint. The generator emits `[DONE]` on normal completion\nand uses `finally` only for presence cleanup \u2014 see\n`_stream_live_events`.\n\nHolding this stream open registers the caller as a session\n*viewer* (presence): co-viewers' streams receive\n`session.presence` events on join/leave/idle edges, and\nthis stream's snapshot-on-connect includes the current\nviewer list. Presence is scoped to the session tree's root\nconversation, so viewers of different agents/sub-agents in\none session see each other. See\n`omnigent/server/presence.py`.\n\n**Returns:** An SSE `StreamingResponse`.\n\n**Raises**\n\n- `OmnigentError` \u2014 404 if no session exists.",
@@ -12969,6 +14756,987 @@
         "summary": "Set Sharing",
         "tags": [
           "sharing"
+        ]
+      }
+    },
+    "/v1/skills": {
+      "get": {
+        "operationId": "list_skills_v1_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Skills V1 Skills Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Skills",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/refresh": {
+      "post": {
+        "description": "Ask every connected owner host to rescan and report skills now.",
+        "operationId": "refresh_skills_v1_skills_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Refresh Skills V1 Skills Refresh Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh Skills",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/roots": {
+      "get": {
+        "description": "Return each host's database-backed skill configuration.",
+        "operationId": "list_skill_roots_v1_skills_roots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Skill Roots V1 Skills Roots Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Skill Roots",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/roots/{harness}": {
+      "put": {
+        "description": "Apply one harness's sync participation setting to every host.",
+        "operationId": "update_global_skill_harness_setting_v1_skills_roots__harness__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillHarnessSettingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Global Skill Harness Setting V1 Skills Roots  Harness  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Global Skill Harness Setting",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/roots/{host_id}/{harness}": {
+      "put": {
+        "operationId": "update_skill_harness_setting_v1_skills_roots__host_id___harness__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillHarnessSettingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Skill Harness Setting V1 Skills Roots  Host Id   Harness  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Skill Harness Setting",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}": {
+      "delete": {
+        "operationId": "delete_skill_v1_skills__skill_name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Skill V1 Skills  Skill Name  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}/content": {
+      "get": {
+        "operationId": "read_skill_v1_skills__skill_name__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Skill V1 Skills  Skill Name  Content Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Skill",
+        "tags": [
+          "skills"
+        ]
+      },
+      "put": {
+        "operationId": "write_skill_v1_skills__skill_name__content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Write Skill V1 Skills  Skill Name  Content Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}/files": {
+      "post": {
+        "description": "Create a new skill on every participating detected harness root.",
+        "operationId": "create_skill_files_v1_skills__skill_name__files_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Skill Files V1 Skills  Skill Name  Files Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Skill Files",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}/sync": {
+      "post": {
+        "operationId": "sync_skill_v1_skills__skill_name__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Skill V1 Skills  Skill Name  Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}/tree": {
+      "get": {
+        "description": "Read every file in one reported skill directory.",
+        "operationId": "read_skill_tree_v1_skills__skill_name__tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Skill Tree V1 Skills  Skill Name  Tree Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Skill Tree",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}/variants/{content_sha256}/content": {
+      "put": {
+        "description": "Write the edited content to every occurrence in one variant.",
+        "operationId": "write_skill_variant_v1_skills__skill_name__variants__content_sha256__content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "content_sha256",
+            "required": true,
+            "schema": {
+              "title": "Content Sha256",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillVariantWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Write Skill Variant V1 Skills  Skill Name  Variants  Content Sha256  Content Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Skill Variant",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skills/{skill_name}/variants/{content_sha256}/files": {
+      "put": {
+        "description": "Write edited text files to every occurrence in one variant.",
+        "operationId": "write_skill_variant_files_v1_skills__skill_name__variants__content_sha256__files_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "content_sha256",
+            "required": true,
+            "schema": {
+              "title": "Content Sha256",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillVariantFilesWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Write Skill Variant Files V1 Skills  Skill Name  Variants  Content Sha256  Files Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Skill Variant Files",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/ssh/connections": {
+      "get": {
+        "description": "List SSH connection profiles stored by this server.",
+        "operationId": "list_ssh_connections_v1_ssh_connections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Ssh Connections V1 Ssh Connections Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ssh Connections",
+        "tags": [
+          "ssh"
+        ]
+      },
+      "put": {
+        "description": "Replace SSH connection profiles stored by this server.",
+        "operationId": "put_ssh_connections_v1_ssh_connections_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshConnectionsPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Ssh Connections V1 Ssh Connections Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ssh Connections",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/ssh/connections/{connection_id}/logs": {
+      "get": {
+        "description": "Return captured installation lifecycle events for the settings UI.",
+        "operationId": "get_ssh_connection_logs_v1_ssh_connections__connection_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Ssh Connection Logs V1 Ssh Connections  Connection Id  Logs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ssh Connection Logs",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/ssh/connections/{connection_id}/retry": {
+      "post": {
+        "description": "Queue an immediate reconciliation attempt.",
+        "operationId": "retry_ssh_connection_v1_ssh_connections__connection_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Retry Ssh Connection V1 Ssh Connections  Connection Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Ssh Connection",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/ssh/test": {
+      "post": {
+        "description": "Probe SSH connectivity from this host using a config alias.",
+        "operationId": "test_ssh_connection_v1_ssh_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Ssh Connection",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/statistics": {
+      "get": {
+        "operationId": "get_statistics_v1_statistics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Statistics",
+        "tags": [
+          "statistics"
+        ]
+      }
+    },
+    "/v1/statistics/model-pricing/{model}": {
+      "delete": {
+        "operationId": "clear_model_pricing_v1_statistics_model_pricing__model__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model",
+            "required": true,
+            "schema": {
+              "title": "Model",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Model Pricing",
+        "tags": [
+          "statistics"
+        ]
+      },
+      "put": {
+        "operationId": "set_model_pricing_v1_statistics_model_pricing__model__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model",
+            "required": true,
+            "schema": {
+              "title": "Model",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelPricingOverrideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelPricingOverrideResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Model Pricing",
+        "tags": [
+          "statistics"
         ]
       }
     },

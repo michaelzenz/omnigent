@@ -1,6 +1,7 @@
 """FastAPI application — main entry point for the omnigent server."""
 
 import asyncio
+import functools
 import logging
 import mimetypes
 import os
@@ -28,6 +29,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from omnigent._platform import resolve_repo_symlink
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME
 from omnigent.harness_plugins import (
     NativeHarnessProvider,
     native_provider_for_key,
@@ -61,26 +63,40 @@ from omnigent.server.performance_metrics import (
     set_request_session_id_for_access_log,
     set_request_user_agent_for_access_log,
 )
+from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
 from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
+from omnigent.server.routes.memory import create_memory_router
+from omnigent.server.routes.model_settings import (
+    configured_omniharness_model_options,
+    create_model_settings_router,
+)
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
+from omnigent.server.routes.prompt_profiles import create_prompt_profiles_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
 from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
 from omnigent.server.routes.session_mcp_servers import create_session_mcp_servers_router
 from omnigent.server.routes.session_policies import create_session_policies_router
 from omnigent.server.routes.sessions import (
+    ServerRunnerInfrastructure,
     SessionLiveness,
     announce_hosts_changed,
+    create_session_internal,
     create_sessions_router,
     set_server_host_registry,
+    set_server_runner_infrastructure,
     set_server_runner_router,
 )
 from omnigent.server.routes.sharing import create_sharing_router
+from omnigent.server.routes.skills import create_skills_router
+from omnigent.server.routes.ssh_connections import create_ssh_connections_router
+from omnigent.server.routes.statistics import create_statistics_router
+from omnigent.server.routes.task_events import create_task_events_router
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
 from omnigent.server.routes.usage import create_usage_router
 from omnigent.server.runner_session_init import RunnerSessionInitializer
@@ -91,14 +107,28 @@ from omnigent.stores import (
     ArtifactStore,
     ConversationStore,
     FileStore,
+    PromptProfileStore,
 )
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.memory_store import MemoryStore
+from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
+from omnigent.stores.prompt_profile_store.sqlalchemy_store import SqlAlchemyPromptProfileStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
+from omnigent.stores.task_asset_store import TaskAssetStore
+from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_item_store import TaskItemStore
+from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
+from omnigent.stores.task_store import TaskStore
+from omnigent.stores.user_role_session_store import UserRoleSessionStore
+from omnigent.stores.worker_provider_store import WorkerProviderStore
+from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
 
@@ -135,6 +165,7 @@ class ServerInfoResponse(BaseModel):
     server_version: str
     smart_routing_enabled: bool
     smart_routing_sources: SmartRoutingSourcesInfo
+    omniharness_model_options: list[dict[str, Any]]
     features: dict[str, bool]
     harness_install_enabled: bool
     installable_harnesses: list[str]
@@ -209,13 +240,16 @@ _DEBBY_AGENT_NAME = "debby"
 _POLLY_AGENT_NAME = "polly"
 _UNMATCHED_ROUTE_TEMPLATE = "<unmatched>"
 _SESSION_PATH_RE = re.compile(r"/v1/sessions/([^/]+)")
-# polly's and debby's multi-file bundles are packaged under
+# OmniHarness, polly, and debby's multi-file bundles are packaged under
 # omnigent.resources.examples (see pyproject package-data), so they resolve
 # in both a repo checkout and an installed wheel. The presence check in each
 # seeder is a safety net.
 # resolve_repo_symlink dereferences the packaged symlink on a no-symlink
 # Windows checkout (where Git leaves it as a stub text file); a no-op elsewhere.
 _DEBBY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "debby")
+_OMNIHARNESS_BUNDLE_SOURCE = resolve_repo_symlink(
+    Path(_examples_resources.__file__).parent / "omniharness"
+)
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")
 
 
@@ -429,6 +463,7 @@ def _ensure_builtin_agent(
     *,
     name: str,
     bundle_bytes: bytes,
+    is_role: bool = False,
 ) -> None:
     """
     Register or refresh a built-in template agent from its bundle.
@@ -462,6 +497,9 @@ def _ensure_builtin_agent(
         ``replace`` and ``evict``.
     :param name: Built-in agent's unique name, e.g. ``"polly"``.
     :param bundle_bytes: Freshly built gzipped tarball of the spec.
+    :param is_role: True for a role-bound profile hidden from the public
+        catalog; applied to both new and existing rows so a reseed flips
+        the flag on rows that predate the column.
     """
     import hashlib
 
@@ -470,6 +508,10 @@ def _ensure_builtin_agent(
     bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
     existing = agent_store.get_by_name(name)
     if existing is not None:
+        # Keep the visibility flag in sync with the seed's intent: existing
+        # rows that predate the is_role column default to false, so a reseed
+        # flips role-bound profiles to hidden on the next boot.
+        agent_store.set_is_role(existing.id, is_role)
         new_loc = f"{existing.id}/{bundle_hash}"
         # Sha-segment compare: legacy rows keep an ``ag_``-prefixed left
         # segment (physical artifact key); only the sha encodes content.
@@ -495,7 +537,7 @@ def _ensure_builtin_agent(
     agent_id = builtin_agent_id(name)
     bundle_key = f"{agent_id}/{bundle_hash}"
     artifact_store.put(bundle_key, bundle_bytes)
-    agent_store.create(agent_id, name, bundle_key)
+    agent_store.create(agent_id, name, bundle_key, is_role=is_role)
     agent_cache.evict(agent_id)
     _logger.info("Registered built-in %s agent as %s", name, agent_id)
 
@@ -520,6 +562,7 @@ def _ensure_default_agents(
     """
     _ensure_default_native_agents(agent_store, artifact_store, agent_cache)
     _ensure_default_acp_agents(agent_store, artifact_store, agent_cache)
+    _ensure_default_omniharness_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
@@ -785,6 +828,36 @@ def _ensure_default_acp_agents(
         )
 
 
+def _ensure_default_omniharness_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Register or refresh the profile-driven OmniHarness target."""
+    import tempfile
+
+    from omnigent.spec import materialize_bundle
+
+    if not (_OMNIHARNESS_BUNDLE_SOURCE / "config.yaml").is_file():
+        _logger.debug(
+            "omniharness bundle not found at %s; skipping seed",
+            _OMNIHARNESS_BUNDLE_SOURCE,
+        )
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bundle_dir = materialize_bundle(_OMNIHARNESS_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
+        bundle_bytes = _tar_gz_dir(bundle_dir)
+
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=OMNIHARNESS_AGENT_NAME,
+        bundle_bytes=bundle_bytes,
+    )
+
+
 def _build_debby_bundle() -> bytes:
     """
     Build a gzipped tarball of the ``examples/debby`` agent bundle.
@@ -900,6 +973,78 @@ def _ensure_default_polly_agent(
     )
 
 
+async def _placeholder_on_fire(scheduled_task_id: str) -> None:
+    """Default scheduler fire callback (no-op placeholder that logs).
+
+    Exercises the ``on_fire`` seam without side effects: the real fire path
+    (creating an agent session for the task) supplies its own callback.
+    """
+    _logger.info(
+        "scheduler: task %s is due (no fire path wired yet — skipping)",
+        scheduled_task_id,
+    )
+
+
+def _build_worker_runner_ensurer(
+    conversation_store: ConversationStore,
+    host_registry: Any,
+    tunnel_registry: Any,
+    runner_exit_reports: Any,
+):
+    """Build the runner-ensure callback the worker dispatch handler uses.
+
+    The dispatcher runs outside request scope, so it cannot use the route helper
+    that reads ``request.app.state``. This closure captures the same registries
+    and replays the best-effort runner launch for a freshly created worker
+    conversation. Returns ``None`` (no-op) when the sessions helpers are not
+    importable in this deployment.
+    """
+    import asyncio
+
+    async def _ensure_runner(conversation_id: str) -> None:
+        from omnigent.server.routes.sessions import (
+            ServerRunnerInfrastructure,
+            _ensure_runner_session_initialized,
+            _server_runner_router,
+            ensure_session_runner_client,
+        )
+
+        conv = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            conversation_id,
+        )
+        if conv is None:
+            return
+        infrastructure = ServerRunnerInfrastructure(
+            host_registry=host_registry,
+            tunnel_registry=tunnel_registry,
+            runner_exit_reports=runner_exit_reports,
+        )
+        runner_client, needs_session_init = await ensure_session_runner_client(
+            conversation_id,
+            conv,
+            conversation_store=conversation_store,
+            runner_router=_server_runner_router,
+            infrastructure=infrastructure,
+        )
+        if runner_client is None:
+            return
+        if needs_session_init:
+            refreshed = await asyncio.to_thread(
+                conversation_store.get_conversation,
+                conversation_id,
+            )
+            if refreshed is not None:
+                await _ensure_runner_session_initialized(
+                    conversation_id,
+                    refreshed,
+                    runner_client,
+                    conversation_store,
+                )
+
+    return _ensure_runner
+
+
 def create_app(
     agent_store: AgentStore,
     file_store: FileStore,
@@ -909,11 +1054,25 @@ def create_app(
     runner_tunnel_tokens: frozenset[str] | None = None,
     comment_store: CommentStore | None = None,
     policy_store: PolicyStore | None = None,
+    model_settings_store: ModelSettingsStore | None = None,
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
+    memory_store: MemoryStore | None = None,
+    task_store: TaskStore | None = None,
+    task_event_store: TaskEventStore | None = None,
+    task_item_store: TaskItemStore | None = None,
+    worker_store: WorkerStore | None = None,
+    worker_provider_store: WorkerProviderStore | None = None,
+    task_asset_store: TaskAssetStore | None = None,
+    task_role_profile_store: TaskRoleProfileStore | None = None,
+    user_role_session_store: UserRoleSessionStore | None = None,
+    agent_queue_store: AgentQueueStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
+    ssh_host_installation_store: SshHostInstallationStore | None = None,
+    ssh_tunnel_host: str = "127.0.0.1",
+    ssh_tunnel_port: int | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
     extra_routers: list[tuple[Any, str, list[str]]] | None = None,
     policy_modules: list[str] | None = None,
@@ -925,6 +1084,7 @@ def create_app(
     public_sharing: bool | Callable[[], bool] | None = None,
     server_config: dict[str, Any] | None = None,
     feature_flags: FeatureFlags | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application with all routes mounted.
@@ -961,6 +1121,16 @@ def create_app(
     :param project_store: Store for first-class projects (owner-private
         containers that group sessions). ``None`` disables the
         ``/v1/projects`` CRUD endpoints.
+    :param task_store: Store for managed agent tasks. When provided with
+        ``task_event_store``, mounts ``/v1/agent-tasks`` CRUD routes.
+    :param task_event_store: Store for task events and execution history.
+    :param task_item_store: Store for task items and routing proposals.
+    :param worker_store: Store for per-task worker slots.
+    :param task_role_profile_store: Global task role definitions.
+        When provided with task stores, enables role profile/session
+        routes and resolve-time bootstrap defaults.
+    :param user_role_session_store: Per-user live conversation bindings
+        for singleton roles (broker, secretary).
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -1041,6 +1211,9 @@ def create_app(
 
     branding_snapshot = load_branding_snapshot(server_config)
     resolved_feature_flags = feature_flags or resolve_feature_flags()
+    from omnigent.memory import DEFAULT_MEMORY_MAX_TOKENS
+
+    memory_max_tokens = DEFAULT_MEMORY_MAX_TOKENS
 
     # First-boot admin bootstrap for the accounts auth provider.
     # Runs before any route is mounted so the login page is never
@@ -1168,6 +1341,161 @@ def create_app(
 
         set_runner_router(runner_router)
 
+        _ensure_default_agents(agent_store, artifact_store, agent_cache)
+        if task_role_profile_store is not None and prompt_profile_store is not None:
+            from omnigent.agent_tasks.broker_session import ensure_role_profile
+            from omnigent.agent_tasks.role_keys import SYSTEM_ROLE_KEYS
+
+            for role in SYSTEM_ROLE_KEYS:
+                ensure_role_profile(
+                    role=role,
+                    auth_user_id=None,
+                    task_role_profile_store=task_role_profile_store,
+                    agent_store=agent_store,
+                    prompt_profile_store=prompt_profile_store,
+                )
+
+        from omnigent.agent_tasks.queue.dispatcher import (
+            AgentQueueDispatcher,
+            DispatcherContext,
+            StatusReader,
+        )
+        from omnigent.agent_tasks.queue.handlers import (
+            BrokerDispatchHandler,
+            ManagerDispatchHandler,
+            WorkerDispatchHandler,
+        )
+        from omnigent.agent_tasks.queue.packagers import (
+            BrokerPackager,
+            ManagerPackager,
+            configure_broker_packager,
+        )
+        from omnigent.agent_tasks.queue.packagers import (
+            _StatusReader as _PackagerStatusReader,
+        )
+        from omnigent.agent_tasks.queue.status_feed import QueueStatusFeed
+
+        # Agent-queue dispatcher + role packagers. Only wired when both the
+        # queue store and the role profile store are present; tests and
+        # single-process setups that pre-build the store pass it through.
+        _agent_queue_dispatcher: AgentQueueDispatcher | None = None
+        _broker_packager: BrokerPackager | None = None
+        _manager_packager: ManagerPackager | None = None
+        if (
+            agent_queue_store is not None
+            and task_role_profile_store is not None
+            and user_role_session_store is not None
+        ):
+            broker_handler = BrokerDispatchHandler(
+                store=agent_queue_store,
+                user_role_session_store=user_role_session_store,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
+            manager_handler: ManagerDispatchHandler | None = None
+            if task_store is not None:
+                manager_handler = ManagerDispatchHandler(
+                    store=agent_queue_store,
+                    task_store=task_store,
+                    conversation_store=conversation_store,
+                    runner_router=runner_router,
+                )
+            worker_handler: WorkerDispatchHandler | None = None
+            if task_store is not None and task_item_store is not None and worker_store is not None:
+                worker_handler = WorkerDispatchHandler(
+                    store=agent_queue_store,
+                    task_store=task_store,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                    worker_store=worker_store,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    task_role_profile_store=task_role_profile_store,
+                    runner_router=runner_router,
+                    ensure_runner=_build_worker_runner_ensurer(
+                        conversation_store,
+                        host_registry,
+                        tunnel_registry,
+                        runner_exit_reports,
+                    ),
+                    session_creator=_session_creator,
+                    app_state=app_inst.state,
+                )
+
+            class _CacheStatusReader(StatusReader):
+                """Reads the in-process session status cache.
+
+                A *miss* returns ``None`` (not ``"idle"``) so the gate keeps its
+                last reading rather than falsely reading a never-seen session
+                as dispatchable. ``_session_status_from_cache`` collapses a miss
+                to ``"idle"``, which would make every queue dispatchable after a
+                restart, so this reads the raw cache instead.
+                """
+
+                async def status_for(self, session_id: str) -> str | None:
+                    from omnigent.server.routes.sessions import (
+                        _session_status_cache,
+                    )
+
+                    return _session_status_cache.get(session_id)
+
+            class _PackagerCacheReader(_PackagerStatusReader):
+                """Sync raw-cache reader for the packager's idle check."""
+
+                def status_for(self, session_id: str) -> str | None:
+                    from omnigent.server.routes.sessions import (
+                        _session_status_cache,
+                    )
+
+                    return _session_status_cache.get(session_id)
+
+            _agent_queue_dispatcher = AgentQueueDispatcher(
+                DispatcherContext(
+                    store=agent_queue_store,
+                    handlers={
+                        "broker": broker_handler,
+                        **({"manager": manager_handler} if manager_handler is not None else {}),
+                        **({"worker": worker_handler} if worker_handler is not None else {}),
+                    },
+                    read_status=_CacheStatusReader(),
+                )
+            )
+            _status_feed = QueueStatusFeed(
+                agent_queue_store,
+                on_status=_agent_queue_dispatcher.gate.observe_sync,
+            )
+            from omnigent.server.routes.sessions import configure_queue_status_feed
+
+            configure_queue_status_feed(_status_feed)
+            _broker_packager = BrokerPackager(
+                store=agent_queue_store,
+                task_event_store=task_event_store,
+                task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
+                task_store=task_store,
+                status_reader=_PackagerCacheReader(),
+                conversation_store=conversation_store,
+                agent_store=agent_store,
+                host_store=host_store,
+                prompt_profile_store=prompt_profile_store,
+                session_creator=_session_creator,
+                app_state=app_inst.state,
+            )
+            if task_store is not None:
+                _manager_packager = ManagerPackager(
+                    store=agent_queue_store,
+                    task_event_store=task_event_store,
+                    task_store=task_store,
+                    status_reader=_PackagerCacheReader(),
+                )
+            await _broker_packager.start()
+            if _manager_packager is not None:
+                await _manager_packager.start()
+            await _agent_queue_dispatcher.start()
+            configure_broker_packager(_broker_packager)
+        else:
+            configure_broker_packager(None)
+
         # Wake a blocked sub-agent's immediate parent: hooks
         # ``pending_elicitations.record_publish`` to post a ``[System: …]``
         # notice to the parent's ``/events``. Uninstalled at teardown so a
@@ -1211,8 +1539,6 @@ def create_app(
         # MCP execution moved to the runner (designs/RUNNER_MCP.md);
         # SessionFilesystemRegistry moved to the runner. Both
         # warmup blocks deleted here.
-
-        _ensure_default_agents(agent_store, artifact_store, agent_cache)
 
         # Populate the policy registry (builtins + user-configured
         # modules) so GET /v1/policy-registry serves the catalog.
@@ -1306,6 +1632,43 @@ def create_app(
             # force-fail of stale ``running`` runs on the scheduled-task read
             # endpoints (see routes/scheduled_tasks.py); there is no startup
             # sweep and no periodic reconcile.
+        # Background GC for old reconciled/dismissed events and completed
+        # queue items so large worker-output payloads do not accumulate.
+        event_gc_task: asyncio.Task | None = None
+        if agent_queue_store is not None:
+            from omnigent.agent_tasks.event_gc import run_event_gc
+
+            event_gc_task = asyncio.create_task(
+                run_event_gc(task_event_store, agent_queue_store),
+                name="event-gc",
+            )
+            app_inst.state.event_gc_task = event_gc_task
+
+        ssh_host_manager = None
+        # The reverse tunnel forwards to this server's own listener, so without a
+        # known port there is nothing valid to point remote hosts at.
+        if (
+            host_store is not None
+            and ssh_host_installation_store is not None
+            and ssh_tunnel_port is not None
+        ):
+            from omnigent.server.ssh_host_manager import SshHostInstallationManager
+
+            ssh_host_manager = SshHostInstallationManager(
+                store=ssh_host_installation_store,
+                host_store=host_store,
+                local_host=ssh_tunnel_host,
+                local_port=ssh_tunnel_port,
+            )
+            app_inst.state.ssh_host_manager = ssh_host_manager
+            try:
+                await ssh_host_manager.start()
+            except Exception:
+                _logger.exception(
+                    "SSH host installation manager failed to start; continuing without it"
+                )
+                app_inst.state.ssh_host_manager = None
+                ssh_host_manager = None
 
         try:
             yield
@@ -1313,8 +1676,17 @@ def create_app(
             # Run completion is event-driven (the _publish_status hook) plus a
             # lazy-on-read stale backstop — there is no run-reconciler task to
             # cancel. Only the per-job scheduler holds timers that need stopping.
+            if ssh_host_manager is not None:
+                await ssh_host_manager.stop()
+                from omnigent.ssh_session import shutdown_ssh_pool
+
+                await shutdown_ssh_pool()
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
+            if event_gc_task is not None:
+                event_gc_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await event_gc_task
             metrics_publish_task.cancel()
             with suppress(asyncio.CancelledError):
                 await metrics_publish_task
@@ -1326,6 +1698,16 @@ def create_app(
 
             await cancel_managed_launch_tasks()
             await background_title_coordinator.shutdown()
+            if _agent_queue_dispatcher is not None:
+                await _agent_queue_dispatcher.stop()
+            if _manager_packager is not None:
+                await _manager_packager.stop()
+            if _broker_packager is not None:
+                await _broker_packager.stop()
+            configure_broker_packager(None)
+            from omnigent.server.routes.sessions import configure_queue_status_feed
+
+            configure_queue_status_feed(None)
             _uninstall_subagent_block_notifier()
             set_resource_registry(None)
             set_runner_ws_factory(None)
@@ -1341,7 +1723,14 @@ def create_app(
             # inside shutdown_all().
             await _mcp_pool.shutdown_all()
 
+    if prompt_profile_store is None:
+        prompt_profile_store = SqlAlchemyPromptProfileStore(agent_store.storage_location)
     app = FastAPI(title="Omnigent Server", lifespan=_lifespan)
+
+    if worker_provider_store is not None:
+        from omnigent.server.routes.worker_providers import ensure_default_worker_provider
+
+        ensure_default_worker_provider(worker_provider_store)
     from omnigent.runtime import telemetry
 
     telemetry.instrument_fastapi_app(app)
@@ -1354,7 +1743,11 @@ def create_app(
     app.state.background_title_coordinator = background_title_coordinator
     app.state.host_registry = host_registry
     app.state.host_store = host_store
+    app.state.ssh_host_installation_store = ssh_host_installation_store
     app.state.agent_store = agent_store
+    app.state.prompt_profile_store = prompt_profile_store
+    app.state.model_settings_store = model_settings_store
+    app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
@@ -1458,6 +1851,13 @@ def create_app(
     # _publish_status when a fired conversation's turn reaches terminal.
     session_live_state.configure(conversation_store, scheduled_task_store)
     pending_elicitations.set_count_persist_hook(session_live_state.persist_pending_count)
+    set_server_runner_infrastructure(
+        ServerRunnerInfrastructure(
+            host_registry=host_registry,
+            tunnel_registry=tunnel_registry,
+            runner_exit_reports=runner_exit_reports,
+        )
+    )
 
     @app.middleware("http")
     async def _record_server_metrics(
@@ -1804,6 +2204,18 @@ def create_app(
             )
         return result
 
+    _session_creator = functools.partial(
+        create_session_internal,
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        runner_router=runner_router,
+        agent_cache=agent_cache,
+        permission_store=permission_store,
+        liveness_lookup=_bulk_session_liveness,
+        file_store=file_store,
+        artifact_store=artifact_store,
+    )
+
     @app.get("/health")
     async def health(
         session_id: str | None = Query(default=None),
@@ -2098,6 +2510,11 @@ def create_app(
                 "server_version": _server_version(),
                 "smart_routing_enabled": smart_routing_enabled,
                 "smart_routing_sources": smart_routing_sources,
+                "omniharness_model_options": (
+                    configured_omniharness_model_options(model_settings_store)
+                    if model_settings_store is not None
+                    else []
+                ),
                 "features": app.state.feature_flags.frontend_dict(),
                 "harness_install_enabled": harness_install_enabled,
                 "installable_harnesses": installable_harnesses,
@@ -2213,7 +2630,10 @@ def create_app(
             # Validates target-project ownership when PATCH /v1/sessions/{id}
             # files a session into a project (owner-private membership).
             project_store=project_store,
+            memory_store=memory_store,
+            memory_max_tokens=memory_max_tokens,
             background_title_coordinator=background_title_coordinator,
+            prompt_profile_store=prompt_profile_store,
         ),
         prefix="/v1",
         tags=["sessions"],
@@ -2239,6 +2659,15 @@ def create_app(
         prefix="/v1",
         tags=["usage"],
     )
+    app.include_router(
+        create_statistics_router(
+            conversation_store,
+            model_settings_store=model_settings_store,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["statistics"],
+    )
     # Read-only built-in agent discovery (designs/BUILTIN_AGENTS.md).
     # Successor to the removed GET /api/agents list; lists only
     # built-in (session_id IS NULL) agents for the new-session picker.
@@ -2246,10 +2675,19 @@ def create_app(
         create_builtin_agents_router(
             agent_store,
             agent_cache,
+            artifact_store,
             auth_provider=auth_provider,
         ),
         prefix="/v1",
         tags=["agents"],
+    )
+    app.include_router(
+        create_prompt_profiles_router(
+            prompt_profile_store,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["prompt-profiles"],
     )
     app.include_router(
         create_harnesses_router(auth_provider=auth_provider),
@@ -2263,6 +2701,24 @@ def create_app(
         create_dictation_router(auth_provider=auth_provider),
         prefix="/v1",
         tags=["dictation"],
+    )
+    app.include_router(
+        create_ssh_connections_router(
+            ssh_store=ssh_host_installation_store,
+            auth_provider=auth_provider,
+            permission_store=permission_store,
+        ),
+        prefix="/v1",
+        tags=["ssh"],
+    )
+    app.include_router(
+        create_skills_router(
+            host_registry,
+            host_store=host_store,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["skills"],
     )
     app.include_router(
         create_terminal_attach_router(
@@ -2297,6 +2753,130 @@ def create_app(
             prefix="/v1",
             tags=["comments"],
         )
+    if (
+        task_store is not None
+        and task_event_store is not None
+        and task_item_store is not None
+        and worker_store is not None
+        and task_asset_store is not None
+    ):
+        if worker_provider_store is not None:
+            from omnigent.server.routes.worker_providers import create_worker_providers_router
+
+            app.include_router(
+                create_worker_providers_router(
+                    worker_provider_store,
+                    agent_store,
+                    auth_provider=auth_provider,
+                    host_store=host_store,
+                ),
+                prefix="/v1",
+                tags=["worker_providers"],
+            )
+        app.include_router(
+            create_agent_tasks_router(
+                task_store,
+                task_event_store,
+                task_item_store,
+                worker_store,
+                task_asset_store,
+                agent_store,
+                conversation_store=conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                user_role_session_store=user_role_session_store,
+                host_store=host_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+                agent_queue_store=agent_queue_store,
+                session_creator=_session_creator,
+                artifact_store=artifact_store,
+                agent_cache=agent_cache,
+                prompt_profile_store=prompt_profile_store,
+                worker_provider_store=worker_provider_store,
+            ),
+            prefix="/v1",
+            tags=["agent_tasks"],
+        )
+        app.include_router(
+            create_task_events_router(
+                task_store,
+                task_event_store,
+                worker_store,
+                conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+                session_creator=_session_creator,
+            ),
+            prefix="/v1",
+            tags=["task_events"],
+        )
+        from omnigent.server.routes.script_plugin_health import (
+            create_script_plugin_health_router,
+        )
+
+        app.include_router(
+            create_script_plugin_health_router(auth_provider=auth_provider),
+            prefix="/v1",
+            tags=["script_plugin_health"],
+        )
+        from omnigent.server.routes.session_watcher import create_session_watcher_router
+
+        app.include_router(
+            create_session_watcher_router(
+                task_store,
+                task_event_store,
+                worker_store,
+                conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                auth_provider=auth_provider,
+                session_creator=_session_creator,
+            ),
+            prefix="/v1",
+            tags=["session_watcher"],
+        )
+        if agent_queue_store is not None:
+            from omnigent.server.routes.agent_queues import create_agent_queues_router
+
+            app.include_router(
+                create_agent_queues_router(
+                    agent_queue_store,
+                    auth_provider=auth_provider,
+                ),
+                prefix="/v1",
+                tags=["agent_queues"],
+            )
+        from omnigent.agent_tasks.adoption import (
+            SessionAdoptionContext,
+            configure_session_adoption,
+        )
+        from omnigent.agent_tasks.completion import (
+            TaskCompletionContext,
+            configure_task_completion,
+        )
+
+        configure_task_completion(
+            TaskCompletionContext(
+                task_store=task_store,
+                task_event_store=task_event_store,
+                task_item_store=task_item_store,
+                conversation_store=conversation_store,
+                worker_store=worker_store,
+                agent_queue_store=agent_queue_store,
+                runner_router=runner_router,
+            )
+        )
+        configure_session_adoption(
+            SessionAdoptionContext(
+                task_store=task_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                host_store=host_store,
+                runner_router=runner_router,
+            )
+        )
     if policy_store is not None:
         app.include_router(
             create_session_policies_router(
@@ -2322,6 +2902,17 @@ def create_app(
         prefix="/v1",
         tags=["policy_registry"],
     )
+    if model_settings_store is not None:
+        app.include_router(
+            create_model_settings_router(
+                model_settings_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+                server_config=server_config,
+            ),
+            prefix="/v1",
+            tags=["models"],
+        )
     if scheduled_task_store is not None:
         app.include_router(
             create_scheduled_tasks_router(
@@ -2357,6 +2948,19 @@ def create_app(
             ),
             prefix="/v1",
             tags=["projects"],
+        )
+
+    if memory_store is not None:
+        app.include_router(
+            create_memory_router(
+                memory_store=memory_store,
+                auth_provider=auth_provider,
+                max_tokens=memory_max_tokens,
+                host_registry=host_registry,
+                host_store=host_store,
+            ),
+            prefix="/v1",
+            tags=["memory"],
         )
 
     # ── Tunnel lifecycle callbacks (Step 8.5 crash recovery) ───
@@ -2678,6 +3282,18 @@ def create_app(
         async def _on_hosts_changed(_host_id: str, owner: str | None) -> None:
             announce_hosts_changed(owner)
 
+        async def _on_duplicate_daemon(
+            host_id: str,
+            owner: str | None,
+            host_name: str,
+        ) -> None:
+            announce_hosts_changed(
+                owner,
+                diagnostic="duplicate_host_daemon",
+                host_id=host_id,
+                host_name=host_name,
+            )
+
         app.include_router(
             create_host_tunnel_router(
                 host_registry,
@@ -2688,6 +3304,8 @@ def create_app(
                 on_host_connect=_on_hosts_changed,
                 on_host_disconnect=_on_hosts_changed,
                 on_host_update=_on_hosts_changed,
+                on_duplicate_daemon=_on_duplicate_daemon,
+                conversation_store=conversation_store,
             ),
             prefix="/v1",
             tags=["hosts"],

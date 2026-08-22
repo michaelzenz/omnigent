@@ -320,8 +320,8 @@ def ask_on_add_policy(event: PolicyEvent) -> PolicyResponse:
 
 # ── Skill blocking ──────────────────────────────────────────────────────────
 
-# Omnigent runner tools that load skills in non-native (SDK) harnesses.
-_SKILL_TOOLS = frozenset({"load_skill", "read_skill_file"})
+# Omnigent runner tools that read or mutate skills in non-native SDK harnesses.
+_SKILL_TOOLS = frozenset({"load_skill", "read_skill_file", "update_skill", "write_skill"})
 
 # Claude Code's native ``Skill`` tool, fired via ``PreToolUse`` hook and
 # evaluated server-side at ``POST /v1/sessions/{id}/policies/evaluate``.
@@ -373,10 +373,11 @@ def block_skills(blocked: list[str]) -> PolicyCallable:
             if not isinstance(args, dict):
                 return _ALLOW
 
-            # Path 1: Omnigent runner tools (load_skill / read_skill_file).
+            # Path 1: Omnigent runner skill tools.
             if tool in _SKILL_TOOLS:
-                # load_skill uses "name"; read_skill_file uses "skill_name"
-                skill_name = args.get("name") if tool == "load_skill" else args.get("skill_name")
+                skill_name = (
+                    args.get("skill_name") if tool == "read_skill_file" else args.get("name")
+                )
                 if skill_name and skill_name.lower() in blocked_lower:
                     return {
                         "result": "DENY",

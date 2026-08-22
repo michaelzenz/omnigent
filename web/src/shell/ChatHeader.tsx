@@ -224,7 +224,7 @@ export function ChatHeader({
         // Scrolled chat text can't render through the controls because the
         // conversation viewport fades its top edge instead (chat-scroll-fade
         // in index.css, applied in ChatPage).
-        "chat-header absolute inset-x-0 top-0 z-30 flex h-14 md:h-12 items-center justify-between px-2 md:px-4 py-3 md:right-[var(--workspace-panel-offset,0px)]",
+        "chat-header pointer-events-none absolute inset-x-0 top-0 z-30 flex h-14 items-center justify-between px-2 py-3 md:right-[var(--workspace-panel-offset,0px)] md:h-12 md:px-4",
       )}
     >
       {/* Left slot: sidebar toggle (when sidebar is closed) and a
@@ -239,7 +239,7 @@ export function ChatHeader({
           in the title-bar strip). Inert outside the shell (index.css). */}
       <div
         className={cn(
-          "flex min-w-0 items-center gap-1 md:gap-6",
+          "pointer-events-auto flex min-w-0 items-center gap-1 md:gap-6",
           !sidebarOpen && "traffic-light-clearance",
         )}
       >
@@ -295,7 +295,7 @@ export function ChatHeader({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="pointer-events-auto flex items-center gap-2">
         {/* Other users currently viewing this session (presence).
             Self-contained — reads the chat store directly, renders
             nothing when the user is alone. */}

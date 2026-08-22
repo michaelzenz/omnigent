@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import Engine, select, update
@@ -86,6 +87,8 @@ class Host:
     sandbox_provider: str | None = None
     sandbox_id: str | None = None
     configured_harnesses: dict[str, HarnessAvailability] | None = None
+    skill_sync_harnesses: dict[str, bool] | None = None
+    skill_search_roots: list[dict[str, str]] | None = None
 
 
 def host_is_live(host: Host, now: int | None = None) -> bool:
@@ -137,6 +140,44 @@ def _parse_configured_harnesses(raw: str | None) -> dict[str, HarnessAvailabilit
     return {k: v for k, v in parsed.items() if isinstance(k, str) and is_harness_availability(v)}
 
 
+def _parse_skill_sync_harnesses(raw: str | None) -> dict[str, bool] | None:
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        _logger.warning("Ignoring malformed hosts.skill_sync_harnesses value")
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    result = {
+        key: value
+        for key, value in parsed.items()
+        if key in {"claude", "codex", "cursor"} and isinstance(value, bool)
+    }
+    return result if len(result) == 3 else None
+
+
+def _parse_skill_search_roots(raw: str | None) -> list[dict[str, str]] | None:
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        _logger.warning("Ignoring malformed hosts.skill_search_roots value")
+        return None
+    if not isinstance(parsed, list):
+        return None
+    roots = [
+        {"harness": item["harness"], "rel_home_path": item["rel_home_path"]}
+        for item in parsed
+        if isinstance(item, dict)
+        and item.get("harness") in {"claude", "codex", "cursor"}
+        and isinstance(item.get("rel_home_path"), str)
+    ]
+    return roots if len(roots) == len(parsed) else None
+
+
 def _row_to_host(row: SqlHost) -> Host:
     """
     Convert a :class:`SqlHost` ORM row to a :class:`Host` entity.
@@ -154,6 +195,8 @@ def _row_to_host(row: SqlHost) -> Host:
         sandbox_provider=row.sandbox_provider,
         sandbox_id=row.sandbox_id,
         configured_harnesses=_parse_configured_harnesses(row.configured_harnesses),
+        skill_sync_harnesses=_parse_skill_sync_harnesses(row.skill_sync_harnesses),
+        skill_search_roots=_parse_skill_search_roots(row.skill_search_roots),
     )
 
 
@@ -529,6 +572,53 @@ class HostStore:
                 )
             )
 
+    def update_skill_configuration(
+        self,
+        host_id: str,
+        sync_harnesses: dict[str, bool],
+        search_roots: Sequence[Mapping[str, object]],
+    ) -> None:
+        """Persist the complete skill configuration reported by a host."""
+        normalized_roots = [
+            {
+                "harness": str(root["harness"]),
+                "rel_home_path": str(root["rel_home_path"]),
+            }
+            for root in search_roots
+            if isinstance(root.get("harness"), str)
+            and isinstance(root.get("rel_home_path"), str)
+        ]
+        if len(normalized_roots) != len(search_roots):
+            raise ValueError("invalid skill search roots")
+        with self._session("update_host_skill_configuration") as session:
+            session.execute(
+                update(SqlHost)
+                .where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                )
+                .values(
+                    skill_sync_harnesses=json.dumps(sync_harnesses),
+                    skill_search_roots=json.dumps(normalized_roots),
+                )
+            )
+
+    def update_skill_sync_harnesses(
+        self,
+        host_id: str,
+        sync_harnesses: dict[str, bool],
+    ) -> None:
+        """Persist the user-selected sync participation for one host."""
+        with self._session("update_host_skill_sync_harnesses") as session:
+            session.execute(
+                update(SqlHost)
+                .where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                )
+                .values(skill_sync_harnesses=json.dumps(sync_harnesses))
+            )
+
     def heartbeat(self, host_id: str) -> None:
         """
         Refresh a host's last-seen timestamp while its tunnel is alive.
@@ -740,6 +830,74 @@ class HostStore:
             )
             session.add(row)
             return _row_to_host(row)
+
+    def register_ssh_host(
+        self,
+        *,
+        host_id: str,
+        name: str,
+        owner: str,
+        token: str,
+        token_expires_at: int,
+    ) -> Host:
+        """Register or re-arm an SSH-attached host identity.
+
+        SSH hosts use launch-token authentication but are not managed
+        sandboxes, so both sandbox discriminator columns remain ``NULL``.
+        """
+        now = now_epoch()
+        token_hash = hash_host_launch_token(token)
+        with self._session("register_ssh_host") as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                if row.user_id != owner:
+                    raise ValueError(
+                        f"host {host_id!r} is registered to a different owner; "
+                        "refusing to re-credential it"
+                    )
+                row.name = name
+                row.token_hash = token_hash
+                row.token_expires_at = token_expires_at
+                row.sandbox_provider = None
+                row.sandbox_id = None
+                row.updated_at = now
+                return _row_to_host(row)
+            row = SqlHost(
+                user_id=owner,
+                name=name,
+                host_id=host_id,
+                status=encode_host_status("offline"),
+                created_at=now,
+                updated_at=now,
+                token_hash=token_hash,
+                token_expires_at=token_expires_at,
+                sandbox_provider=None,
+                sandbox_id=None,
+            )
+            session.add(row)
+            return _row_to_host(row)
+
+    def reassign_ssh_host_owner(self, host_id: str, owner: str) -> bool:
+        """Claim a server-managed SSH host for its persisted profile owner."""
+        with self._session("reassign_ssh_host_owner") as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                    SqlHost.sandbox_provider.is_(None),
+                    SqlHost.sandbox_id.is_(None),
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            row.user_id = owner
+            row.updated_at = now_epoch()
+            return True
 
     def resolve_launch_token(self, host_id: str, token: str) -> Host | None:
         """

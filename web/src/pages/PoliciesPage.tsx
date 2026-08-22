@@ -12,9 +12,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PlusIcon, RefreshCwIcon, ShieldCheckIcon, TrashIcon, XIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ChevronsUpDownIcon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  TrashIcon,
+} from "lucide-react";
 import { PageScroll } from "@/components/PageScroll";
-import { ModelValueCombobox } from "@/components/ModelValueCombobox";
+import {
+  EditPolicyInstanceDialog,
+  PolicyInstanceFields,
+  policyParamProperties,
+} from "@/components/PolicyInstanceEditor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,6 +38,15 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
   useDefaultPolicies,
   useAddDefaultPolicy,
   useUpdateDefaultPolicy,
@@ -33,7 +54,7 @@ import {
   type DefaultPolicy,
 } from "@/hooks/useDefaultPolicies";
 import { usePolicyRegistry, type PolicyRegistryEntry } from "@/hooks/usePolicies";
-import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
+import { useAdminModelSettings, useUpdateAdminModelSettings } from "@/hooks/useModelSettings";
 import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isSingleUserMode } from "@/lib/capabilities";
@@ -45,10 +66,12 @@ import { coercePolicyParams } from "@/lib/policyParams";
 
 function AddDefaultPolicyDialog({
   registry,
+  modelIds,
   open,
   onOpenChange,
 }: {
   registry: PolicyRegistryEntry[];
+  modelIds: string[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -60,37 +83,7 @@ function AddDefaultPolicyDialog({
   const addPolicy = useAddDefaultPolicy();
 
   const entry = registry.find((r) => r.handler === selected);
-  const rawSchema = entry?.params_schema as
-    | {
-        properties?: Record<
-          string,
-          {
-            type?: string;
-            description?: string;
-            default?: unknown;
-            enum?: string[];
-            items?: { type?: string; enum?: string[]; "x-enum-source"?: string };
-            uniqueItems?: boolean;
-          }
-        >;
-        required?: string[];
-      }
-    | null
-    | undefined;
-  const modelIds = useMemo(() => CLAUDE_NATIVE_MODELS.map((m) => m.id), []);
-  const properties = useMemo(() => {
-    const props = rawSchema?.properties ?? {};
-    if (!modelIds.length) return props;
-    const enriched: typeof props = {};
-    for (const [key, prop] of Object.entries(props)) {
-      if (prop.items?.["x-enum-source"] === "models" && !prop.items.enum) {
-        enriched[key] = { ...prop, items: { ...prop.items, enum: modelIds } };
-      } else {
-        enriched[key] = prop;
-      }
-    }
-    return enriched;
-  }, [rawSchema?.properties, modelIds]);
+  const properties = useMemo(() => policyParamProperties(entry, modelIds), [entry, modelIds]);
   const paramKeys = Object.keys(properties);
 
   function handleSelect(handler: string) {
@@ -222,160 +215,13 @@ function AddDefaultPolicyDialog({
             </div>
           )}
           {entry && (
-            <div>
-              <label className="flex items-center gap-1 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">name</span>
-              </label>
-              <input
-                type="text"
-                value={policyName}
-                onChange={(e) => setPolicyName(e.target.value)}
-                className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-              />
-            </div>
-          )}
-          {entry?.kind === "factory" && paramKeys.length > 0 && (
-            <div className="space-y-2">
-              {paramKeys.map((key) => {
-                const prop = properties[key];
-                return (
-                  <div key={key}>
-                    <label className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">{key}</span>
-                      {prop?.type && (
-                        <span>
-                          (
-                          {prop.type === "array" && prop.items?.enum
-                            ? "multi-select"
-                            : prop.type === "array"
-                              ? "comma-separated"
-                              : prop.type}
-                          )
-                        </span>
-                      )}
-                    </label>
-                    {prop?.description && (
-                      <p className="break-words text-sm text-muted-foreground">
-                        {prop.description}
-                      </p>
-                    )}
-                    {prop?.type === "boolean" ? (
-                      <select
-                        value={
-                          factoryParams[key] ??
-                          (prop?.default !== undefined ? String(prop.default) : "")
-                        }
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      >
-                        <option value="true">true</option>
-                        <option value="false">false</option>
-                      </select>
-                    ) : prop?.type === "string" && prop.enum ? (
-                      <select
-                        value={
-                          factoryParams[key] ??
-                          (prop?.default !== undefined
-                            ? String(prop.default)
-                            : (prop.enum[0] ?? ""))
-                        }
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      >
-                        {prop.enum.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    ) : prop?.type === "array" && prop.items?.enum ? (
-                      (() => {
-                        const current = factoryParams[key]
-                          ? factoryParams[key].split(",").filter(Boolean)
-                          : Array.isArray(prop?.default)
-                            ? (prop.default as string[])
-                            : [];
-                        return (
-                          <div className="mt-0.5 space-y-1.5">
-                            {current.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {current.map((v) => (
-                                  <span
-                                    key={v}
-                                    className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 py-0.5 text-sm"
-                                  >
-                                    {v}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const next = current.filter((x) => x !== v);
-                                        setFactoryParams((prev) => ({
-                                          ...prev,
-                                          [key]: next.join(","),
-                                        }));
-                                      }}
-                                      className="ml-0.5 text-muted-foreground hover:text-foreground"
-                                    >
-                                      <XIcon className="size-3" />
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            <ModelValueCombobox
-                              options={prop.items.enum}
-                              selected={current}
-                              onToggle={(v) => {
-                                const next = current.includes(v)
-                                  ? current.filter((x) => x !== v)
-                                  : [...current, v];
-                                setFactoryParams((prev) => ({
-                                  ...prev,
-                                  [key]: next.join(","),
-                                }));
-                              }}
-                            />
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <input
-                        type={
-                          prop?.type === "integer" || prop?.type === "number" ? "number" : "text"
-                        }
-                        placeholder={
-                          prop?.type === "array"
-                            ? prop?.default !== undefined
-                              ? (prop.default as string[]).join(", ")
-                              : "comma-separated values"
-                            : prop?.default !== undefined
-                              ? String(prop.default)
-                              : ""
-                        }
-                        value={factoryParams[key] ?? ""}
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <PolicyInstanceFields
+              name={policyName}
+              onNameChange={setPolicyName}
+              properties={entry.kind === "factory" ? properties : {}}
+              factoryParams={factoryParams}
+              onFactoryParamsChange={setFactoryParams}
+            />
           )}
           {(paramError || addPolicy.isError) && (
             <div
@@ -422,6 +268,117 @@ function AddDefaultPolicyDialog({
 // Main page
 // ---------------------------------------------------------------------------
 
+const NO_POLICY_MODEL = "__none__";
+
+function PolicyModelPicker({
+  models,
+  value,
+  disabled,
+  onChange,
+}: {
+  models: { id: string; displayName: string }[];
+  value: string | null;
+  disabled: boolean;
+  onChange: (model: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = models.find((model) => model.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled}
+          aria-label="Policy checking model"
+          aria-expanded={open}
+          className="mt-3 w-full max-w-md justify-between font-normal"
+        >
+          <span className="truncate">{selected?.displayName ?? value ?? "No model selected"}</span>
+          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+        <Command>
+          <CommandInput placeholder="Search Databricks models…" />
+          <CommandList>
+            <CommandEmpty>No models found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value={NO_POLICY_MODEL}
+                data-checked={value === null}
+                onSelect={() => {
+                  onChange(null);
+                  setOpen(false);
+                }}
+              >
+                No model selected
+              </CommandItem>
+              {models.map((model) => (
+                <CommandItem
+                  key={model.id}
+                  value={`${model.displayName} ${model.id}`}
+                  data-checked={model.id === value}
+                  onSelect={() => {
+                    onChange(model.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate">{model.displayName}</span>
+                    <code className="block truncate text-sm text-muted-foreground">{model.id}</code>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function PolicyCheckingModelSection() {
+  const settings = useAdminModelSettings();
+  const update = useUpdateAdminModelSettings();
+  const data = settings.data;
+
+  return (
+    <section className="mb-6 rounded-lg border border-border bg-background p-4">
+      <h2 className="text-ui font-medium">Policy checking model</h2>
+      <p className="mt-0.5 text-sm text-muted-foreground">
+        Used by intent-based and other LLM-backed policies. This updates the server
+        <code className="mx-1">llm:</code>
+        configuration.
+      </p>
+      {!settings.isLoading && !data?.databricksConnected ? (
+        <div
+          role="alert"
+          className="mt-3 flex items-start gap-2 rounded-md border border-warning/50 bg-warning/15 px-3 py-2 text-foreground"
+        >
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span className="text-sm font-medium">
+            Connect to a Databricks workspace to enable intent based policies.
+          </span>
+        </div>
+      ) : (
+        <PolicyModelPicker
+          models={data?.models ?? []}
+          value={data?.policyModel ?? null}
+          disabled={settings.isLoading || update.isPending}
+          onChange={(policyModel) => update.mutate({ policyModel })}
+        />
+      )}
+      {(settings.isError || update.isError) && (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {settings.error?.message ?? update.error?.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function PoliciesPage() {
   const info = useServerInfo();
   // Explicit single-user local runtime: no auth endpoints exist, so skip the
@@ -431,9 +388,11 @@ export function PoliciesPage() {
   const [meIsAdmin, setMeIsAdmin] = useState<boolean | null>(null);
   const { data: policies = [], refetch } = useDefaultPolicies();
   const { data: registry = [] } = usePolicyRegistry();
+  const modelSettings = useAdminModelSettings();
   const updatePolicy = useUpdateDefaultPolicy();
   const deletePolicy = useDeleteDefaultPolicy();
   const [addOpen, setAddOpen] = useState(false);
+  const [editCandidate, setEditCandidate] = useState<DefaultPolicy | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DefaultPolicy | null>(null);
   const [pendingAction, setPendingAction] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -505,12 +464,16 @@ export function PoliciesPage() {
         </Button>
       </div>
 
+      <PolicyCheckingModelSection />
+
       {policies.length > 0 && (
         <div className="flex flex-col gap-3">
           {policies.map((p) => {
             const registryEntry = registryByHandler.get(p.handler);
             const params = p.factory_params;
             const hasParams = params != null && Object.keys(params).length > 0;
+            const missingRequiredModel =
+              p.enabled && registryEntry?.requires_llm === true && !modelSettings.data?.policyModel;
             return (
               <div
                 key={p.id ?? p.name}
@@ -541,11 +504,33 @@ export function PoliciesPage() {
                       <code className="mt-1 block text-sm text-muted-foreground/70">
                         {p.handler}
                       </code>
+                      {missingRequiredModel && (
+                        <div
+                          role="alert"
+                          className="mt-2 flex items-start gap-1.5 text-sm text-warning"
+                        >
+                          <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            This policy requires a policy checking model. Choose one above before
+                            relying on it.
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {p.source !== "config" ? (
                       <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-muted-foreground"
+                          title="Edit policy"
+                          aria-label={`Edit ${p.name}`}
+                          onClick={() => setEditCandidate(p)}
+                        >
+                          <PencilIcon className="size-3.5" />
+                        </Button>
                         <Switch
                           checked={p.enabled}
                           onCheckedChange={(checked) =>
@@ -605,7 +590,39 @@ export function PoliciesPage() {
         </Button>
       </div>
 
-      <AddDefaultPolicyDialog registry={registry} open={addOpen} onOpenChange={setAddOpen} />
+      <AddDefaultPolicyDialog
+        registry={registry}
+        modelIds={(modelSettings.data?.models ?? []).map((model) => model.id)}
+        open={addOpen}
+        onOpenChange={setAddOpen}
+      />
+
+      <EditPolicyInstanceDialog
+        policy={
+          editCandidate
+            ? {
+                name: editCandidate.name,
+                handler: editCandidate.handler,
+                factory_params: editCandidate.factory_params,
+              }
+            : null
+        }
+        registryEntry={editCandidate ? registryByHandler.get(editCandidate.handler) : undefined}
+        modelIds={(modelSettings.data?.models ?? []).map((model) => model.id)}
+        open={editCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditCandidate(null);
+        }}
+        onSave={(payload) => {
+          if (!editCandidate?.id) return;
+          updatePolicy.mutate(
+            { policyId: editCandidate.id, ...payload },
+            { onSuccess: () => setEditCandidate(null) },
+          );
+        }}
+        isPending={updatePolicy.isPending}
+        error={updatePolicy.isError ? updatePolicy.error : null}
+      />
 
       {/* Delete confirmation */}
       <Dialog

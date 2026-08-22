@@ -34,6 +34,7 @@ class AgentStore(ABC):
         name: str,
         bundle_location: str,
         description: str | None = None,
+        is_role: bool = False,
     ) -> Agent:
         """
         Register a new template agent. Name must be unique among
@@ -49,6 +50,8 @@ class AgentStore(ABC):
             e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
         :param description: Optional free-text description of the
             agent's purpose.
+        :param is_role: True for a role-bound profile hidden from the
+            public catalog (backs a glossary role).
         :returns: The newly created :class:`Agent`.
         """
         ...
@@ -82,6 +85,7 @@ class AgentStore(ABC):
         after: str | None = None,
         before: str | None = None,
         order: str = "desc",
+        include_disabled: bool = False,
     ) -> PagedList[Agent]:
         """
         List registered template agents with cursor-based pagination.
@@ -101,6 +105,16 @@ class AgentStore(ABC):
         ...
 
     @abstractmethod
+    def set_enabled(self, agent_id: str, enabled: bool) -> Agent | None:
+        """Set a template agent's enabled state and return the updated row."""
+        ...
+
+    @abstractmethod
+    def archive(self, agent_id: str) -> Agent | None:
+        """Archive a template agent and return the updated row."""
+        ...
+
+    @abstractmethod
     def get_names(self, agent_ids: builtins.list[str]) -> dict[str, str]:
         """
         Batch-fetch agent names for a list of IDs.
@@ -116,10 +130,19 @@ class AgentStore(ABC):
         ...
 
     @abstractmethod
+    def get_role_flags(self, agent_ids: builtins.list[str]) -> dict[str, bool]:
+        """Batch-fetch the role-profile visibility flag for agent IDs."""
+        ...
+
+    @abstractmethod
     def update(
         self,
         agent_id: str,
         bundle_location: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        _update_metadata: bool = False,
     ) -> Agent | None:
         """
         Update an agent's bundle location, bump its version, and
@@ -130,6 +153,9 @@ class AgentStore(ABC):
             e.g. ``"agent_abc123"``.
         :param bundle_location: New artifact store key for the
             bundle, e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
+        :param name: Updated profile name when metadata is being updated.
+        :param description: Updated profile description, including ``None``.
+        :param _update_metadata: Whether to replace name and description.
         :returns: The updated :class:`Agent`, or ``None`` if not
             found.
         """
@@ -146,5 +172,19 @@ class AgentStore(ABC):
             e.g. ``"agent_abc123"``.
         :returns: ``True`` if the agent was deleted, ``False`` if
             it did not exist.
+        """
+        ...
+
+    @abstractmethod
+    def set_is_role(self, agent_id: str, is_role: bool) -> None:
+        """
+        Toggle the ``is_role`` visibility flag on an agent row.
+
+        Role-bound profiles are hidden from the public catalog. The seed
+        calls this to mark the packaged task-role agents on existing rows
+        that predate the column; new rows take the flag at ``create`` time.
+
+        :param agent_id: Unique agent identifier.
+        :param is_role: True to hide from the catalog, False to restore.
         """
         ...

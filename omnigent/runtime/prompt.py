@@ -18,6 +18,15 @@ from omnigent.runtime.tool_result_replay import image_omitted_placeholder
 from omnigent.spec import AgentSpec
 
 
+def compose_omniharness_instructions(
+    system_prompt: str | None,
+    profile_instructions: str | None,
+) -> str | None:
+    """Compose the global OmniHarness prompt before the selected profile."""
+    parts = [part for part in (system_prompt, profile_instructions) if part]
+    return "\n\n".join(parts) if parts else None
+
+
 def append_framework_instructions(
     instructions: str | None,
     framework_instructions: Sequence[str],
@@ -46,7 +55,9 @@ def build_instructions(
     per_request_instructions: str | None,
     tool_schemas: list[dict[str, Any]],
     *,
+    memory_instructions: str | None = None,
     framework_instructions: Sequence[str] = (),
+    effective_instructions: str | None = None,
 ) -> str:
     """
     Build the system instructions string from the agent's
@@ -62,14 +73,19 @@ def build_instructions(
     :param tool_schemas: OpenAI-format tool schemas (used
         only for future skill-awareness hinting; currently
         not included in the instructions body).
+    :param memory_instructions: Server-rendered persistent user memory,
+        appended after the effective agent/profile prompt.
     :param framework_instructions: Framework-owned additive instructions
-        for this turn, appended after user-authored agent/request instructions.
+        for this turn, appended last.
     :returns: The assembled instructions string.
     """
     parts: list[str] = []
 
-    if spec.instructions:
-        parts.append(spec.instructions)
+    base_instructions = (
+        effective_instructions if effective_instructions is not None else spec.instructions
+    )
+    if base_instructions:
+        parts.append(base_instructions)
 
     if per_request_instructions:
         parts.append(per_request_instructions)
@@ -86,6 +102,9 @@ def build_instructions(
         for skill in spec.skills:
             skill_lines.append(f"- {skill.name}: {skill.description}")
         parts.append("\n".join(skill_lines))
+
+    if memory_instructions:
+        parts.append(memory_instructions)
 
     base_instructions = "\n\n".join(parts) if parts else "You are a helpful assistant."
     return (

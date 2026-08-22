@@ -63,15 +63,23 @@ export function useAddDefaultPolicy() {
   });
 }
 
-/** PATCH /v1/policies/{id} — toggle enabled state. */
+/** PATCH /v1/policies/{id} — update mutable fields on a persisted policy. */
 export function useUpdateDefaultPolicy() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ policyId, enabled }: { policyId: string; enabled: boolean }) => {
+    mutationFn: async ({
+      policyId,
+      ...payload
+    }: {
+      policyId: string;
+      enabled?: boolean;
+      name?: string;
+      factory_params?: Record<string, unknown> | null;
+    }) => {
       const res = await authenticatedFetch(`/v1/policies/${encodeURIComponent(policyId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return (await res.json()) as DefaultPolicy;

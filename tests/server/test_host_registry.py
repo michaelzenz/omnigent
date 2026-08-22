@@ -41,16 +41,22 @@ class FakeWebSocket:
         return ""  # pragma: no cover
 
 
-def _make_hello(name: str = "test-host") -> HostHelloFrame:
+def _make_hello(
+    name: str = "test-host",
+    *,
+    instance_id: str | None = None,
+) -> HostHelloFrame:
     """Build a minimal HostHelloFrame for tests.
 
     :param name: Human-readable host name.
+    :param instance_id: Optional process-lifetime daemon identifier.
     :returns: A :class:`HostHelloFrame` with default values.
     """
     return HostHelloFrame(
         version="0.1.0",
         frame_protocol_version=1,
         name=name,
+        instance_id=instance_id,
     )
 
 
@@ -104,6 +110,20 @@ def test_deregister_poisons_outbound_queue() -> None:
     assert conn.outbound_queue.get_nowait() is None
 
 
+@pytest.mark.asyncio
+async def test_deregister_releases_pending_worktree_operation() -> None:
+    """A tunnel drop must not leave an unlimited worktree wait stuck."""
+    registry = HostRegistry()
+    conn = registry.register("host_worktree", FakeWebSocket(), _make_hello(), owner="bob")
+    pending: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
+    conn.pending_create_worktrees["request-1"] = pending
+
+    assert registry.deregister("host_worktree") is True
+    with pytest.raises(ConnectionError, match="disconnected during worktree operation"):
+        await pending
+    assert conn.pending_create_worktrees == {}
+
+
 def test_deregister_returns_false_for_unknown() -> None:
     """
     Verify that deregister reports whether it removed an entry.
@@ -130,6 +150,46 @@ def test_deregister_guard_keeps_newer_connection() -> None:
 
     assert registry.deregister("host_gen", conn=old_conn) is False
     assert registry.get("host_gen") is new_conn
+
+
+def test_register_marks_different_live_daemon_instance() -> None:
+    """A second process using the same host identity is diagnosed."""
+    registry = HostRegistry()
+    registry.register(
+        "host_duplicate",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-a"),
+        owner="bob",
+    )
+
+    replacement = registry.register(
+        "host_duplicate",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-b"),
+        owner="bob",
+    )
+
+    assert replacement.duplicate_daemon is True
+
+
+def test_register_does_not_mark_same_daemon_reconnect() -> None:
+    """A reconnect from the same process is not a duplicate-daemon warning."""
+    registry = HostRegistry()
+    registry.register(
+        "host_reconnect",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-a"),
+        owner="bob",
+    )
+
+    replacement = registry.register(
+        "host_reconnect",
+        FakeWebSocket(),
+        _make_hello(instance_id="daemon-a"),
+        owner="bob",
+    )
+
+    assert replacement.duplicate_daemon is False
 
 
 def test_mark_frame_seen_refreshes_current_connection() -> None:
@@ -231,6 +291,17 @@ def test_register_replaces_stale_connection() -> None:
     # The None sentinel tells the sender loop to exit.
     poison = old_conn.outbound_queue.get_nowait()
     assert poison is None
+
+
+def test_stale_connection_cannot_deregister_replacement() -> None:
+    registry = HostRegistry()
+    old_conn = registry.register("host_replace", FakeWebSocket(), _make_hello(), owner="dave")
+    new_conn = registry.register("host_replace", FakeWebSocket(), _make_hello(), owner="dave")
+
+    assert registry.deregister("host_replace", old_conn) is None
+    assert registry.get("host_replace") is new_conn
+    assert registry.deregister("host_replace", new_conn) is new_conn
+    assert registry.get("host_replace") is None
 
 
 def test_send_text_enqueues_frame() -> None:
@@ -491,3 +562,26 @@ def test_legacy_prefixed_id_resolves_to_bare_registration() -> None:
     # Deregistering by any spelling removes the entry.
     registry.deregister(prefixed)
     assert registry.get(bare) is None
+
+
+def test_memory_file_cache_is_workspace_scoped() -> None:
+    registry = HostRegistry()
+    registry.record_memory_file(
+        "host-a",
+        {"provider": "agents", "content": "workspace one"},
+        workspace_id=1,
+    )
+    registry.record_memory_file(
+        "host-a",
+        {"provider": "agents", "content": "workspace two"},
+        workspace_id=2,
+    )
+
+    assert registry.memory_file("host-a", "agents", workspace_id=1) == {
+        "provider": "agents",
+        "content": "workspace one",
+    }
+    assert registry.memory_file("host-a", "agents", workspace_id=2) == {
+        "provider": "agents",
+        "content": "workspace two",
+    }

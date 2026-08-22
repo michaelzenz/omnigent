@@ -486,6 +486,92 @@ def test_append_and_list_items(conversation_store: SqlAlchemyConversationStore) 
     assert page.data[1].data.role == "assistant"
 
 
+def test_rewind_from_user_message_removes_target_and_later_items(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    conv = conversation_store.create_conversation()
+    items = conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_1",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "first"}]),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_1",
+                data=MessageData(
+                    role="assistant",
+                    content=[{"type": "output_text", "text": "answer"}],
+                    agent="test-agent",
+                ),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_2",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "second"}]),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_2",
+                data=MessageData(
+                    role="assistant",
+                    content=[{"type": "output_text", "text": "later"}],
+                    agent="test-agent",
+                ),
+            ),
+        ],
+    )
+
+    conversation_store.rewind_conversation(conv.id, from_message_id=items[2].id)
+
+    remaining = conversation_store.list_items(conv.id).data
+    assert [item.id for item in remaining] == [items[0].id, items[1].id]
+    [replacement] = conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_3",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "edited second"}],
+                ),
+            )
+        ],
+    )
+    assert [item.id for item in conversation_store.list_items(conv.id).data] == [
+        items[0].id,
+        items[1].id,
+        replacement.id,
+    ]
+
+
+def test_rewind_rejects_assistant_message(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    conv = conversation_store.create_conversation()
+    [assistant] = conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_1",
+                data=MessageData(
+                    role="assistant",
+                    content=[{"type": "output_text", "text": "answer"}],
+                    agent="test-agent",
+                ),
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="not a user message"):
+        conversation_store.rewind_conversation(conv.id, from_message_id=assistant.id)
+    assert [item.id for item in conversation_store.list_items(conv.id).data] == [assistant.id]
+
+
 def test_append_records_human_author_attribution(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
@@ -2063,6 +2149,38 @@ def test_append_bumps_updated_at(
     )
 
 
+def test_append_can_preserve_updated_at(
+    conversation_store: SqlAlchemyConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Infrastructure items persist without creating unread activity."""
+    import omnigent.stores.conversation_store.sqlalchemy_store as store_mod
+
+    monkeypatch.setattr(store_mod, "now_epoch", lambda: 1000)
+    conv = conversation_store.create_conversation()
+    monkeypatch.setattr(store_mod, "now_epoch", lambda: 2000)
+
+    conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_infrastructure",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "infrastructure"}],
+                ),
+            ),
+        ],
+        bump_updated_at=False,
+    )
+
+    fetched = conversation_store.get_conversation(conv.id)
+    assert fetched is not None
+    assert fetched.updated_at == 1000
+    assert len(conversation_store.list_items(conv.id).data) == 1
+
+
 def test_update_title_bumps_updated_at(
     conversation_store: SqlAlchemyConversationStore,
     monkeypatch: pytest.MonkeyPatch,
@@ -2608,6 +2726,22 @@ def test_replace_runner_id_allows_internal_non_session_conversation(
     fetched = conversation_store.get_conversation(conv.id)
     assert fetched is not None
     assert fetched.runner_id == "runner-uuid-1"
+
+
+def test_replace_runner_id_can_preserve_content_updated_at(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """Infrastructure relaunches do not masquerade as unread chat activity."""
+    conv = conversation_store.create_conversation()
+
+    updated = conversation_store.replace_runner_id(
+        conv.id,
+        "runner-infrastructure-relaunch",
+        bump_updated_at=False,
+    )
+
+    assert updated.runner_id == "runner-infrastructure-relaunch"
+    assert updated.updated_at == conv.updated_at
 
 
 def test_list_conversations_by_runner_id_filters(

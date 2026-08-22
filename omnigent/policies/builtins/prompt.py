@@ -306,11 +306,13 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "server-level LLM, and parses the verdict. Requires the server "
             "to have an llm: config block."
         ),
+        "requires_llm": True,
         "params_schema": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
+                    "x-ui-widget": "textarea",
                     "description": (
                         "Author-supplied domain logic describing when to "
                         "deny, ask, or allow. Example: "

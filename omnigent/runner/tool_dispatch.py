@@ -32,7 +32,8 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
+from urllib.parse import quote
 
 from omnigent.json_types import JsonObject as _JsonObject
 
@@ -83,6 +84,7 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
+from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool, is_task_api_path
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
 from omnigent.tools.builtins.spawn import (
     # Shared contract values with the in-process sys_session_* tools. Imported
@@ -317,6 +319,10 @@ _SHARE_PUBLIC_POLICY = "public"
 # ``_execute_subagent_tool``.
 _WEB_FETCH_TOOLS = frozenset({"web_fetch"})
 
+# Default portable builtins that need explicit runner dispatch.
+_CONVERSATION_SEARCH_TOOLS = frozenset({"search_conversations"})
+_EXPORT_AGENT_TOOLS = frozenset({"export_agent"})
+
 # Priority 5f.1b: web_search — the first-party search builtin. Runner-local
 # so a non-OpenAI model's web_search function call resolves to the spec's
 # configured backend (google / perplexity / nimble) via WebSearchTool.invoke.
@@ -362,10 +368,26 @@ _TASK_LIFECYCLE_TOOLS = frozenset(
     }
 )
 
-# Priority 5i: Skill tools — load_skill and read_skill_file.
+# Priority 5i: Skill tools — reads execute on the runner; writes proxy the server.
 # Dispatched locally in the runner so harness subprocesses can
 # call them via the action_required → dispatch_tool_locally path.
-_SKILL_TOOLS = frozenset({"load_skill", "read_skill_file"})
+_SKILL_TOOLS = frozenset(
+    {
+        "load_skill",
+        "read_skill_file",
+        "update_skill",
+        "write_skill",
+    }
+)
+_SKILL_WRITE_TOOLS = frozenset({"update_skill", "write_skill"})
+_loaded_skill_variants: dict[tuple[str, str], str] = {}
+
+
+def forget_skill_provenance(conversation_id: str) -> None:
+    """Drop loaded-skill variant selections when a runner session closes."""
+    for key in [key for key in _loaded_skill_variants if key[0] == conversation_id]:
+        _loaded_skill_variants.pop(key, None)
+
 
 # Priority 5j: Comment tools — list_comments and update_comment.
 # Auto-registered by ToolManager. The runner has no in-process
@@ -419,6 +441,16 @@ _BROWSER_TOOLS = frozenset(
     }
 )
 
+# Priority 5n: PuppyGarden task-API proxy — ``puppygarden_api``.
+# Auto-registered by ToolManager. The runner proxies the Omnigent server's
+# task REST endpoints (``/v1/agent-tasks`` / ``/v1/task-events`` /
+# ``/v1/task-items``) over ``server_client`` so agents call the API with a
+# typed function call instead of curl. Execution lives HERE (not in
+# Tool.invoke) because it needs the runner's ``server_client`` that
+# ``ToolContext`` does not carry — same posture as _COMMENT_TOOLS /
+# _SCHEDULED_TASK_TOOLS.
+_PUPPYGARDEN_API_TOOLS = frozenset({PuppyGardenApiTool.name()})
+
 # Runner-side outer HTTP read timeout for a browser action POST. The read
 # budget (60s) MUST exceed the server-side browser-action await (30s) so the
 # runner never severs the still-open POST before the server returns either the
@@ -462,6 +494,11 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
     | _TERMINAL_TOOLS
+    | _TIMER_TOOLS
+    | _FILE_TOOLS
+    | _WEB_FETCH_TOOLS
+    | _CONVERSATION_SEARCH_TOOLS
+    | _EXPORT_AGENT_TOOLS
     # ``browser_*`` must ride the native relay: the Omnigent desktop app
     # runs native (claude/codex/pi) sessions, which ignore ``request.tools``
     # and see ONLY this relay surface — without this union member the
@@ -472,6 +509,10 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     # Memory builtins are relayed to native harnesses too — unlike web_search,
     # native harnesses have no built-in long-term memory of their own.
     | _HINDSIGHT_TOOLS
+    # PuppyGarden task-API proxy rides the native relay so native-harness role
+    # agents (claude/codex/pi) can call the task REST API the same way as SDK
+    # agents — without the relay they'd never see the tool.
+    | _PUPPYGARDEN_API_TOOLS
 )
 
 
@@ -853,6 +894,8 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
     | _WEB_FETCH_TOOLS
+    | _CONVERSATION_SEARCH_TOOLS
+    | _EXPORT_AGENT_TOOLS
     | _WEB_SEARCH_TOOLS
     | _NIMBLE_RESEARCH_TOOLS
     | _NIMBLE_EXTRACT_TOOLS
@@ -864,6 +907,7 @@ _ALL_LOCAL_TOOLS = (
     | _AGENT_TOOLS
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
+    | _PUPPYGARDEN_API_TOOLS
 )
 _PLACEHOLDER_CWDS = (None, "", ".", "./")
 
@@ -2953,6 +2997,39 @@ async def _session_create_from_config_path(
     )
 
 
+async def _execute_search_conversations_tool(
+    args: _JsonObject,
+    *,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Search accessible sessions through the server's indexed search."""
+    if server_client is None:
+        return json.dumps({"error": "search_conversations requires a server connection"})
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return json.dumps({"error": "missing required 'query' argument"})
+    limit = args.get("limit", 10)
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return json.dumps({"error": "limit must be a positive integer"})
+    try:
+        response = await server_client.get(
+            "/v1/sessions",
+            params={
+                "search_query": query.strip(),
+                "limit": min(limit, 100),
+                "kind": "any",
+                "include_archived": "true",
+            },
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"search_conversations failed: {exc}"})
+    if response.status_code != 200:
+        return json.dumps({"error": f"search_conversations returned {response.status_code}"})
+    payload = _string_object_dict(response.json()) or {}
+    return json.dumps({"results": _json_object_list(payload.get("data"))})
+
+
 async def _execute_web_fetch_tool(
     args: _JsonObject,
     *,
@@ -3797,6 +3874,80 @@ async def _execute_scheduled_task_tool(
             {"error": f"server returned {resp.status_code}", "details": resp.text[:500]}
         )
     return json.dumps(resp.json())
+
+
+async def _execute_puppygarden_api_tool(
+    tool_name: str,
+    arguments: str,
+    *,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """
+    Runner-local handler for ``puppygarden_api``.
+
+    Proxies any PuppyGarden task REST endpoint (``/v1/agent-tasks`` /
+    ``/v1/task-events`` / ``/v1/task-items``) over ``server_client`` so an
+    agent calls the API with a typed function call instead of curling. The
+    path is validated against the task-API prefixes so a misbehaving model
+    can't use this tool as an arbitrary server proxy. Same posture as
+    :func:`_execute_scheduled_task_tool` / :func:`_execute_comment_tool`.
+
+    :param tool_name: ``"puppygarden_api"``.
+    :param arguments: JSON-encoded arguments string from the LLM, with
+        ``method`` (GET/POST/PATCH/DELETE), ``path`` (``/v1/...``), and
+        optional ``body`` / ``query`` objects.
+    :param server_client: HTTP client pointed at the Omnigent server; ``None``
+        returns an error string.
+    :returns: Tool output JSON string — the server's JSON response, or an
+        ``{"error": ...}`` object on failure.
+    """
+    if server_client is None:
+        return json.dumps({"error": f"{tool_name} requires server access"})
+    try:
+        args: _JsonObject = json.loads(arguments) if arguments.strip() else {}
+    except json.JSONDecodeError:
+        return json.dumps({"error": f"{tool_name}: malformed JSON arguments"})
+
+    method = args.get("method")
+    path = args.get("path")
+    if not isinstance(method, str) or method not in ("GET", "POST", "PATCH", "DELETE"):
+        return json.dumps({"error": f"{tool_name} requires 'method' (GET/POST/PATCH/DELETE)"})
+    if not isinstance(path, str) or not path:
+        return json.dumps({"error": f"{tool_name} requires 'path' (e.g. /v1/agent-tasks/<id>)"})
+    if not is_task_api_path(path):
+        return json.dumps(
+            {
+                "error": (
+                    f"{tool_name} only proxies task API paths "
+                    "(/v1/agent-tasks, /v1/task-events, /v1/task-items)"
+                )
+            }
+        )
+
+    body = args.get("body")
+    query = args.get("query")
+    kwargs: dict[str, Any] = {"timeout": 30.0}
+    if isinstance(query, dict) and query:
+        kwargs["params"] = query
+    if isinstance(body, dict) and method in ("POST", "PATCH"):
+        kwargs["json"] = body
+
+    try:
+        resp = await server_client.request(method, path, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"{tool_name} failed: {exc}"})
+
+    if resp.status_code >= 400:
+        return json.dumps(
+            {"error": f"server returned {resp.status_code}", "details": resp.text[:500]}
+        )
+    # Some DELETE endpoints return 204 No Content; emit a stable empty object.
+    if resp.status_code == 204 or not resp.content:
+        return json.dumps({"status": "ok"})
+    try:
+        return json.dumps(resp.json())
+    except ValueError:
+        return json.dumps({"status": "ok", "body": resp.text[:500]})
 
 
 @dataclass
@@ -5569,6 +5720,21 @@ async def execute_tool(
                 publish_event=publish_event,
                 session_inbox=session_inbox,
             )
+        elif tool_name in _CONVERSATION_SEARCH_TOOLS:
+            output = await _execute_search_conversations_tool(
+                args,
+                server_client=server_client,
+            )
+        elif tool_name in _EXPORT_AGENT_TOOLS:
+            output = await _execute_local_python_tool(
+                tool_name,
+                arguments,
+                agent_spec=agent_spec,
+                conversation_id=conversation_id,
+                task_id=task_id,
+                agent_id=agent_id,
+                runner_workspace=runner_workspace,
+            )
         elif tool_name in _WEB_SEARCH_TOOLS:
             output = await _execute_web_search_tool(
                 args,
@@ -5622,11 +5788,13 @@ async def execute_tool(
                 server_client=server_client,
             )
         elif tool_name in _SKILL_TOOLS:
-            output = _execute_skill_tool(
+            output = await _execute_skill_tool(
                 tool_name,
                 args,
                 agent_spec=agent_spec,
                 runner_workspace=runner_workspace,
+                conversation_id=conversation_id,
+                server_client=server_client,
             )
         elif tool_name in _COMMENT_TOOLS:
             output = await _execute_comment_tool(
@@ -5663,6 +5831,12 @@ async def execute_tool(
                 args,
                 server_client=server_client,
                 conversation_id=conversation_id,
+            )
+        elif tool_name in _PUPPYGARDEN_API_TOOLS:
+            output = await _execute_puppygarden_api_tool(
+                tool_name,
+                arguments,
+                server_client=server_client,
             )
         elif _is_spec_local_python_tool(tool_name, agent_spec):
             output = await _execute_local_python_tool(
@@ -7563,21 +7737,72 @@ def _inject_orchestrator_skills(
     return skills
 
 
-def _execute_skill_tool(
+def _skill_files_argument(args: _JsonObject) -> tuple[dict[str, str] | None, str | None]:
+    files = args.get("files")
+    if not isinstance(files, dict) or not files:
+        return None, "'files' must be a non-empty object"
+    if not all(
+        isinstance(path, str) and path and isinstance(content, str)
+        for path, content in files.items()
+    ):
+        return None, "'files' must map non-empty relative paths to text"
+    return cast(dict[str, str], files), None
+
+
+def _resolved_skill_hash(
+    skill_name: str,
+    *,
+    agent_spec: AgentSpec | None,
+    runner_workspace: Path | None,
+) -> str | None:
+    from omnigent.server.skill_sync_registry import skill_dir_sha256
+    from omnigent.tools.builtins.load_skill import LoadSkillTool, find_skill_by_name
+
+    bundled_skills = list(getattr(agent_spec, "skills", None) or [])
+    skills_filter = getattr(agent_spec, "skills_filter", "all")
+    bundled_skills = _inject_orchestrator_skills(bundled_skills, agent_spec)
+    load_tool = LoadSkillTool(
+        bundled_skills,
+        agent_root=runner_workspace,
+        skills_filter=skills_filter,
+    )
+    skill = find_skill_by_name(load_tool.skills, skill_name)
+    if skill is None or skill.skill_dir is None:
+        return None
+    return skill_dir_sha256(skill.skill_dir)
+
+
+def _server_error(response: httpx.Response, operation: str) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return json.dumps(
+        {
+            "error": str(detail or f"{operation} returned {response.status_code}"),
+            "status_code": response.status_code,
+        }
+    )
+
+
+async def _execute_skill_tool(
     tool_name: str,
     args: _JsonObject,
     *,
     agent_spec: AgentSpec | None,
     runner_workspace: Path | None,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
 ) -> str:
     """
-    Runner-local handler for ``load_skill`` and ``read_skill_file``.
+    Resolve skill reads locally and mediate durable writes through the server.
 
     Instantiates the tool with the agent spec's bundled skills
     plus host-scope discovery from the runner workspace, then
     invokes it.
 
-    :param tool_name: ``"load_skill"`` or ``"read_skill_file"``.
+    :param tool_name: One of the four framework-owned skill tools.
     :param args: Parsed JSON arguments from the LLM.
     :param agent_spec: The session's AgentSpec.
     :param runner_workspace: The runner's workspace path for
@@ -7586,6 +7811,69 @@ def _execute_skill_tool(
     """
     from omnigent.tools.builtins.load_skill import LoadSkillTool
     from omnigent.tools.builtins.read_skill_file import ReadSkillFileTool
+
+    skill_name_key = "name" if tool_name != "read_skill_file" else "skill_name"
+    skill_name = args.get(skill_name_key)
+    if not isinstance(skill_name, str) or not skill_name:
+        return json.dumps({"error": f"{tool_name} requires a non-empty skill name"})
+
+    if tool_name in _SKILL_WRITE_TOOLS:
+        if server_client is None:
+            return json.dumps({"error": f"{tool_name} requires the Omnigent server"})
+        files, files_error = _skill_files_argument(args)
+        if files_error is not None:
+            return json.dumps({"error": files_error})
+        assert files is not None
+        encoded_name = quote(skill_name, safe="")
+        try:
+            if tool_name == "write_skill":
+                response = await server_client.post(
+                    f"/v1/skills/{encoded_name}/files",
+                    json={"files": files},
+                    timeout=30.0,
+                )
+            else:
+                provenance_key = (conversation_id or "", skill_name)
+                content_hash = _loaded_skill_variants.get(provenance_key)
+                if content_hash is None:
+                    content_hash = _resolved_skill_hash(
+                        skill_name,
+                        agent_spec=agent_spec,
+                        runner_workspace=runner_workspace,
+                    )
+                if content_hash is None:
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"Skill {skill_name!r} is not available in this session. "
+                                "Use write_skill to create a new skill."
+                            )
+                        }
+                    )
+                response = await server_client.put(
+                    f"/v1/skills/{encoded_name}/variants/{quote(content_hash, safe='')}/files",
+                    json={"files": files},
+                    timeout=30.0,
+                )
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"error": f"{tool_name} failed: {exc}"})
+        if response.status_code not in {200, 201}:
+            return _server_error(response, tool_name)
+        payload = response.json()
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if isinstance(results, list) and any(
+            isinstance(result, dict) and result.get("status") == "failed" for result in results
+        ):
+            return json.dumps(
+                {
+                    "error": f"{tool_name} only completed on some targets",
+                    **payload,
+                }
+            )
+        new_hash = payload.get("content_sha256") if isinstance(payload, dict) else None
+        if isinstance(new_hash, str) and conversation_id is not None:
+            _loaded_skill_variants[(conversation_id, skill_name)] = new_hash
+        return json.dumps(payload)
 
     bundled_skills = list(getattr(agent_spec, "skills", None) or [])
     skills_filter = getattr(agent_spec, "skills_filter", "all")
@@ -7609,4 +7897,13 @@ def _execute_skill_tool(
     from omnigent.tools.base import ToolContext
 
     ctx = ToolContext(task_id="", conversation_id="", agent_id="")
-    return tool.invoke(arguments_json, ctx)
+    output = tool.invoke(arguments_json, ctx)
+    if not output.startswith("Error:") and conversation_id is not None:
+        content_hash = _resolved_skill_hash(
+            skill_name,
+            agent_spec=agent_spec,
+            runner_workspace=runner_workspace,
+        )
+        if content_hash is not None:
+            _loaded_skill_variants[(conversation_id, skill_name)] = content_hash
+    return output

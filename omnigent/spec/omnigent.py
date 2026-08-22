@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import os
 from collections.abc import Callable
 from typing import Any, TypeAlias, cast
 
@@ -1139,6 +1140,18 @@ def agent_def_to_agent_spec(
     # error regardless of which spec format the user is on.
     skills_filter = _translate_skills_filter_from_yaml(raw_yaml)
 
+    # ``tools_include`` references an external MCP-server config that lives
+    # outside the bundle (e.g. ~/.omnigent/mcp-servers.yaml). It is NOT baked
+    # into mcp_servers here — resolved at session load by
+    # resolve_session_mcp_servers so a synced file takes effect without a
+    # restart. Mirrors the parser.parse path. Only the top-level YAML carries
+    # it; sub-specs (raw_yaml is None) have no include.
+    mcp_include_path: str | None = None
+    if raw_yaml is not None:
+        raw_include = raw_yaml.get("tools_include")
+        if isinstance(raw_include, str) and raw_include.strip():
+            mcp_include_path = os.path.expanduser(raw_include.strip())
+
     return AgentSpec(
         spec_version=_SYNTHETIC_SPEC_VERSION,
         name=name,
@@ -1150,6 +1163,7 @@ def agent_def_to_agent_spec(
         executor=executor_spec,
         guardrails=guardrails,
         mcp_servers=mcp_servers,
+        mcp_include_path=mcp_include_path,
         os_env=agent_def.os_env,
         terminals=terminals,
         timers=agent_def.timers,

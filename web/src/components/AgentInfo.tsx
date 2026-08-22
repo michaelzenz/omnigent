@@ -30,8 +30,10 @@ import {
   usePolicies,
   usePolicyRegistry,
   useAddPolicy,
+  useUpdatePolicy,
   useDeletePolicy,
   type PolicyRegistryEntry,
+  type SessionPolicy,
 } from "@/hooks/usePolicies";
 import { usePermissions, useSessionOwner } from "@/hooks/usePermissions";
 import { isSessionSharedWithOthers } from "@/lib/permissionsApi";
@@ -47,7 +49,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ModelValueCombobox } from "@/components/ModelValueCombobox";
+import {
+  EditPolicyInstanceDialog,
+  PolicyInstanceFields,
+  policyParamProperties,
+} from "@/components/PolicyInstanceEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { capitalizeAgentName } from "@/lib/agentLabels";
 import { coercePolicyParams } from "@/lib/policyParams";
@@ -176,7 +182,13 @@ const MODEL_TOKEN_ROWS: readonly { key: keyof ModelUsage; label: string }[] = [
  *
  * @param usageByModel - Map of raw harness model id to its cumulative usage.
  */
-function ModelUsageBreakdown({ usageByModel }: { usageByModel: Record<string, ModelUsage> }) {
+function ModelUsageBreakdown({
+  usageByModel,
+  showUnknownPrice,
+}: {
+  usageByModel: Record<string, ModelUsage>;
+  showUnknownPrice: boolean;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   // Stable display order: most total tokens first, so the dominant model
   // leads. Falls back to 0 for models that haven't recorded a total yet.
@@ -230,6 +242,12 @@ function ModelUsageBreakdown({ usageByModel }: { usageByModel: Record<string, Mo
                   </span>
                 </div>
               )}
+              {usage.totalCostUsd == null && showUnknownPrice && (
+                <div className="flex items-baseline justify-between gap-3 pl-2 text-sm">
+                  <span className="text-muted-foreground/70">Cost</span>
+                  <span className="text-muted-foreground">UnknownPrice</span>
+                </div>
+              )}
             </div>
           );
         })}
@@ -241,6 +259,17 @@ function ModelUsageBreakdown({ usageByModel }: { usageByModel: Record<string, Mo
 // ---------------------------------------------------------------------------
 // Add-policy dialog
 // ---------------------------------------------------------------------------
+
+function usePolicyModelIds(): string[] {
+  const codexModelOptions = useChatStore((state) => state.codexModelOptions);
+  return useMemo(() => {
+    const ids: string[] = CLAUDE_NATIVE_MODELS.map((model) => model.id);
+    for (const option of codexModelOptions) {
+      if (option.id && !ids.includes(option.id)) ids.push(option.id);
+    }
+    return ids;
+  }, [codexModelOptions]);
+}
 
 function AddPolicyDialog({
   sessionId,
@@ -259,46 +288,10 @@ function AddPolicyDialog({
   const [factoryParams, setFactoryParams] = useState<Record<string, string>>({});
   const [paramError, setParamError] = useState<string | null>(null);
   const addPolicy = useAddPolicy(sessionId);
-  const codexModelOptions = useChatStore((s) => s.codexModelOptions);
+  const modelIds = usePolicyModelIds();
 
   const entry = registry.find((r) => r.handler === selected);
-  const rawSchema = entry?.params_schema as
-    | {
-        properties?: Record<
-          string,
-          {
-            type?: string;
-            description?: string;
-            default?: unknown;
-            enum?: string[];
-            items?: { type?: string; enum?: string[]; "x-enum-source"?: string };
-            uniqueItems?: boolean;
-          }
-        >;
-        required?: string[];
-      }
-    | null
-    | undefined;
-  const modelIds = useMemo(() => {
-    const ids: string[] = CLAUDE_NATIVE_MODELS.map((m) => m.id);
-    for (const opt of codexModelOptions) {
-      if (opt.id && !ids.includes(opt.id)) ids.push(opt.id);
-    }
-    return ids;
-  }, [codexModelOptions]);
-  const properties = useMemo(() => {
-    const props = rawSchema?.properties ?? {};
-    if (!modelIds.length) return props;
-    const enriched: typeof props = {};
-    for (const [key, prop] of Object.entries(props)) {
-      if (prop.items?.["x-enum-source"] === "models" && !prop.items.enum) {
-        enriched[key] = { ...prop, items: { ...prop.items, enum: modelIds } };
-      } else {
-        enriched[key] = prop;
-      }
-    }
-    return enriched;
-  }, [rawSchema?.properties, modelIds]);
+  const properties = useMemo(() => policyParamProperties(entry, modelIds), [entry, modelIds]);
   const paramKeys = Object.keys(properties);
 
   function handleSelect(handler: string) {
@@ -437,160 +430,13 @@ function AddPolicyDialog({
             </div>
           )}
           {entry && (
-            <div>
-              <label className="flex items-center gap-1 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">name</span>
-              </label>
-              <input
-                type="text"
-                value={policyName}
-                onChange={(e) => setPolicyName(e.target.value)}
-                className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-              />
-            </div>
-          )}
-          {entry?.kind === "factory" && paramKeys.length > 0 && (
-            <div className="space-y-2">
-              {paramKeys.map((key) => {
-                const prop = properties[key];
-                return (
-                  <div key={key}>
-                    <label className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">{key}</span>
-                      {prop?.type && (
-                        <span>
-                          (
-                          {prop.type === "array" && prop.items?.enum
-                            ? "multi-select"
-                            : prop.type === "array"
-                              ? "comma-separated"
-                              : prop.type}
-                          )
-                        </span>
-                      )}
-                    </label>
-                    {prop?.description && (
-                      <p className="break-words text-sm text-muted-foreground">
-                        {prop.description}
-                      </p>
-                    )}
-                    {prop?.type === "boolean" ? (
-                      <select
-                        value={
-                          factoryParams[key] ??
-                          (prop?.default !== undefined ? String(prop.default) : "")
-                        }
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      >
-                        <option value="true">true</option>
-                        <option value="false">false</option>
-                      </select>
-                    ) : prop?.type === "string" && prop.enum ? (
-                      <select
-                        value={
-                          factoryParams[key] ??
-                          (prop?.default !== undefined
-                            ? String(prop.default)
-                            : (prop.enum[0] ?? ""))
-                        }
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      >
-                        {prop.enum.map((v: string) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    ) : prop?.type === "array" && prop.items?.enum ? (
-                      (() => {
-                        const current = factoryParams[key]
-                          ? factoryParams[key].split(",").filter(Boolean)
-                          : Array.isArray(prop?.default)
-                            ? (prop.default as string[])
-                            : [];
-                        return (
-                          <div className="mt-0.5 space-y-1.5">
-                            {current.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {current.map((v: string) => (
-                                  <span
-                                    key={v}
-                                    className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 py-0.5 text-sm"
-                                  >
-                                    {v}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const next = current.filter((x) => x !== v);
-                                        setFactoryParams((prev) => ({
-                                          ...prev,
-                                          [key]: next.join(","),
-                                        }));
-                                      }}
-                                      className="ml-0.5 text-muted-foreground hover:text-foreground"
-                                    >
-                                      <XIcon className="size-3" />
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            <ModelValueCombobox
-                              options={prop.items.enum}
-                              selected={current}
-                              onToggle={(v) => {
-                                const next = current.includes(v)
-                                  ? current.filter((x) => x !== v)
-                                  : [...current, v];
-                                setFactoryParams((prev) => ({
-                                  ...prev,
-                                  [key]: next.join(","),
-                                }));
-                              }}
-                            />
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <input
-                        type={
-                          prop?.type === "integer" || prop?.type === "number" ? "number" : "text"
-                        }
-                        placeholder={
-                          prop?.type === "array"
-                            ? prop?.default !== undefined
-                              ? (prop.default as string[]).join(", ")
-                              : "comma-separated values"
-                            : prop?.default !== undefined
-                              ? String(prop.default)
-                              : ""
-                        }
-                        value={factoryParams[key] ?? ""}
-                        onChange={(e) =>
-                          setFactoryParams((prev) => ({
-                            ...prev,
-                            [key]: e.target.value,
-                          }))
-                        }
-                        className="mt-0.5 w-full rounded border border-border bg-background px-2 py-1.5 text-ui"
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <PolicyInstanceFields
+              name={policyName}
+              onNameChange={setPolicyName}
+              properties={entry.kind === "factory" ? properties : {}}
+              factoryParams={factoryParams}
+              onFactoryParamsChange={setFactoryParams}
+            />
           )}
           {(paramError || addPolicy.isError) && (
             <div
@@ -1139,8 +985,11 @@ function McpServersSection({
 function SessionPoliciesSection({ sessionId }: { sessionId: string }) {
   const { data: sessionPolicies = [] } = usePolicies(sessionId);
   const { data: registry = [] } = usePolicyRegistry();
+  const updatePolicy = useUpdatePolicy(sessionId);
   const deletePolicy = useDeletePolicy(sessionId);
+  const modelIds = usePolicyModelIds();
   const [addOpen, setAddOpen] = useState(false);
+  const [editCandidate, setEditCandidate] = useState<SessionPolicy | null>(null);
 
   const userPolicies = sessionPolicies.filter((p) => p.source === "session");
   const registryByHandler = new Map(registry.map((r) => [r.handler, r]));
@@ -1190,14 +1039,24 @@ function SessionPoliciesSection({ sessionId }: { sessionId: string }) {
                     {description && (
                       <p className="break-words text-sm text-muted-foreground">{description}</p>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => p.id && deletePolicy.mutate(p.id)}
-                      className="flex items-center gap-1 self-end rounded px-2 py-1 text-sm text-destructive hover:bg-destructive/10"
-                    >
-                      <TrashIcon className="size-3" />
-                      Remove
-                    </button>
+                    <div className="flex self-end">
+                      <button
+                        type="button"
+                        onClick={() => setEditCandidate(p)}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
+                      >
+                        <PencilIcon className="size-3" />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => p.id && deletePolicy.mutate(p.id)}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-sm text-destructive hover:bg-destructive/10"
+                      >
+                        <TrashIcon className="size-3" />
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 </PopoverContent>
               </Popover>
@@ -1212,6 +1071,34 @@ function SessionPoliciesSection({ sessionId }: { sessionId: string }) {
         registry={registry}
         open={addOpen}
         onOpenChange={setAddOpen}
+      />
+      <EditPolicyInstanceDialog
+        policy={
+          editCandidate
+            ? {
+                name: editCandidate.name,
+                handler: editCandidate.handler ?? "",
+                factory_params: editCandidate.factory_params,
+              }
+            : null
+        }
+        registryEntry={
+          editCandidate?.handler ? registryByHandler.get(editCandidate.handler) : undefined
+        }
+        modelIds={modelIds}
+        open={editCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditCandidate(null);
+        }}
+        onSave={(payload) => {
+          if (!editCandidate?.id) return;
+          updatePolicy.mutate(
+            { policyId: editCandidate.id, ...payload },
+            { onSuccess: () => setEditCandidate(null) },
+          );
+        }}
+        isPending={updatePolicy.isPending}
+        error={updatePolicy.isError ? updatePolicy.error : null}
       />
     </div>
   );
@@ -1268,11 +1155,18 @@ export function AgentInfoContent({
   // by SSE ``session_usage``). ``null`` when the session is unpriced (no
   // turn priced yet) — omit the row rather than show "$0.00" / "—".
   const sessionCostUsd = useChatStore((s) => s.sessionCostUsd);
+  const sessionHarness = useChatStore((s) => s.sessionHarness);
   // Per-model usage breakdown, live from the store (seeded on bind, updated
   // by SSE ``session_usage``). ``null`` until usage is first recorded. The
   // popover renders it directly — the frontend derives any aggregate view
   // from this map rather than receiving flat token fields.
   const usageByModel = useChatStore((s) => s.sessionUsageByModel);
+  const hasModelUsage = usageByModel != null && Object.keys(usageByModel).length > 0;
+  const showUnknownPrice =
+    hasModelUsage &&
+    (sessionHarness === "openai-agents" ||
+      sessionHarness === "openai-agents-sdk" ||
+      sessionHarness === "agents_sdk");
   // Version footer: the server version (global, from the boot capabilities
   // probe) and the bound host's version (per-session, from the health poll).
   // Either may be absent — the footer renders whatever is known and hides
@@ -1372,26 +1266,24 @@ export function AgentInfoContent({
           </div>
         </div>
       )}
-      {sessionId &&
-        (sessionCostUsd != null ||
-          (usageByModel != null && Object.keys(usageByModel).length > 0)) && (
-          <div className="flex flex-col gap-2 py-3">
-            {sessionCostUsd != null && (
-              <div className="flex items-baseline justify-between gap-3">
-                <SectionLabel>Session cost</SectionLabel>
-                <span
-                  className="font-mono text-sm tabular-nums text-muted-foreground"
-                  data-testid="agent-info-session-cost"
-                >
-                  {formatSessionCostUsd(sessionCostUsd)}
-                </span>
-              </div>
-            )}
-            {usageByModel != null && Object.keys(usageByModel).length > 0 && (
-              <ModelUsageBreakdown usageByModel={usageByModel} />
-            )}
-          </div>
-        )}
+      {sessionId && (sessionCostUsd != null || hasModelUsage) && (
+        <div className="flex flex-col gap-2 py-3">
+          {(sessionCostUsd != null || showUnknownPrice) && (
+            <div className="flex items-baseline justify-between gap-3">
+              <SectionLabel>Session cost</SectionLabel>
+              <span
+                className="font-mono text-sm tabular-nums text-muted-foreground"
+                data-testid="agent-info-session-cost"
+              >
+                {sessionCostUsd != null ? formatSessionCostUsd(sessionCostUsd) : "UnknownPrice"}
+              </span>
+            </div>
+          )}
+          {usageByModel != null && hasModelUsage && (
+            <ModelUsageBreakdown usageByModel={usageByModel} showUnknownPrice={showUnknownPrice} />
+          )}
+        </div>
+      )}
       <McpServersSection
         sessionId={sessionId}
         servers={servers}

@@ -12,8 +12,10 @@ import {
 import {
   ClockIcon,
   CornerDownRightIcon,
+  FileTextIcon,
   GripVerticalIcon,
   PencilIcon,
+  SendIcon,
   Trash2Icon,
 } from "lucide-react";
 
@@ -34,10 +36,18 @@ interface QueuedMessagesStripProps {
    */
   onSteer?: (queueId: string) => void;
   /**
+   * Send a queued message now, interrupting the active turn so it starts a
+   * fresh turn with the current model/harness (instead of steering into the
+   * running turn). Omitted when the session can't interrupt mid-turn.
+   */
+  onSendNow?: (queueId: string) => void;
+  /**
    * Move `queueId` so it sits before `beforeQueueId` (or to the end when null).
    * Drives drag-to-reorder; omit to render a non-reorderable strip.
    */
   onReorder?: (queueId: string, beforeQueueId: string | null) => void;
+  /** Whether an explicit draft action steers into a currently active turn. */
+  turnActive?: boolean;
   /** Column-width class so the strip lines up with the composer card. */
   widthClassName?: string;
 }
@@ -48,13 +58,17 @@ function QueuedRow({
   onDelete,
   onEdit,
   onSteer,
+  onSendNow,
   reorderable,
+  turnActive,
 }: {
   message: QueuedMessage;
   onDelete: (queueId: string) => void;
   onEdit: (queueId: string) => void;
   onSteer?: (queueId: string) => void;
+  onSendNow?: (queueId: string) => void;
   reorderable: boolean;
+  turnActive: boolean;
 }) {
   const {
     attributes,
@@ -94,13 +108,44 @@ function QueuedRow({
       ) : (
         <ClockIcon className="size-3.5 shrink-0" aria-hidden="true" />
       )}
+      {message.kind === "draft" ? (
+        <span className="flex shrink-0 items-center gap-1 rounded bg-foreground/5 px-1 py-0.5 text-xs font-medium text-muted-foreground">
+          <FileTextIcon className="size-3" aria-hidden="true" />
+          Draft
+        </span>
+      ) : null}
       <span className="min-w-0 flex-1 truncate">{message.text}</span>
       {/* Always visible (not hover-gated) so the actions are discoverable;
           they brighten on hover/focus. */}
-      {onSteer ? (
+      {message.kind === "draft" && onSteer ? (
         <button
           type="button"
-          aria-label="Send queued message now"
+          aria-label={turnActive ? "Steer draft into running turn" : "Send draft"}
+          className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+          onClick={() => onSteer(message.queueId)}
+        >
+          {turnActive ? (
+            <CornerDownRightIcon className="size-3.5" aria-hidden="true" />
+          ) : (
+            <SendIcon className="size-3.5" aria-hidden="true" />
+          )}
+          {turnActive ? "Steer" : "Send"}
+        </button>
+      ) : message.kind !== "draft" && onSendNow ? (
+        <button
+          type="button"
+          aria-label="Send now, interrupting the current turn"
+          className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+          onClick={() => onSendNow(message.queueId)}
+        >
+          <SendIcon className="size-3.5" aria-hidden="true" />
+          Send
+        </button>
+      ) : null}
+      {message.kind !== "draft" && onSteer ? (
+        <button
+          type="button"
+          aria-label="Steer queued message into running turn"
           className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
           onClick={() => onSteer(message.queueId)}
         >
@@ -133,16 +178,18 @@ function QueuedRow({
  * busy. Peeks above the composer card (`-mb-4` + bottom padding), mirroring
  * `SubagentComposerTray`. Renders nothing when the queue is empty.
  *
- * Each row can be steered (sent now), edited (pulled back into the composer),
- * deleted, or — when `onReorder` is provided — dragged by its grip to reorder
- * the queue (drains FIFO, so order is the send order).
+ * Normal rows can be sent now or steered; draft rows expose one explicit
+ * action that reads Steer during a turn and Send while idle. Every row can be
+ * edited, deleted, or dragged when `onReorder` is provided.
  */
 export function QueuedMessagesStrip({
   messages,
   onDelete,
   onEdit,
   onSteer,
+  onSendNow,
   onReorder,
+  turnActive = false,
   widthClassName,
 }: QueuedMessagesStripProps) {
   // Pointer-only sensors with a small activation distance, matching the
@@ -174,7 +221,9 @@ export function QueuedMessagesStrip({
       onDelete={onDelete}
       onEdit={onEdit}
       onSteer={onSteer}
+      onSendNow={onSendNow}
       reorderable={onReorder !== undefined}
+      turnActive={turnActive}
     />
   ));
 

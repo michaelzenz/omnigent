@@ -46,6 +46,7 @@ from omnigent.tools.builtins.load_skill import (
 )
 from omnigent.tools.builtins.nimble_extract import NimbleExtractTool
 from omnigent.tools.builtins.nimble_research import NimbleResearchTool
+from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool
 from omnigent.tools.builtins.read_skill_file import (
     ReadSkillFileTool,
 )
@@ -56,6 +57,7 @@ from omnigent.tools.builtins.scheduled_tasks import (
     SysScheduledTaskUpdateTool,
 )
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
+from omnigent.tools.builtins.skill_write import UpdateSkillTool, WriteSkillTool
 from omnigent.tools.builtins.spawn import (
     SysSessionCloseTool,
     SysSessionCreateTool,
@@ -79,6 +81,7 @@ __all__ = [
     "LoadSkillTool",
     "NimbleExtractTool",
     "NimbleResearchTool",
+    "PuppyGardenApiTool",
     "ReadSkillFileTool",
     "SysAdviseModelsTool",
     "SysAgentDownloadTool",
@@ -103,7 +106,9 @@ __all__ = [
     "SysTimerCancelTool",
     "SysTimerSetTool",
     "UpdateCommentTool",
+    "UpdateSkillTool",
     "WebSearchTool",
+    "WriteSkillTool",
     "any_skill_has_resources",
     "find_skill_by_name",
     "format_skill_content",
@@ -267,6 +272,8 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "web_fetch": None,
     "list_comments": None,
     "update_comment": None,
+    "update_skill": None,
+    "write_skill": None,
     # ``sys_list_models`` is auto-registered by
     # ``ToolManager._register_sub_agent_tools`` with the dispatch grant
     # and intercepted by name in the runner's tool dispatch — reserved
@@ -291,6 +298,14 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "browser_click": None,
     "browser_type": None,
     "browser_screenshot": None,
+    # ``puppygarden_api`` is framework-owned: always auto-registered by
+    # ``ToolManager._register_puppygarden_api_tool`` so any agent can call
+    # the PuppyGarden task REST API without curling. Reserved here with
+    # ``None`` — like ``list_comments`` — so user specs cannot shadow the
+    # name and ``get_builtin_tool`` returns ``None`` for it. Execution is
+    # runner-dispatched (``_PUPPYGARDEN_API_TOOLS`` in
+    # omnigent/runner/tool_dispatch.py).
+    "puppygarden_api": None,
 }
 
 # Hindsight long-term memory (optional ``hindsight`` extra). Registered only

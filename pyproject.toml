@@ -422,14 +422,15 @@ include-package-data = true
 where = ["."]
 # Discovers the `omnigent` package (including `omnigent.inner.*` and
 # all omnigent subpackages absorbed during unification).
-include = ["omnigent*"]
+include = ["omnigent*", "puppygarden"]
 
 [tool.setuptools.package-data]
 "omnigent.db" = ["alembic.ini"]
 "omnigent.db.migrations" = ["script.py.mako"]
-"omnigent.resources.examples" = ["*.yaml", "*.sh", "debby/**/*", "polly/**/*"]
+"omnigent.resources.examples" = ["*.yaml", "*.sh", "debby/**/*", "omnigent/**/*", "polly/**/*"]
 "omnigent.resources.pi_native" = ["*.js"]
 "omnigent.resources.scripts" = ["*.sh"]
+"puppygarden" = ["docs/*.md", "docs/**/*.md"]
 # include UI assets in build, plus the static API-only landing page served
 # at "/" when no web UI bundle is present
 "omnigent.server" = ["static/web-ui/**/*", "static/api_only_landing.html"]

@@ -26,6 +26,7 @@ import cachetools
 from omnigent.entities import Conversation
 from omnigent.entities import Policy as StoredPolicy
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import is_omniharness_spec
 from omnigent.llms.context_window import fetch_model_pricing
 from omnigent.policies.base import Policy
 from omnigent.policies.function import resolve_function_policy
@@ -562,6 +563,10 @@ def build_policy_engine(
     # Pass the full ModelPricing so the engine can price cache-read and
     # cache-write tokens at their own rates via compute_llm_cost().
     token_pricing = fetch_model_pricing(spec.llm.model) if spec.llm else None
+    if spec.llm and is_omniharness_spec(spec):
+        from omnigent.omniharness_model_catalog import get_omniharness_model_pricing
+
+        token_pricing = get_omniharness_model_pricing(spec.llm.model)
     server_connection = _resolve_server_llm_connection(server_llm)
     # host_connection carries the per-request caller token (billed to
     # the caller). It takes precedence over the static server-level
@@ -675,6 +680,14 @@ def _build_policy_llm_client(
         _connection=connection,
         _request_timeout=server_llm.request_timeout,
         _fallback_models=fallbacks,
+    )
+
+
+def build_server_llm_client(server_llm: LLMConfig | None) -> PolicyLLMClient | None:
+    """Build an LLM client from the complete server-level configuration."""
+    return _build_policy_llm_client(
+        server_llm,
+        _resolve_server_llm_connection(server_llm),
     )
 
 

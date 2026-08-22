@@ -1,10 +1,9 @@
 """
 Server-side proxies for the host git-worktree tunnel frames.
 
-Like ``_workspace_validation._ask_host_stat``: enqueue a
-``host.create_worktree`` / ``host.remove_worktree`` frame, register a
-future on the host connection, and await the result with a timeout. The
-host (not the server) runs git. See designs/SESSION_GIT_WORKTREE.md.
+Enqueue a ``host.create_worktree`` / ``host.remove_worktree`` frame,
+register a future on the host connection, and await the result. The host
+(not the server) runs git. See designs/SESSION_GIT_WORKTREE.md.
 """
 
 from __future__ import annotations
@@ -12,21 +11,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostListWorktreesFrame,
     HostRemoveWorktreeFrame,
+    HostRenewWorktreeLeaseFrame,
     encode_host_frame,
 )
 from omnigent.server.host_registry import HostConnection, HostRegistry
 
 _logger = logging.getLogger(__name__)
 
-# Above the host's own git timeout (120 s) so the host's specific error
-# surfaces instead of a generic server-side timeout.
-_WORKTREE_TIMEOUT_S: float = 150.0
+# Worktree operations may materialize very large repositories. Production
+# waits for the host result without a deadline; tests may inject one.
+_WORKTREE_TIMEOUT_S: float | None = None
 
 
 class WorktreeProxyError(Exception):
@@ -56,8 +57,7 @@ class WorktreeHostUnavailableError(WorktreeProxyError):
     """
     Raised when the host can't be reached for a worktree operation.
 
-    Connection loss or no reply within the timeout — an infrastructure
-    condition, not user input. The route layer maps this to
+    Connection loss is an infrastructure condition, not user input. The route layer maps this to
     ``CONFLICT`` (409). Subclasses :class:`WorktreeProxyError` so
     best-effort callers that catch the base type still catch it.
     """
@@ -88,6 +88,7 @@ async def _await_host_worktree_result(
     request_id: str,
     frame: str,
     op: str,
+    timeout_s: float | None = None,
 ) -> dict[str, object]:
     """
     Send a worktree frame and await its matching result over the tunnel.
@@ -106,11 +107,11 @@ async def _await_host_worktree_result(
         ``"worktree creation"``.
     :returns: The host's result dict (``status`` plus op-specific
         fields).
-    :raises WorktreeHostUnavailableError: On connection loss or no
-        reply within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: On connection loss.
     """
     future: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
     pending[request_id] = future
+    effective_timeout = _WORKTREE_TIMEOUT_S if timeout_s is None else timeout_s
     try:
         try:
             host_registry.send_text(host_conn, frame)
@@ -119,12 +120,17 @@ async def _await_host_worktree_result(
                 f"host '{host_conn.host_id}' connection lost during {op}"
             ) from exc
         try:
-            return await asyncio.wait_for(future, timeout=_WORKTREE_TIMEOUT_S)
+            if effective_timeout is None:
+                return await future
+            return await asyncio.wait_for(future, timeout=effective_timeout)
         except asyncio.TimeoutError as exc:
             raise WorktreeHostUnavailableError(
                 f"host '{host_conn.host_id}' did not respond to {op} within "
-                f"{_WORKTREE_TIMEOUT_S:.0f}s (it may be running an older version "
-                "that does not support worktrees)"
+                f"{effective_timeout:.0f}s"
+            ) from exc
+        except ConnectionError as exc:
+            raise WorktreeHostUnavailableError(
+                f"host '{host_conn.host_id}' connection lost during {op}"
             ) from exc
     finally:
         pending.pop(request_id, None)
@@ -137,41 +143,60 @@ async def create_worktree_on_host(
     repo_path: str,
     branch_name: str,
     base_branch: str | None,
+    auto_fetch_base: bool = False,
+    on_log: Callable[[str], None] | None = None,
+    auto_reuse: bool = False,
+    reuse_existing_branch: bool = False,
+    lease_owner: str | None = None,
+    lease_seconds: int = 86_400,
 ) -> CreatedWorktree:
-    """
-    Send a ``host.create_worktree`` frame and await the result.
+    """Send a ``host.create_worktree`` frame and await the result.
+
+    When ``on_log`` is supplied, each streamed git output line the host
+    emits before the final result is relayed to the callback, so the
+    caller can publish it to the session's SSE stream in real time.
 
     :param host_registry: Server-side registry; used to enqueue the
         outbound frame on the host's send queue.
     :param host_conn: Live host connection to create the worktree on.
     :param repo_path: Absolute path inside the source repo on the
-        host — the canonical picked directory, e.g.
-        ``"/Users/alice/myrepo"``.
+        host.
     :param branch_name: New branch to create, e.g. ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from the repo's current ``HEAD``.
+    :param auto_fetch_base: Whether the host may fetch and retry a missing base.
+    :param on_log: Optional callback for each streamed git output line.
     :returns: The created worktree's path and branch.
-    :raises WorktreeHostUnavailableError: If the host connection drops
-        or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
     :raises WorktreeProxyError: If the host reports a worktree failure.
     """
     request_id = secrets.token_hex(8)
-    frame = encode_host_frame(
-        HostCreateWorktreeFrame(
-            request_id=request_id,
-            repo_path=repo_path,
-            branch_name=branch_name,
-            base_branch=base_branch,
+    if on_log is not None:
+        host_conn.pending_worktree_log_handlers[request_id] = on_log
+    try:
+        frame = encode_host_frame(
+            HostCreateWorktreeFrame(
+                request_id=request_id,
+                repo_path=repo_path,
+                branch_name=branch_name,
+                base_branch=base_branch,
+                auto_fetch_base=auto_fetch_base,
+                auto_reuse=auto_reuse,
+                reuse_existing_branch=reuse_existing_branch,
+                lease_owner=lease_owner,
+                lease_seconds=lease_seconds,
+            )
         )
-    )
-    result = await _await_host_worktree_result(
-        host_registry=host_registry,
-        host_conn=host_conn,
-        pending=host_conn.pending_create_worktrees,
-        request_id=request_id,
-        frame=frame,
-        op="worktree creation",
-    )
+        result = await _await_host_worktree_result(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            pending=host_conn.pending_create_worktrees,
+            request_id=request_id,
+            frame=frame,
+            op="worktree creation",
+        )
+    finally:
+        host_conn.pending_worktree_log_handlers.pop(request_id, None)
     if result.get("status") != "ok":
         raise WorktreeProxyError(
             f"worktree creation failed: {result.get('error') or 'host reported no detail'}"
@@ -204,8 +229,7 @@ async def remove_worktree_on_host(
         deletion.
     :param delete_branch: When ``True``, delete ``branch`` after
         removing the worktree directory.
-    :raises WorktreeHostUnavailableError: If the host connection drops
-        or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
     :raises WorktreeProxyError: If the host reports a removal failure.
     """
     request_id = secrets.token_hex(8)
@@ -248,8 +272,7 @@ async def list_worktrees_on_host(
         ``"/Users/alice/myrepo"``.
     :returns: One dict per worktree with keys ``path``, ``branch``,
         ``is_main``, ``detached`` (main first).
-    :raises WorktreeHostUnavailableError: If the host connection drops
-        or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
     :raises WorktreeProxyError: If the host reports a listing failure.
     """
     request_id = secrets.token_hex(8)
@@ -275,3 +298,56 @@ async def list_worktrees_on_host(
     if not isinstance(worktrees, list):
         raise WorktreeProxyError("host returned an incomplete worktree list")
     return worktrees
+
+
+async def renew_worktree_lease_on_host(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    worktree_path: str,
+    lease_owner: str,
+    lease_seconds: int = 86_400,
+    release: bool = False,
+) -> bool:
+    """Renew a managed worktree lease when ``lease_owner`` still owns it."""
+    request_id = secrets.token_hex(8)
+    frame = encode_host_frame(
+        HostRenewWorktreeLeaseFrame(
+            request_id=request_id,
+            worktree_path=worktree_path,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+            release=release,
+        )
+    )
+    result = await _await_host_worktree_result(
+        host_registry=host_registry,
+        host_conn=host_conn,
+        pending=host_conn.pending_renew_worktree_leases,
+        request_id=request_id,
+        frame=frame,
+        op="worktree lease renewal",
+        timeout_s=10.0,
+    )
+    if result.get("status") != "ok":
+        raise WorktreeProxyError(
+            f"worktree lease renewal failed: {result.get('error') or 'host reported no detail'}"
+        )
+    return result.get("renewed") is True
+
+
+async def release_worktree_lease_on_host(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    worktree_path: str,
+    lease_owner: str,
+) -> bool:
+    """Release a managed lease after explicit session deletion."""
+    return await renew_worktree_lease_on_host(
+        host_registry=host_registry,
+        host_conn=host_conn,
+        worktree_path=worktree_path,
+        lease_owner=lease_owner,
+        release=True,
+    )

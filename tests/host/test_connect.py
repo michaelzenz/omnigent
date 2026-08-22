@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import websockets.asyncio.client
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosedError, InvalidStatus, InvalidURI
 from websockets.http11 import Response
@@ -68,6 +69,11 @@ from omnigent.runner.identity import (
     RUNNER_WORKSPACE_ENV_VAR,
     token_bound_runner_id,
 )
+from omnigent.runner.transports.ws_tunnel.limits import (
+    TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+    TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+)
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 
 pytestmark = pytest.mark.asyncio
 
@@ -1922,6 +1928,7 @@ def test_build_runner_env_allowlists_host_env_and_strips_secrets() -> None:
         "OMNIGENT_LOG_LEVEL": "DEBUG",
         "OMNIGENT_LOG_TO_STDERR": "1",
         "OMNIGENT_LOG_TTY_FD": "9",
+        OMNIGENT_SERVER_UNIX_SOCKET: "~/omnigent.sock",
     }
 
     env = _build_runner_env(
@@ -1981,6 +1988,7 @@ def test_build_runner_env_allowlists_host_env_and_strips_secrets() -> None:
     assert env["OMNIGENT_LOG_LEVEL"] == "DEBUG"
     assert env["OMNIGENT_LOG_TO_STDERR"] == "1"
     assert env["OMNIGENT_LOG_TTY_FD"] == "9"
+    assert env[OMNIGENT_SERVER_UNIX_SOCKET] == "~/omnigent.sock"
     # Non-harness secrets are stripped — the point of the allowlist.
     assert "DATABRICKS_TOKEN" not in env
     assert "AWS_SECRET_ACCESS_KEY" not in env
@@ -3147,6 +3155,35 @@ def _host(
     """
     identity = HostIdentity(host_id="host_test_connect", name="test-laptop")
     return HostProcess(identity, server_url)
+
+
+@pytest.mark.asyncio
+async def test_host_tunnel_uses_unix_socket_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The host preserves its tunnel URI while dialing the configured UDS."""
+    captured: dict[str, object] = {}
+
+    def _unix_connect(path: str, *, uri: str, **kwargs: object) -> _HandshakeFailingConnect:
+        captured.update(path=path, uri=uri, kwargs=kwargs)
+        return _HandshakeFailingConnect(asyncio.CancelledError())
+
+    monkeypatch.setenv(OMNIGENT_SERVER_UNIX_SOCKET, "~/omnigent.sock")
+    monkeypatch.setattr(websockets.asyncio.client, "unix_connect", _unix_connect)
+    monkeypatch.setattr(
+        "omnigent.runner._entry._make_auth_token_factory",
+        lambda *, server_url=None: None,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await _host("https://server.example.com")._connect_and_serve()
+
+    assert captured["path"] == str(Path.home() / "omnigent.sock")
+    assert captured["uri"] == "wss://server.example.com/v1/hosts/host_test_connect/tunnel"
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["ping_interval"] == TUNNEL_KEEPALIVE_PING_INTERVAL_S
+    assert kwargs["ping_timeout"] == TUNNEL_KEEPALIVE_PING_TIMEOUT_S
 
 
 def test_build_connect_headers_adds_org_header(monkeypatch: pytest.MonkeyPatch) -> None:

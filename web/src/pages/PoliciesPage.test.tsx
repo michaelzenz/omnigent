@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PoliciesPage } from "./PoliciesPage";
 import * as identity from "@/lib/identity";
 import * as defaultPolicies from "@/hooks/useDefaultPolicies";
+import * as modelSettings from "@/hooks/useModelSettings";
 import * as policies from "@/hooks/usePolicies";
 
 const serverInfoMocks = vi.hoisted(() => ({
@@ -47,6 +48,10 @@ vi.mock("@/hooks/useDefaultPolicies", () => ({
   useDeleteDefaultPolicy: vi.fn(),
 }));
 vi.mock("@/hooks/usePolicies", () => ({ usePolicyRegistry: vi.fn() }));
+vi.mock("@/hooks/useModelSettings", () => ({
+  useAdminModelSettings: vi.fn(),
+  useUpdateAdminModelSettings: vi.fn(),
+}));
 
 type Policy = ReturnType<typeof policy>;
 function policy(overrides: Partial<Record<string, unknown>> = {}) {
@@ -97,6 +102,22 @@ beforeEach(() => {
   vi.mocked(identity.getCurrentIsAdmin).mockReturnValue(true);
   setPolicies([]);
   vi.mocked(policies.usePolicyRegistry).mockReturnValue({ data: [] } as never);
+  vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+    data: {
+      databricksConnected: true,
+      profile: "test",
+      models: [],
+      omniharnessModels: [],
+      policyModel: "databricks-glm-5-2",
+      error: null,
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  } as never);
+  vi.mocked(modelSettings.useUpdateAdminModelSettings).mockReturnValue(
+    mutationStub(vi.fn()) as never,
+  );
   vi.mocked(defaultPolicies.useAddDefaultPolicy).mockReturnValue(mutationStub(addMutate) as never);
   vi.mocked(defaultPolicies.useUpdateDefaultPolicy).mockReturnValue(
     mutationStub(updateMutate) as never,
@@ -186,6 +207,68 @@ describe("PoliciesPage actions", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^Remove$/ }));
 
     expect(deleteMutate).toHaveBeenCalledWith("p1", expect.anything());
+  });
+
+  it("prefills and updates a persisted global policy, then closes", async () => {
+    vi.mocked(policies.usePolicyRegistry).mockReturnValue({
+      data: [
+        {
+          handler: "omnigent.policies.rate_limit",
+          kind: "factory",
+          name: "Rate Limit",
+          description: "Cap request rate.",
+          params_schema: {
+            properties: {
+              max_per_min: { type: "integer" },
+              strict: { type: "boolean" },
+            },
+          },
+        },
+      ],
+    } as never);
+    setPolicies([
+      policy({
+        id: "p1",
+        name: "custom_limit",
+        handler: "omnigent.policies.rate_limit",
+        factory_params: { max_per_min: 5, strict: false },
+      }),
+    ]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit custom_limit" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("name")).toHaveValue("custom_limit");
+    expect(within(dialog).getByLabelText(/max_per_min/)).toHaveValue(5);
+    expect(within(dialog).getByLabelText(/strict/)).toHaveValue("false");
+
+    fireEvent.change(within(dialog).getByLabelText("name"), {
+      target: { value: "renamed_limit" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/max_per_min/), {
+      target: { value: "9" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(updateMutate).toHaveBeenCalledWith(
+      {
+        policyId: "p1",
+        name: "renamed_limit",
+        factory_params: { max_per_min: 9, strict: false },
+      },
+      expect.anything(),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps config-file policies non-editable", async () => {
+    setPolicies([policy({ id: null, name: "yaml_guard", source: "config" })]);
+    renderPage();
+
+    expect(await screen.findByText("yaml_guard")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit yaml_guard" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Toggle yaml_guard" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove policy" })).toBeNull();
   });
 
   it("adds array (multi-select) values via the model combobox as a coerced list", async () => {
@@ -319,6 +402,92 @@ describe("PoliciesPage actions", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+});
+
+describe("PoliciesPage policy model", () => {
+  it("filters the Databricks model list from the policy picker search", async () => {
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: true,
+        profile: "test",
+        models: [
+          { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
+          { id: "databricks-gpt-5-4", displayName: "GPT 5.4" },
+        ],
+        omniharnessModels: [],
+        policyModel: null,
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Policy checking model" }));
+    fireEvent.change(screen.getByPlaceholderText("Search Databricks models…"), {
+      target: { value: "gpt" },
+    });
+    expect(screen.getByText("GPT 5.4")).toBeInTheDocument();
+    expect(screen.queryByText("GLM 5.2")).not.toBeInTheDocument();
+  });
+
+  it("prompts for a Databricks connection when model discovery is unavailable", async () => {
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: false,
+        profile: null,
+        models: [],
+        omniharnessModels: [],
+        policyModel: null,
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+    renderPage();
+    expect(
+      await screen.findByText("Connect to a Databricks workspace to enable intent based policies."),
+    ).toBeInTheDocument();
+  });
+
+  it("warns when an enabled LLM-backed policy has no checking model", async () => {
+    setPolicies([
+      policy({
+        handler: "omnigent.policies.builtins.routing.intent_based_authorization",
+        enabled: true,
+      }),
+    ]);
+    vi.mocked(policies.usePolicyRegistry).mockReturnValue({
+      data: [
+        {
+          handler: "omnigent.policies.builtins.routing.intent_based_authorization",
+          kind: "factory",
+          name: "Intent Based Authorization",
+          description: "Checks intent.",
+          params_schema: null,
+          requires_llm: true,
+        },
+      ],
+    } as never);
+    vi.mocked(modelSettings.useAdminModelSettings).mockReturnValue({
+      data: {
+        databricksConnected: true,
+        profile: "test",
+        models: [],
+        omniharnessModels: [],
+        policyModel: null,
+        error: null,
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+    renderPage();
+    expect(
+      await screen.findByText(/This policy requires a policy checking model/),
+    ).toBeInTheDocument();
   });
 });
 

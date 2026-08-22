@@ -31,13 +31,19 @@ from omnigent.inner.executor import (
 )
 from omnigent.inner.openai_agents_sdk_executor import (
     OpenAIAgentsSDKExecutor,
+    RawToolItemParts,
     _normalize_content_blocks_for_chat,
     _normalize_responses_items_for_chat,
+    _observed_tool_call,
     _ReasoningBlockFilterStream,
     _sanitize_replay_item,
     _wrap_client_for_reasoning_models,
 )
 from omnigent.llms.errors import is_context_length_exceeded as _is_context_length_exceeded
+from omnigent.tools.mcp_search import (
+    MCP_TOOL_CALL_NAME,
+    openai_agents_lazy_tool_schemas,
+)
 
 
 def _run(coro):
@@ -541,6 +547,81 @@ class TestOpenAIAgentsSDKExecutor(unittest.TestCase):
             ["tool", "session", "args"],
         )
 
+    def test_mcp_tool_call_dispatches_the_discovered_namespaced_tool(self):
+        async def _t():
+            calls = []
+
+            async def _execute(name, args):
+                calls.append((name, args))
+                return {"ok": True}
+
+            executor = OpenAIAgentsSDKExecutor(client=object())
+            executor._tool_executor = _execute
+            schemas = openai_agents_lazy_tool_schemas(
+                [
+                    {
+                        "name": "google__drive_file_list",
+                        "description": "List Drive files",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ]
+            )
+            tools = executor._build_tools(_fake_agents_sdk(), schemas)
+            call_tool = next(tool for tool in tools if tool.name == MCP_TOOL_CALL_NAME)
+
+            result = await call_tool.on_invoke_tool(
+                None,
+                '{"name":"google__drive_file_list","arguments":{"page_size":10}}',
+            )
+
+            self.assertEqual(result, {"ok": True})
+            self.assertEqual(
+                calls,
+                [("google__drive_file_list", {"page_size": 10})],
+            )
+
+        _run(_t())
+
+    def test_mcp_tool_call_rejects_non_namespaced_targets(self):
+        async def _t():
+            executor = OpenAIAgentsSDKExecutor(client=object())
+            executor._tool_executor = lambda name, args: None
+            schemas = openai_agents_lazy_tool_schemas(
+                [
+                    {
+                        "name": "google__drive_file_list",
+                        "description": "List Drive files",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ]
+            )
+            tools = executor._build_tools(_fake_agents_sdk(), schemas)
+            call_tool = next(tool for tool in tools if tool.name == MCP_TOOL_CALL_NAME)
+
+            result = await call_tool.on_invoke_tool(
+                None,
+                '{"name":"sys_os_shell","arguments":{"command":"pwd"}}',
+            )
+
+            self.assertIn("error", result)
+
+        _run(_t())
+
+    def test_mcp_tool_call_events_expose_the_selected_tool_name(self):
+        name, args = _observed_tool_call(
+            RawToolItemParts(
+                name=MCP_TOOL_CALL_NAME,
+                args={
+                    "name": "google__drive_file_list",
+                    "arguments": {"page_size": 10},
+                },
+                call_id="call_1",
+            )
+        )
+
+        self.assertEqual(name, "google__drive_file_list")
+        self.assertEqual(args, {"page_size": 10})
+
     def test_streams_text_and_tool_events(self):
         async def _t():
             _FakeRunner.last_calls = []
@@ -817,6 +898,44 @@ class TestOpenAIAgentsSDKExecutor(unittest.TestCase):
             self.assertEqual(len(tool_events), 1)
             self.assertEqual(tool_events[0].status, ToolCallStatus.BLOCKED)
             self.assertEqual(tool_events[0].error, "Nope")
+
+        _run(_t())
+
+    def test_new_executor_state_clears_persisted_sdk_history(self):
+        """A harness respawn rebuilds from Omnigent history, not stale SDK items."""
+
+        async def _t():
+            _FakeRunner.last_calls = []
+            _FakeRunner.next_result = _FakeResult(events=[], final_output="fresh")
+            executor = OpenAIAgentsSDKExecutor(client=object())
+            agents_sdk = _fake_agents_sdk()
+            state = executor._get_or_create_session_state(agents_sdk, "s1")
+            underlying = state.sdk_session._underlying
+            underlying.items = [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "responses-shaped stale state",
+                }
+            ]
+
+            with patch(
+                "omnigent.inner.openai_agents_sdk_executor._ensure_agents_sdk",
+                return_value=agents_sdk,
+            ):
+                events = [
+                    event
+                    async for event in executor.run_turn(
+                        [{"role": "user", "content": "current", "session_id": "s1"}],
+                        [],
+                        "",
+                    )
+                ]
+
+            self.assertEqual(events[-1].response, "fresh")
+            self.assertEqual(underlying.clear_calls, 1)
+            self.assertEqual(underlying.items, [])
+            self.assertEqual(_FakeRunner.last_calls[0]["input"][0]["content"], "current")
 
         _run(_t())
 
@@ -2304,6 +2423,21 @@ def test_normalize_responses_items_non_message_items_pass_through() -> None:
 
     # Non-message items returned untouched — no normalization applied.
     assert result == items
+
+
+def test_normalize_responses_items_wraps_assistant_string_for_chat_converter() -> None:
+    """Assistant replay strings become Responses output blocks for Chat models."""
+    items = [{"type": "message", "role": "assistant", "content": "previous answer"}]
+
+    result = _normalize_responses_items_for_chat(items)
+
+    assert result == [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "previous answer"}],
+        }
+    ]
 
 
 def test_normalize_responses_items_message_without_input_file_unchanged() -> None:

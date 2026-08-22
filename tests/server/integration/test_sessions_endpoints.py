@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from omnigent.entities import MessageData, NewConversationItem
 from omnigent.llms.context_window import ModelPricing
 from omnigent.runtime.tool_output import MAX_TOOL_OUTPUT_BYTES
 from omnigent.server.background_session_titles import BackgroundTitleRequest
@@ -144,6 +145,53 @@ async def test_create_session_without_title_returns_none(
     agent = await create_test_agent(client)
     session = await _create_session(client, agent["id"])
     assert session["title"] is None
+
+
+async def test_rewind_session_removes_target_user_message_and_later_history(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    agent = await create_test_agent(
+        client,
+        executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
+    )
+    session = await _create_session(client, agent["id"])
+    store = SqlAlchemyConversationStore(db_uri)
+    items = store.append(
+        session["id"],
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_1",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "keep"}]),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_1",
+                data=MessageData(
+                    role="assistant",
+                    content=[{"type": "output_text", "text": "kept answer"}],
+                    agent="test-agent",
+                ),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_2",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "replace"}]),
+            ),
+        ],
+    )
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/rewind",
+        json={"from_message_id": items[2].id},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [item.id for item in store.list_items(session["id"]).data] == [
+        items[0].id,
+        items[1].id,
+    ]
 
 
 async def test_first_message_schedules_background_semantic_title(
@@ -1294,6 +1342,7 @@ async def test_skill_slash_command_persists_visible_item_and_hidden_meta_message
             "agent_id": agent["id"],
             "model": "skill-agent",
             "has_mcp_servers": False,
+            "agent_version": agent["version"],
             # The forwarded message is the meta item; its store id lets the
             # runner dedup it on a cold-cache history reload.
             "persisted_item_id": meta["id"],

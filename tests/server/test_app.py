@@ -1280,6 +1280,29 @@ def test_ensure_default_polly_agent_seeds_card(seed_stores: _SeedStores) -> None
     assert seed_stores.artifact_store.get(seeded.bundle_location) is not None
 
 
+def test_ensure_default_omniharness_agent_seeds_openai_sdk_target(
+    seed_stores: _SeedStores,
+) -> None:
+    """OmniHarness is a prompt-free target backed by the OpenAI Agents SDK."""
+    server_app._ensure_default_omniharness_agent(
+        seed_stores.agent_store,
+        seed_stores.artifact_store,
+        seed_stores.agent_cache,
+    )
+
+    seeded = seed_stores.agent_store.get_by_name(server_app.OMNIHARNESS_AGENT_NAME)
+    assert seeded is not None
+    assert seeded.session_id is None
+    loaded = seed_stores.agent_cache.load(
+        seeded.id,
+        seeded.bundle_location,
+        expand_env=False,
+    )
+    assert loaded.spec.executor.config.get("harness") == "openai-agents"
+    assert loaded.spec.executor.config.get("model") == "databricks-glm-5-2"
+    assert loaded.spec.instructions == ""
+
+
 def test_ensure_default_antigravity_agent_seeds_card(seed_stores: _SeedStores) -> None:
     """
     Seeding registers antigravity-native-ui as a built-in the picker renders.

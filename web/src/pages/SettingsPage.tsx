@@ -13,6 +13,8 @@
  *   Workspace panel default for new chats, and UI/code font controls.
  * - **Git** — Git behavior, e.g. the default base branch pre-filled when
  *   naming a new worktree branch in the composer.
+ * - **Connection** — SSH profiles for remote machines, with automatic
+ *   connectivity checks.
  * - **Keyboard shortcuts** — the full shortcuts reference, shown inline.
  * - **Account** — only when the accounts auth provider is active. Absorbs
  *   the old sidebar AccountMenu: signed-in identity, change password, and
@@ -94,6 +96,7 @@ import { conversationDisplayLabel } from "@/shell/sidebarNav";
 import { absoluteTime } from "@/lib/relativeTime";
 import { useNavigate } from "@/lib/routing";
 import { useSettingsRoute } from "@/shell/settingsNav";
+import { ConnectionSettingsBody } from "@/shell/ConnectionSettingsSection";
 import {
   normalizeResolvedTheme,
   normalizeThemeMode,
@@ -139,10 +142,48 @@ import {
 } from "@/lib/workspacePanelPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import {
+  readAutoFetchWorktreeBase,
+  writeAutoFetchWorktreeBase,
+} from "@/lib/gitFetchPreferences";
+import {
   DEFAULT_HIDE_UNCONFIGURED_HARNESSES,
   readHideUnconfiguredHarnesses,
   writeHideUnconfiguredHarnesses,
 } from "@/lib/harnessVisibilityPreferences";
+import {
+  readAdoptExternalSessions,
+  writeAdoptExternalSessions,
+} from "@/lib/puppyGardenPreferences";
+import {
+  readSendMessageShortcut,
+  type SendMessageShortcut,
+  writeSendMessageShortcut,
+} from "@/lib/sendMessagePreferences";
+import {
+  DEFAULT_STICKY_USER_MESSAGES,
+  readStickyUserMessagesEnabled,
+  STICKY_USER_MESSAGES_STORAGE_KEY,
+  writeStickyUserMessagesEnabled,
+} from "@/lib/stickyUserMessagesPreferences";
+import {
+  DEFAULT_ROUTING_NOTICES_ENABLED,
+  readRoutingNoticesEnabled,
+  ROUTING_NOTICES_STORAGE_KEY,
+  writeRoutingNoticesEnabled,
+} from "@/lib/routingNoticePreferences";
+import {
+  CHAT_TOP_BUTTON_STORAGE_KEY,
+  type ChatTopButtonMode,
+  DEFAULT_CHAT_TOP_BUTTON_MODE,
+  readChatTopButtonMode,
+  writeChatTopButtonMode,
+} from "@/lib/chatTopButtonPreferences";
+import {
+  BOTTOM_LOCK_STORAGE_KEY,
+  DEFAULT_BOTTOM_LOCK_ENABLED,
+  readBottomLockEnabled,
+  writeBottomLockEnabled,
+} from "@/lib/bottomLockPreferences";
 import {
   applyThemePalette,
   DEFAULT_PALETTE,
@@ -180,6 +221,9 @@ import { cn } from "@/lib/utils";
 const MembersPage = lazy(() =>
   import("@/pages/MembersPage").then((m) => ({ default: m.MembersPage })),
 );
+const ModelsPage = lazy(() =>
+  import("@/pages/ModelsPage").then((m) => ({ default: m.ModelsPage })),
+);
 const PoliciesPage = lazy(() =>
   import("@/pages/PoliciesPage").then((m) => ({ default: m.PoliciesPage })),
 );
@@ -212,11 +256,18 @@ export function SettingsPage() {
   // Rendered in ANY multi-user mode (accounts AND OIDC), not gated on
   // `accountsEnabled` — the nav + pages handle admin gating, and Members runs
   // read-only under OIDC (no password actions).
-  if (section === "members" || section === "policies" || section === "sharing") {
+  if (
+    section === "members" ||
+    section === "models" ||
+    section === "policies" ||
+    section === "sharing"
+  ) {
     return (
       <Suspense fallback={null}>
         {section === "members" ? (
           <MembersPage />
+        ) : section === "models" ? (
+          <ModelsPage />
         ) : section === "policies" ? (
           <PoliciesPage />
         ) : (
@@ -229,8 +280,10 @@ export function SettingsPage() {
   return (
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       {section === "appearance" && <AppearanceSection />}
+      {section === "connection" && <ConnectionSection />}
       {section === "git" && <GitSection />}
       {section === "shortcuts" && <ShortcutsSection />}
+      {section === "puppygarden" && <PuppyGardenSection />}
       {section === "account" && hasAuthSession && <AccountSection />}
       {section === "archived" && <ArchivedSection />}
       {section === "cli" && isElectronShell() && <LocalCliSection />}
@@ -823,6 +876,152 @@ function HideUnconfiguredHarnessesControl() {
   );
 }
 
+function StickyUserMessagesControl() {
+  const [enabled, setEnabled] = useState(() => readStickyUserMessagesEnabled());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeStickyUserMessagesEnabled(next);
+  }, []);
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Sticky user messages
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Collapse sent messages to six lines and pin the nearest crossed turn at the top. Click to
+          edit remains available when this is off.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="sticky-user-messages-toggle"
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
+}
+
+function BottomLockControl() {
+  const [enabled, setEnabled] = useState(() => readBottomLockEnabled());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeBottomLockEnabled(next);
+  }, []);
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Keep chat pinned to bottom
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Jump to the latest message when you send, then follow new response content automatically.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="bottom-lock-toggle"
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
+}
+
+function RoutingNoticesControl() {
+  const [enabled, setEnabled] = useState(() => readRoutingNoticesEnabled());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeRoutingNoticesEnabled(next);
+  }, []);
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Smart routing notices
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Show the selected model and routing reason in the chat.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="routing-notices-toggle"
+        className="mt-0.5 shrink-0"
+      />
+    </div>
+  );
+}
+
+function ChatTopButtonControl() {
+  const [mode, setMode] = useState<ChatTopButtonMode>(() => readChatTopButtonMode());
+  const labelId = useId();
+  const select = useCallback((next: ChatTopButtonMode) => {
+    setMode(next);
+    writeChatTopButtonMode(next);
+  }, []);
+  const options: readonly {
+    value: ChatTopButtonMode;
+    label: string;
+    testId: string;
+  }[] = [
+    { value: "jump-to-top", label: "Top", testId: "chat-top-button-jump-to-top" },
+    {
+      value: "jump-to-previous-message",
+      label: "Previous",
+      testId: "chat-top-button-jump-to-previous-message",
+    },
+    { value: "off", label: "Off", testId: "chat-top-button-off" },
+  ];
+  return (
+    <div className="flex items-center justify-between gap-6">
+      <div className="flex flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Top chat button
+        </span>
+        <span className="text-sm text-muted-foreground">
+          Choose what the floating button at the top of a chat does.
+        </span>
+      </div>
+      <div
+        role="radiogroup"
+        aria-labelledby={labelId}
+        className="inline-flex shrink-0 rounded-md border border-border bg-muted/40 p-0.5"
+      >
+        {options.map((option) => {
+          const selected = mode === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              data-testid={option.testId}
+              onClick={() => select(option.value)}
+              className={cn(
+                "rounded px-2 py-1 text-xs font-medium transition-colors",
+                selected
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AppearanceSection() {
   // Embedded: the host owns light/dark, so the Mode and Color theme pickers
   // would be no-ops — hide them and say so (matching ThemeModeMenu). Terminal
@@ -847,6 +1046,10 @@ function AppearanceSection() {
     writeWorkspacePanelDefault(WORKSPACE_PANEL_DEFAULT);
 
     writeHideUnconfiguredHarnesses(DEFAULT_HIDE_UNCONFIGURED_HARNESSES);
+    writeStickyUserMessagesEnabled(DEFAULT_STICKY_USER_MESSAGES);
+    writeBottomLockEnabled(DEFAULT_BOTTOM_LOCK_ENABLED);
+    writeRoutingNoticesEnabled(DEFAULT_ROUTING_NOTICES_ENABLED);
+    writeChatTopButtonMode(DEFAULT_CHAT_TOP_BUTTON_MODE);
 
     applyDesktopUiFontSize(UI_FONT_SIZE_DEFAULT);
     applyUiFontFamily(UI_FONT_FAMILY_DEFAULT);
@@ -870,6 +1073,10 @@ function AppearanceSection() {
           "omnigent:custom-theme",
           "omnigent:default-workspace-panel",
           "omnigent:hide-unconfigured-harnesses",
+          STICKY_USER_MESSAGES_STORAGE_KEY,
+          BOTTOM_LOCK_STORAGE_KEY,
+          ROUTING_NOTICES_STORAGE_KEY,
+          CHAT_TOP_BUTTON_STORAGE_KEY,
         ]) {
           window.localStorage.removeItem(key);
         }
@@ -913,6 +1120,14 @@ function AppearanceSection() {
         <WorkspacePanelDefaultControl />
 
         <HideUnconfiguredHarnessesControl />
+
+        <StickyUserMessagesControl />
+
+        <BottomLockControl />
+
+        <RoutingNoticesControl />
+
+        <ChatTopButtonControl />
 
         <UiFontSizeControl />
 
@@ -963,12 +1178,25 @@ function AppearanceSection() {
   );
 }
 
+/** SSH connection profiles and connectivity checks. */
+function ConnectionSection() {
+  return (
+    <Section
+      title="Connection"
+      description="Add SSH config aliases for remote machines. Connections are tested using your local ~/.ssh/config. When Codex import is enabled, rollouts on that host are mirrored into Omnigent."
+    >
+      <ConnectionSettingsBody />
+    </Section>
+  );
+}
+
 /** Git behavior settings. */
 function GitSection() {
   return (
     <Section title="Git" description="Configure how Omnigent works with Git.">
       <div className="flex flex-col gap-8">
         <DefaultBaseBranchControl />
+        <AutoFetchWorktreeBaseControl />
       </div>
     </Section>
   );
@@ -1007,6 +1235,38 @@ function DefaultBaseBranchControl() {
         className="h-9 w-56 shrink-0"
         value={branch}
         onChange={(e) => update(e.target.value)}
+      />
+    </div>
+  );
+}
+
+/** Opt-in fetch fallback when a requested worktree base is unavailable. */
+function AutoFetchWorktreeBaseControl() {
+  const labelId = useId();
+  const [enabled, setEnabled] = useState(readAutoFetchWorktreeBase);
+
+  const toggle = useCallback((next: boolean) => {
+    setEnabled(next);
+    writeAutoFetchWorktreeBase(next);
+  }, []);
+
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex min-w-0 flex-col">
+        <span id={labelId} className="text-ui font-medium">
+          Fetch missing base branches
+        </span>
+        <span className="text-sm text-muted-foreground">
+          When enabled, fetch and retry if the selected base branch is not available locally. Off
+          skips this preflight and reports Git errors directly.
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={labelId}
+        checked={enabled}
+        onCheckedChange={toggle}
+        data-testid="auto-fetch-worktree-base-toggle"
+        className="mt-0.5 shrink-0"
       />
     </div>
   );
@@ -1370,9 +1630,75 @@ function StepperButton({
 }
 
 function ShortcutsSection() {
+  const [sendShortcut, setSendShortcut] = useState<SendMessageShortcut>(readSendMessageShortcut);
+  const labelId = useId();
+
+  const updateSendShortcut = (value: SendMessageShortcut) => {
+    setSendShortcut(value);
+    writeSendMessageShortcut(value);
+  };
+
   return (
     <Section title="Keyboard shortcuts" description="Speed up common actions with the keyboard.">
+      <div className="flex items-start justify-between gap-6 border-b border-border pb-6">
+        <div className="flex flex-col">
+          <span id={labelId} className="text-sm font-medium">
+            Send messages
+          </span>
+          <span className="text-sm text-muted-foreground">
+            Choose whether Enter sends immediately or inserts a new line.
+          </span>
+        </div>
+        <Select
+          value={sendShortcut}
+          onValueChange={(value) => updateSendShortcut(value as SendMessageShortcut)}
+        >
+          <SelectTrigger
+            aria-labelledby={labelId}
+            data-testid="send-message-shortcut-select"
+            className="w-48 shrink-0"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="enter">Enter</SelectItem>
+            <SelectItem value="command-enter">Command/Ctrl + Enter</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <KeyboardShortcutsList />
+    </Section>
+  );
+}
+
+/** Puppy Garden task board settings. */
+function PuppyGardenSection() {
+  const [adopt, setAdopt] = useState(() => readAdoptExternalSessions());
+  const labelId = useId();
+  const toggle = useCallback((next: boolean) => {
+    setAdopt(next);
+    writeAdoptExternalSessions(next);
+  }, []);
+  return (
+    <Section title="Puppy Garden" description="Configure the Puppy Garden task board.">
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex flex-col">
+          <span id={labelId} className="text-sm font-medium">
+            Adopt external sessions
+          </span>
+          <span className="text-sm text-muted-foreground">
+            When on, sessions discovered by the session watcher are offered for adoption into tasks.
+            Off by default — turn it on to surface adoption cards in the board.
+          </span>
+        </div>
+        <Switch
+          aria-labelledby={labelId}
+          checked={adopt}
+          onCheckedChange={toggle}
+          data-testid="adopt-external-sessions-toggle"
+          className="mt-0.5 shrink-0"
+        />
+      </div>
     </Section>
   );
 }

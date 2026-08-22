@@ -35,6 +35,18 @@ ALICE = "alice@example.com"
 BOB = "bob@example.com"
 
 
+def test_discovery_key_maps_local_to_shared_channel() -> None:
+    """Single-user ``local`` and no-auth ``None`` share one discovery fan-out."""
+    from omnigent.server.auth import RESERVED_USER_LOCAL
+
+    assert sessions_routes._discovery_key(None) == sessions_routes._SHARED_DISCOVERY_KEY
+    assert (
+        sessions_routes._discovery_key(RESERVED_USER_LOCAL)
+        == sessions_routes._SHARED_DISCOVERY_KEY
+    )
+    assert sessions_routes._discovery_key(ALICE) == ALICE
+
+
 class _NoIdentityAuthProvider:
     """Auth provider whose handshake yields no identity.
 
@@ -548,6 +560,39 @@ def test_session_added_event_pushes_unwatched_session(
         # proving the server fetched the real row, not echoed the event.
         assert s2 in items
         assert items[s2]["title"] == "brand new"
+        added = _recv_until(ws, {"session_added"})
+        assert added["session_id"] == s2
+
+
+def test_host_diagnostic_is_forwarded_to_updates_stream(
+    app: FastAPI,
+    stores,
+) -> None:
+    """Host-wide diagnostics reach the app-level updates connection."""
+    session_id = _seed_session(stores, owner=ALICE, title="watched")
+    with TestClient(app).websocket_connect(
+        "/v1/sessions/updates", headers={"X-Forwarded-Email": ALICE}
+    ) as ws:
+        ws.send_text(json.dumps({"type": "watch", "session_ids": [session_id]}))
+        _recv_until(ws, {"snapshot"})
+        sessions_routes.user_session_stream.publish(
+            ALICE,
+            {
+                "type": "hosts_changed",
+                "diagnostic": "duplicate_host_daemon",
+                "host_id": "host_123",
+                "host_name": "Michael's Mac",
+            },
+        )
+
+        frame = _recv_until(ws, {"hosts_changed"})
+
+    assert frame == {
+        "type": "hosts_changed",
+        "diagnostic": "duplicate_host_daemon",
+        "host_id": "host_123",
+        "host_name": "Michael's Mac",
+    }
 
 
 def test_session_added_for_inaccessible_session_is_not_pushed(

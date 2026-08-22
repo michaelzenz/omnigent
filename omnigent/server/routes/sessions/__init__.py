@@ -175,6 +175,7 @@ from omnigent.server.routes._origin import require_trusted_origin
 # isort: off
 from omnigent.server.routes._sessions.common import (
     COST_CONTROL_OVERRIDE_VALUES as COST_CONTROL_OVERRIDE_VALUES,
+    configure_queue_status_feed as configure_queue_status_feed,
     _ALLOWED_EVENT_TYPES as _ALLOWED_EVENT_TYPES,
     _ANTIGRAVITY_NATIVE_ELICITATION_HOOK_TIMEOUT_S as _ANTIGRAVITY_NATIVE_ELICITATION_HOOK_TIMEOUT_S,
     _APPROVAL_TYPE as _APPROVAL_TYPE,
@@ -326,13 +327,17 @@ from omnigent.server.routes._sessions.common import (
     _session_background_task_count_cache as _session_background_task_count_cache,
     _session_mcp_startup_cache as _session_mcp_startup_cache,
     _session_sandbox_status_cache as _session_sandbox_status_cache,
+    _session_worktree_status_cache as _session_worktree_status_cache,
     _session_status_cache as _session_status_cache,
     _session_terminal_pending_cache as _session_terminal_pending_cache,
     _session_todos_cache as _session_todos_cache,
     get_server_host_registry as get_server_host_registry,
+    get_server_runner_infrastructure as get_server_runner_infrastructure,
     get_server_runner_router as get_server_runner_router,
     set_server_host_registry as set_server_host_registry,
+    set_server_runner_infrastructure as set_server_runner_infrastructure,
     set_server_runner_router as set_server_runner_router,
+    ServerRunnerInfrastructure as ServerRunnerInfrastructure,
 )
 
 # Lower-layer helpers (SSE builders, publishers, persistence, runner-forward
@@ -578,6 +583,12 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_sandbox_status_impl as _publish_sandbox_status,
 )
 from omnigent.server.routes._sessions.helpers import (
+    _publish_worktree_log,
+)
+from omnigent.server.routes._sessions.helpers import (
+    _publish_worktree_status,
+)
+from omnigent.server.routes._sessions.helpers import (
     _reset_runner_resources_after_switch_impl as _reset_runner_resources_after_switch,
 )
 from omnigent.server.routes._sessions.helpers import (
@@ -594,6 +605,13 @@ from omnigent.server.routes._sessions.helpers import (
 )
 from omnigent.server.routes._sessions.helpers import (
     _wait_for_runner_client_impl as _wait_for_runner_client,
+)
+from omnigent.server.routes._sessions.helpers import (
+    ensure_session_runner_client as ensure_session_runner_client,
+)
+from omnigent.server.routes._sessions.internal import (
+    _make_internal_request as _make_internal_request,
+    create_session_internal as create_session_internal,
 )
 
 # Higher-layer orchestration flows (runner relay, session-event dispatch,
@@ -724,7 +742,7 @@ from omnigent.spec.types import (
     PolicyAction,
     PolicySpec,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import (
@@ -732,6 +750,7 @@ from omnigent.stores.conversation_store import (
     ConversationNotFoundError,
 )
 from omnigent.stores.file_store import FileStore
+from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.project_store import ProjectStore
 from omnigent.telemetry import emit as _tel_emit
@@ -760,6 +779,8 @@ if TYPE_CHECKING:
         "_presentation_labels_for_agent",
         "_publish_runner_recovered_status",
         "_publish_sandbox_status",
+        "_publish_worktree_log",
+        "_publish_worktree_status",
         "_reset_runner_resources_after_switch",
         "_resolve_harness",
         "_same_provider_family",
@@ -799,7 +820,10 @@ def create_sessions_router(
     runner_exit_reports: RunnerExitReports | None = None,
     host_registry: HostRegistry | None = None,
     project_store: ProjectStore | None = None,
+    memory_store: MemoryStore | None = None,
+    memory_max_tokens: int = 20_000,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> APIRouter:
     """
     Factory that builds the sessions router.
@@ -898,6 +922,7 @@ def create_sessions_router(
         runner_exit_reports=runner_exit_reports,
         host_registry=host_registry,
         project_store=project_store,
+        prompt_profile_store=prompt_profile_store,
         background_title_coordinator=background_title_coordinator,
     )
 
@@ -962,6 +987,9 @@ def create_sessions_router(
         host_registry=host_registry,
         background_title_coordinator=background_title_coordinator,
         runner_tunnel_tokens=runner_tunnel_tokens,
+        memory_store=memory_store,
+        memory_max_tokens=memory_max_tokens,
+        prompt_profile_store=prompt_profile_store,
     )
 
     register_permissions_routes(

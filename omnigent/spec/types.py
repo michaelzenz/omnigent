@@ -8,7 +8,12 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
+from omnigent.inner.datamodel import (
+    OSEnvSpec,
+    TerminalEnvSpec,
+    default_os_env_spec,
+    default_terminal_env_specs,
+)
 
 if TYPE_CHECKING:
     # EvaluationContext is a runtime evaluation artifact (see
@@ -1026,9 +1031,9 @@ class SharePolicy(str, Enum):
     off by default and the public tier is a deliberate extra opt-in.
 
     - :attr:`NONE`: sharing disabled — ``sys_session_share`` is not
-      registered at all (default).
-    - :attr:`NON_PUBLIC`: the agent may grant access to named users
-      (emails), but NOT to ``__public__`` — no anonymous-read exposure.
+      registered.
+    - :attr:`NON_PUBLIC`: the default; the agent may grant access to named
+      users (emails), but NOT to ``__public__``.
     - :attr:`PUBLIC`: the agent may additionally grant ``__public__``
       (anonymous read of the full transcript).
     """
@@ -1516,10 +1521,9 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
         flag is the SOLE enabler of that tool — it is independent of
         ``spawn`` / ``tools.agents``, and has no bearing on sharing the
         session through the server API or CLI. One of
-        :class:`SharePolicy`: ``none`` (default — tool not registered),
-        ``non-public`` (grant named users only), or ``public`` (also
-        allow ``__public__`` anonymous read). **Defaults to
-        ``SharePolicy.NONE``.**
+        :class:`SharePolicy`: ``none`` (tool not registered),
+        ``non-public`` (default; grant named users only), or ``public``
+        (also allow ``__public__`` anonymous read).
     """
 
     spec_version: int
@@ -1555,15 +1559,24 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     # not shipping them, not by setting this filter to ``"none"``.
     skills_filter: str | list[str] = "all"
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    # Path to an external MCP-server config referenced via ``tools_include:``
+    # (e.g. ``~/.omnigent/mcp-servers.yaml``). Resolved at session load, not
+    # parse time, because the file lives outside the bundle and can change
+    # between server restarts (e.g. a daily cron sync). ``mcp_servers`` above
+    # holds only the bundle-owned inline + discovered entries; the included
+    # servers are merged in by ``resolve_session_mcp_servers`` at load time.
+    mcp_include_path: str | None = None
     local_tools: list[LocalToolInfo] = field(default_factory=list)
     sub_agents: list[AgentSpec] = field(default_factory=list)
     executor: ExecutorSpec = field(default_factory=ExecutorSpec)
     compaction: CompactionConfig | None = None
     guardrails: GuardrailsSpec | None = None
     async_enabled: bool = True
-    os_env: OSEnvSpec | None = None
-    terminals: dict[str, TerminalEnvSpec] | None = None
-    timers: bool = False
-    spawn: bool = False
-    agent_session_sharing: SharePolicy = SharePolicy.NONE
+    os_env: OSEnvSpec | None = field(default_factory=default_os_env_spec)
+    terminals: dict[str, TerminalEnvSpec] | None = field(
+        default_factory=default_terminal_env_specs
+    )
+    timers: bool = True
+    spawn: bool = True
+    agent_session_sharing: SharePolicy = SharePolicy.NON_PUBLIC
     source_rel_dir: str | None = field(default=None, compare=False)

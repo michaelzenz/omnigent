@@ -1924,13 +1924,46 @@ async def test_mcp_execute_dispatches_full_namespaced_mcp_tool_name() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sessions_native_path_injects_mcp_schemas() -> None:
-    """``POST /v1/sessions/{conv}/events`` with a message body injects MCP schemas.
+async def test_mcp_execute_searches_namespaced_mcp_tool_schemas() -> None:
+    """The runner-backed search tool returns matching schemas without advertising all of them."""
+    app, _mcp_manager, _harness_client, _server_client = _build_app_with_mcp_tool(
+        tool_name="jira__search_issues"
+    )
+    async with _runner_client(app) as client:
+        seed_resp = await client.post(
+            "/v1/sessions",
+            json={
+                "session_id": "246b505c60a44d798be84797d8603362",
+                "agent_id": "0e36e3219954d2deaef06b8e2a936f38",
+            },
+        )
+        assert seed_resp.status_code == 201, seed_resp.text
 
-    Sessions-native clients must get the same MCP injection that the
-    legacy ``/v1/responses`` path provides.
+        execute_resp = await client.post(
+            "/v1/sessions/246b505c60a44d798be84797d8603362/mcp/execute",
+            json={
+                "method": "tools/call",
+                "params": {
+                    "name": "mcp_tool_search",
+                    "arguments": {"query": "Jira issues"},
+                },
+            },
+        )
+
+    assert execute_resp.status_code == 200
+    output = json.loads(execute_resp.json()["result"]["output"])
+    assert output["tools"][0]["name"] == "jira__search_issues"
+
+
+@pytest.mark.asyncio
+async def test_sessions_native_path_defers_openai_agents_mcp_schemas() -> None:
+    """OpenAI Agents receives MCP search/call tools instead of every MCP schema.
+
+    The complete schema set stays in the runner's session cache for search.
     """
-    app, _mcp_manager, harness_client, _server_client = _build_app_with_mcp_tool()
+    app, _mcp_manager, harness_client, _server_client = _build_app_with_mcp_tool(
+        tool_name="jira__search_issues"
+    )
     async with _runner_client(app) as client:
         resp = await client.post(
             "/v1/sessions/4e92b5a0c0ee6db3f874f9c4a3f855a5/events",
@@ -1952,9 +1985,9 @@ async def test_sessions_native_path_injects_mcp_schemas() -> None:
     assert harness_client.posted_bodies, "harness must receive at least one event"
     body = harness_client.posted_bodies[0]
     schemas = body.get("tools") or []
-    assert any(s.get("name") == "jira_search_issues" for s in schemas), (
-        f"MCP schema must be injected on sessions-native path; got {schemas}"
-    )
+    names = {s.get("name") for s in schemas}
+    assert "jira__search_issues" not in names
+    assert {"mcp_tool_search", "mcp_tool_call"} <= names
 
 
 @pytest.mark.asyncio

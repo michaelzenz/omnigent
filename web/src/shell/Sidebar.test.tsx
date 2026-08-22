@@ -147,6 +147,13 @@ vi.mock("@/hooks/useConversations", () => ({
 // test scoped to the conversation list + funnel.
 vi.mock("@/components/PermissionsModal", () => ({ PermissionsModal: () => null }));
 
+const secretaryProfileMock = vi.hoisted(() => ({
+  current: null as { conversation_id: string | null } | null,
+}));
+vi.mock("@/hooks/useAgentTasks", () => ({
+  useSecretaryProfile: () => ({ data: secretaryProfileMock.current }),
+}));
+
 // The "Shared with me" tab only renders on a multi-user (non-local) server.
 // jsdom's default origin is loopback, which would read as single-user and hide
 // the tabs; force multi-user so the tab-based tests exercise the split. The
@@ -274,6 +281,7 @@ beforeEach(() => {
   fetchProjectSessionIdsMock.mockResolvedValue([]);
   projectSessionsMock.current = {};
   pinnedIdsRef.current = [];
+  secretaryProfileMock.current = null;
   // Default to a multi-user server so the tab-based tests see the tabs.
   isServerLocalMock.mockReturnValue(false);
   // The bound session's startup signal (send in flight / PTY pending) feeds
@@ -646,6 +654,19 @@ describe("Sidebar session list", () => {
     expect(screen.queryByTestId("usage-nav")).toBeNull();
   });
 
+  it("always shows Statistics directly below Glossaries and highlights its route", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/statistics");
+
+    const glossaries = screen.getByTestId("sidebar-tab-glossaries");
+    const statistics = screen.getByTestId("statistics-nav");
+    expect(statistics).toHaveAttribute("href", "/statistics");
+    expect(statistics).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(glossaries.compareDocumentPosition(statistics) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
   it("shows and highlights Usage navigation when the release feature is on", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar(true, "/usage", undefined, {
@@ -766,6 +787,19 @@ describe("Sidebar session list", () => {
     expect(within(recentSection).getByText("conv_active")).toBeInTheDocument();
     // The header Settings link points at the settings page.
     expect(screen.getByTestId("settings-button")).toHaveAttribute("href", "/settings");
+  });
+
+  it("lists the task secretary session in the sidebar like any other chat", () => {
+    secretaryProfileMock.current = { conversation_id: "conv_secretary" };
+    mockConversations([
+      conv("conv_secretary", "task-secretary"),
+      conv("conv_regular", "Claude Code"),
+    ]);
+    renderSidebar();
+
+    const recentSection = screen.getByText("Sessions").closest("section")!;
+    expect(within(recentSection).getByText("conv_secretary")).toBeInTheDocument();
+    expect(within(recentSection).getByText("conv_regular")).toBeInTheDocument();
   });
 
   it("renders sessions in one flat list with no connection grouping", () => {
@@ -1081,6 +1115,13 @@ describe("Sidebar tabs", () => {
     // must not pin the scope and swallow the choice.
     expect(screen.getByText("conv_done")).toBeInTheDocument();
     expect(screen.queryByText("conv_mine")).toBeNull();
+  });
+
+  it("renders the PuppyGarden nav button", () => {
+    mockConversations([conv("conv_mine", "Claude Code")]);
+    renderSidebar();
+    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
+    expect(puppyGarden).toHaveAttribute("href", "/puppy-garden");
   });
 
   it("shows every pinned session in Pinned regardless of the My/Shared filter", () => {

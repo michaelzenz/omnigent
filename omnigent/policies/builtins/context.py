@@ -483,6 +483,7 @@ POLICY_REGISTRY: list[dict[str, object]] = [
             "stale context. Requires an llm: config block on the server; "
             "abstains (fail-open) when no LLM client is available."
         ),
+        "requires_llm": True,
         "params_schema": {
             "type": "object",
             "properties": {
@@ -515,6 +516,8 @@ POLICY_REGISTRY: list[dict[str, object]] = [
                 },
                 "classification_prompt": {
                     "type": "string",
+                    "x-ui-widget": "textarea",
+                    "default": _DEFAULT_TASK_SWITCH_PROMPT,
                     "description": (
                         "System prompt for the classifier. Must instruct the "
                         'model to return {"verdict": "CONTINUATION"|"TASK_SWITCH"}; '

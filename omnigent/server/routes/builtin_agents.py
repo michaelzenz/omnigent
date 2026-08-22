@@ -1,4 +1,4 @@
-"""Read-only route for discovering built-in agents (``GET /v1/agents``).
+"""Routes for discovering and managing durable execution-target agents.
 
 Built-in agents are the long-lived, shared agents the server provides
 out of the box — the seeded ``claude-native-ui`` agent plus anything
@@ -13,24 +13,36 @@ built-ins, then creates a session with
 ``POST /v1/sessions {agent_id, host_id, workspace}``. See
 ``designs/BUILTIN_AGENTS.md``.
 
-This is the read-only successor to the removed ``GET /api/agents`` list:
-there is intentionally no create/update/delete — agent writes happen
-through session creation.
+The catalog also supports durable bundle upload, editing, and archive.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from fastapi.responses import Response
+from sqlalchemy.exc import IntegrityError
 
-from omnigent.db.utils import builtin_agent_id
+from omnigent.db.utils import builtin_agent_id, generate_agent_id
 from omnigent.entities import Agent
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime.agent_cache import AgentCache
-from omnigent.server.auth import AuthProvider
+from omnigent.server.auth import AuthProvider, local_single_user_enabled
+from omnigent.server.bundles import bundle_location, edit_agent_bundle, validate_agent_bundle
 from omnigent.server.routes._auth_helpers import require_user as _require_user
-from omnigent.server.schemas import AgentObject, MCPServerSummary, PaginatedList, SkillSummary
+from omnigent.server.routes._origin import require_trusted_origin
+from omnigent.server.schemas import (
+    AgentEditRequest,
+    AgentObject,
+    MCPServerSummary,
+    PaginatedList,
+    SkillSummary,
+)
 from omnigent.stores import AgentStore
+from omnigent.stores.artifact_store import ArtifactStore
 
 _logger = logging.getLogger(__name__)
 
@@ -54,11 +66,15 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
     skills: list[SkillSummary] = []
     terminals: list[str] = []
     harness: str | None = None
+    model: str | None = None
+    is_multi_agent = False
+    subagent_count = 0
     # Prefer the stored entity's description; fall back to the spec's
     # top-level description when the stored value is unset (single-file
     # YAML agents don't persist it at registration today). Lets the
     # new-session picker show a hover description without a migration.
     description: str | None = agent.description
+    instructions: str | None = None
     try:
         # Built-ins are operator-authored template agents
         # (session_id is None), so ${VAR} expansion against the server
@@ -69,6 +85,7 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         )
         if description is None:
             description = loaded.spec.description
+        instructions = loaded.spec.instructions
         # Declared terminal names, in spec order (mirrors the
         # session-agent endpoint so both report it consistently).
         terminals = list(loaded.spec.terminals or {})
@@ -91,6 +108,9 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         # Kind for the Add Agent picker (Codex vs Claude). Stays None
         # when the bundle can't be loaded (the except below).
         harness = loaded.spec.executor.harness_kind
+        model = loaded.spec.executor.model
+        is_multi_agent = bool(loaded.spec.sub_agents or loaded.spec.tools.agents)
+        subagent_count = len(loaded.spec.sub_agents)
     except Exception:  # noqa: BLE001 — spec load failure must not break the list
         _logger.debug(
             "Failed to load spec for agent %s; mcp_servers/skills will be empty",
@@ -102,6 +122,7 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         name=agent.name,
         version=agent.version,
         description=description,
+        instructions=instructions,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         harness=harness,
@@ -115,12 +136,19 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         # by a same-named ``omnigent run`` upload, but lets a newer
         # upload supersede the latter.
         builtin=agent.session_id is None and agent.id == builtin_agent_id(agent.name),
+        enabled=agent.enabled,
+        archived=agent.archived,
+        is_multi_agent=is_multi_agent,
+        subagent_count=subagent_count,
+        default_harness=harness,
+        default_model=model,
     )
 
 
 def create_builtin_agents_router(
     agent_store: AgentStore,
     agent_cache: AgentCache,
+    artifact_store: ArtifactStore | None = None,
     *,
     auth_provider: AuthProvider | None = None,
 ) -> APIRouter:
@@ -145,6 +173,7 @@ def create_builtin_agents_router(
         after: str | None = Query(default=None),
         before: str | None = Query(default=None),
         order: str = Query(default="desc", pattern="^(asc|desc)$"),
+        include_disabled: bool = Query(default=False),
     ) -> PaginatedList:
         """List built-in agents with cursor-based pagination.
 
@@ -159,12 +188,145 @@ def create_builtin_agents_router(
         :returns: A :class:`PaginatedList` of built-in agents.
         """
         _require_user(request, auth_provider)
-        page = agent_store.list(limit=limit, after=after, before=before, order=order)
+        page = agent_store.list(
+            limit=limit,
+            after=after,
+            before=before,
+            order=order,
+            include_disabled=include_disabled,
+        )
         return PaginatedList(
             data=[_to_agent_object(a, agent_cache) for a in page.data],
             first_id=page.first_id,
             last_id=page.last_id,
             has_more=page.has_more,
         )
+
+    @router.post(
+        "/agents",
+        status_code=201,
+        dependencies=[Depends(require_trusted_origin)],
+    )
+    async def create_agent(
+        request: Request,
+        bundle: Annotated[UploadFile, File(...)],
+    ) -> AgentObject:
+        """Create a durable template agent from an uploaded bundle."""
+        _require_user(request, auth_provider)
+        if artifact_store is None:
+            raise OmnigentError(
+                "Artifact store not configured",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        bundle_bytes = await bundle.read()
+        spec = await asyncio.to_thread(
+            validate_agent_bundle,
+            bundle_bytes,
+            enforce_handler_allowlist=not local_single_user_enabled(),
+        )
+        assert spec.name is not None
+        if await asyncio.to_thread(agent_store.get_by_name, spec.name) is not None:
+            raise OmnigentError(
+                f"Agent name already exists: {spec.name!r}",
+                code=ErrorCode.ALREADY_EXISTS,
+            )
+        agent_id = generate_agent_id()
+        location = bundle_location(agent_id, bundle_bytes)
+        await asyncio.to_thread(artifact_store.put, location, bundle_bytes)
+        try:
+            agent = await asyncio.to_thread(
+                agent_store.create,
+                agent_id,
+                spec.name,
+                location,
+                spec.description,
+            )
+        except IntegrityError as exc:
+            await asyncio.to_thread(artifact_store.delete, location)
+            raise OmnigentError(
+                f"Agent name already exists: {spec.name!r}",
+                code=ErrorCode.ALREADY_EXISTS,
+            ) from exc
+        return _to_agent_object(agent, agent_cache)
+
+    @router.put("/agents/{agent_id}")
+    async def edit_agent(
+        request: Request,
+        agent_id: str,
+        body: AgentEditRequest,
+    ) -> AgentObject:
+        """Edit custom agent metadata and bundled instructions in place."""
+        _require_user(request, auth_provider)
+        if artifact_store is None:
+            raise OmnigentError(
+                "Artifact store not configured",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        existing = await asyncio.to_thread(agent_store.get, agent_id)
+        if existing is None or existing.session_id is not None:
+            raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
+        if existing.id == builtin_agent_id(existing.name):
+            raise OmnigentError("Built-in agents cannot be edited.", code=ErrorCode.CONFLICT)
+        same_name = await asyncio.to_thread(agent_store.get_by_name, body.name)
+        if same_name is not None and same_name.id != agent_id:
+            raise OmnigentError(
+                f"Agent name already exists: {body.name!r}",
+                code=ErrorCode.ALREADY_EXISTS,
+            )
+        original = await asyncio.to_thread(artifact_store.get, existing.bundle_location)
+        edited_bytes = await asyncio.to_thread(
+            edit_agent_bundle,
+            original,
+            name=body.name,
+            description=body.description,
+            instructions=body.instructions,
+        )
+        await asyncio.to_thread(
+            validate_agent_bundle,
+            edited_bytes,
+            enforce_handler_allowlist=not local_single_user_enabled(),
+        )
+        location = bundle_location(agent_id, edited_bytes)
+        await asyncio.to_thread(artifact_store.put, location, edited_bytes)
+        try:
+            updated = await asyncio.to_thread(
+                agent_store.update,
+                agent_id,
+                location,
+                name=body.name,
+                description=body.description,
+                _update_metadata=True,
+            )
+        except IntegrityError as exc:
+            await asyncio.to_thread(artifact_store.delete, location)
+            raise OmnigentError(
+                f"Agent name already exists: {body.name!r}",
+                code=ErrorCode.ALREADY_EXISTS,
+            ) from exc
+        if updated is None:
+            await asyncio.to_thread(artifact_store.delete, location)
+            raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
+        await asyncio.to_thread(
+            agent_cache.replace,
+            agent_id,
+            location,
+            edited_bytes,
+            expand_env=True,
+        )
+        if location != existing.bundle_location:
+            await asyncio.to_thread(artifact_store.delete, existing.bundle_location)
+        return _to_agent_object(updated, agent_cache)
+
+    @router.delete("/agents/{agent_id}", status_code=204)
+    async def delete_agent(request: Request, agent_id: str) -> Response:
+        """Archive a custom template agent."""
+        _require_user(request, auth_provider)
+        agent = await asyncio.to_thread(agent_store.get, agent_id)
+        if agent is None or agent.session_id is not None:
+            raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
+        if agent.id == builtin_agent_id(agent.name):
+            raise OmnigentError("Built-in agents cannot be deleted.", code=ErrorCode.CONFLICT)
+        await asyncio.to_thread(agent_store.archive, agent_id)
+        return Response(status_code=204)
 
     return router

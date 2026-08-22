@@ -260,6 +260,17 @@ function installUpdateBridge(config: UpdateConfig = DEFAULT_UPDATE_CONFIG) {
 }
 
 describe("SettingsPage", () => {
+  it("configures the send-message keyboard shortcut", () => {
+    renderPage("/settings/shortcuts");
+    const select = screen.getByTestId("send-message-shortcut-select");
+
+    expect(select).toHaveValue("enter");
+    fireEvent.change(select, { target: { value: "command-enter" } });
+    expect(select).toHaveValue("command-enter");
+    expect(localStorage.getItem("omnigent:send-message-shortcut")).toBe("command-enter");
+    expect(screen.getByText("Command/Ctrl + Enter")).toBeInTheDocument();
+  });
+
   it("renders the Appearance section and applies a theme on card click", () => {
     renderPage("/settings/appearance");
     expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
@@ -267,6 +278,52 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("theme-system")).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByTestId("theme-dark"));
     expect(mocks.setTheme).toHaveBeenCalledWith("dark");
+  });
+
+  it("toggles sticky user message presentation without disabling editing", () => {
+    renderPage("/settings/appearance");
+    const toggle = screen.getByTestId("sticky-user-messages-toggle");
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(/Click to edit remains available when this is off/),
+    ).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(localStorage.getItem("omnigent:sticky-user-messages")).toBe("false");
+  });
+
+  it("keeps automatic bottom locking off by default", () => {
+    renderPage("/settings/appearance");
+    const toggle = screen.getByTestId("bottom-lock-toggle");
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(localStorage.getItem("omnigent:bottom-lock")).toBe("true");
+  });
+
+  it("configures the floating top chat button", () => {
+    renderPage("/settings/appearance");
+
+    expect(screen.getByTestId("chat-top-button-jump-to-top")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    fireEvent.click(screen.getByTestId("chat-top-button-jump-to-previous-message"));
+    expect(localStorage.getItem("omnigent:chat-top-button")).toBe("jump-to-previous-message");
+    fireEvent.click(screen.getByTestId("chat-top-button-off"));
+    expect(localStorage.getItem("omnigent:chat-top-button")).toBe("off");
+  });
+
+  it("can hide smart routing notices", () => {
+    renderPage("/settings/appearance");
+    const toggle = screen.getByTestId("routing-notices-toggle");
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(localStorage.getItem("omnigent:routing-notices")).toBe("false");
   });
 
   it("renders the Terminal theme radiogroup with auto selected by default", () => {
@@ -460,6 +517,10 @@ describe("SettingsPage", () => {
     });
     fireEvent.click(screen.getByTestId("workspace-panel-default-collapsed"));
     fireEvent.click(screen.getByTestId("hide-unconfigured-harnesses-toggle"));
+    fireEvent.click(screen.getByTestId("sticky-user-messages-toggle"));
+    fireEvent.click(screen.getByTestId("bottom-lock-toggle"));
+    fireEvent.click(screen.getByTestId("routing-notices-toggle"));
+    fireEvent.click(screen.getByTestId("chat-top-button-off"));
     fireEvent.click(screen.getByTestId("ui-font-size-inc"));
     fireEvent.click(screen.getByTestId("ui-font-size-inc"));
     fireEvent.change(screen.getByTestId("ui-font-family-input") as HTMLInputElement, {
@@ -476,6 +537,8 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:ui-theme-palette")).toBe(JSON.stringify("github"));
     expect(localStorage.getItem("omnigent:ui-font-size")).toBe("15");
     expect(localStorage.getItem("omnigent:code-font-size")).toBe("15");
+    expect(localStorage.getItem("omnigent:chat-top-button")).toBe("off");
+    expect(localStorage.getItem("omnigent:routing-notices")).toBe("false");
 
     // Open the confirmation dialog and confirm the reset.
     fireEvent.click(screen.getByTestId("reset-appearance-button"));
@@ -508,6 +571,16 @@ describe("SettingsPage", () => {
       "aria-checked",
       "false",
     );
+    expect(screen.getByTestId("sticky-user-messages-toggle")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("bottom-lock-toggle")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("chat-top-button-jump-to-top")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("routing-notices-toggle")).toHaveAttribute("aria-checked", "true");
   });
 
   it("lets you clear and retype the font size without clamping mid-edit", () => {

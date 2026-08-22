@@ -12,8 +12,10 @@ import type { Host } from "@/hooks/useHosts";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
+import type { PromptProfile } from "@/hooks/usePromptProfiles";
 import { NewChatLandingScreen, resetLandingDraft, sanitizeInitialPrompt } from "./NewChatDialog";
 import { writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
+import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
 
 // The landing screen drives the real Web-start flow end to end: the host and
 // first agent auto-select, the working directory seeds from the host's most-
@@ -90,6 +92,13 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
   useAvailableAgents: vi.fn(),
   prefetchAvailableAgentDetails: vi.fn(),
 }));
+const promptProfileMocks = vi.hoisted(() => ({ rows: [] as PromptProfile[] }));
+vi.mock("@/hooks/usePromptProfiles", () => ({
+  usePromptProfiles: () => ({ data: promptProfileMocks.rows }),
+  useArchivePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePromptProfile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 // The home listing is only consulted when there's no recent; the recent is
 // always set here, so keep this inert (returns no listing).
 vi.mock("@/hooks/useHostFilesystem", () => ({
@@ -100,6 +109,11 @@ vi.mock("@/hooks/useHostFilesystem", () => ({
 }));
 vi.mock("@/hooks/useHostWorktrees", () => ({
   useHostWorktrees: () => ({ data: undefined }),
+  useHostRepository: () => ({
+    data: { isGitRepository: true, worktrees: [], autoWorktreesSupported: true },
+    isLoading: false,
+    isError: false,
+  }),
 }));
 // No other sessions in scope — keep the conflict hooks inert so they don't
 // issue their own /health fetch or surface a warning. The warning is covered
@@ -166,6 +180,20 @@ function setAgents(agents: AvailableAgent[]): void {
   >);
 }
 
+function promptProfile(overrides: Partial<PromptProfile> = {}): PromptProfile {
+  return {
+    id: "profile_general",
+    name: "General",
+    description: null,
+    instructions: "",
+    enabled: true,
+    archived: false,
+    created_at: 1,
+    updated_at: 1,
+    ...overrides,
+  };
+}
+
 function renderLanding(cachedSessionIds: string[] = []): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -222,10 +250,33 @@ function openWorktree(): void {
  */
 function selectAgent(agentId: string): void {
   fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-  if (screen.queryByTestId(`new-chat-landing-agent-${agentId}`) == null) {
-    fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
+  const harnessRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+  if (harnessRow) {
+    fireEvent.click(harnessRow);
+    return;
   }
-  fireEvent.click(screen.getByTestId(`new-chat-landing-agent-${agentId}`));
+  const more = screen.queryByTestId("new-chat-landing-harness-more");
+  if (more) {
+    fireEvent.click(more);
+    const nestedHarnessRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+    if (nestedHarnessRow) {
+      fireEvent.click(nestedHarnessRow);
+      return;
+    }
+  }
+  const custom = screen.queryByTestId("new-chat-landing-custom-agents");
+  if (custom) {
+    fireEvent.pointerMove(custom);
+    fireEvent.click(custom);
+    const customRow = screen.queryByTestId(`new-chat-landing-agent-${agentId}`);
+    if (customRow) {
+      fireEvent.click(customRow);
+      return;
+    }
+  }
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+  fireEvent.click(screen.getByTestId(`new-chat-landing-profile-${agentId}`));
 }
 
 /**
@@ -278,6 +329,7 @@ beforeEach(() => {
   localStorage.setItem(RECENT_KEY, JSON.stringify({ host_1: [SEEDED_WORKSPACE] }));
   setHosts([host()]);
   setAgents([agent()]);
+  promptProfileMocks.rows = [];
 });
 
 afterEach(() => {
@@ -302,7 +354,7 @@ describe("NewChatLandingScreen create flow", () => {
     const [url, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/v1/sessions");
     expect(init.method).toBe("POST");
-    // The host (auto-selected), seeded workspace and default agent must all
+    // The host, seeded workspace, and selected execution target must all
     // reach the server. A missing host_id/workspace would create an unbound
     // session; a wrong agent_id would launch the wrong assistant.
     const body = JSON.parse(init.body as string);
@@ -311,8 +363,7 @@ describe("NewChatLandingScreen create flow", () => {
       host_id: "host_1",
       workspace: SEEDED_WORKSPACE,
     });
-    // A plain YAML agent carries no terminal-wrapper labels.
-    expect(body.labels).toBeUndefined();
+    expect(body.prompt_profile).toBeNull();
 
     // On success the screen routes to the freshly created session.
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_new"));
@@ -455,6 +506,24 @@ describe("NewChatLandingScreen create flow", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it("uses Command+Enter to create a session when configured", async () => {
+    writeSendMessageShortcut("command-enter");
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    await waitForWorkspaceSeed();
+    const input = screen.getByTestId("new-chat-landing-input");
+    fireEvent.change(input, { target: { value: "start a session" } });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
+  });
+
   it("does not create a session when Enter confirms active IME composition", async () => {
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
@@ -566,30 +635,33 @@ describe("NewChatLandingScreen create flow", () => {
     );
   });
 
-  it("hands a bundled-skill first message off as a structured invocation", async () => {
+  it("does not inherit bundled skills from a prompt-only profile", async () => {
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
       json: async () => ({ id: "conv_new" }),
     } as unknown as Response);
     setAgents([
       agent({
-        skills: [{ name: "review-pr", description: "Review a pull request" }],
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
+        harness: "openai-agents",
+        skills: [],
       }),
     ]);
+    promptProfileMocks.rows = [promptProfile({ instructions: "Review pull requests carefully" })];
 
     renderLanding();
     await waitForWorkspaceSeed();
     typeMessage("/review-pr 123 focus on auth");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
 
-    // The skill payload is what ChatPage's auto-send keys off to post a
-    // slash_command instead of a plain message. If matching regressed (or
-    // the handoff dropped the skill), the agent would receive literal
-    // "/review-pr 123 focus on auth" text — the original bug.
+    // Profiles only replace instructions. Their skills must not change the
+    // OmniHarness capabilities or first-message dispatch.
     await waitFor(() =>
       expect(setPendingInitialPromptMock).toHaveBeenCalledWith("conv_new", {
         text: "/review-pr 123 focus on auth",
-        skill: { name: "review-pr", args: "123 focus on auth" },
+        skill: null,
         files: [],
       }),
     );
@@ -1425,6 +1497,7 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
+    selectAgent("ag_polly");
     // With no explicit pick the pill shows just the agent name — the spec
     // default is not suffixed (it lives in the Advanced menu's radios).
     expect(screen.getByTestId("new-chat-landing-agent-select").textContent).toContain("Polly");
@@ -1458,7 +1531,7 @@ describe("NewChatLandingScreen create flow", () => {
     openAgentConfig("ag_polly");
     pickSelectOption("new-chat-landing-config-harness", "Pi");
     saveConfig();
-    openAgentConfig("ag_polly");
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     pickSelectOption("new-chat-landing-config-harness", "Claude SDK");
     saveConfig();
     typeMessage("go");
@@ -1648,7 +1721,11 @@ describe("NewChatLandingScreen create flow", () => {
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
     // The auto-filled default reaches the server just like a typed base would.
     const body = JSON.parse(init.body as string);
-    expect(body.git).toEqual({ branch_name: "feature/login", base_branch: "main" });
+    expect(body.git).toEqual({
+      branch_name: "feature/login",
+      base_branch: "main",
+      auto_fetch_base: false,
+    });
   });
 
   it("posts git.branch_name and git.base_branch when both are provided", async () => {
@@ -1674,7 +1751,11 @@ describe("NewChatLandingScreen create flow", () => {
     // Both the new branch and its base must reach the server so the host
     // creates the worktree off the requested ref, not HEAD.
     const body = JSON.parse(init.body as string);
-    expect(body.git).toEqual({ branch_name: "feature/login", base_branch: "main" });
+    expect(body.git).toEqual({
+      branch_name: "feature/login",
+      base_branch: "main",
+      auto_fetch_base: false,
+    });
   });
 
   it("omits base_branch when blank so the host branches from current HEAD", async () => {
@@ -1697,7 +1778,7 @@ describe("NewChatLandingScreen create flow", () => {
     // No base_branch key (undefined is dropped by JSON.stringify) → the host
     // falls back to the source repo's current HEAD.
     const body = JSON.parse(init.body as string);
-    expect(body.git).toEqual({ branch_name: "feature/login" });
+    expect(body.git).toEqual({ branch_name: "feature/login", auto_fetch_base: false });
   });
 
   it("surfaces the server's reason and does not navigate on a failed create", async () => {
@@ -1725,18 +1806,12 @@ describe("NewChatLandingScreen create flow", () => {
 
     renderLanding();
     await waitForWorkspaceSeed();
-    // Pick the non-default agent (Radix opens on pointerdown). "second_agent"
-    // is a custom agent, so it lives in the "Custom agents" submenu.
-    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-    fireEvent.click(screen.getByTestId("new-chat-landing-custom-agents"));
-    fireEvent.click(screen.getByTestId("new-chat-landing-agent-ag_two"));
+    selectAgent("ag_two");
     // The explicit pick persists immediately — no session has to be created
     // for the preference to stick.
     expect(localStorage.getItem("omnigent:last-agent-id")).toBe("ag_two");
 
-    // A fresh mount (the "next visit") must start on the remembered agent:
-    // submitting without touching the picker posts ag_two, not the
-    // catalog-default ag_hello.
+    // A fresh mount keeps the execution target itself selected.
     cleanup();
     vi.mocked(authenticatedFetch).mockResolvedValueOnce({
       ok: true,
@@ -1749,7 +1824,9 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string).agent_id).toBe("ag_two");
+    const body = JSON.parse(init.body as string);
+    expect(body.agent_id).toBe("ag_two");
+    expect(body.prompt_profile).toBeNull();
   });
 
   it("falls back to the default agent when the remembered id is no longer listed", async () => {
@@ -1769,7 +1846,114 @@ describe("NewChatLandingScreen create flow", () => {
 
     await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
     const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string).agent_id).toBe("ag_hello");
+    const body = JSON.parse(init.body as string);
+    expect(body.agent_id).toBe("ag_hello");
+    expect(body.prompt_profile).toBeNull();
+  });
+
+  it("launches a prompt-only profile on OmniHarness", async () => {
+    setAgents([
+      agent({
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
+        harness: "openai-agents",
+        builtin: true,
+      }),
+    ]);
+    promptProfileMocks.rows = [promptProfile({ id: "profile_general", name: "General agent" })];
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "General agent");
+    saveConfig();
+    typeMessage("start with this profile");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
+    const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.agent_id).toBe("ag_omniharness");
+    expect(body.prompt_profile).toEqual({
+      mode: "fixed",
+      profile_id: "profile_general",
+    });
+    expect(body.harness_override).toBeUndefined();
+    expect(body.model_override).toBeUndefined();
+  });
+
+  it("persists Auto Select for per-turn server selection", async () => {
+    const base = agent({
+      id: "ag_omniharness",
+      name: "omniharness",
+      display_name: "OmniHarness",
+      harness: "openai-agents",
+      builtin: true,
+      enabled: true,
+    });
+    setAgents([base]);
+    promptProfileMocks.rows = [promptProfile({ id: "profile_research", name: "Research" })];
+    vi.mocked(authenticatedFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "Research");
+    pickSelectOption("new-chat-landing-config-profile", "Auto Select");
+    expect(screen.getByTestId("new-chat-landing-config-profile").textContent).toContain("Auto Select");
+    saveConfig();
+    typeMessage("research this change");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    const sessionCall = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.find(([url]) => url === "/v1/sessions");
+    expect(sessionCall).toBeTruthy();
+    if (!sessionCall) throw new Error("Expected a session create call");
+    const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
+    expect(body.agent_id).toBe("ag_omniharness");
+    expect(body.prompt_profile).toEqual({ mode: "auto" });
+  });
+
+  it("persists Auto Include for per-turn multi-profile selection", async () => {
+    setAgents([
+      agent({
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
+        harness: "openai-agents",
+        builtin: true,
+        enabled: true,
+      }),
+    ]);
+    vi.mocked(authenticatedFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+    pickSelectOption("new-chat-landing-config-profile", "Auto Include");
+    saveConfig();
+    typeMessage("use every relevant profile");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    const sessionCall = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.find(([url]) => url === "/v1/sessions");
+    expect(sessionCall).toBeTruthy();
+    if (!sessionCall) throw new Error("Expected a session create call");
+    const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
+    expect(body.prompt_profile).toEqual({ mode: "auto_include" });
   });
 });
 

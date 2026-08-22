@@ -70,7 +70,13 @@ from omnigent.inner import _proc, ui
 from omnigent.integration_daemon import IntegrationDaemon
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.onboarding.sandboxes import available_providers as _sandbox_providers
-from omnigent.process_logging import LOG_LEVEL_ENV_VAR, LOG_TO_STDERR_ENV_VAR, data_dir, env_truthy
+from omnigent.process_logging import (
+    LOG_LEVEL_ENV_VAR,
+    LOG_TO_STDERR_ENV_VAR,
+    data_dir,
+    env_truthy,
+)
+from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
 
 if TYPE_CHECKING:
     import socket
@@ -3948,13 +3954,33 @@ def server(
     from omnigent.server.app import create_app
     from omnigent.server.auth import create_auth_provider
     from omnigent.server.server_config import config_str_list
+    from omnigent.stores.agent_queue_store.sqlalchemy_store import (
+        SqlAlchemyAgentQueueStore,
+    )
     from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
     from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
     from omnigent.stores.conversation_store.sqlalchemy_store import (
         SqlAlchemyConversationStore,
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+    from omnigent.stores.model_settings_store.sqlalchemy_store import (
+        SqlAlchemyModelSettingsStore,
+    )
     from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
+    from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+    from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
+        SqlAlchemyTaskRoleProfileStore,
+    )
+    from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+    from omnigent.stores.user_role_session_store.sqlalchemy_store import (
+        SqlAlchemyUserRoleSessionStore,
+    )
+    from omnigent.stores.worker_provider_store.sqlalchemy_store import (
+        SqlAlchemyWorkerProviderStore,
+    )
+    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
     cfg = _load_config(config_path)
 
@@ -3978,6 +4004,7 @@ def server(
     # with "unable to open database file".
     _ensure_sqlite_parent_dir(db_uri)
 
+    from omnigent.stores.memory_store.sqlalchemy_store import SqlAlchemyMemoryStore
     from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
     from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
     from omnigent.stores.scheduled_task_store.sqlalchemy_store import (
@@ -3989,9 +4016,20 @@ def server(
     conversation_store = SqlAlchemyConversationStore(db_uri, conv_db_uri)
     comment_store = SqlAlchemyCommentStore(db_uri)
     policy_store = SqlAlchemyPolicyStore(db_uri)
+    model_settings_store = SqlAlchemyModelSettingsStore(db_uri)
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
+    memory_store = SqlAlchemyMemoryStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
+    task_store = SqlAlchemyTaskStore(db_uri)
+    task_event_store = SqlAlchemyTaskEventStore(db_uri)
+    task_item_store = SqlAlchemyTaskItemStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    worker_provider_store = SqlAlchemyWorkerProviderStore(db_uri)
+    task_asset_store = SqlAlchemyTaskAssetStore(db_uri)
+    task_role_profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    user_role_session_store = SqlAlchemyUserRoleSessionStore(db_uri)
+    agent_queue_store = SqlAlchemyAgentQueueStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -4010,7 +4048,17 @@ def server(
 
     from omnigent.spec import parse_default_policies, parse_server_llm
 
-    server_llm = parse_server_llm(cfg.get("llm"))
+    model_settings = model_settings_store.get()
+    if model_settings.policy_model is None:
+        server_llm = None
+    else:
+        raw_llm = dict(cfg.get("llm")) if isinstance(cfg.get("llm"), dict) else {}
+        raw_llm["model"] = model_settings.policy_model
+        if not raw_llm.get("profile"):
+            auth = cfg.get("auth")
+            if isinstance(auth, dict) and auth.get("type") == "databricks":
+                raw_llm["profile"] = auth.get("profile")
+        server_llm = parse_server_llm(raw_llm)
 
     routing_settings = parse_routing_settings(cfg.get("routing"))
     routing_backends = _build_routing_backends(cfg, server_llm, routing_settings)
@@ -4033,6 +4081,8 @@ def server(
         artifact_store=artifact_store,
         comment_store=comment_store,
         policy_store=policy_store,
+        task_store=task_store,
+        task_event_store=task_event_store,
         caps=caps,
     )
 
@@ -4064,8 +4114,10 @@ def server(
         )
 
     from omnigent.stores.host_store import HostStore
+    from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 
     host_store = HostStore(db_uri)
+    ssh_host_installation_store = SshHostInstallationStore(db_uri)
 
     # Managed sandbox hosts (host_type="managed" sessions): parse the
     # config's `sandbox:` section up front so an operator typo stops
@@ -4130,14 +4182,28 @@ def server(
         conversation_store=conversation_store,
         comment_store=comment_store,
         policy_store=policy_store,
+        model_settings_store=model_settings_store,
         artifact_store=artifact_store,
         agent_cache=agent_cache,
         runner_tunnel_tokens=_runner_tunnel_tokens,
         permission_store=permission_store,
         scheduled_task_store=scheduled_task_store,
+        memory_store=memory_store,
         project_store=project_store,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        task_item_store=task_item_store,
+        worker_store=worker_store,
+        worker_provider_store=worker_provider_store,
+        task_asset_store=task_asset_store,
+        task_role_profile_store=task_role_profile_store,
+        user_role_session_store=user_role_session_store,
+        agent_queue_store=agent_queue_store,
         auth_provider=auth_provider,
         host_store=host_store,
+        ssh_host_installation_store=ssh_host_installation_store,
+        ssh_tunnel_host="127.0.0.1",
+        ssh_tunnel_port=port,
         account_store=account_store,
         policy_modules=cfg.get("policy_modules"),
         debug_router_modules=config_str_list(cfg.get("debug_router_modules")),
@@ -7938,11 +8004,24 @@ class _HostGroup(click.Group):
             )
         if positionals[1:]:
             raise click.UsageError(f"Unexpected extra argument(s): {' '.join(positionals[1:])}")
-        # remove() drops the first token equal to `url`. Safe because the only
-        # value-taking group option (--server) triggers the conflict error above,
-        # so the URL can't be some other option's value.
+        # Drop the first token equal to `url`, skipping tokens that are another
+        # option's value. --server already triggered the conflict error above,
+        # but --server-unix-socket's value could itself look like the URL.
         remaining = list(args)
-        remaining.remove(url)
+        value_options = {"--server", "--server-unix-socket"}
+        skip_value = False
+        for index, token in enumerate(remaining):
+            if skip_value:
+                skip_value = False
+                continue
+            if token in value_options:
+                skip_value = True
+                continue
+            if any(token.startswith(f"{option}=") for option in value_options):
+                continue
+            if token == url:
+                remaining.pop(index)
+                break
         return ["--server", url, *remaining]
 
     def _token_is_positional_server(self, token: str) -> bool:
@@ -8184,6 +8263,13 @@ def _host_stop_command(explicit_server: str | None) -> str:
     ),
 )
 @click.option(
+    "--server-unix-socket",
+    "server_unix_socket",
+    default=None,
+    metavar="PATH",
+    help="Connect to the logical server through this Unix socket.",
+)
+@click.option(
     "--non-interactive",
     "non_interactive",
     is_flag=True,
@@ -8199,6 +8285,7 @@ def host(
     ctx: click.Context,
     server: str | None,
     background: bool,
+    server_unix_socket: str | None,
     non_interactive: bool,
 ) -> None:
     """
@@ -8229,6 +8316,8 @@ def host(
         to config; empty string selects local mode.
     :param background: When ``True``, spawn the daemon detached and return
         instead of running the daemon loop in the foreground.
+    :param server_unix_socket: Optional Unix socket used to dial the
+        logical server URL.
     :param non_interactive: When ``True``, never launch the browser login
         for an un-authed remote server — fail with the ``omnigent login``
         hint instead.
@@ -8240,6 +8329,8 @@ def host(
     # Kept before the config fallback below: `--background` echoes a `host
     # stop` command that mirrors how this command was invoked.
     explicit_server = server
+    if server_unix_socket is not None:
+        os.environ[OMNIGENT_SERVER_UNIX_SOCKET] = str(Path(server_unix_socket).expanduser())
     cfg = _load_effective_config()
     if server is None:
         server = cfg.get("server")

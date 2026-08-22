@@ -22,7 +22,19 @@
 // wrapper label (their embedded terminal hosts the Omnigent REPL), so
 // behavior gates must use `isNativeWrapper`, never `isTerminalFirst`.
 
-import { createContext, useContext } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { isNativeWrapper as isNativeWrapperLabel } from "@/lib/nativeCodingAgents";
+import {
+  AGENT_TERMINAL_IDS,
+  isAgentTerminalKey,
+  PANEL_NO_TERMINAL_KEY,
+  terminalTabKey,
+  useTerminals,
+} from "@/hooks/useTerminals";
+import type { SessionLiveness } from "@/hooks/useSessionLiveness";
+import { useChatStore } from "@/store/chatStore";
+
+const CLAUDE_NATIVE_WRAPPER = "claude-code-native-ui";
 
 export type TerminalFirstView = "chat" | "terminal";
 
@@ -98,4 +110,101 @@ export const TerminalFirstContextProvider = TerminalFirstContext.Provider;
  */
 export function useTerminalFirst(): TerminalFirstContextValue | null {
   return useContext(TerminalFirstContext);
+}
+
+/**
+ * Minimal terminal-first context for embedded chat surfaces (e.g.
+ * PuppyGarden's sidebar) that are chat-only and not wired to AppShell's
+ * terminal panel. `isNativeWrapper` is derived from session labels so
+ * native-CLI harness behavior (elicitation cards, send queueing, model
+ * picker) matches the main chat page.
+ */
+export function terminalFirstContextForEmbeddedSession(
+  labels: Record<string, string> | undefined,
+): TerminalFirstContextValue {
+  const wrapper = labels?.["omnigent.wrapper"];
+  return {
+    isClaudeNative: wrapper === CLAUDE_NATIVE_WRAPPER,
+    isNativeWrapper: isNativeWrapperLabel(wrapper),
+    isTerminalFirst: false,
+    isShellView: false,
+    view: "chat",
+    terminalViewKey: null,
+    setView: () => {},
+    terminalsAvailable: false,
+    terminalStartingUp: false,
+  };
+}
+
+/**
+ * Terminal-first context for embedded chat surfaces outside AppShell (e.g.
+ * PuppyGarden's sidebar). Mirrors AppShell's panel state so MainAgentSurface
+ * can render MainTerminalView and mirror cursor-native TUI output into chat.
+ */
+export function useEmbeddedTerminalFirstContext(
+  conversationId: string,
+  sessionLabels: Record<string, string> | undefined,
+  liveness: SessionLiveness,
+): TerminalFirstContextValue {
+  const terminalFirst = sessionLabels?.["omnigent.ui"] === "terminal";
+  const wrapper = sessionLabels?.["omnigent.wrapper"];
+  const isClaudeNative = wrapper === CLAUDE_NATIVE_WRAPPER;
+  const isNativeWrapper = isNativeWrapperLabel(wrapper);
+
+  const terminalPending = useChatStore((s) => s.terminalPending);
+  const sessionStatus = useChatStore((s) => s.sessionStatus);
+  const { terminals } = useTerminals(conversationId, {
+    reconcileWhilePending: terminalPending,
+  });
+
+  const [panelInitialKey, setPanelInitialKey] = useState<string | null>(null);
+  const panelOpen = panelInitialKey !== null;
+
+  const setView = useCallback(
+    (view: TerminalFirstView) => {
+      if (view === "chat") {
+        setPanelInitialKey(null);
+        return;
+      }
+      if (terminals.length === 0) {
+        if (terminalFirst) setPanelInitialKey(PANEL_NO_TERMINAL_KEY);
+        return;
+      }
+      const agentTerminal = terminals.find((t) => AGENT_TERMINAL_IDS.has(t.id));
+      setPanelInitialKey(terminalTabKey(agentTerminal ?? terminals[0]));
+    },
+    [terminalFirst, terminals],
+  );
+
+  const terminalsAvailable = terminals.length > 0;
+  const terminalStartingUp =
+    !terminalsAvailable &&
+    sessionStatus !== "failed" &&
+    (liveness.kind === "starting" || terminalPending);
+  const isShellView = terminalFirst && !!panelInitialKey && !isAgentTerminalKey(panelInitialKey);
+
+  return useMemo(
+    () => ({
+      isClaudeNative,
+      isNativeWrapper,
+      isTerminalFirst: terminalFirst,
+      isShellView,
+      view: panelOpen ? "terminal" : "chat",
+      terminalViewKey: panelInitialKey,
+      setView,
+      terminalsAvailable,
+      terminalStartingUp,
+    }),
+    [
+      isClaudeNative,
+      isNativeWrapper,
+      terminalFirst,
+      isShellView,
+      panelOpen,
+      panelInitialKey,
+      setView,
+      terminalsAvailable,
+      terminalStartingUp,
+    ],
+  );
 }

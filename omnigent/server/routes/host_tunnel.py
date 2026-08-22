@@ -40,11 +40,14 @@ from omnigent.host.frames import (
     HostListWorktreesResultFrame,
     HostModelOptionsResultFrame,
     HostRemoveWorktreeResultFrame,
+    HostRenewWorktreeLeaseResultFrame,
     HostRunnerExitedFrame,
     HostRunnerStatusResultFrame,
+    HostSkillInventoryFrame,
     HostStatResultFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretResultFrame,
+    HostWorktreeLogFrame,
     decode_host_frame,
     encode_host_frame,
 )
@@ -61,6 +64,7 @@ from omnigent.server.host_registry import (
     HostRegistry,
     RunnerExitReports,
 )
+from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 
 _logger = logging.getLogger(__name__)
@@ -68,6 +72,53 @@ _logger = logging.getLogger(__name__)
 SUPPORTED_FRAME_PROTOCOL_MAJOR = 1
 PING_INTERVAL_S = 30.0
 PING_MISS_THRESHOLD = 3
+
+
+async def _invalidate_stale_runner_bindings(
+    conversation_store: ConversationStore,
+    host_id: str,
+    live_runner_ids: set[str],
+) -> None:
+    """Null ``runner_id`` for host-bound sessions whose runner is no longer alive.
+
+    On host (re)connect the host reports its live runner tokens. Any session
+    still pinned to a token not in that set is stale (the runner died with the
+    old host process). Clearing ``runner_id`` lets the next message relaunch
+    immediately instead of waiting out the connect grace for a dead token.
+
+    :param conversation_store: Store to query and mutate.
+    :param host_id: Host whose sessions to reconcile.
+    :param live_runner_ids: Runner tokens the host reports as alive now.
+    """
+    try:
+        bindings = await asyncio.to_thread(
+            conversation_store.runner_bindings_for_host, host_id
+        )
+    except Exception:
+        _logger.exception("runner_bindings_for_host(%s) failed", host_id)
+        return
+    stale = [
+        conv_id
+        for conv_id, runner_id in bindings.items()
+        if runner_id is not None and runner_id not in live_runner_ids
+    ]
+    for conv_id in stale:
+        try:
+            await asyncio.to_thread(
+                conversation_store.clear_runner_id,
+                conv_id,
+                bump_updated_at=False,
+            )
+        except Exception:
+            _logger.exception("clear_runner_id(%s) failed", conv_id)
+            continue
+    if stale:
+        _logger.info(
+            "Invalidated %d stale runner binding(s) for host=%s (live_runners=%d)",
+            len(stale),
+            host_id,
+            len(live_runner_ids),
+        )
 
 
 def create_host_tunnel_router(
@@ -78,9 +129,11 @@ def create_host_tunnel_router(
     on_host_connect: Callable[[str, str | None], Awaitable[None]] | None = None,
     on_host_disconnect: Callable[[str, str | None], Awaitable[None]] | None = None,
     on_host_update: Callable[[str, str | None], Awaitable[None]] | None = None,
+    on_duplicate_daemon: Callable[[str, str | None, str], Awaitable[None]] | None = None,
     on_runner_exited: Callable[[str, str], Awaitable[None]] | None = None,
     local_single_user: bool | None = None,
     runner_exit_reports: RunnerExitReports | None = None,
+    conversation_store: ConversationStore | None = None,
 ) -> APIRouter:
     """Build the router hosting the ``/hosts/{id}/tunnel`` WS endpoint.
 
@@ -112,6 +165,9 @@ def create_host_tunnel_router(
         a host's tunnel closes. Receives the ``host_id``.
     :param on_host_update: Optional async callback fired when a connected
         host reports changed harness readiness. Receives ``host_id`` and owner.
+    :param on_duplicate_daemon: Optional async callback fired when a second
+        daemon process replaces a live connection with the same host identity.
+        Receives ``host_id``, owner, and host display name.
     :param local_single_user: When ``True``, allow a host to re-own a
         ``host_id`` already registered under a different owner — needed
         only for the single-user loopback local server, where the owner
@@ -252,6 +308,12 @@ def create_host_tunnel_router(
                 await _send_connection_error(ws, stage="protocol", error=error)
                 await ws.close(code=4002, reason=error)
                 return
+            if (
+                frame.skill_sync_harnesses is None
+                or frame.skill_search_roots is None
+            ):
+                await ws.close(code=4001, reason="host skill configuration is required")
+                return
 
             stage = "registration"
             await asyncio.to_thread(
@@ -263,6 +325,12 @@ def create_host_tunnel_router(
                 configured_harnesses=frame.configured_harnesses,
             )
             host_persisted = True
+            await asyncio.to_thread(
+                host_store.update_skill_configuration,
+                host_id,
+                frame.skill_sync_harnesses,
+                frame.skill_search_roots,
+            )
 
             stage = "registry"
             conn = host_registry.register(
@@ -275,6 +343,14 @@ def create_host_tunnel_router(
             # started learns the host's gateway backing here, so a server
             # restart converges as soon as each host reconnects.
             host_registry.record_gateway_inference(host_id, frame.gateway_inference)
+            if frame.skills is not None:
+                host_registry.record_skill_inventory(host_id, frame.skills)
+            for memory_file in frame.memory_files or []:
+                host_registry.record_memory_file(
+                    host_id,
+                    memory_file,
+                    workspace_id=conn.workspace_id,
+                )
             stage = "connected"
             _logger.info(
                 "Host %s connected (version=%s, name=%s, runners=%s)",
@@ -283,6 +359,18 @@ def create_host_tunnel_router(
                 frame.name,
                 frame.runners,
             )
+            # Proactively null runner bindings for sessions on this host whose
+            # pinned runner token is no longer alive (the host reports its live
+            # runners in the hello frame). After a host/server restart every
+            # session is stale; without this the next message per session waits
+            # out the connect grace for a token that can never register. Nulling
+            # runner_id skips that grace and relaunches immediately on next touch.
+            if conversation_store is not None:
+                await _invalidate_stale_runner_bindings(
+                    conversation_store,
+                    host_id,
+                    set(frame.runners),
+                )
 
             sender_task = asyncio.create_task(
                 _sender_loop(ws, conn),
@@ -320,6 +408,23 @@ def create_host_tunnel_router(
                 except Exception:
                     _logger.exception(
                         "on_host_connect callback failed for %s",
+                        host_id,
+                    )
+
+            if conn.duplicate_daemon and on_duplicate_daemon is not None:
+                try:
+                    await asyncio.wait_for(
+                        on_duplicate_daemon(host_id, tunnel_owner, frame.name),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    _logger.warning(
+                        "on_duplicate_daemon callback timed out for %s",
+                        host_id,
+                    )
+                except Exception:
+                    _logger.exception(
+                        "on_duplicate_daemon callback failed for %s",
                         host_id,
                     )
 
@@ -542,6 +647,21 @@ async def _receive_loop(
                     _logger.exception("on_host_update callback failed for %s", host_id)
             continue
 
+        if isinstance(frame, HostSkillInventoryFrame):
+            host_registry.record_skill_inventory(host_id, frame.skills)
+            await asyncio.to_thread(
+                host_store.update_skill_configuration,
+                host_id,
+                frame.skill_sync_harnesses,
+                frame.skill_search_roots,
+            )
+            if on_host_update is not None:
+                try:
+                    await on_host_update(host_id, conn.owner)
+                except Exception:
+                    _logger.exception("on_host_update callback failed for %s", host_id)
+            continue
+
         if isinstance(frame, HostLaunchRunnerResultFrame):
             future = conn.pending_launches.pop(frame.request_id, None)
             if future is not None and not future.done():
@@ -624,6 +744,12 @@ async def _receive_loop(
                 )
             continue
 
+        if isinstance(frame, HostWorktreeLogFrame):
+            log_handler = conn.pending_worktree_log_handlers.get(frame.request_id)
+            if log_handler is not None:
+                log_handler(frame.line)
+            continue
+
         if isinstance(frame, HostCreateWorktreeResultFrame):
             create_wt_future = conn.pending_create_worktrees.pop(frame.request_id, None)
             if create_wt_future is not None and not create_wt_future.done():
@@ -655,6 +781,18 @@ async def _receive_loop(
                     {
                         "status": frame.status,
                         "worktrees": frame.worktrees,
+                        "error": frame.error,
+                    }
+                )
+            continue
+
+        if isinstance(frame, HostRenewWorktreeLeaseResultFrame):
+            renew_future = conn.pending_renew_worktree_leases.pop(frame.request_id, None)
+            if renew_future is not None and not renew_future.done():
+                renew_future.set_result(
+                    {
+                        "status": frame.status,
+                        "renewed": frame.renewed,
                         "error": frame.error,
                     }
                 )

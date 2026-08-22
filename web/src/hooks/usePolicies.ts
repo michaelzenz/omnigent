@@ -23,6 +23,7 @@ export interface PolicyRegistryEntry {
   name: string;
   description: string;
   params_schema: Record<string, unknown> | null;
+  requires_llm: boolean;
 }
 
 // ── Query helpers ────────────────────────────────────────────────────────────
@@ -83,6 +84,37 @@ export function useAddPolicy(sessionId: string) {
         `/v1/sessions/${encodeURIComponent(sessionId)}/policies`,
         {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return (await res.json()) as SessionPolicy;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: policiesQueryKey(sessionId),
+      });
+    },
+  });
+}
+
+/** PATCH /v1/sessions/{id}/policies/{policyId} */
+export function useUpdatePolicy(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      policyId,
+      ...payload
+    }: {
+      policyId: string;
+      name: string;
+      factory_params: Record<string, unknown> | null;
+    }) => {
+      const res = await authenticatedFetch(
+        `/v1/sessions/${encodeURIComponent(sessionId)}/policies/${encodeURIComponent(policyId)}`,
+        {
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         },

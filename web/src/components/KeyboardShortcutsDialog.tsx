@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { isNativeShell } from "@/lib/nativeBridge";
+import { readSendMessageShortcut } from "@/lib/sendMessagePreferences";
 
 // Custom event the dialog listens for, so non-adjacent surfaces (e.g. the
 // account menu) can open it without threading state through the tree.
@@ -68,6 +69,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { label: "Start a new session", keys: [MOD_KEY, "N"] },
       { label: "Open command palette", keys: [MOD_KEY, "K"] },
+      { label: "Open chat search", keys: [MOD_KEY, SHIFT, "F"] },
       { label: "Show keyboard shortcuts", keys: [MOD_KEY, "/"] },
     ],
   },
@@ -121,11 +123,26 @@ function pinnedSessionShortcut(native: boolean): Shortcut {
 
 /** Shortcut groups for the current runtime — the pinned-jump chord differs by shell. */
 function shortcutGroupsFor(native: boolean): ShortcutGroup[] {
-  return SHORTCUT_GROUPS.map((group) =>
-    group.title === "Navigation"
+  const commandEnter = readSendMessageShortcut() === "command-enter";
+  return SHORTCUT_GROUPS.map((group) => {
+    if (group.title === "In chats") {
+      return {
+        ...group,
+        items: group.items.map((item) => {
+          if (item.label === "Send message") {
+            return { ...item, keys: commandEnter ? [MOD_KEY, ENTER] : [ENTER] };
+          }
+          if (item.label === "New line in message") {
+            return { ...item, keys: commandEnter ? [ENTER] : [SHIFT, ENTER] };
+          }
+          return item;
+        }),
+      };
+    }
+    return group.title === "Navigation"
       ? { ...group, items: [...group.items, pinnedSessionShortcut(native)] }
-      : group,
-  );
+      : group;
+  });
 }
 
 function Kbd({ children }: { children: ReactNode }) {

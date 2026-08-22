@@ -13,6 +13,7 @@
 import type { ConversationItem } from "./conversationItems";
 import type { MessageContentBlock } from "./blocks";
 import type { McpServerStartup } from "./events";
+import { readAutoFetchWorktreeBase } from "./gitFetchPreferences";
 import { authenticatedFetch } from "./identity";
 import { isAndroidShell, isElectronShell, isIOSShell } from "@/lib/nativeBridge";
 import { setSessionHost } from "./sessionHost";
@@ -20,12 +21,14 @@ import type {
   ModelUsage,
   NativeModelOption,
   NestedSessionItem,
+  PromptProfileSelection,
   SandboxStatus,
   Session,
   SessionEventInput,
   SessionItem,
   SessionStatus,
   SkillSummary,
+  WorktreeStatus,
 } from "./types";
 
 /** Returns the client surface label for the X-Omnigent-Client telemetry header. */
@@ -136,6 +139,11 @@ interface SessionResponseWire {
    */
   title?: string | null;
   labels?: Record<string, string>;
+  prompt_profile:
+    | { mode: "auto" }
+    | { mode: "auto_include" }
+    | { mode: "fixed"; profile_id: string }
+    | null;
   /** Canonical working directory; ``null`` when unbound. */
   workspace?: string | null;
   /**
@@ -161,6 +169,7 @@ interface SessionResponseWire {
   /** Sub-agent routing switch; `null`/absent reads the same as `"off"` (Default). */
   subagent_routing_override?: "on" | "off" | null;
   context_window?: number | null;
+  context_window_is_estimate?: boolean;
   last_total_tokens?: number | null;
   total_cost_usd?: number | null;
   /**
@@ -242,6 +251,12 @@ interface SessionResponseWire {
    * `omnigent.server.schemas.SandboxStatus`.
    */
   sandbox_status?: SandboxStatus | null;
+  /** Async git-worktree creation progress; absent/null otherwise. */
+  worktree_status?:
+    | (Omit<WorktreeStatus, "logLines"> & {
+        log_lines?: string[];
+      })
+    | null;
   mcp_startup?: Record<string, McpServerStartup> | null;
   /**
    * Response id of the turn currently in flight, or absent/null when
@@ -310,6 +325,10 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     createdAt: wire.created_at,
     title: wire.title ?? null,
     labels: wire.labels,
+    promptProfile:
+      wire.prompt_profile?.mode === "fixed"
+        ? { mode: "fixed", profileId: wire.prompt_profile.profile_id }
+        : wire.prompt_profile,
     workspace: wire.workspace ?? null,
     terminalLaunchArgs: wire.terminal_launch_args ?? null,
     gitBranch: wire.git_branch ?? null,
@@ -322,6 +341,7 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     costControlModeOverride: wire.cost_control_mode_override,
     subagentRoutingOverride: wire.subagent_routing_override,
     contextWindow: wire.context_window,
+    contextWindowIsEstimate: wire.context_window_is_estimate ?? false,
     lastTotalTokens: wire.last_total_tokens,
     totalCostUsd: wire.total_cost_usd,
     usageByModel: usageByModelFromWire(wire.usage_by_model),
@@ -341,6 +361,14 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     codexModelOptions: wire.model_options ?? [],
     terminalPending: wire.terminal_pending ?? false,
     sandboxStatus: wire.sandbox_status ?? null,
+    worktreeStatus: wire.worktree_status
+      ? {
+          stage: wire.worktree_status.stage,
+          branch: wire.worktree_status.branch ?? null,
+          error: wire.worktree_status.error ?? null,
+          logLines: wire.worktree_status.log_lines ?? [],
+        }
+      : null,
     mcpStartup: wire.mcp_startup ?? null,
     activeResponseId: wire.active_response_id ?? null,
   };
@@ -459,6 +487,7 @@ export async function createSession(
     parentSessionId?: string;
     subAgentName?: string | null;
     title?: string;
+    promptProfile?: PromptProfileSelection | null;
   } = {},
 ): Promise<Session> {
   const body: {
@@ -467,6 +496,11 @@ export async function createSession(
     parent_session_id?: string;
     sub_agent_name?: string | null;
     title?: string;
+    prompt_profile?:
+      | { mode: "auto" }
+      | { mode: "auto_include" }
+      | { mode: "fixed"; profile_id: string }
+      | null;
   } = { agent_id: agentId, initial_items: initialItems };
   if (options.parentSessionId !== undefined) {
     body.parent_session_id = options.parentSessionId;
@@ -476,6 +510,12 @@ export async function createSession(
   }
   if (options.title !== undefined) {
     body.title = options.title;
+  }
+  if (options.promptProfile !== undefined) {
+    body.prompt_profile =
+      options.promptProfile?.mode === "fixed"
+        ? { mode: "fixed", profile_id: options.promptProfile.profileId }
+        : options.promptProfile;
   }
   const res = await authenticatedFetch("/v1/sessions", {
     method: "POST",
@@ -574,6 +614,16 @@ export async function forkSession(
   return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
 }
 
+/** Stop the active turn, then delete a user message and all later history. */
+export async function rewindSession(sessionId: string, fromMessageId: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/rewind`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Omnigent-Client": getClientSurface() },
+    body: JSON.stringify({ from_message_id: fromMessageId }),
+  });
+  await readJsonOrThrow(res);
+}
+
 /**
  * Switch an existing session in place to a different agent/harness:
  * ``POST /v1/sessions/{id}/switch-agent``.
@@ -626,14 +676,25 @@ export async function launchRunner(
   hostId: string,
   sessionId: string,
   workspace: string,
-  git?: { branchName: string; baseBranch?: string; existingWorktree?: boolean },
+  git?: {
+    branchName: string;
+    baseBranch?: string;
+    existingWorktree?: boolean;
+    autoFetchBase?: boolean;
+  },
 ): Promise<{ runnerId: string }> {
   const body: {
     session_id: string;
     workspace: string;
-    git?: { branch_name: string; base_branch?: string; existing_worktree?: boolean };
+    git?: {
+      branch_name: string;
+      base_branch?: string;
+      existing_worktree?: boolean;
+      auto_fetch_base?: boolean;
+    };
   } = { session_id: sessionId, workspace };
   if (git !== undefined) {
+    const autoFetchBase = git.autoFetchBase ?? readAutoFetchWorktreeBase();
     // `existing_worktree` binds a pre-existing worktree (no worktree is
     // created; the branch is recorded for the sidebar + delete flow), so it
     // never carries a base_branch.
@@ -642,8 +703,8 @@ export async function launchRunner(
       ...(git.existingWorktree
         ? { existing_worktree: true }
         : git.baseBranch !== undefined
-          ? { base_branch: git.baseBranch }
-          : {}),
+          ? { base_branch: git.baseBranch, auto_fetch_base: autoFetchBase }
+          : { auto_fetch_base: autoFetchBase }),
     };
   }
   const res = await authenticatedFetch(`/v1/hosts/${encodeURIComponent(hostId)}/runners`, {
@@ -703,9 +764,19 @@ export async function updateSession(
     runnerId?: string;
     silent?: boolean;
     labels?: Record<string, string>;
+    promptProfile?: PromptProfileSelection | null;
   },
 ): Promise<Session> {
-  const body: Record<string, string | boolean | null | Record<string, string>> = {};
+  const body: Record<
+    string,
+    | string
+    | boolean
+    | null
+    | Record<string, string>
+    | { mode: "auto" }
+    | { mode: "auto_include" }
+    | { mode: "fixed"; profile_id: string }
+  > = {};
   if ("reasoningEffort" in updates) {
     body.reasoning_effort = updates.reasoningEffort ?? "default";
   }
@@ -731,6 +802,12 @@ export async function updateSession(
     // Merge-upsert on the server; an empty-string value clears a label
     // (e.g. the pinned flag on unpin — see PATCH /v1/sessions handler).
     body.labels = updates.labels;
+  }
+  if (updates.promptProfile !== undefined) {
+    body.prompt_profile =
+      updates.promptProfile?.mode === "fixed"
+        ? { mode: "fixed", profile_id: updates.promptProfile.profileId }
+        : updates.promptProfile;
   }
   if (updates.silent) {
     body.silent = true;
@@ -820,6 +897,7 @@ export interface GetSessionSlimOptions {
    * refresh pierces stale server-side capability caches.
    */
   refreshState?: boolean;
+  signal?: AbortSignal;
 }
 
 export async function getSessionSlim(
@@ -833,6 +911,7 @@ export async function getSessionSlim(
   if (options.refreshState === true) params.set("refresh_state", "true");
   const res = await authenticatedFetch(
     `/v1/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`,
+    { signal: options.signal },
   );
   return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
 }
@@ -860,13 +939,18 @@ export interface SessionItemsPage {
  */
 export async function fetchSessionItemsPage(
   sessionId: string,
-  { olderThan, limit = SESSION_HISTORY_PAGE_SIZE }: { olderThan?: string; limit?: number } = {},
+  {
+    olderThan,
+    limit = SESSION_HISTORY_PAGE_SIZE,
+    signal,
+  }: { olderThan?: string; limit?: number; signal?: AbortSignal } = {},
 ): Promise<SessionItemsPage> {
   const params = new URLSearchParams({ limit: String(limit), order: "desc" });
   // "Older than the cursor" within a descending scan = items after it.
   if (olderThan) params.set("after", olderThan);
   const res = await authenticatedFetch(
     `/v1/sessions/${encodeURIComponent(sessionId)}/items?${params}`,
+    { signal },
   );
   const page = await readJsonOrThrow<SessionItemsResponseWire>(res);
   // Server returns newest-first; reverse to chronological for rendering.

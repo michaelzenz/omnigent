@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import secrets
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -41,6 +42,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ElicitationDeclinedError, ErrorCode, OmnigentError
+from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME, is_omniharness_agent
 from omnigent.harness_availability import (
     HARNESS_BINARY_MISSING,
     HARNESS_NEEDS_AUTH,
@@ -184,6 +186,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _session_status_cache,
     _session_terminal_pending_cache,
     _session_todos_cache,
+    _session_worktree_status_cache,
     get_caps,
     get_server_runner_router,
     session_stream,
@@ -206,7 +209,6 @@ from omnigent.server.routes._sessions.helpers import (
     _consume_pre_resolved_harness_elicitation,
     _create_and_publish_antigravity_child,
     _create_and_publish_codex_child,
-    _create_session_worktree,
     _delete_stored_session_bundle_after_failure,
     _derive_terminal_launch_args_from_spec,
     _emit_server_routing_decision,
@@ -267,6 +269,8 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_sandbox_status,
     _publish_status,
     _publish_terminal_pending,
+    _publish_worktree_log,
+    _publish_worktree_status,
     _query_host_runner_status,
     _read_state_entry,
     _record_daily_cost,
@@ -330,7 +334,7 @@ from omnigent.spec.types import (
     Phase,
     PolicyAction,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.conversation_store import (
     PINNED_LABEL_KEY,
@@ -339,11 +343,14 @@ from omnigent.stores.conversation_store import (
 )
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.host_store import Host, HostStore, host_is_live
+from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedEvent
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.telemetry.surface import classify_surface as _classify_surface
+
+_pending_omniharness_workloads: dict[str, tuple[str, str | None]] = {}
 
 
 async def _publish_and_wait_for_harness_elicitation(
@@ -636,6 +643,11 @@ async def _best_effort_stop(
 _detached_stop_tasks: set[asyncio.Task[None]] = set()
 
 
+# Strong references to background worktree-creation tasks so they can't be
+# GC'd mid-run (asyncio only holds weak refs to tasks).
+_worktree_creation_tasks: set[asyncio.Task[None]] = set()
+
+
 async def _archive_stop(
     session_id: str,
     conversation_store: ConversationStore,
@@ -763,6 +775,7 @@ def _build_session_list_item(
     conv: Conversation,
     *,
     agent_names_by_id: Mapping[str, str | None],
+    agent_role_flags_by_id: Mapping[str, bool],
     grants: list[SessionPermission],
     user_id: str | None,
     user_is_admin: bool,
@@ -788,6 +801,8 @@ def _build_session_list_item(
     :param agent_names_by_id: Map from agent id to display name, as
         returned by ``agent_store.get_names()``,
         e.g. ``{"ag_abc": "research-agent"}``.
+    :param agent_role_flags_by_id: Map from agent id to its role-only
+        visibility flag.
     :param grants: All permission grants for this conversation, as
         returned by ``permission_store.list_for_sessions()[conv.id]``.
         Empty list when permissions are disabled.
@@ -826,6 +841,7 @@ def _build_session_list_item(
         id=conv.id,
         agent_id=conv.agent_id,
         agent_name=agent_names_by_id.get(conv.agent_id),
+        agent_is_role=agent_role_flags_by_id.get(conv.agent_id, False),
         status=_session_status_with_child_rollup(conv.id, child_session_ids, conv.live_status),
         created_at=conv.created_at,
         updated_at=conv.updated_at,
@@ -943,6 +959,7 @@ def _build_session_response(
     background_task_count: int | None = None,
     llm_model: str | None = None,
     context_window: int | None = None,
+    context_window_is_estimate: bool = False,
     last_total_tokens: int | None = None,
     last_task_error: dict[str, str] | None = None,
     agent_name: str | None = None,
@@ -1076,10 +1093,20 @@ def _build_session_response(
             agent_store=agent_store,
             agent_cache=agent_cache,
         ),
+        prompt_profile=(
+            None
+            if conv.prompt_profile_mode is None
+            else (
+                {"mode": conv.prompt_profile_mode}
+                if conv.prompt_profile_mode in {"auto", "auto_include"}
+                else {"mode": "fixed", "profile_id": conv.prompt_profile_id}
+            )
+        ),
         model_override=conv.model_override,
         cost_control_mode_override=conv.cost_control_mode_override,
         subagent_routing_override=conv.subagent_routing_override,
         context_window=context_window,
+        context_window_is_estimate=context_window_is_estimate,
         last_total_tokens=last_total_tokens,
         # Seed the client's cost indicator on resume. Uses the SUBTREE
         # total (this session + its sub-agents) when the caller computed
@@ -1133,6 +1160,7 @@ def _build_session_response(
         # once the launch succeeds; a failed launch is retained with
         # its reason. Populated by _publish_sandbox_status.
         sandbox_status=_session_sandbox_status_cache.get(conv.id),
+        worktree_status=_session_worktree_status_cache.get(conv.id),
         # Replay harness MCP-server startup state (codex-native) so a
         # client opening the session mid-startup sees the startup band.
         mcp_startup=_session_mcp_startup_cache.get(conv.id),
@@ -1235,14 +1263,44 @@ def _accumulate_session_usage(
             priced = True
         else:
             from omnigent.llms.context_window import compute_llm_cost, fetch_model_pricing
+            from omnigent.omniharness_model_catalog import find_omniharness_model_metadata
 
-            pricing = fetch_model_pricing(llm_model)
+            omniharness_metadata = find_omniharness_model_metadata(llm_model)
+            pricing = (
+                omniharness_metadata.pricing
+                if omniharness_metadata is not None
+                else fetch_model_pricing(llm_model)
+            )
             priced = pricing is not None
             if pricing is not None:
                 # Cache-aware: usage_obj carries cache_read/cache_creation
                 # token counts when the harness reports them; compute_llm_cost
                 # prices them at their own (cheaper read / pricier write) rates.
                 cost_delta = compute_llm_cost(usage_obj, pricing)
+
+    pending_turn = _pending_omniharness_workloads.pop(session_id, None)
+    if pending_turn is not None and conv is not None:
+        try:
+            from omnigent.usage_ledger import record_omniharness_usage
+
+            record_omniharness_usage(
+                conversation_store,
+                session_id=session_id,
+                turn_id=pending_turn[0],
+                purpose="user_interaction",
+                model=llm_model,
+                workload=pending_turn[1],
+                usage=usage_obj,
+                provider_cost=(
+                    float(provider_cost) if isinstance(provider_cost, (int, float)) else None
+                ),
+            )
+        except (OSError, RuntimeError, ValueError, NotImplementedError):
+            _logger.warning(
+                "usage ledger write failed for session=%s",
+                session_id,
+                exc_info=True,
+            )
 
     # Build the delta dict and atomically apply it to the persisted
     # session_usage in a single DB transaction (SELECT FOR UPDATE on
@@ -4594,6 +4652,44 @@ def _runner_reject_detail(response: httpx.Response) -> str:
     return f"{code}: {detail}" if code else detail
 
 
+def _recent_user_messages_for_turn_selection(
+    conversation_store: ConversationStore,
+    session_id: str,
+    current_message: str,
+    total_count: int,
+) -> list[str]:
+    """Return recent user messages in chronological order, including the current one."""
+    previous_needed = max(total_count - 1, 0)
+    if previous_needed == 0:
+        return [current_message]
+
+    previous: list[str] = []
+    after: str | None = None
+    while len(previous) < previous_needed:
+        page = conversation_store.list_items(
+            session_id,
+            limit=max(100, min(previous_needed * 2, 500)),
+            after=after,
+            order="desc",
+            type="message",
+        )
+        for item in page.data:
+            if (
+                isinstance(item.data, MessageData)
+                and item.data.role == "user"
+                and not item.data.is_meta
+                and (text := _message_text(item.data.content))
+            ):
+                previous.append(text[:4000])
+                if len(previous) == previous_needed:
+                    break
+        if len(previous) >= previous_needed or not page.has_more or page.last_id is None:
+            break
+        after = page.last_id
+
+    return [*reversed(previous), current_message]
+
+
 async def _forward_event_to_runner(
     session_id: str,
     conv: Conversation,
@@ -4604,8 +4700,14 @@ async def _forward_event_to_runner(
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     has_mcp_servers: bool = False,
+    agent_version: int | None = None,
     created_by: str | None = None,
     host_store: HostStore | None = None,
+    model_settings_store: ModelSettingsStore | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
+    uses_omniharness: bool = False,
+    profile_instructions: str | None = None,
+    memory_instructions: str | None = None,
 ) -> str:
     """
     Persist a user event and forward it to the runner.
@@ -4632,27 +4734,22 @@ async def _forward_event_to_runner(
         ``has_mcp_servers`` hint so ``proxy_stream`` knows to load
         the agent spec and initialise :class:`ProxyMcpManager` for
         this turn. ``False`` by default (agents without MCP servers).
+    :param agent_version: Current persisted bundle version. The runner uses a
+        newer value to invalidate the session's loaded spec before this turn.
     :param created_by: Authenticated identity of the posting actor,
         recorded on the persisted item for attribution.
     :param host_store: Host registrations, read only to learn whether this
         session's harness is AI-Gateway-backed (which router may route it).
         ``None`` reads as unknown, which counts as backed.
+    :param prompt_profile_store: Prompt profiles available to OmniHarness's
+        per-turn auto selector.
+    :param profile_instructions: OmniHarness-only system prompt selected for
+        this session, replacing the bound agent's instructions for this turn.
     :returns: The store-assigned id of the persisted item.
     """
     import uuid
 
     turn_id = f"turn_{uuid.uuid4().hex}"
-    item = _build_new_item(body, turn_id, created_by=created_by)
-    persisted_items = await asyncio.to_thread(
-        conversation_store.append,
-        session_id,
-        [item],
-    )
-    await _seed_missing_title_from_user_message(
-        conv,
-        item,
-        conversation_store,
-    )
     # Don't publish status="running" or input.consumed here —
     # wait until after the forward to the runner succeeds.
     # Publishing early causes the REPL to start its streaming
@@ -4717,12 +4814,18 @@ async def _forward_event_to_runner(
         # servers — False/absent saves the runner from a no-op spec
         # load on every turn for agents without MCP servers.
         "has_mcp_servers": has_mcp_servers,
-        # Id of the item just persisted for this turn. On a cold runner
-        # cache the runner reloads history (which includes this item in
-        # PRE-resolution form) and drops it by id, appending its own
-        # resolved copy — id-based dedup, not a role/content guess.
-        "persisted_item_id": persisted_items[0].id,
+        "agent_version": agent_version,
     }
+    if profile_instructions is not None:
+        runner_body["profile_instructions"] = profile_instructions
+    if uses_omniharness and model_settings_store is not None:
+        _omniharness_settings = await asyncio.to_thread(model_settings_store.get)
+        if _omniharness_settings.omniharness_system_prompt:
+            runner_body["omniharness_system_prompt"] = (
+                _omniharness_settings.omniharness_system_prompt
+            )
+    if memory_instructions is not None:
+        runner_body["memory_instructions"] = memory_instructions
     # Persist the turn-initiating actor so /policies/evaluate and MCP
     # tools/call can read it back on any server replica.  Skip system-driven
     # forwards (sub-agent results, parent-wake carry created_by=None) — they
@@ -4855,6 +4958,84 @@ async def _forward_event_to_runner(
     _routing_enabled = (
         conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
     ) or _parent_routing_on
+    _harness = _resolve_harness(conv)
+    _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None
+    _profile_dynamic = (
+        body.type == "message"
+        and body.data.get("role") == "user"
+        and _uses_omniharness
+        and conv.prompt_profile_mode in {"auto", "auto_include"}
+    )
+    _profile_include = conv.prompt_profile_mode == "auto_include"
+    _profile_selected_this_turn = False
+    if _profile_dynamic and prompt_profile_store is None:
+        raise OmnigentError(
+            "Prompt profile selection is unavailable",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+
+    def _apply_auto_profiles(profiles: Sequence[Any]) -> None:
+        if not profiles:
+            return
+        runner_body["profile_instructions"] = (
+            profiles[0].instructions
+            if len(profiles) == 1
+            else "\n\n".join(
+                f"## Prompt profile: {profile.name}\n{profile.instructions}"
+                for profile in profiles
+                if profile.instructions
+            )
+        )
+        execution_context = body.data.get("execution_context")
+        if isinstance(execution_context, dict):
+            execution_context = dict(execution_context)
+            names = [profile.name for profile in profiles]
+            execution_context["profile"] = names[0] if len(names) == 1 else None
+            if _profile_include:
+                execution_context["profiles"] = names
+            body.data["execution_context"] = execution_context
+            forwarded_data["execution_context"] = execution_context
+            runner_body["execution_context"] = execution_context
+
+    _omniharness_routing_settings = None
+    if model_settings_store is not None and _uses_omniharness:
+        try:
+            _omniharness_routing_settings = await asyncio.to_thread(model_settings_store.get)
+        except (OSError, RuntimeError, ValueError):
+            _logger.warning(
+                "smart_routing: failed to read global model settings for session=%s",
+                session_id,
+                exc_info=True,
+            )
+    _omniharness_per_turn = (
+        _omniharness_routing_settings is not None
+        and _omniharness_routing_settings.smart_routing_cadence == "per_turn"
+    )
+    _classify_workload = bool(
+        _omniharness_routing_settings is not None
+        and getattr(_omniharness_routing_settings, "workload_classification_enabled", False)
+    )
+    _turn_selection_messages: list[str] | None = None
+
+    async def _recent_turn_selection_messages(current_message: str) -> list[str]:
+        nonlocal _turn_selection_messages
+        if _turn_selection_messages is None:
+            total_count = (
+                _omniharness_routing_settings.turn_selection_user_message_count
+                if _omniharness_routing_settings is not None
+                else 3
+            )
+            _turn_selection_messages = await asyncio.to_thread(
+                _recent_user_messages_for_turn_selection,
+                conversation_store,
+                session_id,
+                current_message,
+                total_count,
+            )
+        return _turn_selection_messages
+
+    _selected_workload: str | None = None
+    _unified_selection_done = False
     _routed_model: str | None = None
     _routed_harness: str | None = None
     _verdict: dict[str, Any] | None = None
@@ -4892,7 +5073,11 @@ async def _forward_event_to_runner(
         # model) — don't re-run the router for the same message.
         and not _auto_resolved_this_turn
         and not _child_routed_before
-        and (effective_runner_override is None or conv.parent_conversation_id is not None)
+        and (
+            effective_runner_override is None
+            or conv.parent_conversation_id is not None
+            or _omniharness_per_turn
+        )
     )
     if _should_route:
         _user_text = _extract_user_text_for_routing(body)
@@ -4983,28 +5168,145 @@ async def _forward_event_to_runner(
                     _routed_model, _verdict = _unavailable_routing_card(_route_err)
                     _route_failed = True
             else:
-                # Top-level sessions: model-only routing (harness already fixed by spec).
-                from omnigent.server.smart_routing import route_turn_or_decline
+                # Top-level OmniHarness sessions select every automatic dimension
+                # in one judge call. A fixed profile keeps model-only routing
+                # on the deployment's normal backend chain.
+                from omnigent.server.smart_routing import (
+                    harness_bars_model,
+                    infer_models,
+                    models_in_family,
+                    route_turn_or_decline,
+                )
 
-                _harness = _resolve_harness(conv)
                 # A turn cannot change harness, so only this session's own
                 # family has to be gateway-backed for the workspace router.
                 _turn_backed = _gateway_backed(
                     await _session_routing_host(conv, host_store), (_harness or "",)
                 )
-                # ``_or_decline``: a routing outage returns an error string
-                # rather than raising. Raised here it became a 500 on the
-                # events POST, so a router that was merely down cost the user
-                # a message that had already been persisted.
-                _routed_model, _verdict, _turn_route_err = await route_turn_or_decline(
-                    _harness,
-                    _user_text,
-                    session_id=session_id,
-                    runner_client=runner_client,
-                    catalog=await _native_turn_catalog(session_id, conv, runner_client),
-                    gateway_backed=_turn_backed,
-                    allow_static_fallback=_turn_backed,
+                _turn_catalog = await _native_turn_catalog(session_id, conv, runner_client)
+                if _omniharness_routing_settings is not None:
+                    # OmniHarness Models settings are the user's routing
+                    # allowlist. The runner catalog is wider and must not
+                    # re-enable models the user toggled off.
+                    _turn_catalog = list(
+                        _omniharness_routing_settings.harness_models.get(
+                            OMNIHARNESS_AGENT_NAME, []
+                        )
+                    )
+                _decision_model = (
+                    _omniharness_routing_settings.smart_routing_decision_model
+                    if _omniharness_routing_settings is not None
+                    else None
                 )
+                _routing_prompt = (
+                    _omniharness_routing_settings.smart_routing_prompt or ""
+                    if _omniharness_routing_settings is not None
+                    else None
+                )
+                _turn_route_err: str | None = None
+                if _profile_dynamic or _classify_workload:
+                    from omnigent.omniharness_turn_selection import (
+                        DEFAULT_WORKLOAD_CATEGORIES,
+                        select_omniharness_turn,
+                    )
+                    from omnigent.usage_ledger import (
+                        canonical_purpose,
+                        record_omniharness_usage,
+                    )
+
+                    if _profile_dynamic:
+                        assert prompt_profile_store is not None
+                    _joint_catalog = _turn_catalog
+                    if _joint_catalog is None and _turn_backed:
+                        _joint_catalog = infer_models(_harness)
+                    _joint_candidates = [
+                        model
+                        for model in models_in_family(_harness, _joint_catalog or ())
+                        if not harness_bars_model(_harness, model)
+                    ]
+                    _selection = await select_omniharness_turn(
+                        await _recent_turn_selection_messages(_user_text),
+                        prompt_profile_store if _profile_dynamic else None,
+                        select_profile=_profile_dynamic,
+                        profile_mode="include" if _profile_include else "single",
+                        max_profiles=(
+                            getattr(
+                                _omniharness_routing_settings,
+                                "prompt_profile_auto_include_limit",
+                                5,
+                            )
+                            if _omniharness_routing_settings is not None
+                            else 5
+                        ),
+                        model_candidates=_joint_candidates,
+                        classify_workload=_classify_workload,
+                        workload_categories=(
+                            *DEFAULT_WORKLOAD_CATEGORIES,
+                            *(
+                                _omniharness_routing_settings.workload_custom_categories
+                                if _omniharness_routing_settings is not None
+                                else ()
+                            ),
+                        ),
+                        decision_model=_decision_model,
+                        smart_routing_prompt=_routing_prompt,
+                    )
+                    if _profile_dynamic:
+                        _apply_auto_profiles(_selection.profiles)
+                        _profile_selected_this_turn = True
+                    _routed_model = _selection.model
+                    _verdict = _selection.model_verdict
+                    _selected_workload = _selection.workload
+                    _unified_selection_done = True
+                    record_omniharness_usage(
+                        conversation_store,
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        purpose=canonical_purpose(
+                            [
+                                *(["profile_selection"] if _profile_dynamic else []),
+                                *(["smart_routing"] if _selection.model is not None else []),
+                                *(["workload_classification"] if _classify_workload else []),
+                            ]
+                        ),
+                        model=_selection.decision_model or _decision_model,
+                        workload=_selected_workload,
+                        usage=_selection.usage or {},
+                    )
+                else:
+                    # ``_or_decline``: a routing outage returns an error string
+                    # rather than raising. Raised here it became a 500 on the
+                    # events POST, so a router that was merely down cost the user
+                    # a message that had already been persisted.
+                    from omnigent.usage_ledger import (
+                        record_omniharness_usage,
+                        response_usage,
+                    )
+
+                    def _record_routing_usage(response: object, model: str | None) -> None:
+                        record_omniharness_usage(
+                            conversation_store,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            purpose="smart_routing",
+                            model=model,
+                            workload=None,
+                            usage=response_usage(response),
+                        )
+
+                    _routing_messages = await _recent_turn_selection_messages(_user_text)
+                    _routed_model, _verdict, _turn_route_err = await route_turn_or_decline(
+                        _harness,
+                        json.dumps({"user_messages": _routing_messages}, ensure_ascii=False),
+                        session_id=session_id,
+                        runner_client=runner_client,
+                        catalog=_turn_catalog,
+                        gateway_backed=_turn_backed,
+                        allow_static_fallback=_turn_backed,
+                        decision_model=_decision_model,
+                        smart_routing_prompt=_routing_prompt,
+                        usage_recorder=_record_routing_usage,
+                    )
                 if _turn_route_err is not None:
                     # Not routed, and visibly so — the turn runs on the
                     # session's own model with the reason on its card.
@@ -5036,6 +5338,92 @@ async def _forward_event_to_runner(
                                 session_id,
                                 exc_info=True,
                             )
+    if (_profile_dynamic and not _profile_selected_this_turn) or (
+        _classify_workload and not _unified_selection_done
+    ):
+        from omnigent.omniharness_turn_selection import (
+            DEFAULT_WORKLOAD_CATEGORIES,
+            select_omniharness_turn,
+        )
+        from omnigent.usage_ledger import canonical_purpose, record_omniharness_usage
+
+        if _profile_dynamic:
+            assert prompt_profile_store is not None
+        try:
+            if _profile_dynamic and not _classify_workload:
+                _profile_selection = await select_omniharness_turn(
+                    await _recent_turn_selection_messages(
+                        _extract_user_text_for_routing(body) or ""
+                    ),
+                    prompt_profile_store,
+                    profile_mode="include" if _profile_include else "single",
+                    max_profiles=(
+                        getattr(
+                            _omniharness_routing_settings,
+                            "prompt_profile_auto_include_limit",
+                            5,
+                        )
+                        if _omniharness_routing_settings is not None
+                        else 5
+                    ),
+                )
+            else:
+                _profile_selection = await select_omniharness_turn(
+                    await _recent_turn_selection_messages(
+                        _extract_user_text_for_routing(body) or ""
+                    ),
+                    prompt_profile_store if _profile_dynamic else None,
+                    select_profile=_profile_dynamic,
+                    profile_mode="include" if _profile_include else "single",
+                    max_profiles=(
+                        getattr(
+                            _omniharness_routing_settings,
+                            "prompt_profile_auto_include_limit",
+                            5,
+                        )
+                        if _omniharness_routing_settings is not None
+                        else 5
+                    ),
+                    classify_workload=_classify_workload,
+                    workload_categories=(
+                        *DEFAULT_WORKLOAD_CATEGORIES,
+                        *(
+                            _omniharness_routing_settings.workload_custom_categories
+                            if _omniharness_routing_settings is not None
+                            else ()
+                        ),
+                    ),
+                    decision_model=(
+                        _omniharness_routing_settings.smart_routing_decision_model
+                        if _omniharness_routing_settings is not None
+                        else None
+                    ),
+                )
+            if _profile_dynamic:
+                _apply_auto_profiles(_profile_selection.profiles)
+            _selected_workload = _profile_selection.workload
+            record_omniharness_usage(
+                conversation_store,
+                session_id=session_id,
+                turn_id=turn_id,
+                purpose=canonical_purpose(
+                    [
+                        *(["profile_selection"] if _profile_dynamic else []),
+                        *(["workload_classification"] if _classify_workload else []),
+                    ]
+                ),
+                model=_profile_selection.decision_model,
+                workload=_selected_workload,
+                usage=_profile_selection.usage or {},
+            )
+        except OmnigentError:
+            if _profile_dynamic:
+                raise
+            _logger.warning(
+                "workload classification failed for session=%s; continuing unclassified",
+                session_id,
+                exc_info=True,
+            )
     # ────────────────────────────────────────────────────────────────
     if effective_runner_override is not None:
         runner_body["model_override"] = effective_runner_override
@@ -5046,6 +5434,37 @@ async def _forward_event_to_runner(
     _effective_harness = _routed_harness or conv.harness_override
     if _effective_harness is not None and _effective_harness != "auto":
         runner_body["harness_override"] = _effective_harness
+
+    # Routing is now resolved, so persist the model that will actually run in
+    # the user bubble's durable execution summary.
+    _execution_context = body.data.get("execution_context")
+    if isinstance(_execution_context, dict):
+        _execution_context = dict(_execution_context)
+        if effective_runner_override is not None:
+            _execution_context["model"] = effective_runner_override
+        body.data["execution_context"] = _execution_context
+        forwarded_data["execution_context"] = _execution_context
+        runner_body["execution_context"] = _execution_context
+
+    if _uses_omniharness and body.data.get("role") == "user":
+        _pending_omniharness_workloads[session_id] = (turn_id, _selected_workload)
+
+    # Keep invariant I1 (persist before forwarding), while delaying the append
+    # until routing has supplied the turn's effective model.
+    item = _build_new_item(body, turn_id, created_by=created_by)
+    persisted_items = await asyncio.to_thread(
+        conversation_store.append,
+        session_id,
+        [item],
+    )
+    await _seed_missing_title_from_user_message(
+        conv,
+        item,
+        conversation_store,
+    )
+    # On a cold runner cache, history already includes this item. The runner
+    # drops it by id before appending its resolved copy.
+    runner_body["persisted_item_id"] = persisted_items[0].id
 
     # The runner's sessions-native POST returns 202 immediately
     # and starts the turn as a background task. No streaming
@@ -5149,7 +5568,11 @@ async def _forward_event_to_runner(
                 _routed_model,
                 _verdict,
                 scope=_decision_scope,
-                harness=_routed_harness or _resolve_harness(conv),
+                harness=(
+                    OMNIHARNESS_AGENT_NAME
+                    if _uses_omniharness
+                    else (_routed_harness or _resolve_harness(conv))
+                ),
                 attempted_override=_overridden,
             )
             if not _route_failed:
@@ -5285,10 +5708,16 @@ async def _dispatch_session_event_to_runner_impl(
     file_store: FileStore | None,
     artifact_store: ArtifactStore | None,
     has_mcp_servers: bool = False,
+    agent_version: int | None = None,
     created_by: str | None = None,
     runner_router: RunnerRouter | None = None,
     native_terminal_ready: bool = False,
     host_store: HostStore | None = None,
+    model_settings_store: ModelSettingsStore | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
+    uses_omniharness: bool = False,
+    profile_instructions: str | None = None,
+    memory_instructions: str | None = None,
 ) -> _SessionEventDispatchResult:
     """
     Forward an item-event to the runner with harness-aware dispatch.
@@ -5585,8 +6014,14 @@ async def _dispatch_session_event_to_runner_impl(
         file_store=file_store,
         artifact_store=artifact_store,
         has_mcp_servers=has_mcp_servers,
+        agent_version=agent_version,
         created_by=created_by,
         host_store=host_store,
+        model_settings_store=model_settings_store,
+        prompt_profile_store=prompt_profile_store,
+        uses_omniharness=uses_omniharness,
+        profile_instructions=profile_instructions,
+        memory_instructions=memory_instructions,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
 
@@ -5777,6 +6212,56 @@ async def _relay_runner_stream(
             return
 
 
+_auto_worktree_lease_renewed_at: dict[str, float] = {}
+_AUTO_WORKTREE_RENEW_INTERVAL_S = 3_600
+
+
+async def _renew_active_auto_worktree_lease(
+    session_id: str,
+    conversation_store: ConversationStore,
+) -> None:
+    """Throttle lease renewal while a runner turn remains active."""
+    if _session_status_cache.get(session_id) not in ("running", "waiting"):
+        return
+    now = time.time()
+    if now - _auto_worktree_lease_renewed_at.get(session_id, 0) < _AUTO_WORKTREE_RENEW_INTERVAL_S:
+        return
+    conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+    if (
+        conv is None
+        or conv.labels.get("omnigent.auto_worktree") != "1"
+        or conv.host_id is None
+        or conv.workspace is None
+    ):
+        return
+    from omnigent.server.routes._host_worktree import (
+        WorktreeProxyError,
+        renew_worktree_lease_on_host,
+    )
+    from omnigent.server.routes._sessions.common import get_server_host_registry
+
+    host_registry = get_server_host_registry()
+    host_conn = host_registry.get(conv.host_id) if host_registry is not None else None
+    if (
+        host_registry is None
+        or host_conn is None
+        or not host_conn.hello.managed_worktree_leases
+    ):
+        return
+    try:
+        renewed = await renew_worktree_lease_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=conv.workspace,
+            lease_owner=session_id,
+        )
+    except WorktreeProxyError:
+        _logger.warning("Failed to renew active worktree lease for %s", session_id)
+        return
+    if renewed:
+        _auto_worktree_lease_renewed_at[session_id] = now
+
+
 async def _relay_runner_stream_once(
     session_id: str,
     runner_client: httpx.AsyncClient,
@@ -5868,6 +6353,10 @@ async def _relay_runner_stream_once(
                     if evt_type == "session.heartbeat":
                         if ready is not None:
                             ready.set()
+                        await _renew_active_auto_worktree_lease(
+                            session_id,
+                            conversation_store,
+                        )
                         continue
 
                     # Stopped turn: drop its trailing response.* output (no
@@ -6090,6 +6579,7 @@ async def _relay_runner_stream_once(
                             conversation_store,
                             session_id,
                             resource_item,
+                            bump_updated_at=False,
                         )
                         # Self-heal the spin-up flag: a created terminal is
                         # authoritative proof the session is no longer
@@ -7612,6 +8102,40 @@ async def _resolve_native_smart_routing(
     return native_agent.agent_name, model, verdict, None
 
 
+def _require_generic_profile_launch_config(
+    agent: Agent,
+    agent_cache: AgentCache | None,
+    *,
+    harness_override: str | None,
+    model_override: str | None,
+) -> None:
+    """Reject a profile with no executor defaults unless launch settings supply both."""
+    if agent_cache is None or harness_override == "auto":
+        return
+    loaded = agent_cache.load(
+        agent.id,
+        agent.bundle_location,
+        expand_env=agent.session_id is None,
+    )
+    spec = loaded.spec
+    if spec.executor.type != "omnigent":
+        return
+    if spec.executor.config.get("harness") or spec.executor.model is not None:
+        return
+
+    missing: list[str] = []
+    if harness_override is None:
+        missing.append("harness")
+    if model_override is None:
+        missing.append("model")
+    if missing:
+        raise OmnigentError(
+            f"Agent {agent.name!r} has no default {' or '.join(missing)}; "
+            f"choose {' and '.join(missing)} in launch settings.",
+            code=ErrorCode.INVALID_INPUT,
+        )
+
+
 async def _create_session_from_existing_agent(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
@@ -7625,6 +8149,7 @@ async def _create_session_from_existing_agent(
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> SessionResponse:
     """
     Create a session bound to an already-registered agent.
@@ -7669,6 +8194,36 @@ async def _create_session_from_existing_agent(
         permission_store=permission_store,
         conversation_store=conversation_store,
     )
+    if body.parent_session_id is None and (not agent.enabled or agent.archived):
+        raise OmnigentError(
+            f"Agent {agent.name!r} is disabled.",
+            code=ErrorCode.CONFLICT,
+        )
+
+    prompt_profile_mode: str | None = None
+    prompt_profile_id: str | None = None
+    if body.prompt_profile is not None:
+        if prompt_profile_store is None:
+            raise OmnigentError(
+                "Prompt profile selection is unavailable",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        if not is_omniharness_agent(agent):
+            raise OmnigentError(
+                "Prompt profiles can only be selected for OmniHarness sessions",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        prompt_profile_mode = body.prompt_profile.mode
+        if body.prompt_profile.mode == "fixed":
+            prompt_profile_id = body.prompt_profile.profile_id
+            from omnigent.profile_selection import load_prompt_profile_instructions
+
+            await asyncio.to_thread(
+                load_prompt_profile_instructions,
+                prompt_profile_id,
+                prompt_profile_store,
+                require_selectable=True,
+            )
 
     # Top-level Smart Routing: "auto" on a native wrapper agent means the client
     # picked Smart Routing with no bundle agent, and its ``agent_id`` is only a
@@ -7709,6 +8264,11 @@ async def _create_session_from_existing_agent(
             permission_store=permission_store,
             conversation_store=conversation_store,
         )
+        if not agent.enabled or agent.archived:
+            raise OmnigentError(
+                f"Agent {agent.name!r} is disabled.",
+                code=ErrorCode.CONFLICT,
+            )
 
     # Routing on a native pane whose CLI is not AI-Gateway-backed can never
     # apply, so an explicit request for it is an error rather than a session
@@ -7902,6 +8462,14 @@ async def _create_session_from_existing_agent(
             _validated_harness_override, body.harness_override, agent
         )
 
+    await asyncio.to_thread(
+        _require_generic_profile_launch_config,
+        agent,
+        agent_cache,
+        harness_override=harness_override,
+        model_override=model_override,
+    )
+
     # Inherit runner affinity from the parent session so the child
     # is assigned to the same runner (sub-agent co-location).
     inherited_runner_id: str | None = None
@@ -7957,21 +8525,24 @@ async def _create_session_from_existing_agent(
             # runs git for this path, so the server is the only gate).
             from omnigent.host.git_worktree import WorktreeError, validate_branch_name
 
+            branch_name = body.git.branch_name
+            if branch_name is None:  # pragma: no cover - schema rejects this shape
+                raise OmnigentError("branch_name is required", code=ErrorCode.INVALID_INPUT)
             try:
-                validate_branch_name(body.git.branch_name)
+                validate_branch_name(branch_name)
             except WorktreeError as exc:
                 raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
-            git_branch = body.git.branch_name
+            git_branch = branch_name
         else:
-            created_worktree = await _create_session_worktree(
-                host_id=body.host_id,
-                source_repo=canonical_workspace,
-                git=body.git,
-                request=request,
-            )
-            canonical_workspace = created_worktree.worktree_path
-            git_branch = created_worktree.branch
-            created_worktree_path = created_worktree.worktree_path
+            # Async worktree creation: the session row is created with the
+            # source repo as its workspace, and the background task creates
+            # the worktree, patches the workspace, and launches the runner.
+            # This returns immediately so the user lands on the session page
+            # and watches git output stream in real time instead of the send
+            # button looping until the worktree is ready.
+            git_branch = body.git.branch_name
+            # The background task signals completion via the worktree_status
+            # cache/SSE events; the runner launch is deferred to the task.
 
     # Native-terminal pass-through args.
     #
@@ -8029,6 +8600,8 @@ async def _create_session_from_existing_agent(
             workspace=canonical_workspace,
             git_branch=git_branch,
             terminal_launch_args=validated_launch_args,
+            prompt_profile_mode=prompt_profile_mode,
+            prompt_profile_id=prompt_profile_id,
         )
     except Exception:
         # Broad catch is intentional: ANY create_conversation failure
@@ -8326,6 +8899,340 @@ async def _create_session_from_existing_agent(
         agent_cache=agent_cache,
         liveness_lookup=liveness_lookup,
     )
+
+
+async def _generate_auto_worktree_branch(
+    *,
+    session_id: str,
+    initial_prompt: str | None,
+    conversation_store: ConversationStore,
+) -> str:
+    """Generate a semantic branch name with a bounded, fail-open AI call."""
+    fallback = f"worktree-{secrets.token_hex(4)}"
+    if not initial_prompt:
+        return fallback
+
+    from omnigent.runtime import get_caps
+    from omnigent.runtime.policies.builder import build_server_llm_client
+    from omnigent.usage_ledger import record_omniharness_usage, response_usage
+
+    configured = get_caps().llm
+    if configured is None:
+        return fallback
+    try:
+        client = build_server_llm_client(configured)
+        if client is None:
+            return fallback
+        response = await asyncio.wait_for(
+            client.create(
+                instructions=(
+                    "Return only a concise lowercase git branch slug describing the task. "
+                    "Use hyphens between words and no surrounding explanation."
+                ),
+                input=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": initial_prompt[:2000]}],
+                    }
+                ],
+                timeout=10.0,
+            ),
+            timeout=10.0,
+        )
+        usage = response_usage(response)
+        model = getattr(response, "model", None) or getattr(configured, "model", None)
+        record_omniharness_usage(
+            conversation_store,
+            session_id=session_id,
+            turn_id=None,
+            purpose="branch_name_generation",
+            model=model if isinstance(model, str) else None,
+            workload="other",
+            usage=usage,
+        )
+        output = getattr(response, "output", None)
+        text = getattr(response, "output_text", None)
+        if not isinstance(text, str):
+            text = next(
+                (
+                    value
+                    for item in output or ()
+                    for content in getattr(item, "content", ())
+                    if isinstance((value := getattr(content, "text", None)), str) and value
+                ),
+                "",
+            )
+        slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48].rstrip("-")
+        if not slug:
+            return fallback
+        candidate = f"agent/{slug}-{secrets.token_hex(3)}"
+        from omnigent.host.git_worktree import WorktreeError, validate_branch_name
+
+        try:
+            validate_branch_name(candidate)
+        except WorktreeError:
+            return fallback
+        return candidate
+    except Exception:  # noqa: BLE001 - naming must never block session creation.
+        _logger.warning("AI branch naming failed for session=%s; using fallback", session_id)
+        return fallback
+
+
+def _spawn_worktree_creation_task(
+    *,
+    session_id: str,
+    host_id: str,
+    source_repo: str,
+    branch_name: str | None,
+    base_branch: str | None,
+    auto_fetch_base: bool,
+    auto_create: bool = False,
+    initial_prompt: str | None = None,
+    user_id: str | None,
+    conversation_store: ConversationStore,
+    request: Request,
+) -> None:
+    """Launch the background worktree-creation + runner-launch task.
+
+    Seeds the ``worktree_status`` cache at ``"creating"`` so the first
+    GET snapshot (the Web UI navigates immediately after the 201) shows
+    the creation indicator, then spawns :func:`_run_worktree_creation`
+    as a retained background task.
+
+    :param session_id: The freshly-created session id.
+    :param host_id: Target host id.
+    :param source_repo: Validated source repo path (the session's
+        current workspace).
+    :param branch_name: New branch to create.
+    :param base_branch: Optional base ref.
+    :param auto_fetch_base: Whether to fetch and retry an unavailable base.
+    :param user_id: Authenticated caller, or ``None`` when auth is
+        disabled.
+    :param conversation_store: Store holding the session row.
+    :param request: FastAPI request carrying app-state registries.
+    """
+    _publish_worktree_status(session_id, "creating", branch=branch_name)
+    task = asyncio.create_task(
+        _run_worktree_creation(
+            session_id=session_id,
+            host_id=host_id,
+            source_repo=source_repo,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            auto_fetch_base=auto_fetch_base,
+            auto_create=auto_create,
+            initial_prompt=initial_prompt,
+            user_id=user_id,
+            conversation_store=conversation_store,
+            request=request,
+        )
+    )
+    _worktree_creation_tasks.add(task)
+    task.add_done_callback(_worktree_creation_tasks.discard)
+
+
+async def _run_worktree_creation(
+    *,
+    session_id: str,
+    host_id: str,
+    source_repo: str,
+    branch_name: str | None,
+    base_branch: str | None,
+    auto_fetch_base: bool,
+    auto_create: bool = False,
+    initial_prompt: str | None = None,
+    user_id: str | None,
+    conversation_store: ConversationStore,
+    request: Request,
+) -> None:
+    """Create a git worktree in the background, then patch + launch.
+
+    Streams each git output line to the session's SSE stream via
+    ``session.worktree_log`` events. On success, patches the session's
+    workspace to the worktree path and launches the runner (the create
+    POST skipped the synchronous host launch). On failure, publishes
+    ``worktree_status: failed`` with the reason and cleans up the orphan
+    worktree (if one was partially created).
+
+    :param session_id: The session to create the worktree for.
+    :param host_id: Target host id.
+    :param source_repo: Validated source repo path.
+    :param branch_name: New branch to create.
+    :param base_branch: Optional base ref.
+    :param auto_fetch_base: Whether to fetch and retry an unavailable base.
+    :param user_id: Authenticated caller, or ``None``.
+    :param conversation_store: Store holding the session row.
+    :param request: FastAPI request carrying app-state registries.
+    """
+    from omnigent.server.routes._host_launch import resolve_host_launch
+    from omnigent.server.routes._host_worktree import (
+        WorktreeHostUnavailableError,
+        WorktreeProxyError,
+        create_worktree_on_host,
+    )
+
+    if auto_create:
+        _publish_worktree_log(session_id, "Generating a branch name…")
+        branch_name = await _generate_auto_worktree_branch(
+            session_id=session_id,
+            initial_prompt=initial_prompt,
+            conversation_store=conversation_store,
+        )
+        _publish_worktree_status(session_id, "creating", branch=branch_name)
+        _publish_worktree_log(session_id, f"Using branch '{branch_name}'.")
+    if branch_name is None:
+        _publish_worktree_status(
+            session_id, "failed", branch=None, error="worktree branch name is missing"
+        )
+        return
+
+    host_registry = getattr(request.app.state, "host_registry", None)
+    if host_registry is None:
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error="host registry not configured"
+        )
+        return
+    host_conn = host_registry.get(host_id)
+    if host_conn is None:
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error="host is offline"
+        )
+        return
+    if auto_create and not host_conn.hello.managed_worktree_leases:
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=branch_name,
+            error="host must be upgraded before auto worktree creation can be used",
+        )
+        return
+
+    def _on_log(line: str) -> None:
+        _publish_worktree_log(session_id, line)
+
+    try:
+        auto_options: dict[str, Any] = (
+            {"auto_reuse": True, "lease_owner": session_id} if auto_create else {}
+        )
+        created = await create_worktree_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            repo_path=source_repo,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            auto_fetch_base=auto_fetch_base,
+            on_log=_on_log,
+            **auto_options,
+        )
+    except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:
+        _logger.warning("Worktree creation failed for %s: %s", session_id, exc.message)
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error=exc.message
+        )
+        return
+    except Exception:  # noqa: BLE001
+        _logger.exception("Worktree creation crashed for %s", session_id)
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=branch_name,
+            error="internal error during worktree creation",
+        )
+        return
+
+    # Patch the session's workspace to the worktree path.
+    try:
+        await asyncio.to_thread(
+            conversation_store.set_host_id,
+            session_id,
+            host_id,
+            workspace=created.worktree_path,
+            git_branch=created.branch,
+        )
+        if auto_create:
+            await asyncio.to_thread(
+                conversation_store.set_labels,
+                session_id,
+                {
+                    "omnigent.auto_worktree": "1",
+                    "omnigent.auto_worktree.source_repo": source_repo,
+                    "omnigent.auto_worktree.base_ref": base_branch or "",
+                },
+            )
+    except Exception:  # noqa: BLE001
+        _logger.exception("Failed to patch workspace for %s", session_id)
+        _publish_worktree_status(
+            session_id, "failed", branch=branch_name, error="failed to update session workspace"
+        )
+        # Best-effort cleanup of the orphan worktree.
+        await _remove_session_worktree_best_effort(
+            host_id=host_id,
+            worktree_path=created.worktree_path,
+            branch=created.branch,
+            delete_branch=True,
+            request=request,
+            reason="worktree-patch-failed",
+        )
+        return
+
+    # Launch the runner now that the workspace is the worktree path.
+    # The create POST skipped the synchronous host launch; the background
+    # task owns it here, mirroring the managed-sandbox launch pattern.
+    _publish_worktree_log(session_id, "Worktree created. Launching runner…")
+    host_store = getattr(request.app.state, "host_store", None)
+    permission_store = getattr(request.app.state, "permission_store", None)
+    if host_store is None:
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error="host store not configured; runner was not launched",
+        )
+        return
+    try:
+        target = await asyncio.to_thread(
+            resolve_host_launch,
+            user_id=user_id,
+            host_id=host_id,
+            session_id=session_id,
+            host_store=host_store,
+            host_registry=host_registry,
+            conversation_store=conversation_store,
+            permission_store=permission_store,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.warning("Host launch authorization failed for %s", session_id, exc_info=True)
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error="failed to authorize runner launch",
+        )
+        return
+    conv = target.conv
+    # Set terminal_pending for terminal-first sessions right before launch.
+    if conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE:
+        _publish_terminal_pending(session_id, True)
+    launch_attempt = await _launch_runner_on_host(
+        conv,
+        conversation_store,
+        host_registry,
+        target.conn,
+    )
+    if launch_attempt.error is not None:
+        _logger.warning(
+            "Runner launch failed for session %s after worktree creation: %s",
+            session_id,
+            launch_attempt.error,
+        )
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error=launch_attempt.error,
+        )
+        return
+    _publish_worktree_status(session_id, "ready", branch=created.branch)
 
 
 def _create_session_from_bundle(
@@ -9172,6 +10079,7 @@ async def _get_session_snapshot(
             status = "failed"
     llm_model: str | None = None
     context_window: int | None = None
+    context_window_is_estimate = False
     agent_name: str | None = None
     if agent_store is not None and agent_cache is not None and conv.agent_id is not None:
         try:
@@ -9220,12 +10128,31 @@ async def _get_session_snapshot(
                     # catalog fetch (blocking HTTP / CPU-bound litellm) inside
                     # the resolver, which would otherwise stall the single-worker
                     # event loop and serialize every concurrent snapshot.
-                    context_window = await asyncio.to_thread(
-                        resolve_effective_context_window,
-                        spec.executor.context_window,
-                        llm_model,
-                        model_override=conv.model_override,
-                    )
+                    if is_omniharness_agent(agent):
+                        effective_model = conv.model_override or llm_model
+                        if (
+                            spec.executor.context_window is not None
+                            and conv.model_override is None
+                        ):
+                            context_window = spec.executor.context_window
+                        elif effective_model is not None:
+                            from omnigent.omniharness_model_catalog import (
+                                get_omniharness_model_metadata,
+                            )
+
+                            metadata = await asyncio.to_thread(
+                                get_omniharness_model_metadata,
+                                effective_model,
+                            )
+                            context_window = metadata.context_window
+                            context_window_is_estimate = metadata.context_window_is_estimate
+                    else:
+                        context_window = await asyncio.to_thread(
+                            resolve_effective_context_window,
+                            spec.executor.context_window,
+                            llm_model,
+                            model_override=conv.model_override,
+                        )
         except Exception:  # noqa: BLE001
             pass
     # The harness's own report is the display authority: when a session has
@@ -9254,6 +10181,7 @@ async def _get_session_snapshot(
         observed = int(raw_window_label)
         if observed > 0:
             context_window = observed
+            context_window_is_estimate = False
     # Resolve strict runner + host liveness for the open-session view.
     # The lookup hits the conversations + hosts tables, so offload it to
     # a worker thread (mirroring _apply_liveness_to_items). Left None on
@@ -9291,6 +10219,7 @@ async def _get_session_snapshot(
         background_task_count=_session_background_task_count_cache.get(session_id),
         llm_model=llm_model,
         context_window=context_window,
+        context_window_is_estimate=context_window_is_estimate,
         last_total_tokens=last_total_tokens,
         last_task_error=last_task_error,
         agent_name=agent_name,

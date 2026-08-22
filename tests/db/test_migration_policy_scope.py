@@ -152,9 +152,13 @@ def test_list_defaults_uses_scope_filter(db_engine: Engine) -> None:
     )
 
     defaults = policy_store.list_defaults()
-    assert len(defaults) == 1
-    assert defaults[0].id == "58bf9f55f214321754995cb4beebed38"
-    assert defaults[0].scope == "default"
+    created = next(
+        policy
+        for policy in defaults
+        if policy.id == "58bf9f55f214321754995cb4beebed38"
+    )
+    assert created.scope == "default"
+    assert all(policy.name != "sess_x" for policy in defaults)
 
 
 def test_downgrade_removes_scope_column(tmp_path: Path) -> None:

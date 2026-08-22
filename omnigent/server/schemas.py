@@ -278,6 +278,7 @@ class AgentObject(BaseModel):
     name: str
     version: int = 1
     description: str | None = None
+    instructions: str | None = None
     created_at: int
     updated_at: int | None = None
     harness: str | None = None
@@ -287,6 +288,114 @@ class AgentObject(BaseModel):
     skills: list[SkillSummary] = Field(default_factory=list)
     terminals: list[str] = Field(default_factory=list)
     builtin: bool = False
+    enabled: bool = True
+    archived: bool = False
+    is_multi_agent: bool = False
+    subagent_count: int = 0
+    default_harness: str | None = None
+    default_model: str | None = None
+
+
+class AgentEditRequest(BaseModel):
+    """Editable agent-bundle fields; bundle capabilities remain unchanged."""
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str = Field(max_length=100_000)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+
+class PromptProfileObject(BaseModel):
+    """API representation of a plain-text prompt profile."""
+
+    id: str
+    object: Literal["prompt_profile"] = "prompt_profile"
+    name: str
+    description: str | None = None
+    instructions: str
+    enabled: bool
+    visible: bool
+    archived: bool
+    created_at: int
+    updated_at: int | None = None
+
+
+class PromptProfileCreateRequest(BaseModel):
+    """Fields accepted when creating a prompt profile."""
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str = Field(max_length=100_000)
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+
+class PromptProfilePatchRequest(BaseModel):
+    """Editable prompt profile fields."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    instructions: str | None = Field(default=None, max_length=100_000)
+    enabled: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def reject_null_non_nullable_fields(self) -> PromptProfilePatchRequest:
+        for field in ("name", "instructions", "enabled"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} must not be null")
+        return self
+
+
+class PromptProfileAutoSelection(BaseModel):
+    """Select a prompt profile independently on every turn."""
+
+    mode: Literal["auto"]
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromptProfileAutoIncludeSelection(BaseModel):
+    """Include every suitable enabled prompt profile on each turn."""
+
+    mode: Literal["auto_include"]
+    model_config = ConfigDict(extra="forbid")
+
+
+class PromptProfileFixedSelection(BaseModel):
+    """Pin a session to one prompt profile."""
+
+    mode: Literal["fixed"]
+    profile_id: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+
+PromptProfileSelection = Annotated[
+    PromptProfileAutoSelection | PromptProfileAutoIncludeSelection | PromptProfileFixedSelection,
+    Field(discriminator="mode"),
+]
 
 
 # ── Session Policies ───────────────────────────────────────────
@@ -392,13 +501,18 @@ class UpdateSessionPolicyRequest(BaseModel):
     """
     Request body for ``PATCH /v1/sessions/{session_id}/policies/{policy_id}``.
 
-    All fields are optional; ``None`` fields are left unchanged.
+    All fields are optional. ``None`` leaves scalar fields unchanged;
+    omitting ``factory_params`` leaves it unchanged while an explicit
+    ``null`` clears it.
     Unknown fields (including ``type``, which is immutable) are
     rejected with ``422``.
 
     :param name: New policy name. ``None`` leaves it unchanged.
     :param handler: New handler path or URL. ``None`` leaves it
         unchanged.
+    :param factory_params: New factory kwargs. Omit to leave them
+        unchanged, use ``null`` to clear them, or ``{}`` to set an
+        empty mapping.
     :param enabled: New enabled flag. ``None`` leaves it
         unchanged.
     """
@@ -407,6 +521,7 @@ class UpdateSessionPolicyRequest(BaseModel):
 
     name: str | None = None
     handler: str | None = None
+    factory_params: dict[str, Any] | None = None
     enabled: bool | None = None
 
 
@@ -501,13 +616,18 @@ class UpdateDefaultPolicyRequest(BaseModel):
     """
     Request body for ``PATCH /v1/policies/{policy_id}``.
 
-    All fields are optional; ``None`` fields are left unchanged.
+    All fields are optional. ``None`` leaves scalar fields unchanged;
+    omitting ``factory_params`` leaves it unchanged while an explicit
+    ``null`` clears it.
     Unknown fields (including ``type``, which is immutable) are
     rejected with ``422``.
 
     :param name: New policy name. ``None`` leaves it unchanged.
     :param handler: New handler path or URL. ``None`` leaves it
         unchanged.
+    :param factory_params: New factory kwargs. Omit to leave them
+        unchanged, use ``null`` to clear them, or ``{}`` to set an
+        empty mapping.
     :param enabled: New enabled flag. ``None`` leaves it
         unchanged.
     """
@@ -516,6 +636,7 @@ class UpdateDefaultPolicyRequest(BaseModel):
 
     name: str | None = None
     handler: str | None = None
+    factory_params: dict[str, Any] | None = None
     enabled: bool | None = None
 
 
@@ -1185,6 +1306,10 @@ class SessionEventInput(BaseModel):
         tools are fixed at start time.
     :param created_by: Optional internal attribution actor for runner-
         originated events that are triggered by a prior human turn.
+    :param interrupt_first: When True on a user message, interrupt any
+        active turn and wait for it to settle before dispatching the
+        message as a fresh turn (instead of steering into the running
+        turn). No-op when the session is already idle.
     """
 
     type: str
@@ -1195,6 +1320,7 @@ class SessionEventInput(BaseModel):
     model_override: str | None = None
     tools: list[dict[str, Any]] | None = None
     created_by: str | None = None
+    interrupt_first: bool = False
 
 
 class SessionGitOptions(BaseModel):
@@ -1225,11 +1351,17 @@ class SessionGitOptions(BaseModel):
         invalid with ``existing_worktree``.
     :param existing_worktree: When ``True``, bind to the pre-existing
         worktree at ``workspace`` instead of creating one (see above).
+    :param auto_fetch_base: When ``True``, verify ``base_branch`` locally
+        and fetch once before retrying if it is unavailable. Defaults off,
+        so Git runs directly and reports its own error.
     """
 
-    branch_name: str
+    branch_name: str | None = None
     base_branch: str | None = None
     existing_worktree: bool = False
+    auto_create: bool = False
+    branch_name_prompt: str | None = Field(default=None, max_length=2_000)
+    auto_fetch_base: bool = False
 
     @model_validator(mode="after")
     def _check_existing_worktree(self) -> SessionGitOptions:
@@ -1244,6 +1376,16 @@ class SessionGitOptions(BaseModel):
         """
         if self.existing_worktree and self.base_branch is not None:
             raise ValueError("base_branch cannot be set when existing_worktree is true")
+        if self.existing_worktree and self.auto_fetch_base:
+            raise ValueError("auto_fetch_base cannot be set when existing_worktree is true")
+        if self.existing_worktree and self.auto_create:
+            raise ValueError("auto_create cannot be set when existing_worktree is true")
+        if self.auto_create and self.branch_name is not None:
+            raise ValueError("branch_name is generated by the server when auto_create is true")
+        if not self.auto_create and self.branch_name_prompt is not None:
+            raise ValueError("branch_name_prompt is only valid when auto_create is true")
+        if not self.auto_create and not self.branch_name:
+            raise ValueError("branch_name is required unless auto_create is true")
         return self
 
 
@@ -1397,6 +1539,7 @@ class SessionCreateRequest(BaseModel):
     cost_control_mode_override: str | None = None
     subagent_routing_override: str | None = None
     harness_override: str | None = None
+    prompt_profile: PromptProfileSelection | None = None
     smart_routing_message: str | None = None
 
     @model_validator(mode="after")
@@ -1593,6 +1736,40 @@ class SandboxStatus(BaseModel):
 
     stage: SandboxLaunchStage
     error: str | None = None
+
+
+# Stages of async git-worktree launch: ``creating`` while git runs and the
+# runner starts, then terminal ``ready`` or ``failed``.
+WorktreeLaunchStage = Literal[
+    "creating",
+    "reacquiring",
+    "relocating",
+    "ready",
+    "failed",
+]
+
+
+class WorktreeStatus(BaseModel):
+    """Git-worktree creation progress for a host-bound session.
+
+    Carried on the session snapshot while background worktree and runner
+    launch is in flight or has failed; ``None`` for sessions without a
+    pending worktree and once launch succeeds.
+
+    :param stage: Current stage: ``"creating"`` while git runs on the
+        host and its runner starts, ``"ready"`` once launch succeeds, or
+        ``"failed"`` on a git or runner-launch error.
+    :param branch: The branch being created, e.g. ``"feature/login"``.
+    :param error: Failure detail when ``stage == "failed"``, e.g.
+        ``"branch already exists"``. ``None`` otherwise.
+    :param log_lines: Recent git output retained so a client that opens
+        the session stream after creation starts does not miss early lines.
+    """
+
+    stage: WorktreeLaunchStage
+    branch: str | None = None
+    error: str | None = None
+    log_lines: list[str] = Field(default_factory=list)
 
 
 class ModelUsage(BaseModel):
@@ -1905,10 +2082,12 @@ class SessionResponse(BaseModel):
     root_conversation_id: str | None = None
     llm_model: str | None = None
     harness: str | None = None
+    prompt_profile: PromptProfileSelection | None = None
     model_override: str | None = None
     cost_control_mode_override: str | None = None
     subagent_routing_override: str | None = None
     context_window: int | None = None
+    context_window_is_estimate: bool = False
     last_total_tokens: int | None = None
     total_cost_usd: float | None = None
     usage_by_model: dict[str, ModelUsage] | None = None
@@ -1932,6 +2111,11 @@ class SessionResponse(BaseModel):
     model_options: list[NativeModelOption] = Field(default_factory=list)
     terminal_pending: bool = False
     sandbox_status: SandboxStatus | None = None
+    # Async git-worktree creation progress — present while the
+    # background worktree task is running or has failed. ``None``
+    # once the worktree is created (workspace patched, runner
+    # launching). Sourced from ``_session_worktree_status_cache``.
+    worktree_status: WorktreeStatus | None = None
     # Per-MCP-server startup state for native harness sessions
     # (codex-native), present while the harness boots its MCP servers or
     # when servers were cancelled/failed. ``None`` otherwise. Sourced from
@@ -2038,6 +2222,8 @@ class UpdateSessionRequest(BaseModel):
         owner-private, only the session owner may file it, and only into a
         project they own — the server verifies both. Independent of the
         legacy ``omni_project`` label, which is set via ``labels``.
+    :param prompt_profile: Typed prompt-profile selection. Omitted leaves
+        selection unchanged; null clears it.
     """
 
     runner_id: str | None = None
@@ -2053,6 +2239,7 @@ class UpdateSessionRequest(BaseModel):
     terminal_launch_args: list[str] | None = None
     archived: bool | None = None
     project_id: str | None = None
+    prompt_profile: PromptProfileSelection | None = None
     silent: bool = False
 
     model_config = ConfigDict(extra="forbid")
@@ -2218,6 +2405,14 @@ class SessionForkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SessionRewindRequest(BaseModel):
+    """Request body for rewinding from a persisted user message."""
+
+    from_message_id: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ReadStatePutRequest(BaseModel):
     """
     Request body for ``PUT /v1/sessions/{session_id}/read-state``.
@@ -2274,6 +2469,8 @@ class SessionListItem(BaseModel):
     :param agent_name: Human-readable name of the bound agent,
         e.g. ``"research-agent"``. ``None`` when the agent row
         cannot be found.
+    :param agent_is_role: Whether the bound agent is reserved for a
+        managed role profile and should be excluded from agent pickers.
     :param status: Derived session lifecycle status.
     :param created_at: Unix epoch seconds of creation.
     :param updated_at: Unix epoch seconds of last update.
@@ -2367,6 +2564,7 @@ class SessionListItem(BaseModel):
     id: str
     agent_id: str
     agent_name: str | None = None
+    agent_is_role: bool = False
     status: Literal["idle", "running", "waiting", "failed"]
     created_at: int
     updated_at: int
@@ -2986,6 +3184,52 @@ class SessionSandboxStatusEvent(_SSEEventBase):
     type: Literal["session.sandbox_status"]
     conversation_id: str
     stage: SandboxLaunchStage
+    error: str | None = None
+
+
+class SessionWorktreeLogEvent(_SSEEventBase):
+    """One streamed line of git output during async worktree creation.
+
+    The background worktree task relays each ``HostWorktreeLogFrame`` line
+    to the session's SSE stream so the Web UI can append it to the
+    scrolling worktree-creation log panel in real time.
+
+    :param type: Always ``"session.worktree_log"``.
+    :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
+    :param line: One line of git stdout/stderr (without trailing newline).
+
+    Category: **transient** (SSE-only). Not persisted; the log panel
+    accumulates lines live and resets on session switch / reload.
+    """
+
+    type: Literal["session.worktree_log"]
+    conversation_id: str
+    line: str
+
+
+class SessionWorktreeStatusEvent(_SSEEventBase):
+    """Async git-worktree creation status transition.
+
+    Emitted when the background worktree task starts (``creating``),
+    succeeds (``ready`` — the workspace is patched and the runner is
+    launching), or fails (``failed`` + ``error``).
+
+    :param type: Always ``"session.worktree_status"``.
+    :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
+    :param stage: ``"creating"``, ``"ready"``, or ``"failed"``.
+    :param branch: The branch being created, e.g. ``"feature/login"``.
+    :param error: Failure detail when ``stage == "failed"``.
+
+    Category: **transient** (SSE + snapshot cache). A client connecting
+    mid-creation seeds from the session snapshot's ``worktree_status``
+    field; live updates arrive off this event. ``ready`` evicts the
+    cache entry.
+    """
+
+    type: Literal["session.worktree_status"]
+    conversation_id: str
+    stage: WorktreeLaunchStage
+    branch: str | None = None
     error: str | None = None
 
 
@@ -4254,6 +4498,8 @@ ServerStreamEvent = Annotated[
     | SessionTodosEvent
     | SessionTerminalPendingEvent
     | SessionSandboxStatusEvent
+    | SessionWorktreeLogEvent
+    | SessionWorktreeStatusEvent
     | SessionMcpStartupEvent
     | SessionSkillsEvent
     | SessionModelOptionsEvent
@@ -4512,3 +4758,62 @@ class UpdateProjectRequest(BaseModel):
         if len(trimmed) > 100:
             raise ValueError("name must be at most 100 characters")
         return trimmed
+
+
+class CreateMemoryCategoryRequest(BaseModel):
+    """Request body for ``POST /v1/memory/categories``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    content: str = ""
+    display_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be empty")
+        if len(value) > 100:
+            raise ValueError("name must be at most 100 characters")
+        return value
+
+
+class UpdateMemoryCategoryRequest(BaseModel):
+    """Request body for ``PATCH /v1/memory/categories/{id}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    content: str | None = None
+    display_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be empty")
+        if len(value) > 100:
+            raise ValueError("name must be at most 100 characters")
+        return value
+
+
+class ReorderMemoryCategoriesRequest(BaseModel):
+    """Request body for ``PUT /v1/memory/order``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ordered_ids: list[str]
+
+
+class UpdateMemorySettingsRequest(BaseModel):
+    """Request body for ``PATCH /v1/memory/settings``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    provider: Literal["omniharness", "claude", "agents"] | None = None

@@ -18,8 +18,11 @@ from pathlib import Path
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from omnigent.db.utils import builtin_agent_id
+from omnigent.errors import OmnigentError
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -71,18 +74,32 @@ def _register_builtin_agent(
     """
     bundle_key = f"{agent_id}/{hashlib.sha256(bundle).hexdigest()}"
     artifact_store.put(bundle_key, bundle)
-    agent_store.create(agent_id, name, bundle_key, description=description)
+    agent_store.create(
+        agent_id,
+        name,
+        bundle_key,
+        description=description,
+    )
 
 
 @pytest.fixture()
 def agents_app(
     agent_store: SqlAlchemyAgentStore,
     agent_cache: AgentCache,
+    artifact_store: LocalArtifactStore,
 ) -> FastAPI:
     """Minimal app mounting only the built-in agents router at ``/v1``."""
     app = FastAPI()
+
+    @app.exception_handler(OmnigentError)
+    async def _handle_omnigent_error(_request: Request, exc: OmnigentError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
     app.include_router(
-        create_builtin_agents_router(agent_store, agent_cache),
+        create_builtin_agents_router(agent_store, agent_cache, artifact_store),
         prefix="/v1",
     )
     return app
@@ -482,3 +499,112 @@ async def test_catalog_description_prefers_stored_row_over_spec(
     # Stored value present → it wins; the differing spec description
     # proves the route didn't blindly overwrite with the bundle's.
     assert entry["description"] == "Curated catalog label."
+
+
+async def test_builtin_delete_is_rejected(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent_id = builtin_agent_id("protected")
+    agent_store.create(agent_id, "protected", "protected/bundle")
+
+    response = await agents_client.delete(f"/v1/agents/{agent_id}")
+
+    assert response.status_code == 409
+    assert agent_store.get(agent_id) is not None
+
+
+async def test_custom_delete_archives_profile(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent = agent_store.create("bb" * 16, "custom", "custom/bundle")
+
+    response = await agents_client.delete(f"/v1/agents/{agent.id}")
+
+    assert response.status_code == 204
+    archived = agent_store.get(agent.id)
+    assert archived is not None
+    assert archived.archived is True
+    assert archived.enabled is False
+
+
+async def test_only_custom_agent_can_be_deleted(
+    agent_store: SqlAlchemyAgentStore,
+    agents_client: httpx.AsyncClient,
+) -> None:
+    agent = agent_store.create("bd" * 16, "only-agent", "only/bundle")
+
+    response = await agents_client.delete(f"/v1/agents/{agent.id}")
+
+    assert response.status_code == 204
+    assert agent_store.get(agent.id).archived is True
+
+
+async def test_multipart_create_persists_profile_and_metadata(
+    agents_client: httpx.AsyncClient,
+) -> None:
+    bundle = build_agent_bundle(
+        name="uploaded-profile",
+        description="Created without a session",
+        executor={"type": "omnigent", "model": "gpt-test", "config": {"harness": "codex"}},
+        sub_agents=[{"name": "worker"}],
+    )
+
+    response = await agents_client.post(
+        "/v1/agents",
+        files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["name"] == "uploaded-profile"
+    assert body["description"] == "Created without a session"
+    assert body["default_harness"] == "codex"
+    assert body["default_model"] == "gpt-test"
+    assert body["is_multi_agent"] is True
+    assert body["subagent_count"] == 1
+    duplicate = await agents_client.post(
+        "/v1/agents",
+        files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
+    )
+    assert duplicate.status_code == 409
+
+
+async def test_custom_profile_can_edit_prompt_fields_in_place(
+    agents_client: httpx.AsyncClient,
+) -> None:
+    bundle = build_agent_bundle(
+        name="editable-profile",
+        description="Before",
+        skills=[
+            {
+                "name": "keep-me",
+                "description": "Preserved capability",
+                "content": "Keep this skill.",
+            }
+        ],
+    )
+    created = await agents_client.post(
+        "/v1/agents",
+        files={"bundle": ("profile.tar.gz", bundle, "application/gzip")},
+    )
+    agent_id = created.json()["id"]
+
+    response = await agents_client.put(
+        f"/v1/agents/{agent_id}",
+        json={
+            "name": "edited-profile",
+            "description": "After",
+            "instructions": "Updated instructions",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == agent_id
+    assert body["name"] == "edited-profile"
+    assert body["description"] == "After"
+    assert body["instructions"] == "Updated instructions"
+    assert [skill["name"] for skill in body["skills"]] == ["keep-me"]
+    assert body["version"] == 2

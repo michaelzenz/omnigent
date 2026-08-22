@@ -514,10 +514,11 @@ def test_managed_mint_factory_serves_cached_token_when_refresh_fails(
 def test_managed_mint_factory_no_factory_when_server_definitively_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A definitive no-mint (HTTP 400/404) installs no factory → bare requests.
+    """A definitive no-mint (HTTP 400/401/404) installs no factory → bare requests.
 
-    HTTP 400 (no auth provider / header mode) and 404 (an older server
-    without the endpoint) mean the server will never mint for this runner,
+    HTTP 400 (no auth provider / header mode), 401 (host-launched runner that
+    is not a managed sandbox), and 404 (an older server without the endpoint)
+    mean the server will never mint for this runner,
     so the runner must fall back to unauthenticated requests — correct on a
     no-auth server. No factory is installed.
 
@@ -535,6 +536,31 @@ def test_managed_mint_factory_no_factory_when_server_definitively_refuses(
         )
 
     monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _refuses)
+
+    assert _make_managed_mint_factory("https://s.example.com", "btok") is None
+
+
+def test_managed_mint_factory_no_factory_when_host_runner_gets_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP 401 at probe time means this is not a managed sandbox → no factory.
+
+    Host-launched runners hold a tunnel binding token but are not registered
+    as managed sandboxes, so the mint endpoint returns 401. The runner must
+    fall back to bare requests (correct on a local single-user server).
+
+    :param monkeypatch: Pytest environment patch fixture.
+    :returns: None.
+    """
+
+    def _unauthorized(mint_url: str, server_url: str, binding_token: str) -> tuple[str, float]:
+        """Reject the mint the way a host-launched runner does (401)."""
+        request = httpx.Request("POST", mint_url)
+        raise httpx.HTTPStatusError(
+            "unauthenticated", request=request, response=httpx.Response(401, request=request)
+        )
+
+    monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _unauthorized)
 
     assert _make_managed_mint_factory("https://s.example.com", "btok") is None
 
@@ -934,6 +960,34 @@ def test_managed_mint_factory_promotes_minted_jwt_to_proxy_bearer(
 
     assert mint_call_bearers[0] == "Bearer seed-bearer"
     assert mint_call_bearers[1] == "Bearer minted-jwt"
+
+
+def test_mint_managed_owner_token_uses_server_unix_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Managed runner auth reaches the mint endpoint through the shared UDS."""
+    from omnigent.server_transport import OMNIGENT_SERVER_UNIX_SOCKET
+
+    captured: dict[str, Any] = {}
+    real_client = httpx.Client
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token": "owner-jwt", "expires_at": 1234567890})
+
+    def _fake_client(**kwargs: Any) -> httpx.Client:
+        captured["transport"] = kwargs.pop("transport", None)
+        return real_client(transport=httpx.MockTransport(_handler), **kwargs)
+
+    monkeypatch.setenv(OMNIGENT_SERVER_UNIX_SOCKET, "/tmp/omnigent-server.sock")
+    monkeypatch.setattr("omnigent.runner._entry.httpx.Client", _fake_client)
+
+    _mint_managed_owner_token(
+        "https://server.example.com/v1/runners/runner_token_abc/token",
+        "https://server.example.com",
+        "the-binding-token",
+    )
+
+    assert isinstance(captured["transport"], httpx.HTTPTransport)
 
 
 def test_runner_databricks_auth_injects_fresh_token_per_request() -> None:
@@ -1824,6 +1878,7 @@ async def test_runner_shutdown_closes_terminal_registry(
     terminal_registries: list[_TrackingTerminalRegistry] = []
     mcp_managers: list[_TrackingMcpManager] = []
     async_clients: list[_TrackingAsyncClient] = []
+    async_client_kwargs: list[dict[str, Any]] = []
     sync_clients: list[_TrackingSyncClient] = []
 
     class _FakeProcessManager:
@@ -1854,7 +1909,8 @@ async def test_runner_shutdown_closes_terminal_registry(
         return manager
 
     def _async_client_factory(*args: Any, **kwargs: Any) -> _TrackingAsyncClient:
-        del args, kwargs
+        del args
+        async_client_kwargs.append(kwargs)
         client = _TrackingAsyncClient()
         async_clients.append(client)
         return client
@@ -1866,6 +1922,7 @@ async def test_runner_shutdown_closes_terminal_registry(
         return client
 
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://runner.test")
+    monkeypatch.setenv("OMNIGENT_SERVER_UNIX_SOCKET", "/tmp/omnigent-server.sock")
     monkeypatch.setattr(
         "omnigent.runtime.harnesses.process_manager.HarnessProcessManager",
         _FakeProcessManager,
@@ -1899,6 +1956,7 @@ async def test_runner_shutdown_closes_terminal_registry(
         "MCP calls are proxied per-session through ProxyMcpManager"
     )
     assert async_clients and async_clients[0].closed
+    assert isinstance(async_client_kwargs[0]["transport"], httpx.AsyncHTTPTransport)
     # No sync httpx.Client is wired into the runner after the DBOS
     # removal — the legacy idle-sync client used by background
     # polling was deleted with that path. If a future change

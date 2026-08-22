@@ -148,6 +148,8 @@ export interface ServerInfo {
    * ``smart_routing_enabled``.
    */
   smart_routing_sources: SmartRoutingSources;
+  /** Database-configured models offered by OmniHarness. */
+  omniharness_model_options?: { id: string; display_name: string }[];
   /**
    * Deployment-wide release features. Missing keys are disabled. The map is
    * the canonical gate for new frontend surfaces.
@@ -319,6 +321,15 @@ export async function resolveServerInfo(): Promise<ServerInfo> {
             data.smart_routing_sources,
             smartRoutingEnabled,
           ),
+          omniharness_model_options: Array.isArray(data.omniharness_model_options)
+            ? data.omniharness_model_options.filter(
+                (model): model is { id: string; display_name: string } =>
+                  typeof model === "object" &&
+                  model !== null &&
+                  typeof model.id === "string" &&
+                  typeof model.display_name === "string",
+              )
+            : [],
           features: parseFeatures(data.features, harnessInstallEnabled),
           harness_install_enabled: harnessInstallEnabled,
           installable_harnesses: Array.isArray(data.installable_harnesses)

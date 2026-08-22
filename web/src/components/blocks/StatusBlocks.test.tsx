@@ -495,7 +495,7 @@ describe("ErrorBanner", () => {
 });
 
 describe("RoutingDecisionCard — session-level auto-routing", () => {
-  it("applied verdict: shows model pill with tier and rationale", () => {
+  it("applied verdict: shows the model and rationale", () => {
     render(
       <RoutingDecisionCard
         model="databricks-claude-opus-4-8"

@@ -658,13 +658,13 @@ def test_build_search_snippet_is_case_insensitive() -> None:
 
 def test_build_search_snippet_windows_long_text_with_ellipses() -> None:
     """A match buried in long text is windowed with … on both elided ends."""
-    text = "a" * 200 + " deploy error " + "b" * 200
+    text = "a" * 1000 + " deploy error " + "b" * 1000
     snippet = build_search_snippet(text, "deploy error")
     assert snippet is not None
     assert "deploy error" in snippet
     assert snippet.startswith("…") and snippet.endswith("…")
-    # Kept short enough for a single UI row.
-    assert len(snippet) <= 160 + 2
+    # Bounded for transport while leaving enough context for a six-line card.
+    assert len(snippet) <= 600 + 2
 
 
 def test_build_search_snippet_collapses_whitespace() -> None:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Protocol, cast
+import math
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy import (
     ColumnElement,
@@ -33,9 +36,11 @@ from omnigent.db.db_models import (
     SqlConversationItem,
     SqlConversationLabel,
     SqlConversationMetadata,
+    SqlModelPricingOverride,
     SqlPolicy,
     SqlProject,
     SqlSessionPermission,
+    SqlUsageLedger,
     SqlUserDailyCost,
     current_workspace_id,
     uuid_to_bytes,
@@ -54,6 +59,7 @@ from omnigent.db.query_context import query_name_scope
 from omnigent.db.utils import (
     _supports_fts5,
     build_search_snippet,
+    delete_fts_by_conversation,
     delete_fts_by_conversation_ids,
     ensure_fts_table,
     extract_search_text,
@@ -95,6 +101,15 @@ from omnigent.stores.conversation_store import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def _next_month(month: str) -> str:
+    """Return the first UTC day following a ``YYYY-MM`` month."""
+    year, month_number = (int(part) for part in month.split("-", 1))
+    if month_number == 12:
+        return f"{year + 1:04d}-01-01"
+    return f"{year:04d}-{month_number + 1:02d}-01"
+
 
 # Server-side deadline (ms) for the content-search query in
 # ``list_conversations``. Session search matches ``LOWER(search_text) LIKE
@@ -203,6 +218,11 @@ def _to_conversation(
         parent_conversation_id=row.parent_conversation_id,
         root_conversation_id=row.root_conversation_id,
         agent_id=row.agent_id,
+        prompt_profile_mode=cast(
+            Literal["auto", "auto_include", "fixed"] | None,
+            row.prompt_profile_mode,
+        ),
+        prompt_profile_id=row.prompt_profile_id,
         runner_id=meta.runner_id if meta else None,
         host_id=meta.host_id if meta else None,
         labels=labels if labels is not None else {},
@@ -239,6 +259,17 @@ def _to_conversation(
     )
 
 
+def _validate_prompt_profile_columns(mode: str | None, profile_id: str | None) -> None:
+    """Enforce the nullable tagged-union shape stored on conversations."""
+    if mode is None and profile_id is None:
+        return
+    if mode in {"auto", "auto_include"} and profile_id is None:
+        return
+    if mode == "fixed" and profile_id:
+        return
+    raise ValueError("invalid prompt profile selection columns")
+
+
 def _new_session_conversation_row(
     conversation_id: str,
     now: int,
@@ -246,6 +277,8 @@ def _new_session_conversation_row(
     parent_conversation_id: str | None = None,
     root_conversation_id: str | None = None,
     agent_id: str | None = None,
+    prompt_profile_mode: str | None = None,
+    prompt_profile_id: str | None = None,
     session_overrides: str | None = None,
 ) -> SqlConversation:
     """
@@ -271,6 +304,7 @@ def _new_session_conversation_row(
         it NULL.
     :returns: Unsaved :class:`SqlConversation` row.
     """
+    _validate_prompt_profile_columns(prompt_profile_mode, prompt_profile_id)
     # Sub-agent children must have a unique title per parent.
     # Fall back to the conversation id to guarantee uniqueness.
     if parent_conversation_id and not title:
@@ -286,6 +320,8 @@ def _new_session_conversation_row(
         # root. Child rows inherit their parent's root.
         root_conversation_id=root_conversation_id or conversation_id,
         agent_id=agent_id,
+        prompt_profile_mode=prompt_profile_mode,
+        prompt_profile_id=prompt_profile_id,
         session_overrides=session_overrides,
     )
 
@@ -863,6 +899,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         title: str | None = None,
         parent_conversation_id: str | None = None,
         agent_id: str | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
         runner_id: str | None = None,
         sub_agent_name: str | None = None,
         host_id: str | None = None,
@@ -929,6 +967,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         """
         from sqlalchemy.exc import IntegrityError
 
+        _validate_prompt_profile_columns(prompt_profile_mode, prompt_profile_id)
         from omnigent.stores.conversation_store import (
             ConversationNotFoundError,
             NameAlreadyExistsError,
@@ -988,6 +1027,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                     parent_conversation_id=parent_conversation_id,
                     root_conversation_id=root_id,
                     agent_id=agent_id,
+                    prompt_profile_mode=prompt_profile_mode,
+                    prompt_profile_id=prompt_profile_id,
                 )
                 ap_sess.add(row)
             meta = SqlConversationMetadata(
@@ -1442,6 +1483,190 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .values(session_usage=json.dumps(current))
             )
             return current
+
+    def record_usage_ledger(self, entry: dict[str, Any]) -> None:
+        """Append one immutable model-request record with its price snapshot."""
+        occurred_at = int(entry.get("occurred_at") or now_epoch())
+        day_utc = datetime.fromtimestamp(occurred_at, tz=timezone.utc).date().isoformat()
+        with self._session("record_usage_ledger") as session:
+            session.add(
+                SqlUsageLedger(
+                    id=uuid.uuid4().hex,
+                    user_id=str(entry["user_id"]),
+                    occurred_at=occurred_at,
+                    day_utc=day_utc,
+                    session_id=entry.get("session_id"),
+                    turn_id=entry.get("turn_id"),
+                    purpose=str(entry["purpose"]),
+                    model=entry.get("model"),
+                    workload=entry.get("workload"),
+                    input_tokens=int(entry.get("input_tokens") or 0),
+                    output_tokens=int(entry.get("output_tokens") or 0),
+                    cache_read_input_tokens=int(entry.get("cache_read_input_tokens") or 0),
+                    cache_creation_input_tokens=int(entry.get("cache_creation_input_tokens") or 0),
+                    input_price_per_token=entry.get("input_price_per_token"),
+                    output_price_per_token=entry.get("output_price_per_token"),
+                    cache_read_price_per_token=entry.get("cache_read_price_per_token"),
+                    cache_write_price_per_token=entry.get("cache_write_price_per_token"),
+                    pricing_source=entry.get("pricing_source"),
+                    cost_usd=entry.get("cost_usd"),
+                    priced=bool(entry.get("priced")),
+                )
+            )
+
+    def list_usage_ledger_month(
+        self,
+        user_id: str,
+        month: str,
+    ) -> list[dict[str, Any]]:
+        """List user-scoped immutable records for one UTC month."""
+        with self._session("list_usage_ledger_month") as session:
+            rows = session.execute(
+                select(SqlUsageLedger)
+                .where(SqlUsageLedger.workspace_id == current_workspace_id())
+                .where(SqlUsageLedger.user_id == user_id)
+                .where(SqlUsageLedger.day_utc >= f"{month}-01")
+                .where(SqlUsageLedger.day_utc < _next_month(month))
+                .order_by(SqlUsageLedger.occurred_at.asc(), SqlUsageLedger.id.asc())
+            ).scalars()
+            return [
+                {
+                    column: getattr(row, column)
+                    for column in (
+                        "occurred_at",
+                        "day_utc",
+                        "session_id",
+                        "turn_id",
+                        "purpose",
+                        "model",
+                        "workload",
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_read_input_tokens",
+                        "cache_creation_input_tokens",
+                        "input_price_per_token",
+                        "output_price_per_token",
+                        "cache_read_price_per_token",
+                        "cache_write_price_per_token",
+                        "pricing_source",
+                        "cost_usd",
+                        "priced",
+                    )
+                }
+                for row in rows
+            ]
+
+    def list_usage_ledger_months(self, user_id: str) -> list[str]:
+        """List UTC months containing user-scoped ledger rows."""
+        with self._session("list_usage_ledger_months") as session:
+            month_expr = func.substr(SqlUsageLedger.day_utc, 1, 7)
+            rows = session.execute(
+                select(month_expr)
+                .where(SqlUsageLedger.workspace_id == current_workspace_id())
+                .where(SqlUsageLedger.user_id == user_id)
+                .distinct()
+                .order_by(month_expr.desc())
+            ).scalars()
+            return [str(month) for month in rows]
+
+    @staticmethod
+    def _pricing_override_dict(row: SqlModelPricingOverride) -> dict[str, Any]:
+        return {
+            "model": row.model,
+            "input_price_per_token": row.input_price_per_token,
+            "output_price_per_token": row.output_price_per_token,
+            "cache_read_price_per_token": row.cache_read_price_per_token,
+            "cache_write_price_per_token": row.cache_write_price_per_token,
+            "updated_at": row.updated_at,
+        }
+
+    def get_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+    ) -> dict[str, Any] | None:
+        """Return one override scoped by workspace and user."""
+        with self._session("get_model_pricing_override") as session:
+            row = session.get(
+                SqlModelPricingOverride,
+                {
+                    "workspace_id": current_workspace_id(),
+                    "user_id": user_id,
+                    "model": model,
+                },
+            )
+            return self._pricing_override_dict(row) if row is not None else None
+
+    def list_model_pricing_overrides(
+        self,
+        user_id: str,
+        models: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return overrides for enabled models without exposing other users."""
+        if not models:
+            return {}
+        with self._session("list_model_pricing_overrides") as session:
+            rows = session.scalars(
+                select(SqlModelPricingOverride).where(
+                    SqlModelPricingOverride.workspace_id == current_workspace_id(),
+                    SqlModelPricingOverride.user_id == user_id,
+                    SqlModelPricingOverride.model.in_(models),
+                )
+            )
+            return {row.model: self._pricing_override_dict(row) for row in rows}
+
+    def set_model_pricing_override(
+        self,
+        user_id: str,
+        model: str,
+        pricing: dict[str, float | None],
+    ) -> dict[str, Any]:
+        """Create or replace one finite, nonnegative pricing override."""
+        if not model or len(model) > 300:
+            raise ValueError("model must contain 1 to 300 characters")
+        required = ("input_price_per_token", "output_price_per_token")
+        optional = ("cache_read_price_per_token", "cache_write_price_per_token")
+        values: dict[str, float | None] = {}
+        for field in (*required, *optional):
+            raw = pricing.get(field)
+            if raw is None and field in required:
+                raise ValueError(f"{field} is required")
+            if raw is None:
+                values[field] = None
+                continue
+            value = float(raw)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{field} must be finite and nonnegative")
+            values[field] = value
+
+        updated_at = now_epoch()
+        identity = {
+            "workspace_id": current_workspace_id(),
+            "user_id": user_id,
+            "model": model,
+        }
+        with self._session("set_model_pricing_override") as session:
+            row = session.get(SqlModelPricingOverride, identity)
+            if row is None:
+                row = SqlModelPricingOverride(**identity, **values, updated_at=updated_at)
+                session.add(row)
+            else:
+                for field, value in values.items():
+                    setattr(row, field, value)
+                row.updated_at = updated_at
+            return self._pricing_override_dict(row)
+
+    def delete_model_pricing_override(self, user_id: str, model: str) -> bool:
+        """Delete only the active user's override in the current workspace."""
+        with self._session("delete_model_pricing_override") as session:
+            result = session.execute(
+                delete(SqlModelPricingOverride).where(
+                    SqlModelPricingOverride.workspace_id == current_workspace_id(),
+                    SqlModelPricingOverride.user_id == user_id,
+                    SqlModelPricingOverride.model == model,
+                )
+            )
+            return bool(cast(_RowCountResult, result).rowcount)
 
     def add_daily_cost(self, user_id: str, day_utc: str, delta_usd: float) -> None:
         """
@@ -1986,6 +2211,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         self,
         conversation_id: str,
         items: list[NewConversationItem],
+        *,
+        bump_updated_at: bool = True,
     ) -> list[ConversationItem]:
         """
         Append items to a conversation.
@@ -1998,6 +2225,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             e.g. ``"conv_abc123"``.
         :param items: List of :class:`NewConversationItem` objects
             to persist.
+        :param bump_updated_at: Whether these items represent user-visible
+            activity for ordering and unread indicators.
         :returns: The persisted :class:`ConversationItem` list
             with store-assigned IDs and timestamps.
         """
@@ -2010,9 +2239,11 @@ class SqlAlchemyConversationStore(ConversationStore):
             # SQLite the database-level lock already serializes.
             self._lock_conversation(session, conversation_id)
 
-            # Bump updated_at on the conversation.
-            conv_row = session.get(SqlConversation, (current_workspace_id(), conversation_id))
-            if conv_row is not None:
+            conv_row = session.get(
+                SqlConversation,
+                (current_workspace_id(), conversation_id),
+            )
+            if bump_updated_at and conv_row is not None:
                 conv_row.updated_at = now
 
             # Allocate item positions from the conversation's maintained
@@ -2700,6 +2931,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
         reported_model: str | None = None,
+        prompt_profile_mode: str | None = None,
+        prompt_profile_id: str | None = None,
+        _unset_prompt_profile: bool = False,
     ) -> Conversation | None:
         """
         Update mutable fields on a conversation.
@@ -2742,10 +2976,19 @@ class SqlAlchemyConversationStore(ConversationStore):
             append). JSON-encoded into the column.
         :param archived: New archived state. ``True`` archives,
             ``False`` unarchives, ``None`` leaves unchanged.
+        :param prompt_profile_mode: Prompt-profile selection mode.
+            A non-``None`` value updates the profile configuration.
+        :param prompt_profile_id: Profile id required by ``fixed``
+            mode and omitted by automatic modes.
+        :param _unset_prompt_profile: When ``True``, clear both
+            prompt-profile fields.
         :returns: The updated :class:`Conversation`, or ``None``
             if the conversation does not exist.
         """
         now = now_epoch()
+        update_prompt_profile = prompt_profile_mode is not None or prompt_profile_id is not None
+        if update_prompt_profile and not _unset_prompt_profile:
+            _validate_prompt_profile_columns(prompt_profile_mode, prompt_profile_id)
         # Two transactions: AP (the conversation row, which carries the agent
         # binding + per-session override blob) and Omnigent (metadata).
         with self._conv_session("update_conversation") as ap_sess:
@@ -2799,6 +3042,14 @@ class SqlAlchemyConversationStore(ConversationStore):
             if archived is not None:
                 # archived lives on the AP conversations row; a visible state change.
                 row.archived = archived
+                ap_changed = True
+            if _unset_prompt_profile:
+                row.prompt_profile_mode = None
+                row.prompt_profile_id = None
+                ap_changed = True
+            elif update_prompt_profile:
+                row.prompt_profile_mode = prompt_profile_mode
+                row.prompt_profile_id = prompt_profile_id
                 ap_changed = True
             if ap_changed:
                 row.updated_at = now
@@ -3000,7 +3251,13 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .values(pending_elicitation_count=count)
             )
 
-    def replace_runner_id(self, conversation_id: str, runner_id: str) -> Conversation:
+    def replace_runner_id(
+        self,
+        conversation_id: str,
+        runner_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Atomically overwrite ``conversations.runner_id``.
 
@@ -3012,6 +3269,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param conversation_id: Session/conversation identifier,
             e.g. ``"conv_abc123"``.
         :param runner_id: New runner id, e.g. ``"runner_abc123"``.
+        :param bump_updated_at: When ``False``, preserve the content activity
+            timestamp for infrastructure-only runner relaunches.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             exists for ``conversation_id``.
@@ -3029,16 +3288,25 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
-            ap_row.updated_at = now_epoch()
+            if bump_updated_at:
+                ap_row.updated_at = now_epoch()
             labels = _fetch_labels(ap_sess, conversation_id)
         return _to_conversation(ap_row, meta, labels)
 
-    def clear_runner_id(self, conversation_id: str) -> Conversation:
+    def clear_runner_id(
+        self,
+        conversation_id: str,
+        *,
+        bump_updated_at: bool = True,
+    ) -> Conversation:
         """
         Null out ``conversations.runner_id``. Atomic last-write-wins.
 
         :param conversation_id: Session/conversation identifier,
             e.g. ``"conv_abc123"``.
+        :param bump_updated_at: When ``False``, leave ``updated_at`` untouched
+            (used by the host-reconnect liveness sweep, which reconciles a
+            stale runner pin without a content change).
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             exists for ``conversation_id``.
@@ -3056,7 +3324,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
-            ap_row.updated_at = now_epoch()
+            if bump_updated_at:
+                ap_row.updated_at = now_epoch()
             labels = _fetch_labels(ap_sess, conversation_id)
         return _to_conversation(ap_row, meta, labels)
 
@@ -3143,6 +3412,28 @@ class SqlAlchemyConversationStore(ConversationStore):
             _to_conversation(r, meta_by_id.get(r.id), labels_by_conv.get(r.id, {}))
             for r in ap_rows
         ]
+
+    def runner_bindings_for_host(
+        self,
+        host_id: str,
+    ) -> dict[str, str | None]:
+        """
+        Return ``{conversation_id: runner_id}`` for sessions bound to *host_id*.
+
+        Metadata-only (no label hydration); see
+        :meth:`ConversationStore.runner_bindings_for_host`.
+        """
+        with self._session("runner_bindings_for_host") as session:
+            rows = session.execute(
+                select(
+                    SqlConversationMetadata.id,
+                    SqlConversationMetadata.runner_id,
+                ).where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.host_id == host_id,
+                )
+            ).all()
+        return {row.id: row.runner_id for row in rows}
 
     def set_host_id(
         self,
@@ -3534,6 +3825,73 @@ class SqlAlchemyConversationStore(ConversationStore):
             project_id=project_id,
         )
 
+    def rewind_conversation(
+        self,
+        conversation_id: str,
+        *,
+        from_message_id: str,
+    ) -> Conversation:
+        """Atomically remove a user message and all subsequent items."""
+        now = now_epoch()
+        with self._conv_session("rewind_conversation") as session:
+            self._lock_conversation(session, conversation_id)
+            conversation = session.get(
+                SqlConversation,
+                (current_workspace_id(), conversation_id),
+            )
+            if conversation is None:
+                raise LookupError(f"conversation not found: {conversation_id!r}")
+
+            target = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == from_message_id,
+                )
+            ).scalar_one_or_none()
+            if target is None:
+                raise LookupError(
+                    f"message not found in conversation {conversation_id!r}: {from_message_id!r}"
+                )
+            decoded = self._decode_item_data_batch([target.data])[0]
+            item = _to_item(target, decoded)
+            if item.type != "message" or getattr(item.data, "role", None) != "user":
+                raise ValueError(f"rewind target is not a user message: {from_message_id!r}")
+
+            retained_rows = (
+                session.execute(
+                    select(SqlConversationItem)
+                    .where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.position < target.position,
+                    )
+                    .order_by(SqlConversationItem.position.asc())
+                )
+                .scalars()
+                .all()
+            )
+            delete_fts_by_conversation(session, conversation_id)
+            session.execute(
+                delete(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.position >= target.position,
+                )
+            )
+            insert_fts_bulk(
+                session,
+                [(row.id, conversation_id, row.search_text or "") for row in retained_rows],
+            )
+            conversation.next_position = target.position
+            conversation.updated_at = now
+            session.flush()
+
+        rewound = self.get_conversation(conversation_id)
+        if rewound is None:
+            raise LookupError(f"conversation not found after rewind: {conversation_id!r}")
+        return rewound
+
     def _fork_conversation_with_id(
         self,
         conversation_id: str,
@@ -3611,6 +3969,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # An explicit agent_id (clone or existing) beats inheriting the
                 # source's binding.
                 agent_id=(agent_id if agent_id is not None else source.agent_id),
+                prompt_profile_mode=source.prompt_profile_mode,
+                prompt_profile_id=source.prompt_profile_id,
                 session_overrides=fork_overrides,
             )
             session.add(new_conv)

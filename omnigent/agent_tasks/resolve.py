@@ -1,0 +1,93 @@
+"""Resolve stalled task events onto a managed task manager."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
+from omnigent.agent_tasks.routing import route_event_to_task
+from omnigent.entities import Task, TaskEvent
+from omnigent.entities.task_role_profile import TaskRoleProfile
+from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_store import TaskStore
+
+_ROUTE_TO_TASK_STATES = frozenset(
+    {
+        "received",
+        "awaiting_grouping",
+    }
+)
+_DISMISSABLE_STATES = frozenset(
+    {
+        "received",
+        "awaiting_grouping",
+        "classified_fyi",
+    }
+)
+
+
+async def dismiss_task_event(
+    *,
+    event: TaskEvent,
+    task_event_store: TaskEventStore,
+) -> TaskEvent:
+    """Mark an event dismissed without routing it to a manager."""
+    if event.state not in _DISMISSABLE_STATES:
+        raise OmnigentError(
+            f"Cannot dismiss event in state {event.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+    updated = task_event_store.update_event(event.id, state="dismissed")
+    if updated is None:
+        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+    return updated
+
+
+async def resolve_task_event(
+    *,
+    event: TaskEvent,
+    task_store: TaskStore,
+    task_event_store: TaskEventStore,
+    conversation_store: ConversationStore,
+    task: Task,
+    host_id: str | None = None,
+    workspace: str | None = None,
+    harness: str | None = None,
+    model: str | None = None,
+    role_profile: TaskRoleProfile | None = None,
+    session_creator: Any | None = None,
+    app_state: Any | None = None,
+    user_id: str | None = None,
+) -> TaskEvent:
+    """Route a stalled event to a task manager, bootstrapping when needed.
+
+    The event lands in ``routed`` state; the manager packager picks it up on its
+    next poll, so this no longer wakes the manager directly.
+    """
+    if event.state not in _ROUTE_TO_TASK_STATES:
+        raise OmnigentError(
+            f"Cannot route event in state {event.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+
+    params = resolve_bootstrap_params(
+        host_id=host_id,
+        workspace=workspace,
+        harness=harness,
+        model=model,
+        role_profile=role_profile,
+    )
+    return await route_event_to_task(
+        event=event,
+        task=task,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        conversation_store=conversation_store,
+        params=params,
+        routing_reason="broker-resolve",
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
+    )

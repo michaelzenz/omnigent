@@ -119,20 +119,26 @@ describe("useUpdateDefaultPolicy", () => {
     return renderHook(() => useUpdateDefaultPolicy(), { wrapper: wrapperWith(queryClient) });
   }
 
-  it("PATCHes the encoded policy id with the enabled flag and invalidates", async () => {
-    // The id is url-encoded so ids with reserved chars hit the right route;
-    // only the enabled flag is sent (the toggle is the only mutable field here).
+  it("PATCHes mutable fields to the encoded policy id and invalidates", async () => {
+    // The id is url-encoded so ids with reserved chars hit the right route.
     fetchMock.mockResolvedValueOnce(mockResponse(makePolicy({ id: "p 1", enabled: false })));
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderUpdate(queryClient);
-    result.current.mutate({ policyId: "p 1", enabled: false });
+    result.current.mutate({
+      policyId: "p 1",
+      name: "renamed",
+      factory_params: { threshold: 9 },
+    });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/v1/policies/p%201");
     expect(init.method).toBe("PATCH");
-    expect(JSON.parse(init.body as string)).toEqual({ enabled: false });
+    expect(JSON.parse(init.body as string)).toEqual({
+      name: "renamed",
+      factory_params: { threshold: 9 },
+    });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["default-policies"] });
   });
 

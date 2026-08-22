@@ -18,6 +18,7 @@ import {
   interrupt,
   listRunners,
   openSessionStream,
+  rewindSession,
   postEvent,
   SESSION_HISTORY_PAGE_SIZE,
   stopSession,
@@ -89,7 +90,9 @@ describe("createSession", () => {
       harness: null,
       modelOverride: undefined,
       costControlModeOverride: undefined,
+      subagentRoutingOverride: undefined,
       reasoningEffort: undefined,
+      contextWindowIsEstimate: false,
       pendingElicitations: [],
       pendingInputs: [],
       permissionLevel: null,
@@ -312,6 +315,21 @@ describe("forkSession", () => {
   });
 });
 
+describe("rewindSession", () => {
+  it("POSTs the persisted user message id to the rewind endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ session_id: "conv abc", from_message_id: "msg_1" }),
+    );
+
+    await rewindSession("conv abc", "msg_1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv%20abc/rewind");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ from_message_id: "msg_1" });
+  });
+});
+
 describe("runner binding", () => {
   it("lists online runners and parses harnesses", async () => {
     fetchMock.mockResolvedValueOnce(
@@ -404,6 +422,27 @@ describe("runner binding", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ reasoning_effort: "high" });
+  });
+
+  it("PATCHes the typed prompt profile without changing execution settings", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    await updateSession("conv_abc", {
+      promptProfile: { mode: "fixed", profileId: "profile_focused" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      prompt_profile: { mode: "fixed", profile_id: "profile_focused" },
+    });
   });
 
   it("PATCHes model_override as snake_case", async () => {
@@ -660,6 +699,32 @@ describe("getSession", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/v1/sessions/conv_abc?include_items=false&include_liveness=false&refresh_state=true",
     );
+  });
+
+  it("maps buffered worktree logs for a late stream connection", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_worktree",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+        worktree_status: {
+          stage: "creating",
+          branch: "feature/logs",
+          error: null,
+          log_lines: ["Resolving repository root…", "Preparing worktree"],
+        },
+      }),
+    );
+
+    const session = await getSession("conv_worktree");
+
+    expect(session.worktreeStatus).toEqual({
+      stage: "creating",
+      branch: "feature/logs",
+      error: null,
+      logLines: ["Resolving repository root…", "Preparing worktree"],
+    });
   });
 
   it("maps permission_level from the wire to permissionLevel", async () => {

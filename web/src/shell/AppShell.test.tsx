@@ -483,6 +483,7 @@ function withWindowOrigin(origin: string, run: () => void) {
 }
 
 beforeEach(() => {
+  delete (window as unknown as { omnigentDesktop?: unknown }).omnigentDesktop;
   useConvMock.mockReset();
   useTerminalsMock.mockReset();
   useTerminalsMock.mockReturnValue({
@@ -535,7 +536,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete (window as unknown as { omnigentDesktop?: unknown }).omnigentDesktop;
+});
 
 describe("AppShell header", () => {
   it("renders the sidebar toggle on all pages", () => {
@@ -1415,6 +1419,42 @@ describe("Workspace rail maximize", () => {
     expect(screen.getByRole("complementary", { name: "Workspace" }).className).not.toContain(
       "md:absolute",
     );
+  });
+
+  it("detaches the native browser view when switching sessions", async () => {
+    const browserSetActive = vi.fn().mockResolvedValue({ ok: true });
+    Object.defineProperty(window, "omnigentDesktop", {
+      configurable: true,
+      value: {
+        kind: "electron",
+        browserOpenOrNavigate: vi.fn(),
+        browserSetActive,
+      },
+    });
+    mockConversations([
+      { id: "conv_abc", permission_level: null },
+      { id: "conv_xyz", permission_level: null },
+    ]);
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={["/c/conv_abc"]}>
+            <Routes>
+              <Route element={<AppShell />}>
+                <Route path="c/:conversationId" element={<SessionNavButton to="/c/conv_xyz" />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(browserSetActive).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("nav-session"));
+
+    await waitFor(() => expect(browserSetActive).toHaveBeenCalledWith(null));
   });
 });
 

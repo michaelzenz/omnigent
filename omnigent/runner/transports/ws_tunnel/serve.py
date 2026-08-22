@@ -54,6 +54,7 @@ from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
 )
 from omnigent.suspend_watch import watch_for_resume
+from omnigent.server_transport import server_unix_socket_path
 from omnigent.tls import client_ssl_context
 
 _logger = logging.getLogger(__name__)
@@ -709,6 +710,7 @@ async def _serve_tunnel_once(
     :returns: None.
     """
     import websockets
+    import websockets.asyncio.client
 
     dispatch_tasks: dict[str, asyncio.Task[None]] = {}
     ws_channels: dict[str, _RunnerWSChannel] = {}
@@ -746,18 +748,31 @@ async def _serve_tunnel_once(
         if shutdown_event is not None
         else _RUNNER_TUNNEL_CLOSE_TIMEOUT_S
     )
-    async with websockets.connect(
-        tunnel_url,
-        additional_headers=headers,
-        close_timeout=close_timeout,
-        max_size=RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
-        ssl=ssl_ctx,
-        # Protocol keepalive aligned to the server's 90 s app-level budget (not the
-        # 20 s library default that drops a busy-but-healthy tunnel — issue #1116).
-        # Also the runner's only liveness probe for a silently-dead server.
-        ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
-        ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
-    ) as ws:
+    socket_path = server_unix_socket_path()
+    if socket_path is None:
+        ws_cm = websockets.connect(
+            tunnel_url,
+            additional_headers=headers,
+            close_timeout=close_timeout,
+            max_size=RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
+            ssl=ssl_ctx,
+            # Protocol keepalive aligned to the server's 90 s app-level budget (not the
+            # 20 s library default that drops a busy-but-healthy tunnel — issue #1116).
+            # Also the runner's only liveness probe for a silently-dead server.
+            ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+            ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+        )
+    else:
+        ws_cm = websockets.asyncio.client.unix_connect(
+            socket_path,
+            uri=tunnel_url,
+            additional_headers=headers,
+            close_timeout=close_timeout,
+            max_size=RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
+            ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+            ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+        )
+    async with ws_cm as ws:
         if on_connected is not None:
             on_connected()
         await _send_hello(

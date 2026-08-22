@@ -421,6 +421,7 @@ def _build_app_with_mcp_tool(
     spec = AgentSpec(
         spec_version=1,
         name="t",
+        executor=ExecutorSpec(type="omnigent", config={"harness": "openai-agents"}),
         mcp_servers=[MCPServerConfig(name="jira", transport="http", url="http://x")],
     )
 

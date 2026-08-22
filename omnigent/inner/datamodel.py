@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
+from omnigent._platform import installed_interactive_shells
+
 # ---------------------------------------------------------------------------
 # Type aliases for JSON-shaped / heterogeneous-value boundaries
 # ---------------------------------------------------------------------------
@@ -829,6 +831,27 @@ class TerminalEnvSpec:
     terminal_transport: str | None = None
 
 
+def default_os_env_spec() -> OSEnvSpec:
+    """Return the unrestricted caller-process environment enabled by default."""
+    return OSEnvSpec(
+        type="caller_process",
+        cwd=".",
+        sandbox=OSEnvSandboxSpec(type="none"),
+    )
+
+
+def default_terminal_env_specs() -> dict[str, TerminalEnvSpec]:
+    """Return one default interactive terminal for each installed shell."""
+    return {
+        shell: TerminalEnvSpec(
+            command=shell,
+            os_env="inherit",
+            allow_cwd_override=True,
+        )
+        for shell in installed_interactive_shells()
+    }
+
+
 # ---------------------------------------------------------------------------
 # AgentDef
 # ---------------------------------------------------------------------------
@@ -865,14 +888,14 @@ class AgentDef:
     async_enabled: bool = True
     cancellable: bool = True
     runtime: bool = False
-    timers: bool = False
+    timers: bool = True
     # Grant for spawning OUTSIDE any declared sub-agent list:
     # sys_session_create (existing agents by id, or custom bundles via
     # config_path) plus send/close to drive the children. Distinct
     # from declared agent tools, which permit only the specified
     # sub-agent types. Session reads are always on. YAML key:
     # ``spawn:``.
-    spawn: bool = False
+    spawn: bool = True
     # Authority for the agent to share the session it runs in, via
     # sys_session_share — the SOLE enabler of that tool (independent of
     # spawn / declared agents, and unrelated to server-API / CLI
@@ -881,9 +904,9 @@ class AgentDef:
     # (also allow __public__ anonymous read). Kept as a str here (inner
     # datamodel has no spec.types dep); mapped to SharePolicy when
     # translated to an AgentSpec.
-    agent_session_sharing: str = "none"
-    os_env: OSEnvSpec | None = None
-    terminals: dict[str, TerminalEnvSpec] = field(default_factory=dict)
+    agent_session_sharing: str = "non-public"
+    os_env: OSEnvSpec | None = field(default_factory=default_os_env_spec)
+    terminals: dict[str, TerminalEnvSpec] = field(default_factory=default_terminal_env_specs)
     skills: SkillRegistry = field(default_factory=dict)
     # Materialized agent-bundle root on disk, when known. Used by
     # the Claude SDK harness to expose ``<bundle>/skills/<dir>/

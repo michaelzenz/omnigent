@@ -32,6 +32,7 @@ from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from
 from omnigent.llms.errors import is_context_length_exceeded as _is_context_length_exceeded
 from omnigent.reasoning_effort import OPENAI_AGENTS_EFFORTS, validate_effort
 from omnigent.spec.types import RetryPolicy
+from omnigent.tools.mcp_search import MCP_TOOL_CALL_NAME
 
 from .async_utils import run_sync_on_thread
 from .executor import (
@@ -57,6 +58,31 @@ from .open_responses_sdk import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _databricks_base_url_for_model(host: str, model: str | None) -> str:
+    """Return the Databricks AI Gateway base URL that serves *model*.
+
+    ``system.ai.*`` models that route through the Responses surface (GLM,
+    kimi, inkling, qwen3) are served on the Codex Responses gateway
+    (``/ai-gateway/codex/v1``); the OpenAI gateway (``/ai-gateway/openai/v1``)
+    rejects them with "Responses API passthrough is not supported". Legacy
+    ``databricks-*`` names and GPT models stay on the OpenAI gateway.
+
+    :param host: Databricks workspace host.
+    :param model: The resolved model id (already alias-translated).
+    :returns: The gateway base URL the OpenAI client should target.
+    """
+    if model is not None and model.lower().startswith("system.ai."):
+        from omnigent.pi_model_compatibility import (
+            DatabricksPiSurface,
+            databricks_pi_surface_for_model,
+        )
+
+        if databricks_pi_surface_for_model(model) is DatabricksPiSurface.RESPONSES:
+            return f"{host.rstrip('/')}/ai-gateway/codex/v1"
+    return _databricks_openai_base_url(host)
+
 
 # Total run attempts per turn (1 initial + retries). The Databricks
 # gateway occasionally returns a completed-but-empty turn (status
@@ -133,10 +159,14 @@ def _normalize_responses_items_for_chat(
         if item.get("type") == "message":
             raw_content = item.get("content")
             if item.get("role") == "assistant" and isinstance(raw_content, str):
-                # The chat converter iterates assistant content expecting
-                # blocks, so a plain string is walked character by character and
-                # each one indexed. User strings take a different branch there.
-                item = {**item, "content": [{"type": "output_text", "text": raw_content}]}
+                # The SDK may collapse replayed assistant output to a string
+                # before call_model_input_filter runs. Its Chat Completions
+                # converter treats type=message + role=assistant as a Responses
+                # output item and therefore requires output content blocks.
+                item = {
+                    **item,
+                    "content": [{"type": "output_text", "text": raw_content}],
+                }
             elif isinstance(raw_content, list):
                 normalized_content = _normalize_content_blocks_for_chat(raw_content)
                 if normalized_content is not raw_content:
@@ -521,7 +551,7 @@ def _get_openai_async_client(
         try:
             auth, host = _resolve_databricks_auth(profile)
             return AsyncOpenAI(
-                base_url=base_url_override or _databricks_openai_base_url(host),
+                base_url=base_url_override or _databricks_base_url_for_model(host, model),
                 api_key=_OPENAI_KEY_PLACEHOLDER,
                 http_client=httpx.AsyncClient(auth=auth),
                 **retry_kwargs,
@@ -585,7 +615,7 @@ def _get_openai_async_client(
             "OPENAI_API_KEY/OPENAI_BASE_URL for non-Databricks OpenAI access."
         ) from exc
     return AsyncOpenAI(
-        base_url=base_url_override or _databricks_openai_base_url(host),
+        base_url=base_url_override or _databricks_base_url_for_model(host, model),
         api_key=_OPENAI_KEY_PLACEHOLDER,
         http_client=httpx.AsyncClient(auth=auth),
         **retry_kwargs,
@@ -809,6 +839,17 @@ def _tool_args_from_raw_item(raw_item: RawToolItem) -> RawToolItemParts:
     # with an explicit ternary at this dataclass boundary.
     resolved_name: str = name if name is not None else ""
     return RawToolItemParts(name=resolved_name, args=args, call_id=call_id)
+
+
+def _observed_tool_call(parts: RawToolItemParts) -> tuple[str, ToolArgs]:
+    """Expose the selected MCP tool, not the generic gateway, in events."""
+    if parts.name != MCP_TOOL_CALL_NAME:
+        return parts.name, parts.args
+    target_name = parts.args.get("name")
+    target_args = parts.args.get("arguments")
+    if isinstance(target_name, str) and "__" in target_name and isinstance(target_args, dict):
+        return target_name, target_args
+    return parts.name, parts.args
 
 
 def _build_reasoning_model_settings(effort: str | None) -> dict[str, object]:
@@ -1270,6 +1311,14 @@ class OpenAIAgentsSDKExecutor(Executor):
         state: _AgentsSessionState,
         messages: list[Message],
     ) -> None:
+        if not state.started:
+            # The SDK's SQLiteSession outlives the harness subprocess. After a
+            # model change or runner restart, Omnigent sends the authoritative
+            # full history again, so retaining SDK-local items would duplicate
+            # replay and may feed Responses-shaped state into a Chat model.
+            if await state.sdk_session.get_items():
+                await state.sdk_session.clear_session()
+
         if state.rollback_to_item_count is not None:
             await self._rewind_sdk_session(state, state.rollback_to_item_count)
             state.rollback_to_item_count = None
@@ -1358,7 +1407,26 @@ class OpenAIAgentsSDKExecutor(Executor):
                 except (TypeError, json.JSONDecodeError):
                     args = {}
 
-                result = self._tool_executor(_tool_name, args)
+                dispatch_name = _tool_name
+                dispatch_args = args
+                if _tool_name == MCP_TOOL_CALL_NAME:
+                    target_name = args.get("name") if isinstance(args, dict) else None
+                    target_args = args.get("arguments") if isinstance(args, dict) else None
+                    if (
+                        not isinstance(target_name, str)
+                        or "__" not in target_name
+                        or not isinstance(target_args, dict)
+                    ):
+                        return {
+                            "error": (
+                                "mcp_tool_call requires a namespaced server__tool "
+                                "name and an arguments object"
+                            )
+                        }
+                    dispatch_name = target_name
+                    dispatch_args = target_args
+
+                result = self._tool_executor(dispatch_name, dispatch_args)
                 if hasattr(result, "__await__"):
                     result = await result  # type: ignore[assignment]
                 return result
@@ -1487,7 +1555,9 @@ class OpenAIAgentsSDKExecutor(Executor):
         cfg = config or ExecutorConfig()
         # cfg.model (per-request /model override; agent name no longer
         # leaks here) wins over the spec default
-        # (HARNESS_OPENAI_AGENTS_MODEL → self._model_override).
+        # (HARNESS_OPENAI_AGENTS_MODEL → self._model_override). Both are
+        # already alias-translated upstream (spawn env + runner forward), so
+        # no apply_servable_alias here.
         model = cfg.model or self._model_override
         if model is None:
             provider_name = "databricks" if self._databricks else "openai"
@@ -1657,14 +1727,15 @@ class OpenAIAgentsSDKExecutor(Executor):
                         sdk_item = item_event.item
                         if sdk_item.type == "tool_call_item":
                             parts = _tool_args_from_raw_item(sdk_item.raw_item)
+                            observed_name, observed_args = _observed_tool_call(parts)
                             pending_tools[parts.call_id or parts.name] = (
-                                parts.name,
+                                observed_name,
                                 time.monotonic(),
                             )
                             saw_tool_activity = True
                             yield ToolCallRequest(
-                                name=parts.name,
-                                args=parts.args,
+                                name=observed_name,
+                                args=observed_args,
                                 metadata={"call_id": parts.call_id} if parts.call_id else {},
                             )
                         elif sdk_item.type == "tool_call_output_item":
@@ -1752,7 +1823,7 @@ class OpenAIAgentsSDKExecutor(Executor):
                     logger.error("OpenAIAgentsSDKExecutor: auth failed: %s", auth_msg)
                     yield ExecutorError(message=auth_msg)
                 else:
-                    logger.error("OpenAIAgentsSDKExecutor: run failed: %s", exc)
+                    logger.error("OpenAIAgentsSDKExecutor: run failed: %s", exc, exc_info=True)
                     yield ExecutorError(message=f"OpenAI Agents SDK error: {exc}")
                 return
             finally:

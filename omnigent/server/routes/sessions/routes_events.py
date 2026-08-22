@@ -16,6 +16,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from omnigent.entities import (
+    Conversation,
     ErrorData,
     NewConversationItem,
 )
@@ -23,15 +24,28 @@ from omnigent.entities.conversation import (
     parse_item_data,
 )
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import (
+    OMNIHARNESS_AGENT_NAME,
+    conversation_uses_omniharness,
+    is_omniharness_agent,
+)
 from omnigent.host.frames import (
     HARNESS_NOT_CONFIGURED_ERROR_CODE as _HARNESS_NOT_CONFIGURED_ERROR_CODE,
 )
 from omnigent.host.frames import (
     WORKSPACE_MISSING_ERROR_CODE as _WORKSPACE_MISSING_ERROR_CODE,
 )
+from omnigent.memory import (
+    DEFAULT_MEMORY_PROVIDER,
+    MemoryProvider,
+    compose_file_memory,
+    compose_memory,
+)
+from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
 from omnigent.runtime import (
+    pending_elicitations,
     session_stream,
 )
 from omnigent.runtime.agent_cache import AgentCache
@@ -74,6 +88,11 @@ from omnigent.server.routes._auth_helpers import (
     require_user as _require_user,
 )
 from omnigent.server.routes._errors import session_not_found as _session_not_found
+from omnigent.server.routes._host_filesystem import (
+    HostFsError,
+    HostFsUnavailableError,
+    read_workspace_from_host,
+)
 from omnigent.server.routes._sessions.common import (
     _ALLOWED_EVENT_TYPES,
     _APPROVAL_TYPE,
@@ -115,8 +134,10 @@ from omnigent.server.routes._sessions.common import (
     _interrupt_fenced_sessions,
     _logger,
     _pushed_model_options_cache,
+    _queue_status_feed,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
+    _session_worktree_status_cache,
     get_server_runner_router,
     set_server_runner_router,
 )
@@ -161,9 +182,14 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_policy_deny,
     _publish_session_superseded,
     _publish_status,
+    _publish_worktree_log,
+    _publish_worktree_status,
+    _remove_session_worktree,
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
+    _resolve_harness,
     _run_compact_locked,
+    _session_status_from_cache,
     _signal_harness_elicitation_resolved_by_id,
     _stop_session_host_runner,
     _stop_session_via_runner,
@@ -201,14 +227,17 @@ from omnigent.server.schemas import (
     ErrorDetail,
     McpServerStartup,
     SessionEventInput,
+    SessionRewindRequest,
 )
+
 from omnigent.session_lifecycle import (
     is_session_closed,
 )
-from omnigent.stores import AgentStore, ConversationStore
+from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.host_store import host_is_live
+from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import SessionDeletedEvent as _TelSessionDeletedEvent
@@ -220,6 +249,9 @@ _retry_recovery_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
 _retry_recovery_tasks: dict[str, asyncio.Task[dict[str, bool | str]]] = {}
+_session_lifecycle_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
 
 
 def _retry_recovery_lock(session_id: str) -> asyncio.Lock:
@@ -228,6 +260,15 @@ def _retry_recovery_lock(session_id: str) -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _retry_recovery_locks[session_id] = lock
+    return lock
+
+
+def _session_lifecycle_lock(session_id: str) -> asyncio.Lock:
+    """Serialize runner recovery against destructive session rewinds."""
+    lock = _session_lifecycle_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_lifecycle_locks[session_id] = lock
     return lock
 
 
@@ -242,7 +283,7 @@ def _evict_retry_recovery_task(
         completed_task.exception()
 
 
-async def _recover_retry_session(
+async def _recover_retry_session_locked(
     *,
     request: Request,
     session_id: str,
@@ -320,6 +361,23 @@ async def _recover_retry_session(
     return {"queued": False, "recovered": False, "recovery": "already_connected"}
 
 
+async def _recover_retry_session(
+    *,
+    request: Request,
+    session_id: str,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+) -> dict[str, bool | str]:
+    """Recover one session while excluding concurrent history rewinds."""
+    async with _session_lifecycle_lock(session_id):
+        return await _recover_retry_session_locked(
+            request=request,
+            session_id=session_id,
+            conversation_store=conversation_store,
+            runner_router=runner_router,
+        )
+
+
 async def _retry_session_single_flight(
     *,
     request: Request,
@@ -347,6 +405,91 @@ async def _retry_session_single_flight(
     return await asyncio.shield(task)
 
 
+_rewinding_sessions: set[str] = set()
+_auto_worktree_restore_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _compose_turn_memory(
+    memory_store: MemoryStore | None,
+    *,
+    user_id: str | None,
+    uses_omniharness: bool,
+    event_type: str,
+    role: Any,
+    max_tokens: int,
+    model: str | None,
+    host_registry: HostRegistry | None = None,
+    host_id: str | None = None,
+    workspace: str | None = None,
+) -> str | None:
+    """Fetch and render memory only for OmniHarness user turns."""
+    if memory_store is None or event_type != "message" or role != "user" or not uses_omniharness:
+        return None
+    provider: MemoryProvider = await asyncio.to_thread(
+        memory_store.get_provider,
+        user_id=user_id,
+        default=DEFAULT_MEMORY_PROVIDER,
+    )
+    effective_max_tokens = await asyncio.to_thread(
+        memory_store.get_max_tokens,
+        user_id=user_id,
+        default=max_tokens,
+    )
+    if provider == "omniharness":
+        categories = await asyncio.to_thread(memory_store.list, user_id=user_id)
+        return compose_memory(categories, effective_max_tokens, model=model)
+
+    documents: list[tuple[str, str]] = []
+    if host_registry is not None and host_id is not None:
+        connection = host_registry.get(host_id)
+        if connection is not None and connection.owner == user_id:
+            try:
+                payload = await read_workspace_from_host(
+                    host_registry=host_registry,
+                    host_conn=connection,
+                    op="memory.project.read",
+                    workspace=workspace or "",
+                    session_id="",
+                    params={"provider": provider},
+                )
+                global_file = payload.get("global_file")
+                if isinstance(global_file, dict) and isinstance(global_file.get("content"), str):
+                    documents.append(
+                        (
+                            f"~/{global_file.get('rel_home_path', '')}",
+                            global_file["content"],
+                        )
+                    )
+                    host_registry.record_memory_file(
+                        host_id,
+                        global_file,
+                        workspace_id=connection.workspace_id,
+                    )
+                project_files = payload.get("project_files")
+                if isinstance(project_files, list):
+                    documents.extend(
+                        (item["path"], item["content"])
+                        for item in project_files
+                        if isinstance(item, dict)
+                        and isinstance(item.get("path"), str)
+                        and isinstance(item.get("content"), str)
+                    )
+            except (HostFsError, HostFsUnavailableError):
+                _logger.warning(
+                    "Failed to read %s memory files for session host %s",
+                    provider,
+                    host_id,
+                    exc_info=True,
+                )
+        elif connection is not None:
+            _logger.warning(
+                "Skipped %s memory files for session host %s owned by another user",
+                provider,
+                host_id,
+            )
+    return compose_file_memory(provider, documents, effective_max_tokens, model=model)
+
+
 def register_events_routes(
     router: APIRouter,
     *,
@@ -363,6 +506,9 @@ def register_events_routes(
     host_registry: HostRegistry | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
     runner_tunnel_tokens: frozenset[str] | None = None,
+    memory_store: MemoryStore | None = None,
+    memory_max_tokens: int = 20_000,
+    prompt_profile_store: PromptProfileStore | None = None,
 ) -> None:
     """Register the events, stream, and delete routes on router."""
 
@@ -374,6 +520,109 @@ def register_events_routes(
             return True
         runner_id = getattr(conv, "runner_id", None)
         return isinstance(runner_id, str) and token_bound_runner_id(token) == runner_id
+
+    async def _renew_or_relocate_auto_worktree(conv: Conversation) -> Conversation:
+        if conv.labels.get("omnigent.auto_worktree") != "1":
+            return conv
+        if conv.host_id is None or conv.workspace is None or conv.git_branch is None:
+            raise OmnigentError(
+                "auto worktree session is missing its host, workspace, or branch",
+                code=ErrorCode.CONFLICT,
+            )
+        if host_registry is None:
+            raise OmnigentError("host registry is unavailable", code=ErrorCode.CONFLICT)
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is None:
+            raise OmnigentError("session host is offline", code=ErrorCode.CONFLICT)
+        if not host_conn.hello.managed_worktree_leases:
+            raise OmnigentError(
+                "session host must be upgraded before its worktree lease can be restored",
+                code=ErrorCode.CONFLICT,
+            )
+
+        from omnigent.server.routes._host_worktree import (
+            WorktreeProxyError,
+            create_worktree_on_host,
+            renew_worktree_lease_on_host,
+        )
+
+        try:
+            renewed = await renew_worktree_lease_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                worktree_path=conv.workspace,
+                lease_owner=conv.id,
+            )
+        except WorktreeProxyError as exc:
+            raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
+        if renewed:
+            return conv
+
+        _publish_worktree_status(conv.id, "reacquiring", branch=conv.git_branch)
+        _publish_worktree_log(conv.id, "The previous worktree was reassigned; relocating…")
+        if conv.runner_id is not None:
+            stopped = await _stop_session_host_runner(
+                conv.id,
+                conv.host_id,
+                conv.runner_id,
+                host_registry,
+                missing_ok=True,
+            )
+            if not stopped:
+                _publish_worktree_status(
+                    conv.id,
+                    "failed",
+                    branch=conv.git_branch,
+                    error="could not stop the stale runner before relocation",
+                )
+                raise OmnigentError(
+                    "Could not safely relocate the session workspace; retry after stopping its runner.",
+                    code=ErrorCode.CONFLICT,
+                )
+            await asyncio.to_thread(
+                conversation_store.clear_runner_id,
+                conv.id,
+                bump_updated_at=False,
+            )
+
+        source_repo = conv.labels.get("omnigent.auto_worktree.source_repo")
+        if not source_repo:
+            raise OmnigentError(
+                "auto worktree session is missing its source repository",
+                code=ErrorCode.CONFLICT,
+            )
+        _publish_worktree_status(conv.id, "relocating", branch=conv.git_branch)
+
+        def _on_log(line: str) -> None:
+            _publish_worktree_log(conv.id, line)
+
+        try:
+            created = await create_worktree_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                repo_path=source_repo,
+                branch_name=conv.git_branch,
+                base_branch=None,
+                auto_reuse=True,
+                reuse_existing_branch=True,
+                lease_owner=conv.id,
+                on_log=_on_log,
+            )
+        except WorktreeProxyError as exc:
+            _publish_worktree_status(
+                conv.id, "failed", branch=conv.git_branch, error=exc.message
+            )
+            raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
+        await asyncio.to_thread(
+            conversation_store.set_host_id,
+            conv.id,
+            conv.host_id,
+            workspace=created.worktree_path,
+            git_branch=created.branch,
+        )
+        _publish_worktree_status(conv.id, "ready", branch=created.branch)
+        refreshed = await asyncio.to_thread(conversation_store.get_conversation, conv.id)
+        return refreshed or conv
 
     @router.post(
         "/sessions/{session_id}/events",
@@ -473,6 +722,15 @@ def register_events_routes(
         :raises OmnigentError: 404 if no session exists.
         """
         user_id = _get_user_id(request, auth_provider)
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and session_id in _rewinding_sessions
+        ):
+            raise OmnigentError(
+                "Session history is being rewound; retry this message after it completes.",
+                code=ErrorCode.CONFLICT,
+            )
         access = await _require_access_and_level(
             user_id, session_id, LEVEL_EDIT, permission_store, conversation_store
         )
@@ -481,6 +739,33 @@ def register_events_routes(
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise _session_not_found()
+        worktree_status = _session_worktree_status_cache.get(session_id)
+        retrying_auto_restore = (
+            worktree_status is not None
+            and worktree_status.stage == "failed"
+            and conv.labels.get("omnigent.auto_worktree") == "1"
+        )
+        if (
+            worktree_status is not None
+            and not retrying_auto_restore
+            and body.type in ("message", _SLASH_COMMAND_TYPE, _RETRY_SESSION_TYPE)
+        ):
+            detail = (
+                "Worktree creation is still running; retry after it completes."
+                if worktree_status.stage == "creating"
+                else "Worktree creation failed; resolve the failure before sending a message."
+            )
+            raise OmnigentError(detail, code=ErrorCode.CONFLICT)
+        if body.type in ("message", _SLASH_COMMAND_TYPE, _RETRY_SESSION_TYPE):
+            if retrying_auto_restore:
+                _session_worktree_status_cache.pop(session_id, None)
+            restore_lock = _auto_worktree_restore_locks.setdefault(session_id, asyncio.Lock())
+            async with restore_lock:
+                latest = await asyncio.to_thread(
+                    conversation_store.get_conversation,
+                    session_id,
+                )
+                conv = await _renew_or_relocate_auto_worktree(latest or conv)
         created_by = _attribution_user(user_id)
         body_created_by = _attribution_user(body.created_by)
         if body_created_by is not None:
@@ -1068,6 +1353,26 @@ def register_events_routes(
                 background_task_count=bg_count,
                 blocked_on=blocked_on,
             )
+            from omnigent.agent_tasks.completion import (
+                notify_worker_session_status,
+                observe_worker_session_status,
+            )
+
+            output_text = output if isinstance(output, str) else None
+            await observe_worker_session_status(
+                session_id,
+                status,
+                needs_response=blocked_on is not None,
+                failure_reason=output_text if status == "failed" else None,
+            )
+            if status in {"idle", "failed"}:
+                await notify_worker_session_status(
+                    session_id,
+                    status,
+                    output=output_text,
+                )
+            if _queue_status_feed is not None:
+                await _queue_status_feed.notify(session_id, status)
             forward_body = body.model_dump()
             forward_body["data"] = await _enrich_idle_status_with_subagent_output(
                 forward_body["data"], status, session_id, conversation_store
@@ -1306,6 +1611,42 @@ def register_events_routes(
                     code=ErrorCode.RUNNER_UNAVAILABLE,
                 ) from exc
             return {"queued": True, "item_id": body.data["call_id"]}
+        # interrupt_first: interrupt the active turn and wait for it to
+        # settle before dispatching this message as a fresh turn (instead
+        # of steering into the running turn). Mirrors the rewind settle
+        # loop: forward an interrupt, poll live_status until not-running,
+        # then fall through to the normal item dispatch below.
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and body.interrupt_first
+            and (
+                _session_status_from_cache(session_id, conv.live_status) == "running"
+                or pending_elicitations.count_for(session_id) > 0
+            )
+        ):
+            await post_event(
+                request,
+                session_id,
+                SessionEventInput(type=_INTERRUPT_TYPE, data={}),
+            )
+            deadline = asyncio.get_running_loop().time() + 10.0
+            while True:
+                current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+                db_status = current.live_status if current is not None else None
+                settled = _session_status_from_cache(session_id, db_status) != "running"
+                no_elicitations = pending_elicitations.count_for(session_id) == 0
+                if settled and no_elicitations:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise OmnigentError(
+                        "Timed out waiting for the active turn to stop.",
+                        code=ErrorCode.CONFLICT,
+                    )
+                await asyncio.sleep(0.05)
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+            if conv is None:
+                raise _session_not_found()
         # Whether the runner was initially unavailable or was woken below. In
         # that case the session-init handshake may still be racing the first
         # message, even if we reused the original binding instead of launching
@@ -1651,6 +1992,9 @@ def register_events_routes(
         # asyncio.to_thread wrapper covers the rare cold-cache path
         # where the bundle is extracted from disk for the first time.
         _has_mcp_servers = False
+        _profile_instructions: str | None = None
+        _memory_instructions: str | None = None
+        _loaded_spec: Any | None = None
         if _agent is not None and agent_cache is not None and _agent.bundle_location:
             try:
                 _loaded_agent = await asyncio.to_thread(
@@ -1658,6 +2002,7 @@ def register_events_routes(
                     _agent.id,
                     _agent.bundle_location,
                 )
+                _loaded_spec = _loaded_agent.spec
                 _has_mcp_servers = bool(_loaded_agent.spec.mcp_servers)
             except Exception:
                 _logger.warning(
@@ -1665,6 +2010,66 @@ def register_events_routes(
                     session_id,
                     exc_info=True,
                 )
+        _resolved_harness = _resolve_harness(
+            conv,
+            agent_store=agent_store,
+            agent_cache=agent_cache,
+        )
+        _uses_omniharness = is_omniharness_agent(_agent)
+        _spec_model = None
+        if _loaded_spec is not None:
+            _spec_model = _loaded_spec.executor.model or (
+                _loaded_spec.llm.model if _loaded_spec.llm is not None else None
+            )
+        _memory_instructions = await _compose_turn_memory(
+            memory_store,
+            # The local sentinel is hidden from attribution but still owns memory rows.
+            user_id=user_id,
+            uses_omniharness=_uses_omniharness,
+            event_type=body.type,
+            role=body.data.get("role"),
+            max_tokens=memory_max_tokens,
+            model=body.model_override or conv.model_override or _spec_model,
+            host_registry=host_registry,
+            host_id=conv.host_id,
+            workspace=conv.workspace,
+        )
+        _selected_profile_name = _agent.name if _agent is not None else None
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and _uses_omniharness
+            and conv.prompt_profile_mode is not None
+        ):
+            if prompt_profile_store is None:
+                raise OmnigentError(
+                    "Prompt profile selection is unavailable",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            if conv.prompt_profile_mode == "fixed":
+                assert conv.prompt_profile_id is not None
+                _stored_profile = await asyncio.to_thread(
+                    prompt_profile_store.get,
+                    conv.prompt_profile_id,
+                )
+                if _stored_profile is None:
+                    raise OmnigentError(
+                        f"Profile not found or unavailable: {conv.prompt_profile_id!r}",
+                        code=ErrorCode.NOT_FOUND,
+                    )
+                _selected_profile_name = _stored_profile.name
+                _profile_instructions = await asyncio.to_thread(
+                    load_prompt_profile_instructions,
+                    _stored_profile.id,
+                    prompt_profile_store,
+                    require_selectable=False,
+                )
+        if body.type == "message" and body.data.get("role") == "user":
+            body.data["execution_context"] = {
+                "profile": _selected_profile_name,
+                "harness": OMNIHARNESS_AGENT_NAME if _uses_omniharness else _resolved_harness,
+                "model": body.model_override or conv.model_override or _spec_model,
+            }
         pending_background_title = prepare_background_session_title(
             coordinator=background_title_coordinator,
             conversation=conv,
@@ -1706,6 +2111,15 @@ def register_events_routes(
             if pending_background_title is not None:
                 pending_background_title.schedule()
             return {"queued": True, "item_id": item_id}
+        if (
+            body.type == "message"
+            and body.data.get("role") == "user"
+            and session_id in _rewinding_sessions
+        ):
+            raise OmnigentError(
+                "Session history is being rewound; retry this message after it completes.",
+                code=ErrorCode.CONFLICT,
+            )
         dispatch = await _dispatch_session_event_to_runner(
             session_id,
             conv,
@@ -1716,12 +2130,20 @@ def register_events_routes(
             file_store=file_store,
             artifact_store=artifact_store,
             has_mcp_servers=_has_mcp_servers,
+            agent_version=_agent.version if _agent else None,
             created_by=created_by,
             runner_router=runner_router,
             native_terminal_ready=native_terminal_ready,
+            profile_instructions=_profile_instructions,
+            memory_instructions=_memory_instructions,
             # Read only for the gateway-backing check that decides which router
             # serves this turn; absent, routing keeps its default posture.
             host_store=getattr(request.app.state, "host_store", None),
+            # Global Omnigent routing settings are read for every user turn so
+            # admin updates apply without restarting the server.
+            model_settings_store=getattr(request.app.state, "model_settings_store", None),
+            prompt_profile_store=prompt_profile_store,
+            uses_omniharness=_uses_omniharness,
         )
         if pending_background_title is not None:
             pending_background_title.schedule()
@@ -1737,6 +2159,88 @@ def register_events_routes(
         if dispatch.pending_id is not None:
             response["pending_id"] = dispatch.pending_id
         return response
+
+    @router.post(
+        "/sessions/{session_id}/rewind",
+        response_model=None,
+    )
+    async def rewind_session(
+        request: Request,
+        session_id: str,
+        body: SessionRewindRequest,
+    ) -> dict[str, str]:
+        """Interrupt, settle, then truncate a session from a user message."""
+        user_id = _get_user_id(request, auth_provider)
+        access = await _require_access_and_level(
+            user_id, session_id, LEVEL_EDIT, permission_store, conversation_store
+        )
+        conv = access.conversation
+        if conv is None:
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if conv is None:
+            raise _session_not_found()
+        await _require_access(
+            user_id,
+            session_id,
+            LEVEL_OWNER,
+            permission_store,
+            conversation_store,
+        )
+        if not conversation_uses_omniharness(conv, agent_store):
+            raise OmnigentError(
+                "Rewind is currently supported only for OmniHarness sessions.",
+                code=ErrorCode.INVALID_INPUT,
+            )
+
+        lifecycle_lock = _session_lifecycle_lock(session_id)
+        await lifecycle_lock.acquire()
+        _rewinding_sessions.add(session_id)
+        try:
+            if (
+                _session_status_from_cache(session_id, conv.live_status) == "running"
+                or pending_elicitations.count_for(session_id) > 0
+            ):
+                await post_event(
+                    request,
+                    session_id,
+                    SessionEventInput(type=_INTERRUPT_TYPE, data={}),
+                )
+
+            deadline = asyncio.get_running_loop().time() + 10.0
+            while True:
+                current = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+                db_status = current.live_status if current is not None else None
+                settled = _session_status_from_cache(session_id, db_status) != "running"
+                no_elicitations = pending_elicitations.count_for(session_id) == 0
+                if settled and no_elicitations:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise OmnigentError(
+                        "Timed out waiting for the active turn to stop; history was not changed.",
+                        code=ErrorCode.CONFLICT,
+                    )
+                await asyncio.sleep(0.05)
+
+            try:
+                await asyncio.to_thread(
+                    conversation_store.rewind_conversation,
+                    session_id,
+                    from_message_id=body.from_message_id,
+                )
+            except LookupError as exc:
+                raise OmnigentError(str(exc), code=ErrorCode.NOT_FOUND) from exc
+            except ValueError as exc:
+                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+
+            _interrupt_fenced_sessions.discard(session_id)
+            _publish_status(session_id, "idle")
+            return {
+                "session_id": session_id,
+                "from_message_id": body.from_message_id,
+            }
+        finally:
+            _rewinding_sessions.discard(session_id)
+            lifecycle_lock.release()
 
     # ── GET /sessions/{session_id}/stream ────────────────────────
 
@@ -1969,9 +2473,9 @@ def register_events_routes(
             has a server-created worktree (``git_branch`` set), the
             host removes the worktree directory and deletes its branch
             (``git worktree remove --force`` then ``git branch -D``).
-            Ignored for sessions with no worktree. Best-effort: a
-            cleanup failure does not block the delete. Defaults to
-            ``False`` (worktree and branch left untouched). See
+            Ignored for sessions with no worktree. A cleanup failure
+            aborts the session deletion and is returned to the caller.
+            Defaults to ``False`` (worktree and branch left untouched). See
             designs/SESSION_GIT_WORKTREE.md.
         :returns: A :class:`ConversationDeleted` confirmation.
         :raises OmnigentError: 404 if no session or no access,
@@ -2028,6 +2532,47 @@ def register_events_routes(
 
             with contextlib.suppress(RuntimeError):
                 await get_terminal_registry().cleanup_conversation(session_id)
+        # Opt-in git worktree cleanup: only when delete_branch=true and
+        # the session has a server-created worktree. Keep the session row
+        # and files when cleanup fails so the caller can retry.
+        if (
+            delete_branch
+            and conv.git_branch is not None
+            and conv.workspace is not None
+            and conv.host_id is not None
+        ):
+            await _remove_session_worktree(
+                host_id=conv.host_id,
+                worktree_path=conv.workspace,
+                branch=conv.git_branch,
+                delete_branch=True,
+                request=request,
+            )
+        if (
+            conv.labels.get("omnigent.auto_worktree") == "1"
+            and conv.host_id is not None
+            and conv.workspace is not None
+            and host_registry is not None
+        ):
+            host_conn = host_registry.get(conv.host_id)
+            if host_conn is not None:
+                from omnigent.server.routes._host_worktree import (
+                    WorktreeProxyError,
+                    release_worktree_lease_on_host,
+                )
+
+                try:
+                    await release_worktree_lease_on_host(
+                        host_registry=host_registry,
+                        host_conn=host_conn,
+                        worktree_path=conv.workspace,
+                        lease_owner=conv.id,
+                    )
+                except WorktreeProxyError:
+                    _logger.warning(
+                        "Failed to release managed worktree lease for deleted session %s",
+                        session_id,
+                    )
         # Session file cleanup.
         if file_store is not None and artifact_store is not None:
             deleted_file_ids = await asyncio.to_thread(
@@ -2035,23 +2580,6 @@ def register_events_routes(
             )
             for fid in deleted_file_ids:
                 await asyncio.to_thread(artifact_store.delete, fid)
-        # Opt-in git worktree cleanup: only when delete_branch=true and
-        # the session has a server-created worktree. Runs after runner
-        # teardown; best-effort (designs/SESSION_GIT_WORKTREE.md).
-        if (
-            delete_branch
-            and conv.git_branch is not None
-            and conv.workspace is not None
-            and conv.host_id is not None
-        ):
-            await _remove_session_worktree_best_effort(
-                host_id=conv.host_id,
-                worktree_path=conv.workspace,
-                branch=conv.git_branch,
-                delete_branch=True,
-                request=request,
-                reason="session-delete",
-            )
         _interrupt_fenced_sessions.discard(session_id)
         _intentional_stop_sessions.discard(session_id)
         deleted = await conversation_store.delete_conversation(session_id)
@@ -2063,6 +2591,10 @@ def register_events_routes(
         # failed-launch session would leak one entry for the process
         # lifetime.
         _session_sandbox_status_cache.pop(session_id, None)
+        # Worktree logs, including successful runs, remain available for
+        # session revisits and must be released with the deleted session.
+        _session_worktree_status_cache.pop(session_id, None)
+        _auto_worktree_restore_locks.pop(session_id, None)
         # Same for MCP startup state: failed/cancelled maps are retained
         # for reload visibility while the session exists, so a session
         # whose MCP startup never settled clean would leak its entry.

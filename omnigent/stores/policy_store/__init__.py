@@ -10,6 +10,13 @@ from typing import Any
 from omnigent.entities import Policy
 
 
+class UnsetFactoryParams:
+    """Sentinel distinguishing an omitted update from an explicit null."""
+
+
+UNSET_FACTORY_PARAMS = UnsetFactoryParams()
+
+
 class PolicyStore(ABC):
     """
     Abstract base for policy persistence.
@@ -104,6 +111,7 @@ class PolicyStore(ABC):
         *,
         name: str | None = None,
         handler: str | None = None,
+        factory_params: dict[str, Any] | None | UnsetFactoryParams = UNSET_FACTORY_PARAMS,
         enabled: bool | None = None,
     ) -> Policy | None:
         """
@@ -115,6 +123,8 @@ class PolicyStore(ABC):
         :param session_id: The owning session.
         :param name: New name.
         :param handler: New handler path or URL.
+        :param factory_params: New factory kwargs. The unset sentinel
+            leaves them unchanged; ``None`` clears them.
         :param enabled: New enabled flag.
         :returns: The updated :class:`Policy`, or ``None``.
         """
@@ -198,6 +208,7 @@ class PolicyStore(ABC):
         *,
         name: str | None = None,
         handler: str | None = None,
+        factory_params: dict[str, Any] | None | UnsetFactoryParams = UNSET_FACTORY_PARAMS,
         enabled: bool | None = None,
     ) -> Policy | None:
         """
@@ -207,6 +218,8 @@ class PolicyStore(ABC):
         :param policy_id: Opaque policy identifier.
         :param name: New name.
         :param handler: New handler path or URL.
+        :param factory_params: New factory kwargs. The unset sentinel
+            leaves them unchanged; ``None`` clears them.
         :param enabled: New enabled flag.
         :returns: The updated :class:`Policy`, or ``None``.
         """

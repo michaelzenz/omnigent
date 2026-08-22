@@ -24,7 +24,7 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -269,6 +269,7 @@ class HostConnection:
     outbound_queue: asyncio.Queue[str | None]
     connected_at: float
     last_frame_at: float
+    duplicate_daemon: bool = False
     pending_launches: dict[str, asyncio.Future[dict[str, str | None]]] = field(
         default_factory=dict,
     )
@@ -287,10 +288,19 @@ class HostConnection:
     pending_create_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict,
     )
+    # Per-request_id log-line callbacks for in-flight worktree creation.
+    # Called by host_tunnel when a HostWorktreeLogFrame arrives, so the
+    # server can relay each line to the session's SSE stream in real time.
+    pending_worktree_log_handlers: dict[str, Callable[[str], None]] = field(
+        default_factory=dict,
+    )
     pending_remove_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict,
     )
     pending_list_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_renew_worktree_leases: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict,
     )
     pending_create_dirs: dict[str, asyncio.Future[dict[str, Any]]] = field(
@@ -317,6 +327,26 @@ class HostConnection:
     )
 
 
+def _fail_pending_worktree_operations(conn: HostConnection) -> None:
+    """Release worktree requests that can no longer receive a tunnel reply."""
+    def _fail(future: asyncio.Future[dict[str, Any]]) -> None:
+        if not future.done():
+            future.set_exception(
+                ConnectionError(f"host '{conn.host_id}' disconnected during worktree operation")
+            )
+
+    for pending in (
+        conn.pending_create_worktrees,
+        conn.pending_remove_worktrees,
+        conn.pending_list_worktrees,
+        conn.pending_renew_worktree_leases,
+    ):
+        for future in pending.values():
+            future.get_loop().call_soon_threadsafe(_fail, future)
+        pending.clear()
+    conn.pending_worktree_log_handlers.clear()
+
+
 class HostRegistry:
     """Thread-safe registry of live host WebSocket connections.
 
@@ -338,6 +368,59 @@ class HostRegistry:
         # answer) and lost with the process, which is the point — a restarted
         # server re-learns it from the reconnect handshake.
         self._gateway_inference: dict[str, dict[str, bool]] = {}
+        self._skill_inventories: dict[str, list[dict[str, str]]] = {}
+        self._memory_file_inventories: dict[tuple[int, str], dict[str, dict[str, object]]] = {}
+
+    def record_skill_inventory(self, host_id: str, skills: list[dict[str, object]]) -> None:
+        """Replace the latest host-reported global skill inventory."""
+        normalized: list[dict[str, str]] = []
+        for skill in skills:
+            fields = ("name", "description", "harness", "rel_home_path", "content_sha256")
+            if not all(isinstance(skill.get(field), str) for field in fields):
+                continue
+            normalized.append({field: str(skill[field]) for field in fields})
+        with self._lock:
+            self._skill_inventories[_canonical_host_id(host_id)] = normalized
+
+    def skill_inventory(self, host_id: str) -> list[dict[str, str]] | None:
+        """Return a copy of the latest inventory reported by a host."""
+        with self._lock:
+            inventory = self._skill_inventories.get(_canonical_host_id(host_id))
+            return [dict(skill) for skill in inventory] if inventory is not None else None
+
+    def record_memory_file(
+        self,
+        host_id: str,
+        file_data: dict[str, object],
+        *,
+        workspace_id: int | None = None,
+    ) -> None:
+        """Cache one host's latest global memory file state."""
+        provider = file_data.get("provider")
+        if provider not in {"claude", "agents"}:
+            return
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            host_files = self._memory_file_inventories.setdefault(
+                (ws_id, _canonical_host_id(host_id)),
+                {},
+            )
+            host_files[str(provider)] = dict(file_data)
+
+    def memory_file(
+        self,
+        host_id: str,
+        provider: str,
+        *,
+        workspace_id: int | None = None,
+    ) -> dict[str, object] | None:
+        """Return the latest cached global memory file for one host."""
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            value = self._memory_file_inventories.get(
+                (ws_id, _canonical_host_id(host_id)), {}
+            ).get(provider)
+            return dict(value) if value is not None else None
 
     def register(
         self,
@@ -389,11 +472,21 @@ class HostRegistry:
             key = (ws_id, host_id)
             old = self._hosts.get(key)
             if old is not None:
-                _logger.info(
-                    "replacing stale host connection: ws=%s host=%s",
+                old_instance = old.hello.instance_id
+                new_instance = hello.instance_id
+                conn.duplicate_daemon = (
+                    old_instance is not None
+                    and new_instance is not None
+                    and old_instance != new_instance
+                )
+                log = _logger.warning if conn.duplicate_daemon else _logger.info
+                log(
+                    "%s host connection: ws=%s host=%s",
+                    "duplicate daemon replacing" if conn.duplicate_daemon else "replacing stale",
                     ws_id,
                     host_id,
                 )
+                _fail_pending_worktree_operations(old)
                 old.outbound_queue.put_nowait(None)
             self._hosts[key] = conn
         return conn
@@ -429,6 +522,7 @@ class HostRegistry:
             removed = self._hosts.pop(key)
         # Without this the route handler's loops keep running and its ping loop
         # keeps the host row online, even though the host is now unreachable.
+        _fail_pending_worktree_operations(removed)
         removed.outbound_queue.put_nowait(None)
         return True
 

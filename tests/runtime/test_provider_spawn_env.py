@@ -1142,19 +1142,39 @@ def test_codex_subscription_default_pins_builtin_openai(config_home: Path) -> No
     assert "HARNESS_CODEX_GATEWAY" not in env
 
 
-def test_openai_agents_cli_config_default_fails_loud(config_home: Path) -> None:
-    """A cli-config default cannot drive the openai-agents-sdk harness.
-
-    The pinned provider exists only inside ~/.codex/config.toml, which only
-    the codex CLI reads. Failure (no exception) means openai-agents would
-    launch with no credential at all and die opaquely at the first request.
-    """
-    from omnigent.errors import OmnigentError
-
+def test_openai_agents_cli_config_databricks_default_routes_gateway(
+    config_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Codex Databricks provider also drives the OpenAI Agents harness."""
+    _isolate_home_with_codex_config(config_home, monkeypatch)
     _write_config(config_home, _cli_config_default_config())
     spec = _make_spec(harness="openai-agents")
 
-    with pytest.raises(OmnigentError, match=r"cli-config.*codex"):
+    env = _build_openai_agents_sdk_spawn_env(spec)
+
+    assert env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] == (
+        "https://example.ai-gateway.cloud.databricks.com/codex/v1"
+    )
+    assert env["HARNESS_OPENAI_AGENTS_GATEWAY_HOST"] == (
+        "https://example.ai-gateway.cloud.databricks.com"
+    )
+    assert env["HARNESS_OPENAI_AGENTS_GATEWAY_AUTH_COMMAND"] == "jq"
+    assert env["HARNESS_OPENAI_AGENTS_MODEL"] == _CATALOG_DEFAULTS[("databricks", "openai")]
+
+
+def test_openai_agents_cli_config_without_databricks_transport_fails_loud(
+    config_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unresolved Codex provider never launches OpenAI Agents without credentials."""
+    from omnigent.errors import OmnigentError
+
+    monkeypatch.setenv("HOME", str(config_home))
+    _write_config(config_home, _cli_config_default_config())
+    spec = _make_spec(harness="openai-agents")
+
+    with pytest.raises(OmnigentError, match=r"cannot drive.*openai-agents-sdk"):
         _build_openai_agents_sdk_spawn_env(spec)
 
 
@@ -1163,9 +1183,8 @@ def test_pi_cli_config_databricks_default_routes_gateway(
 ) -> None:
     """A cli-config Databricks gateway default routes the pi (gateway) harness.
 
-    Unlike openai-agents (which fails loud), pi CAN consume a cli-config
-    Databricks AI Gateway — the gateway's Anthropic Messages surface is one Pi
-    speaks. The gateway-harness pi path must translate it into the
+    Pi consumes a cli-config Databricks AI Gateway through the gateway's
+    Anthropic Messages surface. The gateway-harness pi path must translate it into the
     ``HARNESS_PI_GATEWAY_*`` transport (the same vars an inline gateway emits),
     pointing at the gateway's ``/anthropic`` surface — NOT raise the
     "can only drive the 'codex' harness" error.

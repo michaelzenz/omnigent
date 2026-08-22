@@ -168,7 +168,7 @@ export type SessionStatus = "idle" | "launching" | "running" | "waiting" | "fail
  * Mirrors `omnigent.server.schemas.SessionEventInput`.
  */
 export type SessionEventInput =
-  | { type: "message"; data: { role: "user"; content: ContentBlock[] } }
+  | { type: "message"; data: { role: "user"; content: ContentBlock[] }; interrupt_first?: boolean }
   | { type: "function_call_output"; data: Record<string, unknown> }
   | { type: "approval"; data: Record<string, unknown> }
   | { type: "interrupt"; data?: Record<string, unknown> }
@@ -236,6 +236,11 @@ export interface ModelUsage {
   totalCostUsd: number | null;
 }
 
+export type PromptProfileSelection =
+  | { mode: "auto" }
+  | { mode: "auto_include" }
+  | { mode: "fixed"; profileId: string };
+
 export interface Session {
   id: string;
   agentId: string;
@@ -285,6 +290,8 @@ export interface Session {
    * `omnigent.fork.source_id` on an unbound coding clone).
    */
   labels?: Record<string, string>;
+  /** Prompt overlay used by Omnigent; null for other execution targets. */
+  promptProfile?: PromptProfileSelection | null;
   /**
    * Canonical working directory the runner starts in, e.g.
    * ``"/Users/alice/myrepo"`` (or a worktree path). ``null`` when
@@ -340,6 +347,8 @@ export interface Session {
   subagentRoutingOverride?: "on" | "off" | null;
   /** Model context window size in tokens as looked up server-side. */
   contextWindow?: number | null;
+  /** True when OmniHarness is using an unpublished fallback size. */
+  contextWindowIsEstimate?: boolean;
   /**
    * Input token count from the most recently completed task's usage.
    * ``null`` when no task has completed yet. Lets the context-ring
@@ -464,6 +473,13 @@ export interface Session {
    */
   sandboxStatus?: SandboxStatus | null;
   /**
+   * Git-worktree creation progress. Present while the background
+   * worktree task is running or has failed; `null` once the worktree
+   * is created. Sourced from the server's
+   * `_session_worktree_status_cache` at snapshot build time.
+   */
+  worktreeStatus?: WorktreeStatus | null;
+  /**
    * Per-MCP-server startup state for native harness sessions
    * (codex-native). Present while the harness boots its MCP servers or
    * when servers were cancelled/failed; `null` otherwise. Sourced from
@@ -503,6 +519,22 @@ export interface SandboxStatus {
   stage: SandboxLaunchStage;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */
   error?: string | null;
+}
+
+/**
+ * Git-worktree creation progress — mirrors
+ * `omnigent.server.schemas.WorktreeStatus`. Drives the worktree-creation
+ * log panel on the session page while the background worktree task runs.
+ */
+export interface WorktreeStatus {
+  /** Current creation or restore stage. */
+  stage: "creating" | "reacquiring" | "relocating" | "ready" | "failed";
+  /** The branch being created, e.g. `"feature/login"`. */
+  branch?: string | null;
+  /** Failure detail when `stage === "failed"`; `null` otherwise. */
+  error?: string | null;
+  /** Recent git output retained for clients that connect after creation starts. */
+  logLines?: string[];
 }
 
 /**

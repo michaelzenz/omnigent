@@ -1,5 +1,6 @@
 import type * as UseWorkspaceChangedFilesModule from "@/hooks/useWorkspaceChangedFiles";
 import type * as UseSessionModule from "@/hooks/useSession";
+import type * as UsePromptProfilesModule from "@/hooks/usePromptProfiles";
 import type * as UseHostsModule from "@/hooks/useHosts";
 import type * as RunnerHealthProviderModule from "@/hooks/RunnerHealthProvider";
 import type * as AgentLabelsModule from "@/lib/agentLabels";
@@ -27,6 +28,10 @@ vi.mock("@/hooks/useSession", async (importOriginal) => ({
   ...(await importOriginal<typeof UseSessionModule>()),
   useSession: () => ({ session: { hostId: null }, isLoading: false, error: null }),
 }));
+vi.mock("@/hooks/usePromptProfiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof UsePromptProfilesModule>()),
+  usePromptProfiles: () => ({ data: [] }),
+}));
 vi.mock("@/hooks/useHosts", async (importOriginal) => ({
   ...(await importOriginal<typeof UseHostsModule>()),
   useHosts: () => ({ data: [] }),
@@ -48,9 +53,15 @@ vi.mock("@/lib/agentLabels", async (importOriginal) => ({
 }));
 import type { ElicitationBlock } from "@/lib/blocks";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Composer, isSubagentRoutingEligible, shouldQueueSend } from "./ChatPage";
+import {
+  Composer,
+  isSubagentRoutingEligible,
+  shouldQueueSend,
+  supportsSessionProfileSelection,
+} from "./ChatPage";
 import type { Session } from "@/lib/types";
 import type { QueuedMessage } from "@/store/chatStore";
+import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
   BUILTIN_SLASH_COMMANDS,
   rankedSlashCommandNames,
@@ -85,6 +96,11 @@ function composerProps(overrides: Partial<Parameters<typeof Composer>[0]> = {}) 
     showModels: false,
     modelPickerKind: null,
     codexModelOptions: [],
+    sdkModelOptions: [
+      { id: "databricks-gpt-5-6-luna", displayName: "GPT 5.6 Luna" },
+      { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
+      { id: "databricks-kimi-k3", displayName: "Kimi K3" },
+    ],
     showCodexPlanMode: false,
     ...overrides,
   };
@@ -97,6 +113,29 @@ const CLAUDE_MODEL_OPTIONS = [
   { id: "sonnet_5", displayName: "Sonnet 5" },
   { id: "haiku", displayName: "Haiku" },
 ];
+
+describe("supportsSessionProfileSelection", () => {
+  it("supports only top-level OmniHarness sessions", () => {
+    expect(
+      supportsSessionProfileSelection({
+        agentName: "omniharness",
+        parentSessionId: null,
+      }),
+    ).toBe(true);
+    expect(
+      supportsSessionProfileSelection({
+        agentName: "polly",
+        parentSessionId: null,
+      }),
+    ).toBe(false);
+    expect(
+      supportsSessionProfileSelection({
+        agentName: "omniharness",
+        parentSessionId: "conv_parent",
+      }),
+    ).toBe(false);
+  });
+});
 
 /** The composer textarea, located by its aria-label. */
 function textarea() {
@@ -116,6 +155,7 @@ describe("Composer growth layout", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   it("keeps multiline growth in layout instead of offsetting the form over the transcript", () => {
@@ -283,6 +323,20 @@ describe("Composer slash-command menu", () => {
     fireEvent.change(ta, { target: { value: "hello there" } });
 
     fireEvent.keyDown(ta, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("hello there", undefined);
+  });
+
+  it("requires Command or Ctrl+Enter when configured", () => {
+    writeSendMessageShortcut("command-enter");
+    const onSend = vi.fn();
+    render(<Composer {...composerProps({ onSend })} />);
+    const ta = textarea();
+    fireEvent.change(ta, { target: { value: "hello there" } });
+
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(ta, { key: "Enter", metaKey: true });
     expect(onSend).toHaveBeenCalledWith("hello there", undefined);
   });
 
@@ -680,6 +734,8 @@ describe("Composer model/effort label", () => {
   beforeEach(() => {
     useChatStore.setState({
       conversationId: "conv_test",
+      boundAgentName: null,
+      parentSessionId: null,
       skills: [],
       selectedModel: null,
       selectedEffort: null,
@@ -1720,6 +1776,40 @@ describe("Composer — queued-message flush gating", () => {
   });
 });
 
+describe("Composer — save draft", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useChatStore.setState({ queuedMessages: [] });
+  });
+
+  it("stores the composer text as a non-sending draft and clears the input", () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      conversationId: "conv_test",
+      boundAgentId: "agent_xyz",
+      status: "idle",
+      sessionStatus: "idle",
+      send: sendSpy,
+      queuedMessages: [],
+    });
+    render(<Composer {...composerProps()} />);
+
+    fireEvent.change(textarea(), { target: { value: "Review this later" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+
+    expect(textarea()).toHaveValue("");
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queuedMessages).toMatchObject([
+      {
+        text: "Review this later",
+        conversationId: "conv_test",
+        kind: "draft",
+      },
+    ]);
+  });
+});
+
 describe("Composer config gear", () => {
   beforeEach(() => {
     useChatStore.setState({
@@ -1730,6 +1820,7 @@ describe("Composer config gear", () => {
       llmModel: null,
       nativeVendorOwnsModel: false,
       selectedEffort: null,
+      busySendMode: "queue",
       costControlModeOverride: null,
       // Opening the gear re-reads the routing switches; stub the fetch away.
       refreshSessionOverrides: vi.fn().mockResolvedValue(undefined),
@@ -1739,6 +1830,7 @@ describe("Composer config gear", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.localStorage.removeItem("omnigent.busy-send-mode");
   });
 
   const gear = () => document.querySelector('[data-testid="composer-config-gear"]');
@@ -1748,14 +1840,25 @@ describe("Composer config gear", () => {
     expect(gear()).not.toBeNull();
   });
 
-  it("does not render when there is nothing to configure", () => {
-    // No models, no effort, not routable → nothing to configure.
+  it("still renders for busy-send behavior when there are no harness knobs", () => {
     renderWithTooltips(
       <Composer
         {...composerProps({ showEffort: false, showModels: false, costRoutingEligible: false })}
       />,
     );
-    expect(gear()).toBeNull();
+    expect(gear()).not.toBeNull();
+  });
+
+  it("changes the default busy-send behavior", async () => {
+    renderWithTooltips(<Composer {...composerProps({ showEffort: false, showModels: false })} />);
+    fireEvent.click(gear()!);
+    await screen.findByTestId("composer-config-modal");
+    fireEvent.click(screen.getByTestId("composer-config-busy-send-mode"));
+    fireEvent.click(screen.getByRole("option", { name: "Steer" }));
+    fireEvent.click(screen.getByTestId("composer-config-save"));
+
+    expect(useChatStore.getState().busySendMode).toBe("steer");
+    expect(window.localStorage.getItem("omnigent.busy-send-mode")).toBe("steer");
   });
 
   it("soft-disables the gear on a read-only session (aria-disabled, click no-ops)", () => {
@@ -1874,6 +1977,60 @@ describe("Composer config gear", () => {
     // Claude native → Model + Effort selects present.
     expect(screen.getByTestId("composer-config-model")).toBeTruthy();
     expect(screen.getByTestId("composer-config-effort")).toBeTruthy();
+  });
+
+  it("includes PromptProfile selection in OmniHarness settings", async () => {
+    const setModel = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      boundAgentName: "omniharness",
+      llmModel: "databricks-glm-5-2",
+      setModel,
+    });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: false,
+          showModels: true,
+          modelPickerKind: "sdk",
+        })}
+      />,
+    );
+
+    fireEvent.click(gear()!);
+    await screen.findByTestId("composer-config-modal");
+    expect(screen.queryByTestId("composer-config-model")).toBeNull();
+    expect(screen.getByTestId("composer-config-profile")).toHaveTextContent("Auto Select");
+    fireEvent.click(screen.getByTestId("composer-config-profile"));
+    expect(screen.getByRole("option", { name: "Auto Include" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: "Auto Select" }));
+    expect(screen.getByTestId("omniharness-system-prompt-edit")).toBeTruthy();
+    expect(screen.getByTestId("composer-config-busy-send-mode")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("composer-config-save"));
+    await waitFor(() => expect(screen.queryByTestId("composer-config-modal")).toBeNull());
+    expect(setModel).not.toHaveBeenCalled();
+  });
+
+  it("uses the composer selector for the execution target, not the SDK model", () => {
+    const setModel = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      llmModel: "databricks-glm-5-2",
+      setModel,
+    });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: false,
+          showModels: true,
+          modelPickerKind: "sdk",
+          agents: [{ id: "a_omni", name: "OmniHarness" } as never],
+          selectedAgentId: "a_omni",
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("composer-execution-target-select")).toHaveTextContent("OmniHarness");
+    expect(screen.queryByTestId("composer-sdk-model-select")).toBeNull();
+    expect(setModel).not.toHaveBeenCalled();
   });
 
   it("uses the Default sentinel when Kiro marks no catalog row as default", async () => {
@@ -2323,6 +2480,7 @@ describe("Composer config gear — subagent routing", () => {
       selectedEffort: null,
       costControlModeOverride: null,
       subagentRoutingOverride: null,
+      promptProfile: null,
       // Opening the gear re-reads the switches from the server; stub it so
       // these renders don't reach the network.
       refreshSessionOverrides: vi.fn().mockResolvedValue(undefined),
@@ -2613,9 +2771,10 @@ describe("Composer config gear — subagent routing", () => {
       expect(gear()).not.toBeNull();
     });
 
-    it("renders exactly one row — the subagent row, with no switch/Model/Effort", async () => {
+    it("renders message delivery and subagent rows, with no Model/Effort", async () => {
       await openBundleModal();
-      expect(configRows()).toHaveLength(1);
+      expect(configRows()).toHaveLength(2);
+      expect(screen.getByTestId("composer-config-busy-send-mode")).toHaveTextContent("Queue");
       expect(row()).not.toBeNull();
       expect(screen.queryByTestId("composer-config-smart-routing")).toBeNull();
       expect(screen.queryByTestId("composer-config-model")).toBeNull();
@@ -2735,5 +2894,11 @@ describe("shouldQueueSend", () => {
 
   it("ignores queued messages belonging to a different conversation", () => {
     expect(shouldQueueSend("conv_a", "idle", "idle", [q("conv_b")])).toBe(false);
+  });
+
+  it("ignores drafts when deciding whether an idle send must queue", () => {
+    expect(
+      shouldQueueSend("conv_a", "idle", "idle", [{ ...q("conv_a"), kind: "draft" }]),
+    ).toBe(false);
   });
 });

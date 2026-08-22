@@ -10,8 +10,11 @@ import { useChatStore } from "@/store/chatStore";
 // Mock the policies data layer so SessionPoliciesSection and AddPolicyDialog
 // render deterministically without network. The add/delete mutations expose
 // `mutate` spies we can assert on.
-const { addMutate, deleteMutate, copyTextMock } = vi.hoisted(() => ({
+const { addMutate, updatePolicyMutate, deleteMutate, copyTextMock } = vi.hoisted(() => ({
   addMutate: vi.fn(),
+  updatePolicyMutate: vi.fn((_payload, options?: { onSuccess?: () => void }) =>
+    options?.onSuccess?.(),
+  ),
   deleteMutate: vi.fn(),
   copyTextMock: vi.fn(() => Promise.resolve()),
 }));
@@ -40,6 +43,12 @@ vi.mock("@/hooks/usePolicies", () => ({
   usePolicies: () => ({ data: policiesData.current }),
   usePolicyRegistry: () => ({ data: registryData.current }),
   useAddPolicy: () => ({ mutate: addMutate, isPending: false, isError: false, error: null }),
+  useUpdatePolicy: () => ({
+    mutate: updatePolicyMutate,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
   useDeletePolicy: () => ({ mutate: deleteMutate }),
 }));
 vi.mock("@/hooks/useAgents", () => ({
@@ -369,7 +378,11 @@ describe("AgentInfoButton session cost row", () => {
   // composer status line). It reads from the shared chat store, so reset
   // the field between cases to keep them independent.
   beforeEach(() => {
-    useChatStore.setState({ sessionCostUsd: null });
+    useChatStore.setState({
+      sessionCostUsd: null,
+      sessionUsageByModel: null,
+      sessionHarness: null,
+    });
   });
 
   it("shows the formatted session cost in the popover when priced", () => {
@@ -399,6 +412,26 @@ describe("AgentInfoButton session cost row", () => {
     // The rest of the popover still renders (agent name proves it opened).
     expect(screen.getByText("Databricks_coding_agent")).toBeInTheDocument();
     expect(screen.queryByTestId("agent-info-session-cost")).toBeNull();
+  });
+
+  it("shows UnknownPrice for Omnigent usage without published pricing", () => {
+    useChatStore.setState({
+      sessionHarness: "openai-agents",
+      sessionUsageByModel: {
+        "databricks-kimi-k3": {
+          inputTokens: 1000,
+          outputTokens: 200,
+          totalTokens: 1200,
+          cacheReadInputTokens: null,
+          cacheCreationInputTokens: null,
+          totalCostUsd: null,
+        },
+      },
+    });
+    renderButtonWithSession(AGENT_WITH_BOTH, "conv_cost");
+    fireEvent.click(screen.getByTestId("agent-info-trigger"));
+
+    expect(screen.getByTestId("agent-info-session-cost")).toHaveTextContent("UnknownPrice");
   });
 });
 
@@ -527,7 +560,7 @@ describe("AgentInfoButton per-model usage breakdown", () => {
   // The breakdown reads `sessionUsageByModel` from the store; reset between
   // cases so they stay independent.
   beforeEach(() => {
-    useChatStore.setState({ sessionUsageByModel: null });
+    useChatStore.setState({ sessionUsageByModel: null, sessionHarness: null });
   });
 
   it("renders per-model token buckets and cost for multiple models", () => {
@@ -655,6 +688,7 @@ function renderContent(sessionId: string) {
 describe("SessionPoliciesSection", () => {
   beforeEach(() => {
     addMutate.mockReset();
+    updatePolicyMutate.mockClear();
     deleteMutate.mockReset();
     policiesData.current = [];
     registryData.current = [];
@@ -679,6 +713,58 @@ describe("SessionPoliciesSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /deny_pii/ }));
     fireEvent.click(screen.getByRole("button", { name: /Remove/ }));
     expect(deleteMutate).toHaveBeenCalledWith("p1");
+  });
+
+  it("prefills and updates a session policy instance, then closes", () => {
+    registryData.current = [
+      {
+        handler: "h.factory",
+        kind: "factory",
+        name: "Factory Guard",
+        description: "configurable",
+        params_schema: {
+          properties: {
+            threshold: { type: "integer" },
+            strict: { type: "boolean" },
+          },
+        },
+      },
+    ];
+    policiesData.current = [
+      {
+        id: "p 1",
+        name: "custom_guard",
+        handler: "h.factory",
+        factory_params: { threshold: 7, strict: false },
+        source: "session",
+      },
+    ];
+    renderContent("conv edit");
+
+    fireEvent.click(screen.getByRole("button", { name: /custom_guard/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("name")).toHaveValue("custom_guard");
+    expect(within(dialog).getByLabelText(/threshold/)).toHaveValue(7);
+    expect(within(dialog).getByLabelText(/strict/)).toHaveValue("false");
+
+    fireEvent.change(within(dialog).getByLabelText("name"), {
+      target: { value: "renamed_guard" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/threshold/), {
+      target: { value: "11" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(updatePolicyMutate).toHaveBeenCalledWith(
+      {
+        policyId: "p 1",
+        name: "renamed_guard",
+        factory_params: { threshold: 11, strict: false },
+      },
+      expect.anything(),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("filters the registry list and adds a callable policy", () => {

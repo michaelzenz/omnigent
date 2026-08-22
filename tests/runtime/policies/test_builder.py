@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+import omnigent.omniharness_model_catalog as omniharness_catalog
+import omnigent.runtime.policies.builder as builder_module
 from omnigent.entities import Conversation
 from omnigent.runtime.policies.builder import build_policy_engine
 from omnigent.spec.parser import parse
@@ -251,6 +253,62 @@ guardrails:
         conversation_store=conversation_store,
     )
     assert engine.model is None
+
+
+def test_omniharness_pricing_is_not_shared_with_adapter_agents(
+    tmp_path: Path,
+    conversation_store: SqlAlchemyConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generic_pricing = object()
+    omniharness_pricing = object()
+    omniharness_calls: list[str] = []
+    monkeypatch.setattr(builder_module, "fetch_model_pricing", lambda _model: generic_pricing)
+    monkeypatch.setattr(
+        omniharness_catalog,
+        "get_omniharness_model_pricing",
+        lambda model: omniharness_calls.append(model) or omniharness_pricing,
+    )
+
+    (tmp_path / "role").mkdir()
+    (tmp_path / "target").mkdir()
+    role_spec = parse(
+        _write_spec(
+            tmp_path / "role",
+            """
+spec_version: 1
+name: task-worker
+llm:
+  model: databricks-glm-5-2
+""",
+        )
+    )
+    target_spec = parse(
+        _write_spec(
+            tmp_path / "target",
+            """
+spec_version: 1
+name: omniharness
+llm:
+  model: databricks-glm-5-2
+""",
+        )
+    )
+
+    role_engine = build_policy_engine(
+        spec=role_spec,
+        conversation_id=conversation_store.create_conversation().id,
+        conversation_store=conversation_store,
+    )
+    target_engine = build_policy_engine(
+        spec=target_spec,
+        conversation_id=conversation_store.create_conversation().id,
+        conversation_store=conversation_store,
+    )
+
+    assert role_engine._token_pricing is generic_pricing
+    assert target_engine._token_pricing is omniharness_pricing
+    assert omniharness_calls == ["databricks-glm-5-2"]
 
 
 def test_build_seeds_initial_labels(

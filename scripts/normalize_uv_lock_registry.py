@@ -52,7 +52,7 @@ _CANONICAL_FILES_HOST = "https://files.pythonhosted.org"
 _REGISTRY_RE = re.compile(r'(registry = ")[^"]*(")')
 
 # Matches any non-pypi.org host in a direct wheel/sdist url = "..." entry so
-# proxy-resolved URLs (e.g. pypi-proxy.cloud.databricks.com) can be rewritten
+# proxy-resolved URLs (e.g. pypi-proxy.internal.example.com) can be rewritten
 # to files.pythonhosted.org.  The path component (/packages/…) is identical
 # between the proxy and the canonical host.
 _DIRECT_URL_RE = re.compile(

@@ -527,6 +527,10 @@ def db_uri(tmp_path: Path, _worker_db_uri: str) -> Generator[str, None, None]:
         db_path = tmp_path / "test.db"
         uri = f"sqlite:///{db_path}"
         engine = get_or_create_engine(uri)
+        # Product migrations seed installation defaults. Most store/route tests
+        # need an empty database, matching the truncation used by external DBs.
+        with engine.begin() as conn:
+            conn.execute(_sa.text("DELETE FROM policies"))
         yield uri
         with _engine_lock:
             _engine_cache.pop(uri, None)

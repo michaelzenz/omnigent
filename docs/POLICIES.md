@@ -146,7 +146,8 @@ rate_limit:
 
 Session-level policies let you customize agent behavior for your current task. There are two ways to add them:
 
-1. **UI** -- Open the information window to browse available policies and toggle them on or off.
+1. **UI** -- Open the information window to browse policy templates, add an
+   editable instance, and update its name or parameters later.
 2. **Chat** -- Tell the agent directly, e.g. *"add a policy that asks me before running shell commands"*. The agent has a built-in `sys_add_policy` tool and will configure the policy for you.
 
 Session policies evaluate before agent spec and admin policies, so they can enforce stricter rules or add additional gates for your specific workflow.
@@ -544,7 +545,7 @@ curl -X POST http://localhost:6767/v1/policies \
 | `POST` | `/v1/policies` | Create a default policy |
 | `GET` | `/v1/policies` | List all default policies |
 | `GET` | `/v1/policies/{policy_id}` | Get a specific policy |
-| `PATCH` | `/v1/policies/{policy_id}` | Update (name, handler, enabled) |
+| `PATCH` | `/v1/policies/{policy_id}` | Update name, handler, parameters, or enabled state |
 | `DELETE` | `/v1/policies/{policy_id}` | Remove a policy |
 
 `GET /v1/policy-registry` lists all discoverable policies with parameter schemas -- useful for building admin UIs.

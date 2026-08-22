@@ -4,7 +4,12 @@ dist/
 node_modules/
 .pnpm-store/
 .pnpm-debug.log*
+# Lockfiles are regenerated locally; keep on disk but do not track in git.
+uv.lock
+web/package-lock.json
 reviews/
+# Scratch space for in-progress notes; shared designs belong in designs/.
+notes/
 
 # Generated artifact; never committed.
 .pytest_cache/
@@ -52,6 +57,9 @@ run-omnigents.sh
 # Persisted artifacts from ad-hoc runs.
 artifacts/
 .tmp-codex-parity-target/
+
+# PuppyGarden is local workspace state; force-add deliberate additions.
+puppygarden/
 
 # omnidev (dev pod supervisor) Rust build output. Pod state lives outside the
 # repo under ~/.cache/omnidev/, so only the build dir needs ignoring.

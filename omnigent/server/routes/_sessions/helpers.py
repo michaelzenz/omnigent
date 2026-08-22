@@ -26,7 +26,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 from fastapi import (
@@ -37,6 +37,9 @@ from fastapi import (
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, StatementError
+
+if TYPE_CHECKING:
+    from omnigent.server.routes._sessions.common import ServerRunnerInfrastructure
 
 from omnigent.cost_plan import (
     COST_CONTROL_LABEL_NAMESPACE,
@@ -60,6 +63,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.execution_targets import is_omniharness_spec
 from omnigent.harness_plugins import (
     NativeCodingAgent,
 )
@@ -165,6 +169,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _FORK_HISTORY_NATIVE_HARNESSES,
     _HOOK_ELICITATION_ID_RE,
     _HOST_LAUNCH_RESULT_TIMEOUT_S,
+    _HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
     _KIMI_NATIVE_HARNESS,
     _LABEL_VALUE_MAX_LEN,
     _LAST_TASK_ERROR_CAUSE_LABEL_KEY,
@@ -212,6 +217,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _session_status_cache,
     _session_terminal_pending_cache,
     _session_todos_cache,
+    _session_worktree_status_cache,
     build_policy_engine,
     get_agent_cache,
     get_caps,
@@ -262,8 +268,11 @@ from omnigent.server.schemas import (
     SessionTerminalPendingEvent,
     SessionTitleEvent,
     SessionTodosEvent,
+    SessionWorktreeLogEvent,
+    SessionWorktreeStatusEvent,
     SkillSummary,
     ToolOutputDeltaEvent,
+    WorktreeStatus,
 )
 from omnigent.session_lifecycle import (
     labels_with_closed_status,
@@ -559,7 +568,13 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
     )
 
 
-def announce_hosts_changed(user_id: str | None) -> None:
+def announce_hosts_changed(
+    user_id: str | None,
+    *,
+    diagnostic: str | None = None,
+    host_id: str | None = None,
+    host_name: str | None = None,
+) -> None:
     """
     Push a ``hosts_changed`` event to a user's session-updates streams.
 
@@ -569,8 +584,18 @@ def announce_hosts_changed(user_id: str | None) -> None:
 
     :param user_id: Owner of the host that changed, or ``None`` in
         single-user mode.
+    :param diagnostic: Optional host diagnostic code for the UI.
+    :param host_id: Host associated with the diagnostic.
+    :param host_name: Human-readable host name for the diagnostic.
     """
-    user_session_stream.publish(_discovery_key(user_id), {"type": "hosts_changed"})
+    event: dict[str, object] = {"type": "hosts_changed"}
+    if diagnostic is not None:
+        event["diagnostic"] = diagnostic
+    if host_id is not None:
+        event["host_id"] = host_id
+    if host_name is not None:
+        event["host_name"] = host_name
+    user_session_stream.publish(_discovery_key(user_id), event)
 
 
 def _native_ask_gate_lock(conversation_id: str, deciding_policy: str) -> asyncio.Lock:
@@ -770,7 +795,7 @@ def _publish_and_persist_resource_event(
         ),
     )
     try:
-        conversation_store.append(session_id, [item])
+        conversation_store.append(session_id, [item], bump_updated_at=False)
     except (AttributeError, TypeError, ValueError, RuntimeError):
         _logger.debug(
             "Failed to persist resource event for session=%s",
@@ -4150,6 +4175,68 @@ def _publish_sandbox_status_impl(session_id: str, stage: str, error: str | None 
     session_stream.publish(session_id, event.model_dump())
 
 
+def _publish_worktree_log(session_id: str, line: str) -> None:
+    """Retain and publish one git output line.
+
+    The bounded snapshot buffer prevents the first lines from being lost
+    while the browser navigates from session creation to its SSE stream.
+
+    :param session_id: Session/conversation identifier.
+    :param line: One line of git stdout/stderr (no trailing newline).
+    """
+    status = _session_worktree_status_cache.get(session_id)
+    if status is not None:
+        _session_worktree_status_cache[session_id] = status.model_copy(
+            update={"log_lines": [*status.log_lines, line][-200:]}
+        )
+    event = SessionWorktreeLogEvent(
+        type="session.worktree_log",
+        conversation_id=session_id,
+        line=line,
+    )
+    session_stream.publish(session_id, event.model_dump())
+
+
+def _publish_worktree_status(
+    session_id: str,
+    stage: str,
+    branch: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Publish a ``session.worktree_status`` event and update the cache.
+
+    Mirrors :func:`_publish_sandbox_status`: ``ready`` evicts the cache
+    (the session then looks like any host-bound session); ``failed``
+    retains the reason so a reload still shows it.
+
+    :param session_id: Session/conversation identifier.
+    :param stage: ``"creating"``, ``"ready"``, or ``"failed"``.
+    :param branch: The branch being created.
+    :param error: Failure detail when ``stage == "failed"``.
+    """
+    previous = _session_worktree_status_cache.get(session_id)
+    status = WorktreeStatus.model_validate(
+        {
+            "stage": stage,
+            "branch": branch,
+            "error": error,
+            "log_lines": previous.log_lines if previous is not None else [],
+        }
+    )
+    if status.stage == "ready":
+        _session_worktree_status_cache.pop(session_id, None)
+    else:
+        _session_worktree_status_cache[session_id] = status
+    event = SessionWorktreeStatusEvent(
+        type="session.worktree_status",
+        conversation_id=session_id,
+        stage=status.stage,
+        branch=status.branch,
+        error=status.error,
+    )
+    session_stream.publish(session_id, event.model_dump())
+
+
 def _publish_mcp_startup(session_id: str, servers: dict[str, McpServerStartup]) -> None:
     """
     Publish a typed :class:`SessionMcpStartupEvent` to the live stream.
@@ -4680,6 +4767,7 @@ async def _launch_runner_on_host_impl(
         conversation_store.replace_runner_id,
         conv.id,
         new_runner_id,
+        bump_updated_at=False,
     )
 
     # Pull workspace from the session row — populated and validated
@@ -4920,6 +5008,94 @@ async def _await_settled_managed_launch(launch: ManagedLaunch) -> None:
             f"The session's managed sandbox failed to launch: {launch.error}",
             code=ErrorCode.RUNNER_UNAVAILABLE,
         )
+
+
+async def ensure_session_runner_client(
+    session_id: str,
+    conv: Conversation,
+    *,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+    infrastructure: ServerRunnerInfrastructure | None = None,
+) -> tuple[httpx.AsyncClient | None, bool]:
+    """Resolve a connected runner client, launching one when needed.
+
+    Idempotent: returns an existing connected client without spawning a
+    duplicate runner. For host-bound sessions, mirrors the relaunch path
+    used by ``POST /v1/sessions/{id}/events``.
+
+    :param session_id: Session/conversation identifier.
+    :param conv: Conversation row for *session_id*.
+    :param conversation_store: Store used to rotate ``runner_id``.
+    :param runner_router: Router for resolving a connected runner.
+    :param infrastructure: Host/tunnel registries. Defaults to the module
+        global set by :func:`set_server_runner_infrastructure`.
+    :returns: ``(client, needs_session_init)`` — ``needs_session_init`` is
+        ``True`` when a runner was launched during this call and the caller
+        should run :func:`_ensure_runner_session_initialized` before
+        forwarding an event.
+    """
+    from omnigent.server.routes._sessions.common import get_server_runner_infrastructure
+
+    infra = infrastructure if infrastructure is not None else get_server_runner_infrastructure()
+
+    runner_client = await _get_runner_client(session_id, runner_router)
+    if runner_client is not None:
+        return runner_client, False
+
+    if conv.host_id is None:
+        return None, False
+
+    tunnel_registry = infra.tunnel_registry if infra is not None else None
+    runner_exit_reports = infra.runner_exit_reports if infra is not None else None
+    host_registry = infra.host_registry if infra is not None else None
+
+    if conv.runner_id is not None:
+        runner_client = await _wait_for_runner_client(
+            session_id,
+            runner_router,
+            tunnel_registry,
+            runner_id=conv.runner_id,
+            timeout_s=10.0,
+            runner_exit_reports=runner_exit_reports,
+        )
+        if runner_client is not None:
+            return runner_client, False
+
+    launched_runner_id: str | None = None
+    if host_registry is not None:
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is not None:
+            from omnigent.host.frames import HARNESS_NOT_CONFIGURED_ERROR_CODE
+
+            launch_attempt = await _launch_runner_on_host(
+                conv,
+                conversation_store,
+                host_registry,
+                host_conn,
+            )
+            if launch_attempt.error_code == HARNESS_NOT_CONFIGURED_ERROR_CODE:
+                _logger.warning(
+                    "ensure_session_runner_client: harness not configured for session %s",
+                    session_id,
+                )
+                return None, False
+            launched_runner_id = launch_attempt.runner_id
+
+    if launched_runner_id is None:
+        return None, False
+
+    runner_client = await _wait_for_runner_client(
+        session_id,
+        runner_router,
+        tunnel_registry,
+        runner_id=launched_runner_id,
+        timeout_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+        runner_exit_reports=runner_exit_reports,
+    )
+    if runner_client is None:
+        return None, False
+    return runner_client, True
 
 
 async def _get_runner_client_for_resource_access(
@@ -5641,6 +5817,8 @@ async def _stop_session_host_runner(
     host_id: str,
     runner_id: str,
     host_registry: Any,
+    *,
+    missing_ok: bool = False,
 ) -> bool:
     """
     Terminate the host-launched runner backing a host-spawned session.
@@ -5703,7 +5881,11 @@ async def _stop_session_host_runner(
     future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()
     conn.pending_stops[request_id] = future
     stop_frame = encode_host_frame(
-        HostStopRunnerFrame(request_id=request_id, runner_id=runner_id),
+        HostStopRunnerFrame(
+            request_id=request_id,
+            runner_id=runner_id,
+            missing_ok=missing_ok,
+        ),
     )
     try:
         host_registry.send_text(conn, stop_frame)
@@ -6018,6 +6200,7 @@ async def _dispatch_skill_slash_command_to_runner(
         "agent_id": conv.agent_id,
         "model": agent.name,
         "has_mcp_servers": has_mcp_servers,
+        "agent_version": agent.version,
         # The forwarded message carries ``meta_content`` — i.e. the
         # META item (persisted_items[1]), not the user-visible item.
         # Hand the runner that id so a cold-cache reload drops the
@@ -6600,6 +6783,8 @@ async def _relay_persist(
     conversation_store: ConversationStore | None,
     session_id: str,
     item: NewConversationItem,
+    *,
+    bump_updated_at: bool = True,
 ) -> None:
     """
     Persist a single conversation item from the relay.
@@ -6607,6 +6792,7 @@ async def _relay_persist(
     :param conversation_store: Store instance, or ``None`` to skip.
     :param session_id: Session/conversation identifier.
     :param item: The item to persist.
+    :param bump_updated_at: Whether the item is user-visible activity.
     """
     if conversation_store is None:
         return
@@ -6615,6 +6801,7 @@ async def _relay_persist(
             conversation_store.append,
             session_id,
             [item],
+            bump_updated_at=bump_updated_at,
         )
     except Exception:  # noqa: BLE001
         _logger.exception(
@@ -7076,7 +7263,7 @@ def _build_policy_engine_from_spec_impl(
     host_connection = (
         caps.policy_llm_connection_factory() if caps.policy_llm_connection_factory else None
     )
-    return build_policy_engine(
+    engine = build_policy_engine(
         spec=spec,
         conversation_id=session_id,
         conversation_store=conversation_store,
@@ -7090,6 +7277,31 @@ def _build_policy_engine_from_spec_impl(
         server_llm=caps.llm,
         host_connection=host_connection,
     )
+    if conversation is not None and is_omniharness_spec(spec):
+        llm_client = getattr(engine, "_llm_client", None)
+        if llm_client is not None:
+            from omnigent.usage_ledger import record_omniharness_usage, response_usage
+
+            def _record_policy_usage(response: object, model: str) -> None:
+                try:
+                    record_omniharness_usage(
+                        conversation_store,
+                        session_id=session_id,
+                        turn_id=None,
+                        purpose="policy",
+                        model=model,
+                        workload=None,
+                        usage=response_usage(response),
+                    )
+                except (OSError, RuntimeError, ValueError, NotImplementedError):
+                    _logger.warning(
+                        "policy usage ledger write failed for session=%s",
+                        session_id,
+                        exc_info=True,
+                    )
+
+            llm_client._usage_recorder = _record_policy_usage
+    return engine
 
 
 async def _apply_pending_policy_ask_writes(
@@ -7917,8 +8129,14 @@ async def _create_session_worktree(
             "git worktree creation requires a source repository workspace",
             code=ErrorCode.INVALID_INPUT,
         )
+    if git.auto_create or git.branch_name is None:
+        raise OmnigentError(
+            "auto worktree creation must be handled by session orchestration",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    branch_name = git.branch_name
     try:
-        validate_branch_name(git.branch_name)
+        validate_branch_name(branch_name)
     except WorktreeError as exc:
         raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
 
@@ -7929,8 +8147,9 @@ async def _create_session_worktree(
             host_registry=host_registry,
             host_conn=host_conn,
             repo_path=source_repo,
-            branch_name=git.branch_name,
+            branch_name=branch_name,
             base_branch=git.base_branch,
+            auto_fetch_base=git.auto_fetch_base,
         )
     except WorktreeHostUnavailableError as exc:
         # Host offline / unresponsive — infra, not user input.
@@ -7939,6 +8158,56 @@ async def _create_session_worktree(
         # Host-reported git failure (dup branch, bad base, not a repo) —
         # user-correctable input.
         raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc
+
+
+async def _remove_session_worktree(
+    *,
+    host_id: str,
+    worktree_path: str,
+    branch: str,
+    delete_branch: bool,
+    request: Request,
+) -> None:
+    """Remove a session worktree and surface cleanup failures.
+
+    :param host_id: Host that owns the worktree, e.g.
+        ``"host_a1b2c3d4..."``.
+    :param worktree_path: Absolute worktree directory to remove on the
+        host, e.g. ``"/Users/alice/.omnigent/worktrees/feature-login"``.
+    :param branch: Branch checked out in the worktree, e.g.
+        ``"feature/login"``.
+    :param delete_branch: When ``True``, also run ``git branch -D``
+        after removing the worktree directory.
+    :param request: FastAPI request carrying the host registry.
+    :raises OmnigentError: If the host is unavailable or cleanup fails.
+    """
+    from omnigent.server.routes._host_worktree import (
+        WorktreeProxyError,
+        remove_worktree_on_host,
+    )
+
+    host_registry = getattr(request.app.state, "host_registry", None)
+    if host_registry is None:
+        raise OmnigentError("Host registry unavailable", code=ErrorCode.INTERNAL_ERROR)
+    host_conn = host_registry.get(host_id)
+    if host_conn is None:
+        raise OmnigentError(
+            f"Cannot remove worktree while host {host_id!r} is offline",
+            code=ErrorCode.CONFLICT,
+        )
+    try:
+        await remove_worktree_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=worktree_path,
+            branch=branch,
+            delete_branch=delete_branch,
+        )
+    except WorktreeProxyError as exc:
+        raise OmnigentError(
+            f"Failed to remove worktree: {exc}",
+            code=ErrorCode.CONFLICT,
+        ) from exc
 
 
 async def _remove_session_worktree_best_effort(
@@ -7950,51 +8219,16 @@ async def _remove_session_worktree_best_effort(
     request: Request,
     reason: str,
 ) -> None:
-    """
-    Best-effort removal of a session's git worktree.
-
-    Used for create-rollback (orphan cleanup) and opt-in session-delete
-    cleanup. Never raises — a failure is logged so the caller's primary
-    operation still completes.
-
-    :param host_id: Host that owns the worktree, e.g.
-        ``"host_a1b2c3d4..."``.
-    :param worktree_path: Absolute worktree directory to remove on the
-        host, e.g. ``"/Users/alice/myrepo-worktrees/feature-login"``.
-    :param branch: Branch checked out in the worktree, e.g.
-        ``"feature/login"``.
-    :param delete_branch: When ``True``, also run ``git branch -D``
-        after removing the worktree directory.
-    :param request: FastAPI request carrying the host registry.
-    :param reason: Short label for log lines, e.g.
-        ``"create-rollback"`` or ``"session-delete"``.
-    """
-    from omnigent.server.routes._host_worktree import (
-        WorktreeProxyError,
-        remove_worktree_on_host,
-    )
-
-    host_registry = getattr(request.app.state, "host_registry", None)
-    if host_registry is None:
-        return
-    host_conn = host_registry.get(host_id)
-    if host_conn is None:
-        _logger.warning(
-            "Skipping worktree removal (%s) for %s: host %s offline",
-            reason,
-            worktree_path,
-            host_id,
-        )
-        return
+    """Best-effort worktree cleanup used for failed session creation."""
     try:
-        await remove_worktree_on_host(
-            host_registry=host_registry,
-            host_conn=host_conn,
+        await _remove_session_worktree(
+            host_id=host_id,
             worktree_path=worktree_path,
             branch=branch,
             delete_branch=delete_branch,
+            request=request,
         )
-    except WorktreeProxyError:
+    except OmnigentError:
         _logger.warning(
             "Best-effort worktree removal (%s) failed for %s",
             reason,
@@ -8391,6 +8625,15 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     """
     if not labels:
         return
+    auto_worktree_key = next(
+        (key for key in labels if key == "omnigent.auto_worktree" or key.startswith("omnigent.auto_worktree.")),
+        None,
+    )
+    if auto_worktree_key is not None:
+        raise OmnigentError(
+            f"label {auto_worktree_key!r} is server-internal and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
     if _TURN_ACTOR_LABEL in labels:
         raise OmnigentError(
             f"label {_TURN_ACTOR_LABEL!r} is server-internal and cannot be set by clients",
@@ -9785,6 +10028,8 @@ __all__ = [
     "_publish_session_superseded",
     "_publish_status",
     "_publish_terminal_pending",
+    "_publish_worktree_log",
+    "_publish_worktree_status",
     "_query_host_runner_status",
     "_read_state_entry",
     "_read_upload_capped",

@@ -24,6 +24,7 @@ import type {
   RoutingDecisionBlock,
   ToolExecution,
   ToolResultBlock,
+  UserMessageBlock,
 } from "./blocks";
 import { LIVE_ITEM_PREFIX } from "./blocks";
 import { isUserInputElicitation } from "./askUserQuestion";
@@ -145,6 +146,7 @@ export type Bubble =
       kind: "user";
       itemId: string;
       content: MessageContentBlock[];
+      executionContext?: UserMessageBlock["executionContext"];
       /** Human author email, when known. */
       createdBy?: string;
       /** Epoch seconds of this message, when known — server-stamped from
@@ -788,6 +790,7 @@ function walkBubbles(
         kind: "user",
         itemId: b.ctx.itemId ?? `user_${i}`,
         content: b.content,
+        ...(b.executionContext ? { executionContext: b.executionContext } : {}),
         ...(b.ctx.createdBy !== undefined ? { createdBy: b.ctx.createdBy } : {}),
         // Server stamp on cold load, client stamp while live — display
         // only, so either clock is correct here.

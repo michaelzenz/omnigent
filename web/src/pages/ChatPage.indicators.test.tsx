@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import type { Bubble } from "@/lib/renderItems";
@@ -190,7 +190,7 @@ describe("BubbleView dispatch", () => {
     );
     const bubble = screen.getByTestId("message-bubble");
     expect(bubble).toHaveAttribute("data-role", "user");
-    expect(bubble).toHaveClass("max-w-[640px]");
+    expect(bubble).toHaveClass("max-w-full");
     expect(bubble).toHaveTextContent("hello there");
   });
 
@@ -295,6 +295,25 @@ describe("BubbleView dispatch", () => {
     duration: 1,
   });
 
+  it("opens Turn activity for a response that used tools", () => {
+    const bubble = assistantText("I inspected the repository.");
+    bubble.items.push(toolItem("call_activity"));
+    render(<BubbleView bubble={bubble} />);
+
+    fireEvent.click(screen.getByTestId("turn-activity-trigger"));
+
+    const board = screen.getByTestId("turn-activity-board");
+    expect(board).toBeInTheDocument();
+    expect(board).toHaveTextContent("Turn activity");
+    expect(board).toHaveTextContent("Bash");
+    expect(board).toHaveTextContent("Tools");
+    expect(board).toHaveTextContent("Skills");
+    expect(board).toHaveTextContent("MCPs");
+
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByTestId("turn-activity-board")).not.toBeInTheDocument();
+  });
+
   /** A turn that yielded mid-task: its whole trace folds, its answer lands later. */
   const foldOnlyBubble = (items: AssistantBubble["items"]): AssistantBubble => ({
     kind: "assistant",
@@ -370,5 +389,20 @@ describe("BubbleView dispatch", () => {
     expect(screen.getByTestId("compacting-indicator")).toHaveTextContent(
       "Compacting conversation…",
     );
+  });
+
+  it("hides the entire routing notice when notices are disabled", () => {
+    const routingBubble: Bubble = {
+      kind: "routing_decision",
+      itemId: "route_1",
+      model: "gpt-5-6-luna",
+      applied: true,
+      rationale: "Selected for this task.",
+    };
+    const { container } = render(
+      <BubbleView bubble={routingBubble} routingNoticesEnabled={false} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
   });
 });

@@ -21,7 +21,7 @@ import sys
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, SupportsInt, cast
 
 import websockets.asyncio.client
 from websockets.exceptions import ConnectionClosed, InvalidStatus, InvalidURI
@@ -59,23 +59,29 @@ from omnigent.host.frames import (
     HostModelOptionsResultFrame,
     HostRemoveWorktreeFrame,
     HostRemoveWorktreeResultFrame,
+    HostRenewWorktreeLeaseFrame,
+    HostRenewWorktreeLeaseResultFrame,
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
+    HostSkillInventoryFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretFrame,
     HostStoreSecretResultFrame,
+    HostWorktreeLogFrame,
     decode_host_frame,
     encode_host_frame,
 )
 from omnigent.host.git_worktree import (
     WorktreeError,
-    create_worktree,
+    acquire_auto_worktree_streaming,
+    create_worktree_streaming,
     list_worktrees,
     remove_worktree,
+    renew_auto_worktree_lease,
 )
 from omnigent.host.identity import HostIdentity, load_or_create_host_identity
 from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
@@ -129,8 +135,15 @@ from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
 )
 from omnigent.suspend_watch import watch_for_resume
+from omnigent.server_transport import (
+    OMNIGENT_SERVER_UNIX_SOCKET,
+    server_unix_socket_path,
+)
 from omnigent.tls import client_ssl_context
 from omnigent.version import VERSION
+
+if TYPE_CHECKING:
+    from omnigent.host.polling import PollScheduler
 
 _logger = logging.getLogger(__name__)
 
@@ -148,6 +161,7 @@ def _coerce_int(value: object) -> int:
 HARNESS_READINESS_REFRESH_INTERVAL_S = 5.0
 # Auth changes and removals need the full, potentially expensive readiness map.
 HARNESS_READINESS_FULL_REFRESH_INTERVAL_S = 60.0
+SKILL_INVENTORY_REFRESH_INTERVAL_S = 5 * 60.0
 
 
 def _unavailable_harness_became_ready(
@@ -533,6 +547,9 @@ _RUNNER_ENV_ALLOWLIST: frozenset[str] = frozenset(
         # NAMES, not secrets, so allowlisting it leaks nothing on its own.
         # (Literal, not RUNNER_ENV_PASSTHROUGH_ENV_VAR, which is defined below.)
         "OMNIGENT_RUNNER_ENV_PASSTHROUGH",
+        # Optional local transport to the logical remote server. Runners must
+        # dial the same socket as their owning host.
+        OMNIGENT_SERVER_UNIX_SOCKET,
     }
     # Windows system / profile constants (SYSTEMROOT is mandatory for Winsock,
     # USERPROFILE for Path.home(), etc.); a no-op on POSIX. See _platform.
@@ -809,6 +826,8 @@ class _RunnerHandle:
 
     proc: subprocess.Popen[bytes] | ZygoteRunnerProc
     log_path: Path
+    session_id: str = ""
+    workspace: str = ""
 
 
 class HostRetryableConnectionError(Exception):
@@ -838,6 +857,7 @@ class HostProcess:
         """
         self._identity = identity
         self._server_url = server_url.rstrip("/")
+        self._instance_id = os.urandom(16).hex()
         self._runners: dict[str, _RunnerHandle] = {}
         # Retain the host's refreshable auth context after the first tunnel
         # handshake so runner launches can reuse its warm bearer. Failed or
@@ -884,6 +904,8 @@ class HostProcess:
         self._watcher_tasks: set[asyncio.Task[None]] = set()
         # Strong ref to the orphan-reaper task (see :meth:`_orphan_reaper_loop`).
         self._reaper_task: asyncio.Task[None] | None = None
+        # Scheduled poll plugins owned by this host.
+        self._poll_scheduler: PollScheduler | None = None
         # Number of host-owned ``subprocess`` operations (e.g. the git worktree
         # commands in :mod:`omnigent.host.git_worktree`) currently in flight.
         # The orphan reaper skips its sweep while this is >0 so it never
@@ -1024,11 +1046,8 @@ class HostProcess:
             # ``subprocess.run``'s own ``wait()`` and corrupt that command's
             # returncode to 0 (CPython swallows the ECHILD and reports 0).
             # Skip this sweep; a later one drains any real orphans once the op
-            # finishes. A worktree op can hold this off for up to
-            # ``_GIT_TIMEOUT_S`` (120s) per git command, so real orphans can
-            # linger that long in the rare case a runner dies mid-worktree-op —
-            # acceptable, since the leak this guards against accrues over hours,
-            # not a two-minute worst case.
+            # finishes. A worktree operation may run for a long time, but
+            # stealing its child would corrupt the checkout result.
             return 0
         if not hasattr(os, "WNOHANG"):
             # Windows: no child reparenting to a subreaper and no ``WNOHANG`` /
@@ -1457,7 +1476,12 @@ class HostProcess:
                 error=_runner_exit_error(proc.returncode, log_path),
             )
 
-        self._runners[runner_id] = _RunnerHandle(proc=proc, log_path=log_path)
+        self._runners[runner_id] = _RunnerHandle(
+            proc=proc,
+            log_path=log_path,
+            session_id=frame.session_id or "",
+            workspace=str(workspace),
+        )
         watcher = asyncio.create_task(self._watch_runner(runner_id))
         self._watcher_tasks.add(watcher)
         watcher.add_done_callback(self._watcher_tasks.discard)
@@ -1649,6 +1673,11 @@ class HostProcess:
         """
         handle = self._runners.pop(frame.runner_id, None)
         if handle is None:
+            if frame.missing_ok:
+                return HostStopRunnerResultFrame(
+                    request_id=frame.request_id,
+                    status="stopped",
+                )
             return HostStopRunnerResultFrame(
                 request_id=frame.request_id,
                 status="failed",
@@ -2223,6 +2252,89 @@ class HostProcess:
         :returns: A result frame with the runner-shaped payload, or an
             error frame mirroring the status the runner would return.
         """
+        if frame.op.startswith("memory."):
+            try:
+                from omnigent.host.memory_ops import handle_memory_fs_op
+
+                payload = handle_memory_fs_op(
+                    frame.op,
+                    frame.params or {},
+                    workspace=frame.workspace,
+                )
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="ok",
+                    payload=payload,
+                )
+            except FileExistsError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=409,
+                    error_code="memory_file_conflict",
+                    error=str(exc),
+                )
+            except FileNotFoundError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=404,
+                    error_code="not_found",
+                    error=str(exc),
+                )
+            except ValueError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=400,
+                    error_code="invalid_request",
+                    error=str(exc),
+                )
+            except Exception as exc:
+                _logger.exception("host memory operation %r failed", frame.op)
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=500,
+                    error_code="memory_operation_failed",
+                    error=str(exc),
+                )
+        if frame.op.startswith("skill."):
+            try:
+                from omnigent.host.skill_ops import handle_skill_fs_op
+
+                payload = handle_skill_fs_op(frame.op, frame.params or {})
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="ok",
+                    payload=payload,
+                )
+            except FileNotFoundError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=404,
+                    error_code="not_found",
+                    error=str(exc),
+                )
+            except ValueError as exc:
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=400,
+                    error_code="invalid_request",
+                    error=str(exc),
+                )
+            except Exception as exc:
+                _logger.exception("host skill operation %r failed", frame.op)
+                return HostFsResultFrame(
+                    request_id=frame.request_id,
+                    status="error",
+                    error_status=500,
+                    error_code="skill_operation_failed",
+                    error=str(exc),
+                )
+
         from pathlib import Path
 
         from omnigent.workspace_fs import WorkspaceReader, WorkspaceReaderError
@@ -2501,36 +2613,124 @@ class HostProcess:
             )
         raise ValueError(f"unknown fs op: {op!r}")
 
+    async def _reclaim_worktree_runners(
+        self,
+        previous_owner: str,
+        worktree_path: str,
+    ) -> bool:
+        """Intentionally stop runners before an expired worktree is reused."""
+        target = Path(worktree_path).resolve()
+        async with self._runner_lifecycle_lock:
+            matches = [
+                (runner_id, handle)
+                for runner_id, handle in self._runners.items()
+                if handle.session_id == previous_owner
+                and Path(handle.workspace).resolve() == target
+            ]
+            for runner_id, _handle in matches:
+                self._runners.pop(runner_id, None)
+        try:
+            for _runner_id, handle in matches:
+                await asyncio.to_thread(self._stop_runner_proc, handle.proc)
+        except OSError:
+            async with self._runner_lifecycle_lock:
+                for runner_id, handle in matches:
+                    if await asyncio.to_thread(handle.proc.poll) is None:
+                        self._runners[runner_id] = handle
+            return False
+        for _, handle in matches:
+            if await asyncio.to_thread(handle.proc.poll) is None:
+                return False
+        return True
+
     async def _handle_create_worktree(
         self,
         frame: HostCreateWorktreeFrame,
+        ws: websockets.asyncio.client.ClientConnection,
     ) -> HostCreateWorktreeResultFrame:
         """Handle a ``host.create_worktree`` request from the server.
 
         Runs the blocking git work in a worker thread so the tunnel
-        loop keeps servicing pings. See designs/SESSION_GIT_WORKTREE.md.
+        loop keeps servicing pings. Streams each git output line back as
+        a :class:`HostWorktreeLogFrame` before the final result frame,
+        so the server can relay them to the session's SSE stream for
+        real-time display.
 
         :param frame: The create-worktree request frame.
+        :param ws: The open tunnel connection, used to send log frames.
         :returns: Result frame with the worktree path and branch on
             success, or ``status: "failed"`` with an error message.
         """
-        try:
-            # Pause the orphan reaper: create_worktree runs git via
-            # subprocess.run, whose children are direct children of this host
-            # but not tracked runners — the reaper must not wait() them out
-            # from under subprocess (#1782).
-            with self._host_subprocess_op():
-                created = await asyncio.to_thread(
-                    create_worktree,
-                    repo_path=frame.repo_path,
-                    branch_name=frame.branch_name,
-                    base_branch=frame.base_branch,
+        loop = asyncio.get_running_loop()
+
+        def _on_log(line: str) -> None:
+            # Called from the worker thread — schedule the frame send on
+            # the event loop so we never touch the websocket from a thread.
+            asyncio.run_coroutine_threadsafe(
+                ws.send(
+                    encode_host_frame(
+                        HostWorktreeLogFrame(
+                            request_id=frame.request_id,
+                            line=line,
+                        )
+                    )
+                ),
+                loop,
+            )
+
+        def _on_reclaim(previous_owner: str, worktree_path: str) -> bool:
+            future = asyncio.run_coroutine_threadsafe(
+                self._reclaim_worktree_runners(previous_owner, worktree_path),
+                loop,
+            )
+            try:
+                return future.result(timeout=35.0)
+            except (TimeoutError, OSError):
+                _logger.warning(
+                    "Could not stop stale runner for managed worktree %s",
+                    worktree_path,
+                    exc_info=True,
                 )
+                return False
+
+        try:
+            with self._host_subprocess_op():
+                if frame.auto_reuse:
+                    if not frame.lease_owner:
+                        raise WorktreeError("auto worktree creation requires a lease owner")
+                    created = await asyncio.to_thread(
+                        acquire_auto_worktree_streaming,
+                        repo_path=frame.repo_path,
+                        branch_name=frame.branch_name,
+                        base_branch=frame.base_branch,
+                        auto_fetch_base=frame.auto_fetch_base,
+                        lease_owner=frame.lease_owner,
+                        lease_seconds=frame.lease_seconds,
+                        reuse_existing_branch=frame.reuse_existing_branch,
+                        on_log=_on_log,
+                        on_reclaim=_on_reclaim,
+                    )
+                else:
+                    created = await asyncio.to_thread(
+                        create_worktree_streaming,
+                        repo_path=frame.repo_path,
+                        branch_name=frame.branch_name,
+                        base_branch=frame.base_branch,
+                        auto_fetch_base=frame.auto_fetch_base,
+                        on_log=_on_log,
+                    )
         except WorktreeError as exc:
             return HostCreateWorktreeResultFrame(
                 request_id=frame.request_id,
                 status="failed",
                 error=exc.message,
+            )
+        except (OSError, ValueError) as exc:
+            _logger.warning("Managed worktree operation failed", exc_info=True)
+            return HostCreateWorktreeResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error=f"managed worktree state error: {exc}",
             )
         _logger.info(
             "Created worktree %s (branch %s) from %s",
@@ -2686,6 +2886,30 @@ class HostProcess:
         self._gateway_inference = gateway
         self._capabilities_initialized = True
 
+    async def _handle_renew_worktree_lease(
+        self,
+        frame: HostRenewWorktreeLeaseFrame,
+    ) -> HostRenewWorktreeLeaseResultFrame:
+        try:
+            renewed = await asyncio.to_thread(
+                renew_auto_worktree_lease,
+                worktree_path=frame.worktree_path,
+                lease_owner=frame.lease_owner,
+                lease_seconds=frame.lease_seconds,
+                release=frame.release,
+            )
+        except (OSError, ValueError) as exc:
+            return HostRenewWorktreeLeaseResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error=str(exc),
+            )
+        return HostRenewWorktreeLeaseResultFrame(
+            request_id=frame.request_id,
+            status="ok",
+            renewed=renewed,
+        )
+
     async def run(self) -> None:
         """Run the host process with reconnection.
 
@@ -2727,6 +2951,19 @@ class HostProcess:
                 asyncio.to_thread(self._ensure_zygote_started),
                 name="host-zygote-prestart",
             )
+        from omnigent.host.polling import (
+            PollScheduler,
+            ScriptPollPluginsPoller,
+            ScriptTimerPluginsPoller,
+        )
+
+        self._poll_scheduler = PollScheduler(
+            server_url=self._server_url,
+            host_id=self._identity.host_id,
+        )
+        self._poll_scheduler.register(ScriptPollPluginsPoller())
+        self._poll_scheduler.register(ScriptTimerPluginsPoller())
+        await self._poll_scheduler.start()
         backoff = _RECONNECT_BASE_S
         try:
             while True:
@@ -2872,6 +3109,12 @@ class HostProcess:
         finally:
             # Await the cancellations: a bare cancel() leaves the tasks
             # pending at loop close ("Task was destroyed but it is pending!").
+            if self._poll_scheduler is not None:
+                await self._poll_scheduler.stop()
+                self._poll_scheduler = None
+            from omnigent.ssh_session import shutdown_ssh_pool
+
+            await shutdown_ssh_pool()
             if self._reaper_task is not None:
                 self._reaper_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -2976,23 +3219,36 @@ class HostProcess:
         # ``ssl=None`` for ws:// is the library default (no TLS).
         ssl_ctx = client_ssl_context() if url.startswith("wss://") else None
         try:
-            ws_cm = websockets.asyncio.client.connect(
-                url,
-                additional_headers=headers,
-                max_size=100 * 1024 * 1024,
-                ssl=ssl_ctx,
-                open_timeout=(
-                    _RECONNECT_OPEN_TIMEOUT_S
-                    if self._ever_connected
-                    else _INITIAL_CONNECT_OPEN_TIMEOUT_S
-                ),
-                # Align the host->server tunnel's protocol keepalive to the same
-                # 90 s app-level budget as the runner tunnel (not the 20 s library
-                # default that drops a busy-but-healthy tunnel with 1011 — #1116).
-                # Symmetric with serve.py's runner-side connect().
-                ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
-                ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+            open_timeout = (
+                _RECONNECT_OPEN_TIMEOUT_S
+                if self._ever_connected
+                else _INITIAL_CONNECT_OPEN_TIMEOUT_S
             )
+            socket_path = server_unix_socket_path()
+            if socket_path is None:
+                ws_cm = websockets.asyncio.client.connect(
+                    url,
+                    additional_headers=headers,
+                    max_size=100 * 1024 * 1024,
+                    ssl=ssl_ctx,
+                    open_timeout=open_timeout,
+                    # Align the host->server tunnel's protocol keepalive to the same
+                    # 90 s app-level budget as the runner tunnel (not the 20 s library
+                    # default that drops a busy-but-healthy tunnel with 1011 — #1116).
+                    # Symmetric with serve.py's runner-side connect().
+                    ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+                    ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+                )
+            else:
+                ws_cm = websockets.asyncio.client.unix_connect(
+                    socket_path,
+                    uri=url,
+                    additional_headers=headers,
+                    max_size=100 * 1024 * 1024,
+                    open_timeout=open_timeout,
+                    ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+                    ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
+                )
             ws = await ws_cm.__aenter__()
         except (InvalidURI, InvalidStatus) as exc:
             # The upgrade itself was rejected. Fail loud on permanent
@@ -3118,6 +3374,17 @@ class HostProcess:
                 _tel_install_id = _get_install_id()
         except Exception:  # noqa: BLE001
             pass
+        from omnigent.host.memory_ops import global_memory_inventory_wire
+        from omnigent.host.skill_ops import (
+            skill_inventory_wire,
+            skill_search_roots_wire,
+            skill_sync_settings_wire,
+        )
+
+        skills = await asyncio.to_thread(skill_inventory_wire)
+        skill_sync_harnesses = await asyncio.to_thread(skill_sync_settings_wire)
+        skill_search_roots = await asyncio.to_thread(skill_search_roots_wire)
+        memory_files = await asyncio.to_thread(global_memory_inventory_wire)
         hello = HostHelloFrame(
             version=VERSION,
             frame_protocol_version=1,
@@ -3127,6 +3394,12 @@ class HostProcess:
             gateway_inference=self._gateway_inference,
             telemetry_opt_out=_tel_opt_out,
             installation_id=_tel_install_id,
+            instance_id=self._instance_id,
+            skills=skills,
+            skill_sync_harnesses=skill_sync_harnesses,
+            skill_search_roots=skill_search_roots,
+            memory_files=memory_files,
+            managed_worktree_leases=True,
         )
         try:
             encoded_hello = encode_host_frame(hello)
@@ -3158,6 +3431,14 @@ class HostProcess:
         prewarm_task = asyncio.create_task(
             self._prewarm_model_options(), name="host-model-options-prewarm"
         )
+        skill_inventory_task = asyncio.create_task(
+            self._skill_inventory_loop(
+                ws,
+                skills,
+                skill_sync_harnesses,
+                skill_search_roots,
+            )
+        )
         try:
             while True:
                 raw = await ws.recv()
@@ -3182,8 +3463,11 @@ class HostProcess:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await prewarm_task
             readiness_task.cancel()
+            skill_inventory_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await readiness_task
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await skill_inventory_task
 
     async def _harness_readiness_loop(
         self,
@@ -3247,6 +3531,42 @@ class HostProcess:
             return
         if isinstance(frame, HostConnectionErrorFrame):
             self._raise_connection_error(frame)
+
+    async def _skill_inventory_loop(
+        self,
+        ws: websockets.asyncio.client.ClientConnection,
+        initial: list[dict[str, object]],
+        initial_settings: dict[str, bool],
+        initial_roots: list[dict[str, object]],
+    ) -> None:
+        """Report host-local skill inventory changes while connected."""
+        from omnigent.host.skill_ops import (
+            skill_inventory_wire,
+            skill_search_roots_wire,
+            skill_sync_settings_wire,
+        )
+
+        inventory = initial
+        settings = initial_settings
+        roots = initial_roots
+        while True:
+            await asyncio.sleep(SKILL_INVENTORY_REFRESH_INTERVAL_S)
+            latest = await asyncio.to_thread(skill_inventory_wire)
+            latest_settings = await asyncio.to_thread(skill_sync_settings_wire)
+            latest_roots = await asyncio.to_thread(skill_search_roots_wire)
+            if latest != inventory or latest_settings != settings or latest_roots != roots:
+                await ws.send(
+                    encode_host_frame(
+                        HostSkillInventoryFrame(
+                            skills=latest,
+                            skill_sync_harnesses=latest_settings,
+                            skill_search_roots=latest_roots,
+                        )
+                    )
+                )
+                inventory = latest
+                settings = latest_settings
+                roots = latest_roots
 
     def _start_frame_task(self, ws: websockets.asyncio.client.ClientConnection, raw: str) -> None:
         """Handle one inbound frame on its own task, off the receive loop.
@@ -3378,11 +3698,13 @@ class HostProcess:
             credentials_result = await asyncio.to_thread(self._handle_detect_credentials, frame)
             await ws.send(encode_host_frame(credentials_result))
         elif isinstance(frame, HostCreateWorktreeFrame):
-            await ws.send(encode_host_frame(await self._handle_create_worktree(frame)))
+            await ws.send(encode_host_frame(await self._handle_create_worktree(frame, ws)))
         elif isinstance(frame, HostRemoveWorktreeFrame):
             await ws.send(encode_host_frame(await self._handle_remove_worktree(frame)))
         elif isinstance(frame, HostListWorktreesFrame):
             await ws.send(encode_host_frame(await self._handle_list_worktrees(frame)))
+        elif isinstance(frame, HostRenewWorktreeLeaseFrame):
+            await ws.send(encode_host_frame(await self._handle_renew_worktree_lease(frame)))
         elif isinstance(frame, HostFsRequestFrame):
             # Git status and directory walks can block, so run the read
             # off the event loop and reply when it completes.

@@ -220,6 +220,8 @@ class Conversation:
     kind: str = "default"
     parent_conversation_id: str | None = None
     agent_id: str | None = None
+    prompt_profile_mode: Literal["auto", "auto_include", "fixed"] | None = None
+    prompt_profile_id: str | None = None
     runner_id: str | None = None
     host_id: str | None = None
     labels: dict[str, str] = field(default_factory=dict)
@@ -254,6 +256,15 @@ class Conversation:
 # ── Conversation item data types ───────────────────────
 
 
+class MessageExecutionContext(BaseModel):
+    """Execution selections captured when a user message starts a turn."""
+
+    profile: str | None = None
+    profiles: list[str] = Field(default_factory=list)
+    harness: str | None = None
+    model: str | None = None
+
+
 class MessageData(BaseModel):
     """
     Data for a message item (user or assistant).
@@ -280,6 +291,7 @@ class MessageData(BaseModel):
     agent: str | None = Field(default=None, serialization_alias="model")
     is_meta: bool = Field(default=False, exclude_if=lambda value: value is False)
     interrupted: bool = Field(default=False, exclude_if=lambda value: value is False)
+    execution_context: MessageExecutionContext | None = None
 
     @model_validator(mode="after")
     def check_agent_for_assistant(self) -> MessageData:
