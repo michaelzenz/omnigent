@@ -1173,6 +1173,66 @@ describe("JumpToTopButton", () => {
     window.matchMedia = originalMatchMedia;
   });
 
+  it("loads older history to find the previous user message when not in the DOM", async () => {
+    const { container, scroll, scroller } = makeScroller({
+      scrollTop: 300,
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+    const metrics = scroll as unknown as { scrollTop: number };
+    scroll.style.overflowY = "auto";
+    // Only one user message in the DOM — the topmost. The previous user
+    // message is in an unloaded history page.
+    const currentMessage = document.createElement("div");
+    currentMessage.dataset.role = "user";
+    currentMessage.dataset.userMessageId = "current-turn";
+    vi.spyOn(currentMessage, "getBoundingClientRect").mockReturnValue(rect(-50));
+    scroll.append(currentMessage);
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
+
+    let calls = 0;
+    const loadMoreHistory = vi.fn(async () => {
+      calls += 1;
+      // Simulate the library re-sticking to the bottom on each prepend.
+      scroller.state.isAtBottom = true;
+      // On the first call, prepend an older user message to the DOM.
+      if (calls === 1) {
+        const olderMessage = document.createElement("div");
+        olderMessage.dataset.role = "user";
+        olderMessage.dataset.userMessageId = "older-turn";
+        vi.spyOn(olderMessage, "getBoundingClientRect").mockReturnValue(rect(-200));
+        scroll.prepend(olderMessage);
+      }
+      useChatStore.setState({ hasMoreHistory: false });
+    });
+    useChatStore.setState({ hasMoreHistory: true, loadMoreHistory });
+
+    render(
+      <JumpToTopButton
+        containerEl={container}
+        scroller={scroller}
+        hasMoreHistory
+        mode="jump-to-previous-message"
+      />,
+    );
+    act(() => {
+      fireEvent.mouseMove(container, { clientY: 10 });
+    });
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Jump to the previous message"]',
+      )!,
+    );
+
+    await waitFor(() => expect(loadMoreHistory).toHaveBeenCalledTimes(1));
+    // Scrolls to the older message: scrollTop(300) + top(-200) = 100.
+    await waitFor(() => expect(metrics.scrollTop).toBe(100));
+    expect(scroller.state.isAtBottom).toBe(false);
+    expect(scroller.state.escapedFromLock).toBe(true);
+    window.matchMedia = originalMatchMedia;
+  });
+
   it("releases the bottom-lock, pages in all history, then scrolls to the top", async () => {
     const { container, scroller, scroll } = makeScroller({
       scrollTop: 500,

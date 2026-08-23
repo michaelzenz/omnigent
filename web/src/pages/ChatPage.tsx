@@ -3636,24 +3636,65 @@ export function JumpToTopButton({
     }
   }, [scroller]);
 
-  const jumpToPreviousMessage = useCallback(() => {
+  const jumpToPreviousMessage = useCallback(async () => {
     if (!scroller) return;
     const { el, state, stopScroll } = scroller;
-    const userMessages = Array.from(
-      el.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
-    );
-    if (userMessages.length === 0) return;
-    const bannerBottom = buttonRef.current?.getBoundingClientRect().bottom ?? userMessageRoof(el);
-    const roof = el.scrollTop + bannerBottom - el.getBoundingClientRect().top;
-    const targetIndex = userMessageIndexNearestRoof(
-      userMessages.map((message) => ({ top: naturalElementTop(message) - naturalElementTop(el) })),
-      roof,
-    );
-    if (targetIndex < 0) return;
-    stopScroll();
-    state.isAtBottom = false;
-    state.escapedFromLock = true;
-    scrollToUserTurnStart(userMessages[targetIndex], bannerBottom);
+    const nextFrame = () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+
+    // Find the user message to jump to within the currently loaded DOM.
+    const findTarget = (): { messages: HTMLElement[]; index: number } | null => {
+      const userMessages = Array.from(
+        el.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
+      );
+      if (userMessages.length === 0) return null;
+      const bannerBottom = buttonRef.current?.getBoundingClientRect().bottom ?? userMessageRoof(el);
+      const roof = el.scrollTop + bannerBottom - el.getBoundingClientRect().top;
+      const targetIndex = userMessageIndexNearestRoof(
+        userMessages.map((message) => ({ top: naturalElementTop(message) - naturalElementTop(el) })),
+        roof,
+      );
+      if (targetIndex < 0) return null;
+      return { messages: userMessages, index: targetIndex };
+    };
+
+    setJumping(true);
+    try {
+      stopScroll();
+      state.isAtBottom = false;
+      state.escapedFromLock = true;
+
+      let target = findTarget();
+      // Track the element we'd scroll to before a load, so we can detect when
+      // a history page actually delivers an earlier user message.
+      let prevTargetEl: HTMLElement | null = target?.messages[target.index] ?? null;
+
+      // If no user message is above the roof, or the nearest one is the
+      // topmost in the loaded window (no earlier message to jump to), page in
+      // older history until an earlier user message appears or history is
+      // exhausted. Mirrors jumpToTop's loading loop.
+      /* oxlint-disable no-await-in-loop */
+      for (let i = 0; i < 1000 && useChatStore.getState().hasMoreHistory; i++) {
+        // Stop if we have a target that's not the topmost (has a previous in
+        // DOM), or if loading gave us a different target than we started with.
+        if (target && (target.index > 0 || target.messages[target.index] !== prevTargetEl)) break;
+        await useChatStore.getState().loadMoreHistory();
+        state.isAtBottom = false;
+        state.escapedFromLock = true;
+        await nextFrame();
+        prevTargetEl = target?.messages[target.index] ?? null;
+        target = findTarget();
+      }
+      /* oxlint-enable no-await-in-loop */
+
+      if (!target) return;
+      const bannerBottom = buttonRef.current?.getBoundingClientRect().bottom ?? userMessageRoof(el);
+      scrollToUserTurnStart(target.messages[target.index], bannerBottom);
+    } finally {
+      setJumping(false);
+    }
   }, [scroller]);
 
   const jumpLabel = mode === "jump-to-top" ? "Jump to top" : "Jump to previous message";
@@ -3681,7 +3722,7 @@ export function JumpToTopButton({
         disabled={jumping}
         onClick={() => {
           if (mode === "jump-to-top") void jumpToTop();
-          else jumpToPreviousMessage();
+          else void jumpToPreviousMessage();
         }}
         aria-label={accessibleLabel}
         // When hidden (opacity-0 / pointer-events-none) keep the button out of
