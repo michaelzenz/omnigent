@@ -964,9 +964,12 @@ describe("Sidebar session list", () => {
 
   it("shares one hosts observer across multiple ordinary session rows", () => {
     const observerMounted = vi.fn();
-    useHostsMock.mockImplementation(() => {
+    // Respect `enabled` so disabled callers (e.g. NewProjectButton when its
+    // dialog is closed) don't count as an observer — the test verifies session
+    // rows share exactly one, not the total app-wide observer count.
+    useHostsMock.mockImplementation((opts?: { enabled?: boolean }) => {
       useEffect(() => {
-        observerMounted();
+        if (opts?.enabled !== false) observerMounted();
       }, []);
       return { data: [] };
     });
