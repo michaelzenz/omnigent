@@ -1711,6 +1711,24 @@ async def _persist_model_change_note(
     _publish_external_conversation_item(session_id, persisted_items[0])
 
 
+async def _persist_routing_enabled_note(
+    session_id: str,
+    conversation_store: ConversationStore,
+) -> None:
+    """Append a ``[System: smart routing enabled]`` transcript note."""
+    text = "[System: smart routing enabled]"
+    item = NewConversationItem(
+        type="message",
+        response_id=generate_task_id(),
+        data=MessageData(
+            role="user",
+            content=[{"type": "input_text", "text": text}],
+        ),
+    )
+    persisted_items = await asyncio.to_thread(conversation_store.append, session_id, [item])
+    _publish_external_conversation_item(session_id, persisted_items[0])
+
+
 async def _resolve_elicitation(
     session_id: str,
     data: dict[str, Any],
@@ -10321,6 +10339,7 @@ __all__ = [
     "_persist_external_session_usage",
     "_persist_host_launch_failure_turn",
     "_persist_model_change_note",
+    "_persist_routing_enabled_note",
     "_persist_native_cumulative_usage",
     "_persist_native_terminal_failure",
     "_persist_session_event",

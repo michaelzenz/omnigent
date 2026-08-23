@@ -8571,14 +8571,6 @@ export function ComposerSdkModelSelect({
               {SMART_ROUTING_LABEL}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            data-testid="composer-sdk-model-default"
-            data-active={!routingOn && !activeId ? "true" : undefined}
-            onSelect={() => handleSelect(MODEL_SELECT_DEFAULT)}
-            className="data-[active=true]:bg-muted"
-          >
-            Default
-          </DropdownMenuItem>
           {sdkModelOptions.map((option) => (
             <DropdownMenuItem
               key={option.id}

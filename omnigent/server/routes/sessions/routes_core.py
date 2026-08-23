@@ -161,6 +161,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _is_native_terminal_session,
     _labels_for_viewer,
     _persist_model_change_note,
+    _persist_routing_enabled_note,
     _publish_runner_recovered_status,
     _run_managed_launch,
     _spawn_archive_stop,
@@ -1998,11 +1999,17 @@ def register_core_routes(
                     _model_forward,
                 )
             else:
-                await _persist_model_change_note(
-                    session_id,
-                    updated.model_override,
-                    conversation_store,
-                )
+                if clear_model and cost_control_mode_override == "on":
+                    await _persist_routing_enabled_note(
+                        session_id,
+                        conversation_store,
+                    )
+                else:
+                    await _persist_model_change_note(
+                        session_id,
+                        updated.model_override,
+                        conversation_store,
+                    )
         if requested_codex_collaboration_mode is not None and live_forward:
             _codex_plan_enabled = _codex_plan_mode_enabled(requested_codex_collaboration_mode)
             _runner_result = await _forward_session_change_to_runner(
