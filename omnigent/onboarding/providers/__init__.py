@@ -645,6 +645,12 @@ def _catalog_lookup_targets(model: str) -> list[tuple[str, str]]:
         _add("databricks", normalized)
         base = normalized[len("databricks-") :]
         _add(_inferred_catalog_provider(base), base)
+    elif normalized.lower().startswith("system.ai."):
+        _add("databricks", normalized)
+        base = normalized[len("system.ai.") :]
+        databricks_id = f"databricks-{base}"
+        _add("databricks", databricks_id)
+        _add(_inferred_catalog_provider(base), base)
     else:
         _add(_inferred_catalog_provider(normalized), normalized)
     _add("openrouter", normalized)

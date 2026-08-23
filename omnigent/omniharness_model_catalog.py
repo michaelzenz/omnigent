@@ -42,14 +42,43 @@ _snapshot: dict[str, OmniHarnessModelMetadata] = {}
 
 
 def _aliases(model: str) -> set[str]:
-    """Return stable aliases used by Databricks and local metadata catalogs."""
+    """Return stable aliases used by Databricks and local metadata catalogs.
+
+    Databricks serves the same model under two spellings: ``databricks-*``
+    (serving endpoints) and ``system.ai.*`` (Unity Catalog / AI Gateway).
+    Aliases are bidirectional so a catalog refreshed with one spelling
+    satisfies a lookup using the other.
+    """
     value = model.strip()
     aliases = {value, value.lower()}
     if value.startswith("databricks/"):
         bare = value.removeprefix("databricks/")
         aliases.update({bare, bare.lower()})
+        if bare.lower().startswith("databricks-"):
+            inner = bare.removeprefix("databricks-")
+            aliases.update({f"system.ai.{inner}", f"system.ai.{inner}".lower()})
     elif value.startswith("databricks-"):
-        aliases.update({f"databricks/{value}", f"databricks/{value}".lower()})
+        bare = value.removeprefix("databricks-")
+        aliases.update(
+            {
+                f"databricks/{value}",
+                f"databricks/{value}".lower(),
+                f"system.ai.{bare}",
+                f"system.ai.{bare}".lower(),
+            }
+        )
+    elif value.startswith("system.ai."):
+        bare = value.removeprefix("system.ai.")
+        aliases.update(
+            {
+                f"databricks-{bare}",
+                f"databricks-{bare}".lower(),
+                f"databricks/databricks-{bare}",
+                f"databricks/databricks-{bare}".lower(),
+                bare,
+                bare.lower(),
+            }
+        )
     return aliases
 
 
@@ -62,6 +91,9 @@ def _litellm_pricing(model: str) -> ModelPricing | None:
     candidates = [model]
     if model.startswith("databricks-"):
         candidates.append(f"databricks/{model}")
+    elif model.startswith("system.ai."):
+        bare = model.removeprefix("system.ai.")
+        candidates.extend((f"databricks-{bare}", f"databricks/databricks-{bare}"))
     for candidate in candidates:
         try:
             info = litellm.get_model_info(candidate)
@@ -130,6 +162,9 @@ def _litellm_metadata(model: str) -> ModelMetadata:
     candidates = [model]
     if model.startswith("databricks-"):
         candidates.append(f"databricks/{model}")
+    elif model.startswith("system.ai."):
+        bare = model.removeprefix("system.ai.")
+        candidates.extend((f"databricks-{bare}", f"databricks/databricks-{bare}"))
     info: Mapping[str, object] = {}
     for candidate in candidates:
         try:

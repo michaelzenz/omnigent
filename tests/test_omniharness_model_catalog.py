@@ -60,3 +60,35 @@ def test_refresh_keeps_verified_metadata_and_aliases(
     assert metadata.metadata.supports(ModelCapability.TOOL_USE) is True
     assert metadata.pricing is pricing
     assert catalog.find_omniharness_model_metadata("databricks-glm-5-2") is metadata
+
+
+def test_system_ai_alias_resolves_to_databricks_pricing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``system.ai.*`` lookup finds pricing cached under ``databricks-*``.
+
+    Smart routing translates ``databricks-glm-5-2`` to ``system.ai.glm-5-2``
+    (the spelling the AI Gateway serves). The catalog is refreshed with
+    ``databricks-*`` ids (from serving endpoints), so the ``system.ai.*``
+    lookup must alias back to find pricing.
+    """
+    pricing = ModelPricing(input_per_token=1e-6, output_per_token=2e-6)
+    monkeypatch.setattr(
+        catalog,
+        "lookup_model_context_window",
+        lambda _model: (262_144, "mlflow"),
+    )
+    monkeypatch.setattr(catalog, "fetch_model_pricing", lambda _model: pricing)
+    monkeypatch.setattr(catalog, "_catalog_metadata", lambda _model: ModelMetadata())
+    monkeypatch.setattr(catalog, "_litellm_metadata", lambda _model: ModelMetadata())
+
+    catalog.refresh_omniharness_model_catalog(["databricks-glm-5-2"])
+
+    # The system.ai.* spelling should find the same pricing as databricks-*.
+    metadata = catalog.get_omniharness_model_metadata("system.ai.glm-5-2")
+    assert metadata.pricing is pricing
+    assert catalog.find_omniharness_model_metadata("system.ai.glm-5-2") is metadata
+    # The reverse direction also holds: databricks-* finds system.ai.* entries.
+    catalog.refresh_omniharness_model_catalog(["system.ai.glm-5-2"])
+    metadata = catalog.get_omniharness_model_metadata("databricks-glm-5-2")
+    assert metadata.pricing is pricing
