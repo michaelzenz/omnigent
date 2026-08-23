@@ -160,7 +160,8 @@ import { retrySession } from "@/lib/sessionsApi";
 import { codexEffortLevelsForModel, findNativeModelOption } from "@/lib/codexNativeModels";
 import {
   composerAttachmentKey,
-  consumePendingInitialPrompt,
+  peekPendingInitialPrompt,
+  deletePendingInitialPrompt,
   type PendingInitialPrompt,
   type PendingUserMessage,
   type QueuedMessage,
@@ -818,15 +819,13 @@ export function ChatPage() {
   // guard by conversation id resets it per session while still covering
   // StrictMode's double-invoke and re-renders within one session.
   const initialPromptSentForConvRef = useRef<string | null>(null);
-  // Caches the consumed prompt keyed by conversation id so the consume
+  // Caches the peeked prompt keyed by conversation id so the consume
   // effect is idempotent under StrictMode's setup→cleanup→setup
-  // double-invoke. `consumePendingInitialPrompt` is destructive (get +
-  // delete): the first invocation drains the store map, so a naive second
-  // invocation would read null and last-write-wins would settle
-  // `initialPrompt` to null — silently dropping the prompt in dev. By
-  // memoizing the first result per conv id, the second invocation reuses
-  // it. Keyed by id (not a bare value) so it still re-consumes for the
-  // next conversation when ChatPage stays mounted across `/c/:a` → `/c/:b`.
+  // double-invoke. The first invocation peeks the store map and caches
+  // the result; the second invocation reuses the cache instead of
+  // re-peeking. Keyed by id (not a bare value) so it still re-peeks for
+  // the next conversation when ChatPage stays mounted across
+  // `/c/:a` → `/c/:b`.
   const consumedInitialPromptRef = useRef<{
     conversationId: string;
     prompt: PendingInitialPrompt | null;
@@ -879,15 +878,19 @@ export function ChatPage() {
   }, [redirectToConversationId, urlConvId, navigate]);
 
   // Pull the first message the landing composer stashed for this conversation,
-  // if any. Read-once (consume deletes), so a refresh/back can't replay
-  // it. Runs in an effect (not render) because consume mutates the store
-  // map — calling it during render would double-consume under StrictMode.
-  // The per-conv-id cache (consumedInitialPromptRef) makes the consume
-  // idempotent across StrictMode's double-invoke: the first run drains the
-  // map and caches the result; the second run reuses the cache instead of
-  // re-consuming (which would read null and drop the prompt). Resetting to
-  // null when no prompt is pending clears a prior conversation's value
-  // when ChatPage stays mounted across `/c/:a` → `/c/:b`.
+  // if any. Uses a non-destructive peek (the entry stays in the map until
+  // the auto-send effect deletes it after dispatching). This is critical
+  // for worktree creation: if the user switches sessions while the worktree
+  // is still being created, the prompt must survive the round-trip so it
+  // can be sent once the worktree is ready and the user returns.
+  //
+  // Runs in an effect (not render) because peek mutates the store map
+  // reference (though not the map itself). The per-conv-id cache
+  // (consumedInitialPromptRef) makes the peek idempotent across
+  // StrictMode's double-invoke. When no prompt is pending for the current
+  // URL, the existing `initialPrompt` (for a different conversation) is
+  // preserved — `shouldSendInitialPrompt`'s `promptConversationId !==
+  // conversationId` guard prevents it from leaking into the wrong session.
   useEffect(() => {
     if (!urlConvId) {
       setInitialPrompt(null);
@@ -895,9 +898,15 @@ export function ChatPage() {
     }
     const cached = consumedInitialPromptRef.current;
     const prompt =
-      cached?.conversationId === urlConvId ? cached.prompt : consumePendingInitialPrompt(urlConvId);
+      cached?.conversationId === urlConvId ? cached.prompt : peekPendingInitialPrompt(urlConvId);
     consumedInitialPromptRef.current = { conversationId: urlConvId, prompt };
-    setInitialPrompt(prompt === null ? null : { conversationId: urlConvId, prompt });
+    if (prompt !== null) {
+      setInitialPrompt({ conversationId: urlConvId, prompt });
+    }
+    // Don't clear initialPrompt when there's no new prompt for this URL:
+    // the existing prompt (for a different conversation) is kept so it can
+    // be sent when the user navigates back. shouldSendInitialPrompt's
+    // promptConversationId !== conversationId guard prevents leaking.
   }, [urlConvId]);
 
   // Subscribe to the bits of store state we render. Each is a
@@ -1110,6 +1119,10 @@ export function ChatPage() {
     // predicate already guarantees these, so this never fires at runtime.
     if (initialPrompt === null || !agentId || !urlConvId) return;
     initialPromptSentForConvRef.current = urlConvId;
+    // The prompt has been dispatched — remove it from the pending map so a
+    // return to this session can't replay it. The non-destructive peek kept
+    // it alive across session switches while the worktree was being created.
+    deletePendingInitialPrompt(urlConvId);
     const { send, sendSlashCommand } = useChatStore.getState();
     dispatchInitialPrompt(initialPrompt.prompt, agentId, send, sendSlashCommand);
   }, [initialPrompt, urlConvId, loadingConversation, agentId, worktreeStatus]);
@@ -1134,6 +1147,9 @@ export function ChatPage() {
         files: initialPrompt.prompt.files ?? [],
       },
     });
+    // Clean up the pending map entry — the prompt text is now preserved in
+    // failedSendDraft, so leaving it in the map would be stale.
+    deletePendingInitialPrompt(urlConvId);
     consumedInitialPromptRef.current = { conversationId: urlConvId, prompt: null };
     setInitialPrompt(null);
   }, [initialPrompt, urlConvId, worktreeStatus]);

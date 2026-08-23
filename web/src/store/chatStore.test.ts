@@ -50,11 +50,14 @@ import type { TerminalInfo } from "@/hooks/useTerminals";
 import { terminalsQueryKey } from "@/hooks/useTerminals";
 import { type ChildSessionInfo, childSessionsQueryKey } from "@/hooks/useChildSessions";
 import {
-  consumePendingInitialPrompt,
+  deletePendingInitialPrompt,
+  gcPendingInitialPrompts,
   handleSessionEvent,
   isStaleCompletedResponse,
   initChatStore,
+  peekPendingInitialPrompt,
   pumpStreamEvents,
+  releaseConversation,
   SSE_STALE_RECYCLE_MS,
   setPendingInitialPrompt,
   startStreamPump,
@@ -62,7 +65,6 @@ import {
   type ConversationState,
   type FrameScheduler,
   bindConversationForTest,
-  releaseConversation,
 } from "./chatStore";
 import { conversationRegistry } from "./conversationRegistry";
 import {
@@ -9020,52 +9022,153 @@ describe("chatStore — startStreamPump reconnect loop", () => {
   });
 });
 
-// The first-message handoff from the landing composer to ChatPage. The
-// read-once delete is what replaces the old router-state clear: it must
-// return the prompt exactly once so a refresh/back can't replay it.
-describe("pending initial prompt transport", () => {
-  it("returns the stashed prompt exactly once, then null", () => {
-    setPendingInitialPrompt("conv_abc", { text: "read the README", skill: null });
-    // First consume yields the stashed prompt verbatim.
-    expect(consumePendingInitialPrompt("conv_abc")).toEqual({
-      text: "read the README",
-      skill: null,
-    });
-    // Second consume yields null — the delete prevents a replay.
-    expect(consumePendingInitialPrompt("conv_abc")).toBeNull();
+// Peek + delete is the non-destructive pair that lets the prompt survive a
+// session switch while a worktree is being created. The prompt stays in the
+// map until the auto-send effect dispatches it (or a failed worktree cleans
+// it up), so navigating away and back doesn't lose the message.
+describe("peek + delete pending initial prompt", () => {
+  it("peek returns the prompt without removing it", () => {
+    setPendingInitialPrompt("conv_peek", { text: "hello", skill: null });
+    expect(peekPendingInitialPrompt("conv_peek")).toEqual({ text: "hello", skill: null });
+    // Second peek still returns the prompt — it was not deleted.
+    expect(peekPendingInitialPrompt("conv_peek")).toEqual({ text: "hello", skill: null });
   });
 
-  it("returns null for a conversation with no pending prompt", () => {
-    expect(consumePendingInitialPrompt("conv_never_set")).toBeNull();
+  it("peek returns null for a conversation with no pending prompt", () => {
+    expect(peekPendingInitialPrompt("conv_peek_none")).toBeNull();
+  });
+
+  it("delete removes the prompt so subsequent peeks return null", () => {
+    setPendingInitialPrompt("conv_del", { text: "bye", skill: null });
+    deletePendingInitialPrompt("conv_del");
+    expect(peekPendingInitialPrompt("conv_del")).toBeNull();
+  });
+
+  it("delete is a no-op when no prompt was set", () => {
+    // Should not throw.
+    deletePendingInitialPrompt("conv_del_never_set");
+  });
+
+  it("prompt survives a session switch: peek → switch away → peek again", () => {
+    setPendingInitialPrompt("conv_survive", { text: "survives the switch", skill: null });
+    // First peek (when ChatPage loads the new session).
+    expect(peekPendingInitialPrompt("conv_survive")).toEqual({
+      text: "survives the switch",
+      skill: null,
+    });
+    // User switches to a different session — no peek or delete for conv_survive.
+    // ... time passes, worktree completes ...
+    // User comes back — peek still returns the prompt.
+    expect(peekPendingInitialPrompt("conv_survive")).toEqual({
+      text: "survives the switch",
+      skill: null,
+    });
+    // Now the auto-send fires and deletes.
+    deletePendingInitialPrompt("conv_survive");
+    expect(peekPendingInitialPrompt("conv_survive")).toBeNull();
   });
 
   it("ignores a blank prompt so a blank message never auto-sends", () => {
     setPendingInitialPrompt("conv_blank", { text: "", skill: null });
-    // Nothing was stored, so the consume reads null.
-    expect(consumePendingInitialPrompt("conv_blank")).toBeNull();
+    expect(peekPendingInitialPrompt("conv_blank")).toBeNull();
   });
 
   it("keys prompts by conversation id so they don't cross sessions", () => {
     setPendingInitialPrompt("conv_a", { text: "prompt for A", skill: null });
     setPendingInitialPrompt("conv_b", { text: "prompt for B", skill: null });
-    // Each conversation consumes only its own prompt.
-    expect(consumePendingInitialPrompt("conv_b")).toEqual({ text: "prompt for B", skill: null });
-    expect(consumePendingInitialPrompt("conv_a")).toEqual({ text: "prompt for A", skill: null });
+    expect(peekPendingInitialPrompt("conv_b")).toEqual({ text: "prompt for B", skill: null });
+    expect(peekPendingInitialPrompt("conv_a")).toEqual({ text: "prompt for A", skill: null });
   });
 
   it("carries a matched skill invocation through intact", () => {
-    // The skill payload is what makes ChatPage's auto-send post a
-    // slash_command instead of a plain message — if it's dropped or
-    // mutated in transit, the first message regresses to literal
-    // "/name" text reaching the agent.
     setPendingInitialPrompt("conv_skill", {
       text: "/review-pr 123 focus on auth",
       skill: { name: "review-pr", args: "123 focus on auth" },
     });
-    expect(consumePendingInitialPrompt("conv_skill")).toEqual({
+    expect(peekPendingInitialPrompt("conv_skill")).toEqual({
       text: "/review-pr 123 focus on auth",
       skill: { name: "review-pr", args: "123 focus on auth" },
     });
+  });
+});
+
+// GC evicts unconsumed prompts older than 1 hour, but skips sessions whose
+// worktree is still being created (refreshing their timestamp instead).
+describe("gcPendingInitialPrompts", () => {
+  const MAX_AGE = 60 * 60 * 1000; // matches PENDING_PROMPT_GC_MAX_AGE_MS
+
+  it("evicts a prompt older than the max age when the session has no live entry", () => {
+    setPendingInitialPrompt("conv_gc_stale", { text: "old", skill: null });
+    // Simulate the passage of time: GC called with a `now` past the max age.
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_stale")).toBeNull();
+  });
+
+  it("keeps a prompt younger than the max age", () => {
+    setPendingInitialPrompt("conv_gc_fresh", { text: "new", skill: null });
+    gcPendingInitialPrompts(Date.now() + 100);
+    expect(peekPendingInitialPrompt("conv_gc_fresh")).toEqual({ text: "new", skill: null });
+  });
+
+  it("keeps a stale prompt when the session's worktree is still creating", () => {
+    // Bind a live conversation entry with a creating worktree.
+    bindConversationForTest("conv_gc_creating", { worktreeStatus: { stage: "creating" } });
+    setPendingInitialPrompt("conv_gc_creating", { text: "waiting for worktree", skill: null });
+    // Well past max age — but the worktree is still creating.
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_creating")).toEqual({
+      text: "waiting for worktree",
+      skill: null,
+    });
+    releaseConversation("conv_gc_creating");
+  });
+
+  it("refreshes the timestamp of a worktree-creating entry so it survives another cycle", () => {
+    bindConversationForTest("conv_gc_refresh", { worktreeStatus: { stage: "creating" } });
+    setPendingInitialPrompt("conv_gc_refresh", { text: "refreshed", skill: null });
+    // First GC pass: past max age but worktree still creating → timestamp refreshed.
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_refresh")).not.toBeNull();
+    // Second GC pass called soon after: the refreshed timestamp means age < max.
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 2);
+    expect(peekPendingInitialPrompt("conv_gc_refresh")).not.toBeNull();
+    releaseConversation("conv_gc_refresh");
+  });
+
+  it("evicts a stale prompt when the session has a live entry but no creating worktree", () => {
+    bindConversationForTest("conv_gc_idle", { worktreeStatus: null });
+    setPendingInitialPrompt("conv_gc_idle", { text: "worktree done", skill: null });
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_idle")).toBeNull();
+    releaseConversation("conv_gc_idle");
+  });
+
+  it("evicts a stale prompt when the session's worktree reached 'ready'", () => {
+    bindConversationForTest("conv_gc_ready", { worktreeStatus: { stage: "ready" } });
+    setPendingInitialPrompt("conv_gc_ready", { text: "ready", skill: null });
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_ready")).toBeNull();
+    releaseConversation("conv_gc_ready");
+  });
+
+  it("evicts a stale prompt when the session's worktree failed", () => {
+    bindConversationForTest("conv_gc_failed", { worktreeStatus: { stage: "failed" } });
+    setPendingInitialPrompt("conv_gc_failed", { text: "failed worktree", skill: null });
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_failed")).toBeNull();
+    releaseConversation("conv_gc_failed");
+  });
+
+  it("handles a mix of stale and creating entries in one sweep", () => {
+    setPendingInitialPrompt("conv_mix_stale", { text: "stale", skill: null });
+    bindConversationForTest("conv_mix_creating", { worktreeStatus: { stage: "creating" } });
+    setPendingInitialPrompt("conv_mix_creating", { text: "creating", skill: null });
+
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+
+    expect(peekPendingInitialPrompt("conv_mix_stale")).toBeNull();
+    expect(peekPendingInitialPrompt("conv_mix_creating")).toEqual({ text: "creating", skill: null });
+    releaseConversation("conv_mix_creating");
   });
 });
 

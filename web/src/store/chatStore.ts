@@ -1245,6 +1245,13 @@ export function initChatStore(client: QueryClient): void {
   // the next one (production calls this once at boot; tests call it per case).
   // The send latch is per-conversation state now, cleared with the registry above.
   sendChains.clear();
+  // Clear the pending-prompt GC timer and drop all stashed prompts so a test
+  // reset (or HMR) starts from an empty map and a disarmed timer.
+  if (pendingPromptGcTimer !== null) {
+    clearInterval(pendingPromptGcTimer);
+    pendingPromptGcTimer = null;
+  }
+  pendingInitialPrompts.clear();
   queryClient = client;
 }
 
@@ -1309,7 +1316,57 @@ export interface PendingInitialPrompt {
 // host-provided routing (the host router may not carry react-router
 // state through navigate() → useLocation()). Both surfaces share this
 // module-level singleton, so it works identically standalone and embedded.
-const pendingInitialPrompts = new Map<string, PendingInitialPrompt>();
+//
+// Each entry carries a `setAt` timestamp so the GC can evict prompts that
+// were never consumed (session deleted, user never returned). The GC skips
+// entries whose session still has a worktree in the "creating" stage so a
+// slow repo clone doesn't lose the prompt before the runner is ready.
+const pendingInitialPrompts = new Map<string, { prompt: PendingInitialPrompt; setAt: number }>();
+
+// Maximum age (ms) before an unconsumed prompt is garbage-collected.
+const PENDING_PROMPT_GC_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+// Interval at which the GC sweep runs once armed.
+const PENDING_PROMPT_GC_INTERVAL_MS = 60 * 1000; // 1 minute
+let pendingPromptGcTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Evict unconsumed prompts older than {@link PENDING_PROMPT_GC_MAX_AGE_MS}.
+ *
+ * A prompt whose session still has a worktree in the "creating" stage is
+ * exempt: its `setAt` is refreshed so a long-running worktree creation
+ * (e.g. a large repo clone) doesn't lose the message before the runner
+ * launches. Sessions without a live conversation-registry entry (already
+ * evicted/closed) are not exempt — the client can't observe their worktree
+ * status, so keeping the prompt would leak indefinitely.
+ *
+ * Exported for tests.
+ */
+export function gcPendingInitialPrompts(now: number = Date.now()): void {
+  for (const [id, entry] of pendingInitialPrompts) {
+    const age = now - entry.setAt;
+    if (age < PENDING_PROMPT_GC_MAX_AGE_MS) continue;
+    // Check if the session's worktree is still being created.
+    const liveEntry = conversationRegistry.peek(id);
+    const state = liveEntry?.getState();
+    if (state?.worktreeStatus?.stage === "creating") {
+      // Still working — refresh the timestamp so the prompt survives.
+      entry.setAt = now;
+      continue;
+    }
+    pendingInitialPrompts.delete(id);
+  }
+  // Disarm the timer when nothing is left to collect.
+  if (pendingInitialPrompts.size === 0 && pendingPromptGcTimer !== null) {
+    clearInterval(pendingPromptGcTimer);
+    pendingPromptGcTimer = null;
+  }
+}
+
+/** Arm the periodic GC timer if it isn't already running. */
+function ensurePendingPromptGcTimer(): void {
+  if (pendingPromptGcTimer !== null) return;
+  pendingPromptGcTimer = setInterval(() => void gcPendingInitialPrompts(), PENDING_PROMPT_GC_INTERVAL_MS);
+}
 
 /**
  * Stash the first message for a freshly created conversation so ChatPage
@@ -1327,25 +1384,36 @@ export function setPendingInitialPrompt(
   prompt: PendingInitialPrompt,
 ): void {
   if (!prompt.text) return;
-  pendingInitialPrompts.set(conversationId, prompt);
+  pendingInitialPrompts.set(conversationId, { prompt, setAt: Date.now() });
+  ensurePendingPromptGcTimer();
 }
 
 /**
- * Read and remove the pending first message for a conversation. Read-once
- * (get + delete): the delete is what prevents a refresh/back from
- * replaying the prompt, replacing the old `navigate(..., { state: null })`
- * clear.
+ * Read the pending first message for a conversation without removing it.
  *
- * @param conversationId The conversation id to consume for, e.g.
+ * Keeps the entry in the map so the prompt survives a session switch
+ * before it has been sent (e.g. while a git worktree is being created).
+ * The caller must {@link deletePendingInitialPrompt} once the prompt has
+ * been dispatched.
+ *
+ * @param conversationId The conversation id to peek for, e.g.
  *   `"conv_abc123"`.
- * @returns The stashed prompt, or `null` when none was set (or it was
- *   already consumed).
+ * @returns The stashed prompt, or `null` when none was set.
  */
-export function consumePendingInitialPrompt(conversationId: string): PendingInitialPrompt | null {
-  const prompt = pendingInitialPrompts.get(conversationId);
-  if (prompt === undefined) return null;
+export function peekPendingInitialPrompt(conversationId: string): PendingInitialPrompt | null {
+  return pendingInitialPrompts.get(conversationId)?.prompt ?? null;
+}
+
+/**
+ * Remove a pending first message after it has been dispatched (or is no
+ * longer needed, e.g. a failed worktree). Paired with
+ * {@link peekPendingInitialPrompt} so the prompt survives a session
+ * switch until it is actually sent.
+ *
+ * @param conversationId The conversation id whose prompt to delete.
+ */
+export function deletePendingInitialPrompt(conversationId: string): void {
   pendingInitialPrompts.delete(conversationId);
-  return prompt;
 }
 
 export const useChatStore = create<ChatState>((_rootSet, get) => ({
