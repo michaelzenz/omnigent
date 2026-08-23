@@ -76,7 +76,7 @@ describe("forkTargetCarriesHistory", () => {
     ["codex"],
     ["openai-agents"],
     ["agents_sdk"],
-    // antigravity is the Gemini-family SDK target.
+    // antigravity is the Gemini-family SDK target (in-process, not native).
     ["antigravity"],
   ])("SDK target %s carries history", (target) => {
     expect(forkTargetCarriesHistory(target)).toBe(true);
@@ -108,8 +108,6 @@ describe("forkTargetCarriesHistory", () => {
     // still be offered, or the fork/switch-agent pickers silently drop it.
     ["pi-native"],
     ["native-pi"],
-    ["antigravity-native"],
-    ["native-antigravity"],
     // qwen-native rebuilds qwen's on-disk recording from the copied items.
     ["qwen-native"],
     ["native-qwen"],
@@ -119,9 +117,17 @@ describe("forkTargetCarriesHistory", () => {
 
   // Native harnesses with NO carry path on the server (neither rebuild nor
   // preamble) and no single provider family — forking into them would start
-  // fresh, so the fork picker must not offer them. (qwen-native DOES carry —
-  // it rebuilds from items — so it is intentionally absent here.)
-  it.each([["kiro-native"], ["kimi-native"], ["goose-native"]])(
+  // fresh, so the fork picker must not offer them. antigravity-native has a
+  // family (gemini) but the server declares ForkHistory.NONE — no rebuild,
+  // no preamble, no SDK replay. (qwen-native DOES carry — it rebuilds from
+  // items — so it is intentionally absent here.)
+  it.each([
+    ["kiro-native"],
+    ["kimi-native"],
+    ["goose-native"],
+    ["antigravity-native"],
+    ["native-antigravity"],
+  ])(
     "native target %s without a carry path does NOT carry on fork",
     (target) => {
       expect(forkTargetCarriesHistory(target)).toBe(false);
@@ -155,10 +161,8 @@ describe("switchTargetCarriesHistory", () => {
     ["native-qwen"],
     ["claude-sdk"],
     ["openai-agents"],
+    // antigravity is the in-process Gemini-family SDK target (NOT native).
     ["antigravity"],
-    // antigravity-native currently carries via the family proxy (see the
-    // forkTargetCarriesHistory NOTE); kept offered until verified.
-    ["antigravity-native"],
   ])("switch target %s carries history", (target) => {
     expect(switchTargetCarriesHistory(target)).toBe(true);
   });
@@ -175,7 +179,15 @@ describe("switchTargetCarriesHistory", () => {
   );
 
   // Native harnesses with no carry path are offered by neither picker.
-  it.each([["kiro-native"], ["kimi-native"], ["goose-native"]])(
+  // antigravity-native has a family (gemini) but the server declares
+  // ForkHistory.NONE — no rebuild, no preamble, no SDK replay.
+  it.each([
+    ["kiro-native"],
+    ["kimi-native"],
+    ["goose-native"],
+    ["antigravity-native"],
+    ["native-antigravity"],
+  ])(
     "native target %s without a carry path does NOT carry on switch",
     (target) => {
       expect(switchTargetCarriesHistory(target)).toBe(false);
