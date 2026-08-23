@@ -49,6 +49,26 @@ def test_fork_drops_import_provenance_labels(
     assert IMPORT_EXTERNAL_SESSION_ID_LABEL_KEY not in fork.labels
 
 
+def test_fork_drops_auto_worktree_lease_labels(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """A fork must acquire its own managed-worktree lease metadata."""
+    source = conversation_store.create_conversation()
+    conversation_store.set_labels(
+        source.id,
+        {
+            "omnigent.auto_worktree": "1",
+            "omnigent.auto_worktree.source_repo": "/repo",
+            "omnigent.auto_worktree.base_ref": "main",
+            "kept": "yes",
+        },
+    )
+
+    fork = conversation_store.fork_conversation(source.id)
+
+    assert fork.labels == {"kept": "yes"}
+
+
 def test_fork_drops_per_user_pin_labels(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:

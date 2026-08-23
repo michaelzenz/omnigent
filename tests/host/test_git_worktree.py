@@ -215,6 +215,24 @@ def test_auto_worktree_quarantines_expired_dirty_entry(git_repo: Path) -> None:
     )
 
 
+def test_auto_worktree_without_base_uses_linked_worktree_head(git_repo: Path) -> None:
+    """A fork from a linked worktree follows that worktree's commit."""
+    source = create_worktree(repo_path=str(git_repo), branch_name="feature/source")
+    source_path = Path(source.worktree_path)
+    (source_path / "source.txt").write_text("source commit")
+    _git(source_path, "add", ".")
+    _git(source_path, "commit", "-q", "-m", "source")
+
+    created = acquire_auto_worktree_streaming(
+        repo_path=str(source_path),
+        branch_name="agent/fork-aaaaaa",
+        lease_owner="session-fork",
+    )
+
+    assert _rev_parse(Path(created.worktree_path)) == _rev_parse(source_path)
+    assert _rev_parse(Path(created.worktree_path)) != _rev_parse(git_repo)
+
+
 def test_create_worktree_resolves_repo_root_from_subdir(git_repo: Path) -> None:
     """Picking a subdir still creates under Omnigent's managed root."""
     sub = git_repo / "src"

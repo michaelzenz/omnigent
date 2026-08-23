@@ -4248,16 +4248,16 @@ class SqlAlchemyConversationStore(ConversationStore):
             # message instead of dropping it. Forks of chat-only sources
             # (no workspace) get no such label and resume in-process like
             # a brand-new chat session.
-            # Per-user pin keys (``omnigent.pinned.<user>``) are dynamic-suffix,
-            # so they're never in the exact-match drop sets — drop them by prefix
-            # instead. A fork is a NEW conversation; inheriting the source's pins
-            # would show the clone as pinned for the forker AND carry every other
-            # user's pin key along as dead data.
+            # Per-user pins and managed-worktree lease metadata use dynamic
+            # suffixes, so drop them by prefix. Both belong to the source
+            # session instance, not the copied conversation.
             fork_labels = {
                 key: value
                 for key, value in _fetch_labels(session, source_conversation_id).items()
                 if key not in (_INSTANCE_SCOPED_LABEL_KEYS | _FORK_ONLY_DROPPED_LABEL_KEYS)
                 and not key.startswith(f"{PINNED_LABEL_KEY}.")
+                and key != "omnigent.auto_worktree"
+                and not key.startswith("omnigent.auto_worktree.")
             }
             source_workspace = source_meta_ref.workspace if source_meta_ref else None
             source_ext_session = source_meta_ref.external_session_id if source_meta_ref else None

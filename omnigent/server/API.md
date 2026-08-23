@@ -1066,7 +1066,8 @@ Content-Type: application/json
 
 {
   "title": "Exploring alternative approach",   // optional
-  "up_to_response_id": "resp_abc123"           // optional
+  "up_to_response_id": "resp_abc123",          // optional
+  "worktree": { "mode": "auto" }               // optional
 }
 
 Request body matches `SessionForkRequest`:
@@ -1074,6 +1075,14 @@ Request body matches `SessionForkRequest`:
   title (string | null, optional)
     Title for the forked session. When null or omitted, the server
     derives "Fork of <source_title>".
+
+  worktree (object | null, optional)
+    With `{ "mode": "auto" }`, create a server-managed branch and
+    isolated worktree on the source session's host, then launch the
+    fork there. The branch starts from the source workspace's branch
+    when provisioning begins; uncommitted changes are not copied.
+    Requires owner access and a connected host that supports managed
+    worktree leases.
 
   up_to_response_id (string | null, optional)
     Truncation point for the copied history ("fork from this
@@ -1097,9 +1106,10 @@ Request body matches `SessionForkRequest`:
 Creates a new session by deep-copying every item from the source
 session. The server also clones the source's agent (new agent ID,
 same bundle and config) so the fork can be reconfigured independently.
-The forked session is **not** bound to a runner — clients must
-`PATCH /v1/sessions/{id}` with `runner_id` before posting events,
-the same way they bind a runner after resuming an existing session.
+Without `worktree`, the forked session is not bound to a runner and
+clients must launch or bind one. With auto worktree mode, provisioning
+continues in the background and publishes worktree status events; the
+runner launches after the managed worktree is ready.
 
 The response is a full `SessionResponse` snapshot of the fork — same
 shape as `GET /v1/sessions/{id}` — with status `"idle"` and all

@@ -19,6 +19,7 @@ import { useHosts, type Host } from "@/hooks/useHosts";
 import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { checkHostDirectory, useHostFilesystem } from "@/hooks/useHostFilesystem";
+import { useHostRepository } from "@/hooks/useHostWorktrees";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => {
@@ -38,6 +39,7 @@ vi.mock("@/hooks/useHostFilesystem", () => ({
   useHostFilesystem: vi.fn(),
   checkHostDirectory: vi.fn(),
 }));
+vi.mock("@/hooks/useHostWorktrees", () => ({ useHostRepository: vi.fn() }));
 // The tree browser only mounts when browsing; coding-fork tests rely on the
 // directory being prefilled from the source, so the real picker never opens —
 // stub it anyway to keep its filesystem fetch out of the test.
@@ -59,6 +61,7 @@ const useDirectorySessionsMock = vi.mocked(useDirectorySessions);
 const useRunnerHealthMock = vi.mocked(useRunnerHealthRegistration);
 const useHostFilesystemMock = vi.mocked(useHostFilesystem);
 const checkHostDirectoryMock = vi.mocked(checkHostDirectory);
+const useHostRepositoryMock = vi.mocked(useHostRepository);
 const prefetchAvailableAgentDetailsMock = vi.mocked(prefetchAvailableAgentDetails);
 
 function host(overrides: Partial<Host> = {}): Host {
@@ -174,6 +177,9 @@ beforeEach(() => {
   // test overrides it with a failure message.
   checkHostDirectoryMock.mockReset();
   checkHostDirectoryMock.mockResolvedValue(null);
+  useHostRepositoryMock.mockReturnValue({
+    data: { isGitRepository: false, worktrees: [], autoWorktreesSupported: false },
+  } as unknown as ReturnType<typeof useHostRepository>);
   prefetchAvailableAgentDetailsMock.mockReset();
   setAgents(AVAILABLE_AGENTS, "claude-sdk");
   // Defaults for the coding-fork wiring; the non-coding tests don't render
@@ -226,7 +232,12 @@ describe("ForkSessionDialog", () => {
     await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
     // No agent switch → agent_id omitted (undefined) so the server keeps
     // the source's agent.
-    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", "My clone", undefined, undefined);
+    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+      title: "My clone",
+      agentId: undefined,
+      upToResponseId: undefined,
+      autoWorktree: false,
+    });
     // Session list refreshed so the fork shows in the sidebar, then navigated.
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversations"] });
     // A fork inherits the source's project, so the project-folder lists must
@@ -271,9 +282,14 @@ describe("ForkSessionDialog", () => {
     fireEvent.click(screen.getByTestId("fork-session-submit"));
 
     await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
-    // The 4th arg is the truncation point — undefined here would mean the
-    // dialog dropped it and the fork silently copied the full history.
-    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", undefined, undefined, "resp_cut");
+    // The truncation point must survive the options-object conversion;
+    // omitting it would silently copy the full history.
+    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+      title: undefined,
+      agentId: undefined,
+      upToResponseId: "resp_cut",
+      autoWorktree: false,
+    });
   });
 
   it("omits the title (server derives it) when the field is cleared", async () => {
@@ -290,7 +306,12 @@ describe("ForkSessionDialog", () => {
 
     await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
     // Whitespace-only → undefined so the server applies "Fork of <title>".
-    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", undefined, undefined, undefined);
+    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+      title: undefined,
+      agentId: undefined,
+      upToResponseId: undefined,
+      autoWorktree: false,
+    });
   });
 
   it("pressing Enter in the title input submits the fork", async () => {
@@ -520,12 +541,12 @@ describe("ForkSessionDialog", () => {
     // Switching to a same-family native target forwards agent_id so the
     // server clones that agent and marks the fork for native rebuild. The
     // name was left blank (optional) → undefined so the server derives it.
-    expect(forkSessionMock).toHaveBeenCalledWith(
-      "conv_src",
-      undefined,
-      "ag_claude_native",
-      undefined,
-    );
+    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+      title: undefined,
+      agentId: "ag_claude_native",
+      upToResponseId: undefined,
+      autoWorktree: false,
+    });
   });
 
   it("labels the keep-current option with the source agent's name, not generic text", () => {
@@ -551,6 +572,31 @@ describe("ForkSessionDialog", () => {
       sourceWorkspace: "/repo",
       sourceHostId: "host_1",
     };
+
+    it("defaults to a server-managed auto worktree when the source host supports it", async () => {
+      useHostRepositoryMock.mockReturnValue({
+        data: { isGitRepository: true, worktrees: [], autoWorktreesSupported: true },
+      } as unknown as ReturnType<typeof useHostRepository>);
+      forkSessionMock.mockResolvedValue({
+        id: "conv_fork",
+      } as unknown as Awaited<ReturnType<typeof forkSession>>);
+
+      renderDialog(CODING);
+
+      const toggle = await screen.findByTestId("fork-session-auto-worktree-toggle");
+      await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+      fireEvent.click(screen.getByTestId("fork-session-submit"));
+
+      await waitFor(() =>
+        expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+          title: undefined,
+          agentId: undefined,
+          upToResponseId: undefined,
+          autoWorktree: true,
+        }),
+      );
+      expect(launchRunnerMock).not.toHaveBeenCalled();
+    });
 
     it("hides the host/directory fields for a non-coding source", () => {
       // No source workspace → nothing to bind. Advanced still holds the
@@ -630,7 +676,12 @@ describe("ForkSessionDialog", () => {
 
       await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
       // Name left blank (optional) → undefined so the server derives it.
-      expect(forkSessionMock).toHaveBeenCalledWith("conv_src", undefined, undefined, undefined);
+      expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+        title: undefined,
+        agentId: undefined,
+        upToResponseId: undefined,
+        autoWorktree: false,
+      });
       // Navigation happens even though the launch promise is still pending.
       await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_fork"));
       // The launch was kicked off (in the background) on the prefilled host/dir.

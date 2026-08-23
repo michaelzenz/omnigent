@@ -7,6 +7,7 @@ shape using minimal real-type stubs — no MagicMock.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -262,6 +263,9 @@ def _make_conversation(
     agent_id: str | None = "087b7cb7ac30abf4debfaa578d052ec6",
     title: str = "Source Chat",
     kind: str = "default",
+    host_id: str | None = None,
+    workspace: str | None = None,
+    git_branch: str | None = None,
 ) -> Conversation:
     """
     Build a minimal Conversation entity for testing.
@@ -271,6 +275,9 @@ def _make_conversation(
     :param title: Title string.
     :param kind: Conversation kind, e.g. ``"default"`` or
         ``"sub_agent"``.
+    :param host_id: Optional source host id.
+    :param workspace: Optional source working directory.
+    :param git_branch: Optional branch checked out in the source worktree.
     :returns: A Conversation.
     """
     return Conversation(
@@ -281,6 +288,9 @@ def _make_conversation(
         agent_id=agent_id,
         title=title,
         kind=kind,
+        host_id=host_id,
+        workspace=workspace,
+        git_branch=git_branch,
     )
 
 
@@ -309,6 +319,7 @@ def _make_item(item_id: str, text: str, response_id: str = "resp_001") -> Conver
 def _build_app(
     store: _ConversationStore,
     agent_store: _AgentStore | None = None,
+    host_registry: Any | None = None,
 ) -> FastAPI:
     """
     Build a FastAPI app with the sessions router and error handler.
@@ -320,6 +331,7 @@ def _build_app(
     :param store: The conversation store stub.
     :param agent_store: The agent store stub. Defaults to a
         pre-populated stub with ``087b7cb7ac30abf4debfaa578d052ec6``.
+    :param host_registry: Optional connected-host registry stub.
     :returns: A configured FastAPI app ready for TestClient.
     """
     if agent_store is None:
@@ -337,6 +349,7 @@ def _build_app(
     router = create_sessions_router(
         conversation_store=store,  # type: ignore[arg-type]
         agent_store=agent_store,  # type: ignore[arg-type]
+        host_registry=host_registry,
     )
     app = FastAPI()
 
@@ -357,6 +370,58 @@ def _build_app(
 
 
 # ── Tests ────────────────────────────────────────────────────────
+
+
+def test_auto_worktree_requires_source_host_and_workspace() -> None:
+    """Auto mode fails before copying a non-coding source session."""
+    conv = _make_conversation()
+    store = _ConversationStore(conversations={conv.id: conv})
+    client = TestClient(_build_app(store))
+
+    resp = client.post(
+        f"/v1/sessions/{conv.id}/fork",
+        json={"worktree": {"mode": "auto"}},
+    )
+
+    assert resp.status_code == 400
+    assert "source host and workspace" in resp.json()["error"]["message"]
+
+
+def test_auto_worktree_spawns_managed_provisioning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A coding fork delegates worktree creation to the managed worker."""
+    conv = _make_conversation(
+        host_id="host_1",
+        workspace="/repo",
+        git_branch="feature/source",
+    )
+    store = _ConversationStore(conversations={conv.id: conv})
+    registry = SimpleNamespace(
+        get=lambda host_id: SimpleNamespace(
+            hello=SimpleNamespace(managed_worktree_leases=host_id == "host_1")
+        )
+    )
+    spawned: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.routes_core._spawn_worktree_creation_task",
+        lambda **kwargs: spawned.append(kwargs),
+    )
+    client = TestClient(_build_app(store, host_registry=registry))
+
+    resp = client.post(
+        f"/v1/sessions/{conv.id}/fork",
+        json={"title": "Try another fix", "worktree": {"mode": "auto"}},
+    )
+
+    assert resp.status_code == 201
+    assert len(spawned) == 1
+    assert spawned[0]["session_id"] == resp.json()["id"]
+    assert spawned[0]["host_id"] == "host_1"
+    assert spawned[0]["source_repo"] == "/repo"
+    assert spawned[0]["base_branch"] == "feature/source"
+    assert spawned[0]["auto_create"] is True
+    assert spawned[0]["initial_prompt"] == "Try another fix"
 
 
 @pytest.mark.asyncio

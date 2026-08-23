@@ -303,10 +303,29 @@ describe("forkSession", () => {
       }),
     );
 
-    await forkSession("conv_src", "My clone");
+    await forkSession("conv_src", { title: "My clone" });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ title: "My clone" });
+  });
+
+  it("requests a server-managed worktree for the fork", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", { upToResponseId: "resp_1", autoWorktree: true });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      up_to_response_id: "resp_1",
+      worktree: { mode: "auto" },
+    });
   });
 
   it("surfaces a non-ok response as a thrown error (e.g. 403 no access)", async () => {
