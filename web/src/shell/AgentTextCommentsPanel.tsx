@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2Icon, PencilIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useSessionAgent } from "@/hooks/useAgents";
 import {
   useAddAgentTextComment,
   useAgentTextComments,
   useDeleteAgentTextComment,
-  useDeleteAgentTextCommentsBatch,
   useUpdateAgentTextComment,
 } from "@/hooks/useAgentTextComments";
 import { formatAgentTextComments } from "@/lib/formatAgentTextComments";
 import { useChatStore } from "@/store/chatStore";
+import { authenticatedFetch } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { useAgentTextCommentsUI, type AgentTextCommentsUI } from "./AgentTextCommentsContext";
 
@@ -25,17 +26,18 @@ export function AgentTextCommentsPanel({
 }) {
   const contextUI = useAgentTextCommentsUI();
   const ui = providedUI ?? contextUI;
+  const queryClient = useQueryClient();
   const query = useAgentTextComments(conversationId);
   const add = useAddAgentTextComment(conversationId);
   const update = useUpdateAgentTextComment(conversationId);
   const remove = useDeleteAgentTextComment(conversationId);
-  const removeBatch = useDeleteAgentTextCommentsBatch(conversationId);
   const { data: agent } = useSessionAgent(conversationId);
   const comments = query.data ?? [];
   const [draftBody, setDraftBody] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
+  const [clearingBatch, setClearingBatch] = useState(false);
   const { isSending, sentBatchIds } = ui.sendState;
   const selectedCardRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -73,11 +75,29 @@ export function AgentTextCommentsPanel({
     }
   };
 
-  const clearSentBatch = async (ids: string[]) => {
-    await removeBatch.mutateAsync(ids);
-    ui.setSendState({ isSending: false, sentBatchIds: null });
-    setSendError(null);
-    ui?.activateComment(null);
+  const clearSentBatch = async (ids: string[], batchConversationId: string) => {
+    setClearingBatch(true);
+    try {
+      const res = await authenticatedFetch(
+        `/v1/sessions/${encodeURIComponent(batchConversationId)}/agent-text-comments/delete-batch`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ comment_ids: ids }),
+        },
+      );
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      // Invalidate the query for the session the comments belonged to,
+      // not the currently-visible one.
+      queryClient.invalidateQueries({
+        queryKey: ["agent-text-comments", batchConversationId],
+      });
+      ui.setSendState({ isSending: false, sentBatchIds: null });
+      setSendError(null);
+      ui?.activateComment(null);
+    } finally {
+      setClearingBatch(false);
+    }
   };
 
   const sendAll = async () => {
@@ -90,6 +110,10 @@ export function AgentTextCommentsPanel({
       ui?.pendingAnchor
     )
       return;
+    // Capture the session at click time — the user may switch sessions
+    // while the send POST is in-flight, and the batch delete must target
+    // the session whose comments we're clearing, not the now-active one.
+    const batchConversationId = conversationId;
     const batch = comments.map((comment) => ({ ...comment }));
     const ids = batch.map((comment) => comment.id);
     setSendError(null);
@@ -114,13 +138,13 @@ export function AgentTextCommentsPanel({
 
     ui.setSendState({ isSending: false, sentBatchIds: ids });
     try {
-      await clearSentBatch(ids);
+      await clearSentBatch(ids, batchConversationId);
     } catch {
       setSendError("Comments were sent, but could not be cleared. Retry clearing them.");
     }
   };
 
-  const busy = isSending || add.isPending || removeBatch.isPending || sentBatchIds !== null;
+  const busy = isSending || add.isPending || clearingBatch || sentBatchIds !== null;
 
   const handleDelete = (commentId: string) => {
     setSendError(null);
@@ -308,10 +332,10 @@ export function AgentTextCommentsPanel({
             <Button
               type="button"
               size="sm"
-              disabled={removeBatch.isPending}
-              onClick={() => void clearSentBatch(sentBatchIds)}
+              disabled={clearingBatch}
+              onClick={() => void clearSentBatch(sentBatchIds, conversationId)}
             >
-              {removeBatch.isPending && <Loader2Icon className="size-4 animate-spin" />}
+              {clearingBatch && <Loader2Icon className="size-4 animate-spin" />}
               Retry clear
             </Button>
           ) : (
