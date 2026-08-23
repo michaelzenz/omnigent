@@ -9999,7 +9999,7 @@ def create_runner_app(
         if compacted_messages:
             compaction_event["compacted_messages"] = compacted_messages
         try:
-            await server_client.post(
+            response = await server_client.post(
                 f"/v1/sessions/{conv}/events",
                 json={
                     "type": "compaction",
@@ -10007,15 +10007,27 @@ def create_runner_app(
                 },
                 timeout=10.0,
             )
+            response.raise_for_status()
         except (httpx.HTTPError, RuntimeError):
             _logger.warning(
                 "Failed to persist harness compaction item for %s",
                 conv,
                 exc_info=True,
             )
+            raise
 
         if compacted_messages:
-            _session_histories[conv] = compacted_messages
+            live_messages = list(compacted_messages)
+            # Local compaction persists through the active user input but
+            # excludes generated output to avoid duplicating durable items.
+            # Keep tool events already observed after that input in runner memory.
+            if compacted_messages[-1].get("role") == "user":
+                existing = _session_histories.get(conv, [])
+                for index in range(len(existing) - 1, -1, -1):
+                    if existing[index].get("role") == "user":
+                        live_messages.extend(existing[index + 1 :])
+                        break
+            _session_histories[conv] = live_messages
         else:
             _session_histories[conv] = [
                 {

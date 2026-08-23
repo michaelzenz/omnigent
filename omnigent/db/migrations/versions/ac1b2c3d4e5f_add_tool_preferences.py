@@ -1,7 +1,7 @@
 """Add deployment-wide tool preferences table.
 
-Revision ID: aa1b2c3d4e5f
-Revises: zz2q3r4s5t6u
+Revision ID: ac1b2c3d4e5f
+Revises: b9d0e1f2a3b4
 Create Date: 2026-08-22 16:00:00.000000
 """
 
@@ -12,8 +12,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "aa1b2c3d4e5f"
-down_revision: str | None = "zz2q3r4s5t6u"
+revision: str = "ac1b2c3d4e5f"
+down_revision: str | None = "b9d0e1f2a3b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

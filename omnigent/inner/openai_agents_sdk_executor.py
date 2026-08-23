@@ -31,7 +31,7 @@ from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.llms.errors import is_context_length_exceeded as _is_context_length_exceeded
 from omnigent.reasoning_effort import OPENAI_AGENTS_EFFORTS, validate_effort
-from omnigent.spec.types import RetryPolicy
+from omnigent.spec.types import CompactionConfig, RetryPolicy
 from omnigent.tools.mcp_search import MCP_TOOL_CALL_NAME
 
 from .async_utils import run_sync_on_thread
@@ -726,6 +726,15 @@ class _AgentsSessionState:
     rollback_to_item_count: int | None = None
 
 
+@dataclass(frozen=True)
+class _LocalCompactionSnapshot:
+    """Summary and replacement history produced without ``/responses/compact``."""
+
+    summary: str
+    token_count: int
+    messages: list[ReplayItem]
+
+
 # ``_sanitize_replay_item`` walks replay values recursively. At the
 # boundary these are either SDK TypedDicts, pydantic models that have
 # already been ``model_dump``-ed to dicts, or primitive JSON values — so
@@ -868,8 +877,9 @@ def _build_reasoning_model_settings(effort: str | None) -> dict[str, object]:
 
 
 def _is_databricks_openai_client(client: AsyncOpenAIClient) -> bool:
-    """Return whether *client* targets a Databricks AI Gateway base URL."""
-    return "/ai-gateway/" in str(getattr(client, "base_url", ""))
+    """Return whether *client* targets a Databricks AI Gateway endpoint."""
+    base_url = str(getattr(client, "base_url", "")).lower()
+    return "/ai-gateway/" in base_url
 
 
 class _ReasoningBlockFilterStream:
@@ -1201,19 +1211,166 @@ class OpenAIAgentsSDKExecutor(Executor):
                 )
 
                 class _SafeCompactionSession(OpenAIResponsesCompactionSession):
-                    """Compaction session that raises on compaction failure.
+                    """Use semantic local compaction on Databricks gateways."""
 
-                    The responses.compact API may not be available on all
-                    endpoints. A failure kills the turn — without compaction
-                    the context grows unbounded and the agent cannot function
-                    correctly.
-                    """
+                    _local_snapshot: _LocalCompactionSnapshot | None = None
+                    _summary_boundary: int | None = None
+
+                    def __init__(self, *args: Any, **kwargs: Any) -> None:
+                        super().__init__(*args, **kwargs)
+                        self._use_local_compaction = _is_databricks_openai_client(self.client)
+                        if self._use_local_compaction:
+                            self.should_trigger_compaction = self._should_trigger_local_compaction
+
+                    def set_runtime_model(self, model: str) -> None:
+                        self.model = model
+                        if model.lower().startswith(("system.ai.", "databricks-")):
+                            self._use_local_compaction = True
+                            self.should_trigger_compaction = self._should_trigger_local_compaction
+
+                    def set_summary_boundary(self, item_count: int) -> None:
+                        self._summary_boundary = item_count
+
+                    def take_local_snapshot(self) -> _LocalCompactionSnapshot | None:
+                        snapshot = self._local_snapshot
+                        self._local_snapshot = None
+                        return snapshot
+
+                    def has_local_snapshot(self) -> bool:
+                        return self._local_snapshot is not None
+
+                    def uses_local_compaction(self) -> bool:
+                        return self._use_local_compaction
+
+                    def _context_window(self) -> int:
+                        from omnigent.omniharness_model_catalog import (
+                            get_omniharness_context_window,
+                        )
+
+                        return get_omniharness_context_window(self.model)
+
+                    def _should_trigger_local_compaction(self, context: dict[str, Any]) -> bool:
+                        from omnigent.runtime.compaction import count_tokens
+
+                        items = cast(list[ReplayItem], context["session_items"])
+                        return count_tokens(items, self.model) >= int(self._context_window() * 0.8)
 
                     async def run_compaction(
                         self,
                         args: OpenAIResponsesCompactionArgs | None = None,
                     ) -> None:
-                        await super().run_compaction(args)
+                        if not self._use_local_compaction:
+                            await super().run_compaction(args)
+                            return
+
+                        if args and args.get("response_id"):
+                            self._response_id = args["response_id"]
+                        candidates, raw_items = await self._ensure_compaction_candidates()
+                        force = args.get("force", False) if args else False
+                        context = {
+                            "response_id": self._response_id,
+                            "compaction_mode": "input",
+                            "compaction_candidate_items": candidates,
+                            "session_items": raw_items,
+                        }
+                        if not force and not self.should_trigger_compaction(context):
+                            return
+                        if not raw_items:
+                            return
+
+                        boundary = min(self._summary_boundary or 0, len(raw_items))
+                        items_to_summarize = raw_items[:boundary]
+                        current_turn_items = cast(list[ReplayItem], raw_items[boundary:])
+                        if not items_to_summarize:
+                            return
+                        items = cast(
+                            list[ReplayItem],
+                            [_sanitize_replay_item(item) for item in items_to_summarize],
+                        )
+
+                        from omnigent.entities import ConversationItem, MessageData
+                        from omnigent.runtime.compaction import compact, count_tokens
+
+                        history: list[ConversationItem] = []
+                        for index, item in enumerate(items):
+                            item_type = item.get("type")
+                            role = (
+                                "assistant"
+                                if item_type == "function_call" or item.get("role") == "assistant"
+                                else "user"
+                            )
+                            history.append(
+                                ConversationItem(
+                                    id=f"sdk_compaction_{index}",
+                                    type="message",
+                                    status="completed",
+                                    response_id=self._response_id or self.session_id,
+                                    created_at=index,
+                                    data=MessageData(role=role, content=[]),
+                                )
+                            )
+
+                        class _ResponsesClientAdapter:
+                            def __init__(self, client: Any) -> None:
+                                self._client = client
+                                self.responses = self
+
+                            async def create(
+                                self,
+                                *,
+                                connection_params: dict[str, str] | None = None,
+                                **kwargs: Any,
+                            ) -> Any:
+                                del connection_params
+                                return await self._client.responses.create(**kwargs)
+
+                        context_window = self._context_window()
+                        result = await compact(
+                            items,
+                            history,
+                            config=CompactionConfig(
+                                trigger_threshold=0.8,
+                                recent_window=0,
+                            ),
+                            context_window=context_window,
+                            system_token_budget=0,
+                            model=self.model,
+                            task_id=self._response_id or self.session_id,
+                            llm_client=_ResponsesClientAdapter(self.client),
+                            force=True,
+                            fail_on_summary_error=True,
+                        )
+                        metadata = result.summary_metadata
+                        if metadata is None or not metadata.text.strip():
+                            raise RuntimeError("local compaction returned no durable summary")
+
+                        replacement: list[ReplayItem] = [
+                            *result.messages,
+                            *current_turn_items,
+                        ]
+                        persisted_tail: list[ReplayItem] = []
+                        for item in current_turn_items:
+                            if (
+                                item.get("role") == "assistant"
+                                or item.get("type") in {"function_call", "reasoning"}
+                            ):
+                                break
+                            persisted_tail.append(item)
+                        persisted_messages: list[ReplayItem] = [
+                            *result.messages,
+                            *persisted_tail,
+                        ]
+                        await self.underlying_session.clear_session()
+                        await self.underlying_session.add_items(cast(Any, replacement))
+                        self._compaction_candidate_items = cast(Any, [replacement[-1]])
+                        self._session_items = cast(Any, replacement)
+                        self._deferred_response_id = None
+
+                        self._local_snapshot = _LocalCompactionSnapshot(
+                            summary=metadata.text,
+                            token_count=count_tokens(replacement, self.model),
+                            messages=persisted_messages,
+                        )
 
                 sdk_session = cast(
                     _SDKSession,
@@ -1571,9 +1728,13 @@ class OpenAIAgentsSDKExecutor(Executor):
             return
 
         state = self._get_or_create_session_state(agents_sdk, session_key)
+        set_runtime_model = getattr(state.sdk_session, "set_runtime_model", None)
+        if callable(set_runtime_model):
+            set_runtime_model(model)
         state.interrupt_requested = False
         await self._prepare_sdk_session_for_turn(state, messages)
         stepwise_internal_turns = bool(cfg.extra.get("stepwise_internal_turns"))
+        initial_sdk_run = not state.started
         input_value = self._build_input_for_turn(
             state,
             messages,
@@ -1655,6 +1816,7 @@ class OpenAIAgentsSDKExecutor(Executor):
         response_text = ""
         saw_tool_activity = False
         final_text = ""
+        context_overflow_retried = False
         for attempt in range(_EMPTY_TURN_MAX_ATTEMPTS):
             response_text = ""
             pending_tools: dict[str, tuple[str, float]] = {}
@@ -1671,6 +1833,17 @@ class OpenAIAgentsSDKExecutor(Executor):
                 # Reuse the count already fetched above; avoids a second
                 # ``get_items()`` round-trip.
                 state.run_item_count_before = current_item_count
+                set_summary_boundary = getattr(state.sdk_session, "set_summary_boundary", None)
+                if callable(set_summary_boundary):
+                    summary_boundary = current_item_count
+                    if initial_sdk_run and current_item_count == 0 and isinstance(input_value, list):
+                        summary_boundary = len(input_value)
+                        for index in range(len(input_value) - 1, -1, -1):
+                            item = input_value[index]
+                            if isinstance(item, dict) and item.get("role") == "user":
+                                summary_boundary = index
+                                break
+                    set_summary_boundary(summary_boundary)
                 result = cast(
                     _RunResult,
                     agents_sdk.Runner.run_streamed(
@@ -1795,6 +1968,34 @@ class OpenAIAgentsSDKExecutor(Executor):
                 if state.interrupt_requested:
                     return
                 if _is_context_length_exceeded(exc):
+                    run_compaction = getattr(state.sdk_session, "run_compaction", None)
+                    has_local_snapshot = getattr(state.sdk_session, "has_local_snapshot", None)
+                    uses_local_compaction = getattr(
+                        state.sdk_session,
+                        "uses_local_compaction",
+                        None,
+                    )
+                    if (
+                        not context_overflow_retried
+                        and attempt + 1 < _EMPTY_TURN_MAX_ATTEMPTS
+                        and callable(run_compaction)
+                        and callable(has_local_snapshot)
+                        and callable(uses_local_compaction)
+                        and uses_local_compaction()
+                    ):
+                        local_compact = cast(
+                            Callable[[dict[str, Any]], Awaitable[None]],
+                            run_compaction,
+                        )
+                        await local_compact({"force": True})
+                        if has_local_snapshot():
+                            context_overflow_retried = True
+                            current_item_count = len(await state.sdk_session.get_items())
+                            logger.info(
+                                "OpenAIAgentsSDKExecutor: locally compacted after context "
+                                "overflow; retrying once"
+                            )
+                            continue
                     # Re-raise so the ExecutorAdapter's error classifier
                     # maps it to ``context_length_exceeded`` and the
                     # runner surfaces the overflow to the user.
@@ -1948,8 +2149,25 @@ class OpenAIAgentsSDKExecutor(Executor):
                     turn_usage["cache_read_input_tokens"] = cached_tok
         _notify_usage_from_dict(model=model, usage=turn_usage)
 
-        # Emit CompactionComplete if the SDK compacted this turn.
-        if result is not None:
+        # Persist either the Databricks-compatible local summary or a native
+        # Responses compaction item so server history and SDK history stay in sync.
+        take_local_snapshot = getattr(state.sdk_session, "take_local_snapshot", None)
+        local_snapshot = take_local_snapshot() if callable(take_local_snapshot) else None
+        if isinstance(local_snapshot, _LocalCompactionSnapshot):
+            from omnigent.inner.executor import CompactionComplete
+
+            # The server-side compaction item is authoritative. Force the next
+            # turn to clear SQLite and replay the persisted compacted history.
+            state.started = False
+            state.history_cursor = 0
+            state.resume_state = None
+            yield CompactionComplete(
+                summary=local_snapshot.summary,
+                token_count=local_snapshot.token_count,
+                model=model,
+                compacted_messages=local_snapshot.messages,
+            )
+        elif result is not None:
             for item in result.new_items:
                 if getattr(item, "type", None) == "compaction_item":
                     from omnigent.inner.executor import CompactionComplete

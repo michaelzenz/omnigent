@@ -20,6 +20,7 @@ import base64
 import databricks.sdk.config as _sdk_config_mod
 
 from omnigent.inner.executor import (
+    CompactionComplete,
     ExecutorConfig,
     ExecutorError,
     ReasoningChunk,
@@ -2549,6 +2550,75 @@ def test_context_length_exceeded_re_raises() -> None:
     _run(_t())
 
 
+def test_databricks_context_overflow_compacts_first_run_and_retries() -> None:
+    """A restored Databricks session compacts authoritative input before retry."""
+
+    class _CtxExceeded(Exception):
+        code = "context_length_exceeded"
+
+    class _SummaryResponses:
+        async def create(self, **kwargs: Any) -> object:
+            del kwargs
+            block = types.SimpleNamespace(text="Summary before active request")
+            return types.SimpleNamespace(output=[types.SimpleNamespace(content=[block])])
+
+    class _PersistingRunner:
+        calls = 0
+
+        @classmethod
+        def run_streamed(cls, agent, input, session, max_turns, run_config):
+            del agent, max_turns, run_config
+            cls.calls += 1
+            if cls.calls == 1:
+
+                class _OverflowResult(_FakeResult):
+                    async def stream_events(self):
+                        await session.add_items(input)
+                        raise _CtxExceeded()
+                        yield  # pragma: no cover
+
+                return _OverflowResult(events=[])
+            return _FakeResult(events=[], final_output="recovered")
+
+    async def _t() -> None:
+        client = types.SimpleNamespace(
+            base_url="https://workspace.example.com/ai-gateway/codex/v1",
+            responses=_SummaryResponses(),
+        )
+        executor = OpenAIAgentsSDKExecutor(client=client)
+        sdk = _fake_agents_sdk()
+        sdk.Runner = _PersistingRunner
+        with patch(
+            "omnigent.inner.openai_agents_sdk_executor._ensure_agents_sdk",
+            return_value=sdk,
+        ):
+            events = await _collect(
+                executor.run_turn(
+                    [
+                        {"role": "user", "content": "old request", "session_id": "s_restore"},
+                        {
+                            "role": "assistant",
+                            "content": "old response",
+                            "session_id": "s_restore",
+                        },
+                        {"role": "user", "content": "active request", "session_id": "s_restore"},
+                    ],
+                    [],
+                    "Be helpful.",
+                )
+            )
+
+        assert _PersistingRunner.calls == 2
+        compacted = next(event for event in events if isinstance(event, CompactionComplete))
+        assert compacted.summary == "Summary before active request"
+        assert compacted.compacted_messages is not None
+        assert compacted.compacted_messages[-1]["content"] == "active request"
+        assert isinstance(events[-1], TurnComplete)
+        assert events[-1].response == "recovered"
+
+    _run(_t())
+
+
 # ── LLM_REQUEST policy evaluation wiring ─────────────────────────────────────
 
 
@@ -3245,6 +3315,62 @@ class _FakeCompactionItem:
     """Stand-in for agents.items.CompactionItem."""
 
     type: str = "compaction_item"
+
+
+def test_databricks_compaction_uses_responses_create_for_local_summary() -> None:
+    """Databricks gateways never receive the unsupported responses.compact call."""
+
+    class _SummaryResponses:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create(self, **kwargs: Any) -> object:
+            self.calls.append(kwargs)
+            block = types.SimpleNamespace(text="Durable local summary")
+            return types.SimpleNamespace(
+                output=[types.SimpleNamespace(content=[block])],
+            )
+
+    async def _t() -> None:
+        responses = _SummaryResponses()
+        client = types.SimpleNamespace(
+            base_url="https://workspace.example.com/ai-gateway/codex/v1",
+            responses=responses,
+        )
+        executor = OpenAIAgentsSDKExecutor(client=client)
+        state = executor._get_or_create_session_state(_fake_agents_sdk(), "session-local-compact")
+        set_model = getattr(state.sdk_session, "set_runtime_model")
+        set_model("system.ai.gpt-5.3-codex")
+        await state.sdk_session.add_items(
+            [
+                {"type": "message", "role": "user", "content": "Investigate the failure"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "very large historical tool result",
+                },
+                {"type": "message", "role": "assistant", "content": "Initial findings"},
+            ]
+        )
+
+        run_compaction = getattr(state.sdk_session, "run_compaction")
+        getattr(state.sdk_session, "set_summary_boundary")(2)
+        await run_compaction({"force": True})
+        snapshot = getattr(state.sdk_session, "take_local_snapshot")()
+
+        assert len(responses.calls) == 1
+        assert responses.calls[0]["model"] == "system.ai.gpt-5.3-codex"
+        assert responses.calls[0]["tools"] == []
+        assert "responses/compact" not in str(responses.calls[0])
+        assert "very large historical tool result" not in str(responses.calls[0]["input"])
+        assert snapshot is not None
+        assert snapshot.summary == "Durable local summary"
+        assert [item["role"] for item in snapshot.messages] == ["user", "assistant"]
+        sdk_items = await state.sdk_session.get_items()
+        assert [item["role"] for item in sdk_items] == ["user", "assistant", "assistant"]
+        assert sdk_items[-1]["content"] == "Initial findings"
+
+    _run(_t())
 
 
 def test_compaction_item_emits_compaction_complete() -> None:
