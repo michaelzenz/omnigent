@@ -36,10 +36,11 @@ export function AgentTextCommentsPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
-  const [isSending, setIsSending] = useState(false);
-  const [sentBatchIds, setSentBatchIds] = useState<string[] | null>(null);
+  const { isSending, sentBatchIds } = ui.sendState;
   const selectedCardRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
 
   useEffect(() => {
     if (!ui?.pendingAnchor) return;
@@ -56,12 +57,17 @@ export function AgentTextCommentsPanel({
 
   const saveDraft = async () => {
     if (!ui?.pendingAnchor || !draftBody.trim()) return;
+    const anchorConvId = conversationId;
     setSendError(null);
     try {
       const comment = await add.mutateAsync({ ...ui.pendingAnchor, body: draftBody.trim() });
       setDraftBody("");
       ui.cancelDraft();
-      ui.activateComment(comment.id);
+      // Only activate if still on the same session — the POST may resolve
+      // after the user has already switched away.
+      if (conversationIdRef.current === anchorConvId) {
+        ui.activateComment(comment.id);
+      }
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not add comment.");
     }
@@ -69,7 +75,7 @@ export function AgentTextCommentsPanel({
 
   const clearSentBatch = async (ids: string[]) => {
     await removeBatch.mutateAsync(ids);
-    setSentBatchIds(null);
+    ui.setSendState({ isSending: false, sentBatchIds: null });
     setSendError(null);
     ui?.activateComment(null);
   };
@@ -87,7 +93,7 @@ export function AgentTextCommentsPanel({
     const batch = comments.map((comment) => ({ ...comment }));
     const ids = batch.map((comment) => comment.id);
     setSendError(null);
-    setIsSending(true);
+    ui.setSendState({ isSending: true, sentBatchIds: null });
     let policyDenied = false;
     try {
       await useChatStore.getState().send(formatAgentTextComments(batch), agent.id, [], {
@@ -97,26 +103,34 @@ export function AgentTextCommentsPanel({
       });
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not send comments.");
-      setIsSending(false);
+      ui.setSendState({ isSending: false, sentBatchIds: null });
       return;
     }
     if (policyDenied) {
       setSendError("The message was denied by policy. Comments were not cleared.");
-      setIsSending(false);
+      ui.setSendState({ isSending: false, sentBatchIds: null });
       return;
     }
 
-    setSentBatchIds(ids);
+    ui.setSendState({ isSending: false, sentBatchIds: ids });
     try {
       await clearSentBatch(ids);
     } catch {
       setSendError("Comments were sent, but could not be cleared. Retry clearing them.");
-    } finally {
-      setIsSending(false);
     }
   };
 
   const busy = isSending || add.isPending || removeBatch.isPending || sentBatchIds !== null;
+
+  const handleDelete = (commentId: string) => {
+    setSendError(null);
+    if (ui?.activeCommentId === commentId) {
+      ui.activateComment(null);
+    }
+    remove.mutate(commentId, {
+      onError: (error) => setSendError(error.message),
+    });
+  };
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Agent response comments">
@@ -166,7 +180,19 @@ export function AgentTextCommentsPanel({
           </div>
         )}
 
-        {query.isLoading ? (
+        {query.isError ? (
+          <div className="flex flex-col items-center gap-2 p-8 text-center text-sm text-destructive">
+            Could not load comments.
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              onClick={() => query.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : query.isLoading ? (
           <div className="flex justify-center p-8 text-sm text-muted-foreground">Loading…</div>
         ) : comments.length === 0 && !ui?.pendingAnchor ? (
           <div className="flex justify-center p-8 text-center text-sm text-muted-foreground">
@@ -254,12 +280,7 @@ export function AgentTextCommentsPanel({
                         variant="ghost"
                         aria-label="Delete comment"
                         disabled={busy || remove.isPending}
-                        onClick={() => {
-                          setSendError(null);
-                          remove.mutate(comment.id, {
-                            onError: (error) => setSendError(error.message),
-                          });
-                        }}
+                        onClick={() => handleDelete(comment.id)}
                       >
                         <Trash2Icon className="size-3.5" />
                       </Button>

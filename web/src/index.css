@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist-mono";
 
 ::highlight(omnigent-agent-comment) {
   background-color: rgb(250 204 21 / 28%);
@@ -11,10 +15,6 @@
 ::highlight(omnigent-agent-comment-pending) {
   background-color: rgb(59 130 246 / 28%);
 }
-@plugin "@tailwindcss/typography";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist-mono";
 
 /* Streamdown ships utility classes pre-compiled in its dist; this @source
  * pragma tells Tailwind v4 to scan those files so the classes survive the

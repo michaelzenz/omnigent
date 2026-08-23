@@ -2117,7 +2117,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 prefix_context=prefix_context,
                 suffix_context=suffix_context,
                 body=body,
-                created_at=created_us // 1_000_000,
+                created_at=created_us,
                 updated_at=created_us,
             )
             session.add(row)

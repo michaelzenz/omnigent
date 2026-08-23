@@ -1201,7 +1201,7 @@ class SqlAgentTextComment(ConversationBase):
     prefix_context: Mapped[str] = mapped_column(CompressedText)
     suffix_context: Mapped[str] = mapped_column(CompressedText)
     body: Mapped[str] = mapped_column(CompressedText)
-    created_at: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[int] = mapped_column(BigInteger)
     updated_at: Mapped[int] = mapped_column(BigInteger)
 
     __table_args__ = (

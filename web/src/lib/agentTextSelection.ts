@@ -116,7 +116,7 @@ export function resolveAgentTextCommentRange(
       const at = index.text.indexOf(comment.selected_text, from);
       if (at < 0) break;
       candidates.push(at);
-      from = at + Math.max(1, comment.selected_text.length);
+      from = at + 1;
     }
     start =
       candidates.find((candidate) =>

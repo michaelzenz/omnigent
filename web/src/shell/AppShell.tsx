@@ -105,7 +105,11 @@ import { ForkSessionDialog } from "./ForkSessionDialog";
 import { ForkDialogContextProvider, type ForkDialogContextValue } from "./ForkDialogContext";
 import { InlineTerminalsSection } from "./InlineTerminalsSection";
 import { WorkspacePanel } from "./WorkspacePanel";
-import { AgentTextCommentsProvider } from "./AgentTextCommentsContext";
+import {
+  AgentTextCommentsProvider,
+  type AgentTextCommentSendState,
+  type AgentTextCommentsUI,
+} from "./AgentTextCommentsContext";
 import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
@@ -314,9 +318,13 @@ export function AppShell() {
   const [pendingAgentTextComment, setPendingAgentTextComment] =
     useState<AgentTextCommentAnchor | null>(null);
   const [activeAgentTextCommentId, setActiveAgentTextCommentId] = useState<string | null>(null);
+  const [agentTextCommentSendState, setAgentTextCommentSendState] =
+    useState<AgentTextCommentSendState>({ isSending: false, sentBatchIds: null });
   useEffect(() => {
     setPendingAgentTextComment(null);
     setActiveAgentTextCommentId(null);
+    setAgentTextCommentSendState({ isSending: false, sentBatchIds: null });
+    setAgentTextCommentsPanelOpen(false);
   }, [conversationId]);
   // The right "Workspace" rail (WorkspacePanel) remembers its open/closed
   // state per session. A brand-new session (no saved `open`) follows the
@@ -1586,28 +1594,45 @@ export function AppShell() {
     !executionLogsOpen &&
     !filesPanelOpen,
   );
-  const agentTextCommentsUI = {
-    canEdit: isEditorLevel(permissionLevel),
-    pendingAnchor: pendingAgentTextComment,
-    activeCommentId: activeAgentTextCommentId,
-    openDraft: (anchor: AgentTextCommentAnchor) => {
-      setPendingAgentTextComment(anchor);
-      setActiveAgentTextCommentId(null);
-      handleRightRailTabChange("comments");
-      if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
-      else setRightPanelOpen(true);
-    },
-    cancelDraft: () => setPendingAgentTextComment(null),
-    activateComment: (commentId: string | null) => {
-      setActiveAgentTextCommentId(commentId);
-      if (commentId) {
-        setPendingAgentTextComment(null);
+  const agentTextCommentsUI = useMemo<AgentTextCommentsUI>(
+    () => ({
+      canEdit: isEditorLevel(permissionLevel),
+      pendingAnchor: pendingAgentTextComment,
+      activeCommentId: activeAgentTextCommentId,
+      sendState: agentTextCommentSendState,
+      openDraft: (anchor: AgentTextCommentAnchor) => {
+        setPendingAgentTextComment(anchor);
+        setActiveAgentTextCommentId(null);
         handleRightRailTabChange("comments");
         if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
         else setRightPanelOpen(true);
-      }
-    },
-  };
+      },
+      cancelDraft: () => setPendingAgentTextComment(null),
+      activateComment: (commentId: string | null) => {
+        setActiveAgentTextCommentId(commentId);
+        if (commentId) {
+          setPendingAgentTextComment(null);
+          handleRightRailTabChange("comments");
+          if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
+          else setRightPanelOpen(true);
+        }
+      },
+      setSendState: setAgentTextCommentSendState,
+    }),
+    // handleRightRailTabChange is a plain function (not memoized); it closes
+    // over the current state, so we can't memoize the object on it without a
+    // stale closure. The recreation is cheap and the context consumers only
+    // re-render when the memoized value changes — which it does whenever any
+    // of these deps change. handleRightRailTabChange is excluded because it
+    // reads state that's already in these deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      permissionLevel,
+      pendingAgentTextComment,
+      activeAgentTextCommentId,
+      agentTextCommentSendState,
+    ],
+  );
 
   return (
     <FileViewerContext.Provider value={fileViewerContextValue}>

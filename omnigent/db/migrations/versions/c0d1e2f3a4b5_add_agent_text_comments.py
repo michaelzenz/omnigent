@@ -34,7 +34,7 @@ def upgrade() -> None:
         sa.Column("prefix_context", CompressedText(), nullable=False),
         sa.Column("suffix_context", CompressedText(), nullable=False),
         sa.Column("body", CompressedText(), nullable=False),
-        sa.Column("created_at", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.BigInteger(), nullable=False),
         sa.Column("updated_at", sa.BigInteger(), nullable=False),
         sa.CheckConstraint("start_offset >= 0", name="ck_agent_text_comments_start"),
         sa.CheckConstraint("end_offset > start_offset", name="ck_agent_text_comments_range"),
