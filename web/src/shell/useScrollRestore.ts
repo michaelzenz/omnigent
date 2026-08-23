@@ -113,14 +113,18 @@ export function useScrollRestore(
   const keyRef = useRef<string | null>(null);
   if (key !== keyRef.current) {
     keyRef.current = key;
-    // The deadline belongs to the pending entry, not to an effect run, so
-    // re-renders during the restore can't keep extending the window.
-    pendingRef.current = key
-      ? {
-          target: scrollTopCache.get(key) ?? 0,
-          deadline: performance.now() + SCROLL_RESTORE_BUDGET_MS,
-        }
-      : null;
+    // Only replay a saved offset worth restoring. A key with no cached
+    // entry (first visit, or after a reload) leaves the browser's natural
+    // scroll position untouched — forcing it to 0 would yank the view to
+    // the top. A saved 0 is the default top, so there's nothing to replay
+    // either. Mirrors `attachEditorScrollRestore`. The deadline belongs
+    // to the pending entry, not to an effect run, so re-renders during
+    // the restore can't keep extending the window.
+    const saved = key ? scrollTopCache.get(key) : undefined;
+    pendingRef.current =
+      saved !== undefined && saved > 0
+        ? { target: saved, deadline: performance.now() + SCROLL_RESTORE_BUDGET_MS }
+        : null;
   }
 
   // No dependency array: intentionally runs after every render — each

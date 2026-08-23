@@ -10,6 +10,7 @@
 //   5. Real user input (a wheel gesture) settles the restore immediately.
 //   6. Saving resumes once the restore settles.
 //   7. A null key disables persistence entirely.
+//   8. A key with no saved offset does not yank the scroll to the top.
 
 import { useRef } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
@@ -84,6 +85,18 @@ describe("useScrollRestore", () => {
 
     const other = mount("view:c");
     expect(other.el.scrollTop).toBe(0);
+  });
+
+  it("does not yank scroll to top when a key has no saved offset", () => {
+    // A fresh key (first visit) has no cached offset. The hook should leave
+    // the browser's natural scroll position alone instead of forcing 0.
+    const { view, el } = mount("view:noforce");
+    el.scrollTop = 80;
+
+    // Switch to another unsaved key, reusing the same DOM element.
+    view.rerender(<Scroller scrollKey="view:alsounsaved" ready={true} />);
+
+    expect(el.scrollTop).toBe(80);
   });
 
   it("does not let the loading clamp overwrite the saved offset", () => {
