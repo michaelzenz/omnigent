@@ -1146,6 +1146,46 @@ def test_compaction_to_history_items_produces_valid_pair() -> None:
     assert assistant_item.id == "cmp_abc123_assistant"
 
 
+def test_compaction_to_history_items_with_compacted_messages_sets_agent() -> None:
+    """
+    compaction_to_history_items() sets ``agent`` on assistant-role
+    compacted messages so the MessageData validator doesn't reject them.
+    """
+    compaction_item = ConversationItem(
+        id="cmp_def456",
+        type="compaction",
+        status="completed",
+        response_id="task_002",
+        created_at=2000,
+        data=CompactionData(
+            summary="Summary.",
+            last_item_id="msg_end",
+            model="databricks-claude-sonnet-4",
+            token_count=10,
+            compacted_messages=[
+                {"role": "user", "content": [{"type": "input_text", "text": "Hello"}]},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "Hi there"}]},
+                {"role": "user", "content": [{"type": "input_text", "text": "Thanks"}]},
+            ],
+        ),
+    )
+
+    result = compaction_to_history_items(compaction_item)
+
+    assert len(result) == 3
+    assert isinstance(result[0].data, MessageData)
+    assert result[0].data.role == "user"
+    assert result[0].data.agent is None
+
+    assert isinstance(result[1].data, MessageData)
+    assert result[1].data.role == "assistant"
+    assert result[1].data.agent == "databricks-claude-sonnet-4"
+
+    # Third item is a user message, so agent stays None.
+    assert isinstance(result[2].data, MessageData)
+    assert result[2].data.role == "user"
+
+
 def test_count_tokens_returns_positive_integer() -> None:
     """count_tokens returns a positive integer for non-empty messages."""
     messages = [{"role": "user", "content": "Hello world, this is a test message."}]

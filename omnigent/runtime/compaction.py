@@ -509,6 +509,7 @@ def compaction_to_history_items(
     if data.compacted_messages:
         items: list[ConversationItem] = []
         for i, msg in enumerate(data.compacted_messages):
+            msg_role = msg.get("role", "user")
             items.append(
                 ConversationItem(
                     id=f"{compaction_item.id}_compacted_{i}",
@@ -517,8 +518,9 @@ def compaction_to_history_items(
                     response_id=compaction_item.response_id,
                     created_at=compaction_item.created_at,
                     data=MessageData(
-                        role=msg.get("role", "user"),
+                        role=msg_role,
                         content=msg.get("content", []),
+                        agent=data.model if msg_role == "assistant" else None,
                     ),
                 )
             )
