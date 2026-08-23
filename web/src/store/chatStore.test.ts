@@ -615,6 +615,49 @@ describe("chatStore — switchTo", () => {
     expect(fetchMock.mock.calls.length).toBe(callsAfterB);
   });
 
+  it("finishes a cold bind in the background after the user switches away", async () => {
+    // A brand-new session whose bindStream is still in progress when the user
+    // switches to another conversation must keep binding in the background —
+    // not be torn down — so it is already live when the user returns.
+    seedSession("conv_new", [userMessage("resp_new", "new")]);
+    seedSession("conv_other", [userMessage("resp_other", "other")]);
+    let releaseSnapshot: (() => void) | null = null;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (
+        url.split("?")[0] === "/v1/sessions/conv_new" &&
+        (init?.method ?? "GET") === "GET" &&
+        releaseSnapshot === null
+      ) {
+        return new Promise<Response>((resolve) => {
+          releaseSnapshot = () => resolve(defaultFetchHandler(input, init));
+        });
+      }
+      return defaultFetchHandler(input, init);
+    });
+
+    const binding = useChatStore.getState().switchTo("conv_new");
+    await tick();
+    // The user switches away before the snapshot lands.
+    await useChatStore.getState().switchTo("conv_other");
+    expect(conversationRegistry.peek("conv_new")).toBeDefined();
+    releaseSnapshot!();
+    await binding;
+    await tick();
+
+    // The backgrounded conversation's entry survived and hydrated.
+    const entry = conversationRegistry.peek("conv_new");
+    expect(entry).toBeDefined();
+    expect(entry!.disposed).toBe(false);
+    expect(entry!.getState().loadingConversation).toBe(false);
+    // Switching back is instant — the entry is already live.
+    const callsBefore = fetchMock.mock.calls.length;
+    await useChatStore.getState().switchTo("conv_new");
+    expect(useChatStore.getState().conversationId).toBe("conv_new");
+    expect(useChatStore.getState().blocks).toHaveLength(1);
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+  });
+
   it("commits a message sent in a backgrounded conversation, in transcript order", async () => {
     // End-to-end version of the interleaving regression, through the real pump.
     //

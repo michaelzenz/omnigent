@@ -2221,15 +2221,15 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   },
 
   switchTo: async (conversationId) => {
-    for (const [id, entry] of pendingForegroundBinds) {
-      if (id === conversationId) continue;
-      const state = entry.getState();
-      const hasUnsentWork =
-        state.pendingUserMessages.some((message) => message.posted !== true) ||
-        state.failedSendDraft !== null;
-      if (hasUnsentWork) continue;
-      pendingForegroundBinds.delete(id);
-      conversationRegistry.release(id);
+    // Drop stale foreground-bind trackers without disposing their entries.
+    // A cold bind that is still in progress when the user switches away must
+    // keep running in the background — disposing it here was what stopped a
+    // brand-new session from finishing its startup until the user switched
+    // back. The stream-slot manager (acquireStreamSlot → evictLruEvictable)
+    // already bounds how many background streams stay open, so there is no
+    // need to cancel superseded binds eagerly.
+    for (const [id] of pendingForegroundBinds) {
+      if (id !== conversationId) pendingForegroundBinds.delete(id);
     }
     if (get().conversationId === conversationId) return;
 
