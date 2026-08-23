@@ -53,8 +53,11 @@ function SystemPromptDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl" data-testid="omniharness-system-prompt-dialog">
-        <DialogHeader>
+      <DialogContent
+        className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl"
+        data-testid="omniharness-system-prompt-dialog"
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>OmniHarness system prompt</DialogTitle>
           <DialogDescription>
             Applied globally before the selected Prompt Profile and memory on every OmniHarness
@@ -68,7 +71,7 @@ function SystemPromptDialog({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="You are a helpful assistant."
-            className="min-h-72 resize-y font-mono text-sm"
+            className="h-72 min-h-0 max-h-72 resize-none overflow-y-auto font-mono text-sm"
             disabled={settings.isLoading}
             aria-label="OmniHarness system prompt"
             data-testid="omniharness-system-prompt-input"
@@ -77,7 +80,7 @@ function SystemPromptDialog({
         {update.isError && (
           <p className="text-sm text-destructive">Couldn&apos;t save the system prompt.</p>
         )}
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
