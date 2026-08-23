@@ -25,9 +25,7 @@ describe("formatAgentTextComments", () => {
         comment("one", "first line\nsecond line", "Fix this."),
         comment("two", "another claim", "Explain why."),
       ]),
-    ).toBe(`Please address the following comments on your responses.
-
-1. Agent text:
+    ).toBe(`1. Agent text:
 > first line
 > second line
 

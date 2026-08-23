@@ -13,5 +13,5 @@ export function formatAgentTextComments(comments: AgentTextComment[]): string {
     (comment, index) =>
       `${index + 1}. Agent text:\n${quote(comment.selected_text)}\n\nComment:\n${comment.body.trim()}`,
   );
-  return `Please address the following comments on your responses.\n\n${sections.join("\n\n")}`;
+  return `${sections.join("\n\n")}`;
 }
