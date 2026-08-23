@@ -364,9 +364,13 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
     return { type: "response_queued", response: parseResponse(data) } satisfies ResponseQueued;
   }
   if (eventType === "response.in_progress") {
+    const parsed = parseResponse(data);
+    const commentThreadId =
+      typeof data.comment_thread_id === "string" ? data.comment_thread_id : undefined;
     return {
       type: "response_in_progress",
-      response: parseResponse(data),
+      response: parsed,
+      ...(commentThreadId ? { commentThreadId } : {}),
     } satisfies ResponseInProgress;
   }
   if (eventType === "response.completed") {
@@ -784,6 +788,9 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       ...(typeof createdBy === "string" ? { createdBy } : {}),
       data: payload,
       clearedPendingId: typeof clearedPendingId === "string" ? clearedPendingId : null,
+      ...(typeof p.comment_thread_id === "string"
+        ? { commentThreadId: p.comment_thread_id }
+        : {}),
     } satisfies SessionInputConsumedEvent;
   }
   if (eventType === "session.interrupted") {

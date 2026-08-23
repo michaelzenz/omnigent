@@ -4852,6 +4852,8 @@ async def _forward_event_to_runner(
         "has_mcp_servers": has_mcp_servers,
         "agent_version": agent_version,
     }
+    if body.comment_thread_id is not None:
+        runner_body["comment_thread_id"] = body.comment_thread_id
     if profile_instructions is not None:
         runner_body["profile_instructions"] = profile_instructions
     if uses_omniharness and model_settings_store is not None:
@@ -5555,7 +5557,11 @@ async def _forward_event_to_runner(
             )
         # Publish input.consumed AFTER the forward succeeds —
         # the runner has the message and will start the turn.
-        _publish_input_consumed(session_id, persisted_items[0])
+        _publish_input_consumed(
+            session_id,
+            persisted_items[0],
+            comment_thread_id=body.comment_thread_id,
+        )
         # Emit the routing_decision chip AFTER input.consumed so the
         # live SSE stream delivers the user bubble before the chip —
         # matching the store order (user message was persisted first).
@@ -6501,6 +6507,14 @@ async def _relay_runner_stream_once(
                         _rid = resp_obj.get("id")
                         if isinstance(_rid, str) and _rid:
                             current_response_id = _rid
+                            _thread_id = event.get("comment_thread_id")
+                            if isinstance(_thread_id, str) and _thread_id:
+                                await asyncio.to_thread(
+                                    conversation_store.bind_agent_text_thread_response,
+                                    session_id,
+                                    _thread_id,
+                                    _rid,
+                                )
                         _model = resp_obj.get("model")
                         if isinstance(_model, str) and _model:
                             current_model = _model

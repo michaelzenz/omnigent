@@ -53,6 +53,8 @@ export function AgentTextThreadPanel({
   const [draftBody, setDraftBody] = useState("");
   const [error, setError] = useState<string | null>(null);
   const draftRequestIdRef = useRef(crypto.randomUUID());
+  const pendingAnchorRef = useRef(ui.pendingAnchor);
+  pendingAnchorRef.current = ui.pendingAnchor;
   const query = useAgentTextThreads(conversationId, view);
   const openQuery = useAgentTextThreads(conversationId, "open");
   const create = useCreateAgentTextThread(conversationId);
@@ -67,7 +69,7 @@ export function AgentTextThreadPanel({
     for (const thread of threads) {
       if (!thread.response_id) continue;
       const responseBlocks = liveBlocks.filter(
-        (block) => block.responseId === thread.response_id,
+        (block) => block.ctx.responseId === thread.response_id,
       );
       const completed = responseBlocks.flatMap((block) =>
         block.type === "text_done" ? [block.fullText] : [],
@@ -93,15 +95,23 @@ export function AgentTextThreadPanel({
   }, [ui.pendingAnchor]);
 
   const saveDraft = async () => {
-    if (!ui.pendingAnchor || !draftBody.trim()) return;
+    const anchor = ui.pendingAnchor;
+    if (!anchor || !draftBody.trim()) return;
+    const requestId = draftRequestIdRef.current;
     setError(null);
     try {
       const thread = await create.mutateAsync({
-        ...ui.pendingAnchor,
-        client_request_id: draftRequestIdRef.current,
+        ...anchor,
+        client_request_id: requestId,
         comment: draftBody.trim(),
       });
-      if (useChatStore.getState().conversationId === conversationId) {
+      // A newer text selection may have opened another draft while this send
+      // was pending. Never let the older completion clear or replace it.
+      if (
+        useChatStore.getState().conversationId === conversationId &&
+        pendingAnchorRef.current === anchor &&
+        draftRequestIdRef.current === requestId
+      ) {
         setDraftBody("");
         ui.cancelDraft();
         ui.activateComment(thread.id);

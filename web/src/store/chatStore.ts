@@ -647,6 +647,13 @@ export interface AppChatState {
   /** Default behavior when sending while the active agent is running. */
   busySendMode: BusySendMode;
   /**
+   * Response IDs from threaded-comment turns that should be hidden from
+   * the main chat surface. Populated from the first tagged response event so
+   * streaming blocks are filtered before the thread query refreshes.
+   * Cleared on conversation switch.
+   */
+  hiddenThreadResponseIds: Set<string>;
+  /**
    * Sticky picker pick — applies to the current session via PATCH and
    * survives navigation + reload (localStorage). ``null`` means the
    * agent-spec default applies.
@@ -703,6 +710,8 @@ export interface ChatActions {
   setBusySendMode: (mode: BusySendMode) => void;
   /** Remove a queued message by id (the strip's per-row delete). */
   dequeueMessage: (queueId: string) => void;
+  /** Register a response ID as belonging to a threaded comment (hide from main chat). */
+  registerThreadResponseId: (responseId: string) => void;
   /**
    * Reorder a queued message within its own conversation (the strip's
    * drag-to-reorder). Moves `queueId` so it sits before `beforeQueueId`, or to
@@ -1466,6 +1475,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
   pendingUserMessages: [],
   queuedMessages: [],
   busySendMode: loadBusySendMode(),
+  hiddenThreadResponseIds: new Set<string>(),
   activeResponse: null,
   interruptedResponseIds: [],
   status: "idle",
@@ -1572,6 +1582,15 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     setActive((s) => ({
       queuedMessages: s.queuedMessages.filter((m) => m.queueId !== queueId),
     }));
+  },
+
+  registerThreadResponseId: (responseId) => {
+    _rootSet((s) => {
+      if (s.hiddenThreadResponseIds.has(responseId)) return {};
+      const next = new Set(s.hiddenThreadResponseIds);
+      next.add(responseId);
+      return { hiddenThreadResponseIds: next };
+    });
   },
 
   reorderQueuedMessage: (queueId, beforeQueueId) => {
@@ -2266,6 +2285,8 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // drained yet, so it can't bleed into the incoming composer (which drains
       // the store on mount).
       pendingComposerAttachments: [],
+      // Clear hidden thread response IDs from the outgoing conversation.
+      hiddenThreadResponseIds: new Set<string>(),
     });
     conversationRegistry.setActive(conversationId);
 
@@ -5431,6 +5452,14 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
   };
 
   switch (event.type) {
+    case "response_in_progress":
+      if (event.commentThreadId) {
+        useChatStore.getState().registerThreadResponseId(event.response.id);
+        queryClient?.invalidateQueries({
+          queryKey: ["agent-text-threads", sourceConversationId],
+        });
+      }
+      return;
     case "response_completed":
       // Prefer contextTokens (last sub-call total) for the context ring — on
       // tool-call turns, totalTokens is the billing sum across all sub-calls
@@ -5876,7 +5905,7 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       return;
     }
     case "session_input_consumed":
-      if (event.isMeta === true) return;
+      if (event.isMeta === true || event.commentThreadId) return;
       // Promote the matching optimistic bubble into committed history.
       // Three ways to find it, in order of precision:
       //   1. By id — the server tells us which pending-input entry this

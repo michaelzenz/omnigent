@@ -605,7 +605,14 @@ class ConversationStore(ABC):
     def bind_agent_text_thread_item(
         self, conversation_id: str, thread_id: str, item_id: str
     ) -> AgentTextThread | None:
-        """Bind a thread to its persisted user item and response id."""
+        """Bind a thread to its persisted user item."""
+        ...
+
+    @abstractmethod
+    def bind_agent_text_thread_response(
+        self, conversation_id: str, thread_id: str, response_id: str
+    ) -> AgentTextThread | None:
+        """Bind a submitted thread to the assistant response that serves it."""
         ...
 
     @abstractmethod

@@ -1550,6 +1550,8 @@ def _publish_input_consumed(
     session_id: str,
     item: ConversationItem,
     cleared_pending_id: str | None = None,
+    *,
+    comment_thread_id: str | None = None,
 ) -> None:
     """
     Publish a ``session.input.consumed`` event for a just-persisted
@@ -1581,7 +1583,10 @@ def _publish_input_consumed(
             cleared_pending_id=cleared_pending_id,
         ),
     )
-    session_stream.publish(session_id, event.model_dump())
+    wire_event = event.model_dump()
+    if comment_thread_id is not None:
+        wire_event["data"]["comment_thread_id"] = comment_thread_id
+    session_stream.publish(session_id, wire_event)
 
 
 def _publish_compaction_in_progress(session_id: str) -> None:

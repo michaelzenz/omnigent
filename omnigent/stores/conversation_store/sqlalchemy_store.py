@@ -2375,7 +2375,22 @@ class SqlAlchemyConversationStore(ConversationStore):
             if item is None:
                 return None
             thread.user_item_id = item.id
-            thread.response_id = item.response_id
+            thread.updated_at = now_epoch_us()
+            return _to_agent_text_thread(thread)
+
+    def bind_agent_text_thread_response(
+        self, conversation_id: str, thread_id: str, response_id: str
+    ) -> AgentTextThread | None:
+        with self._conv_session("bind_agent_text_thread_response") as session:
+            thread = session.get(
+                SqlAgentTextThread,
+                (current_workspace_id(), conversation_id, thread_id),
+            )
+            if thread is None:
+                return None
+            thread.response_id = response_id
+            thread.state = "running"
+            thread.failure_message = None
             thread.updated_at = now_epoch_us()
             return _to_agent_text_thread(thread)
 
@@ -2428,6 +2443,14 @@ class SqlAlchemyConversationStore(ConversationStore):
                         SqlConversationItem.response_id == row.response_id,
                     )
                 )
+            if row.user_item_id is not None:
+                session.execute(
+                    delete(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.id == _uuid_bytes(row.user_item_id),
+                    )
+                )
             row.state = "queued"
             row.user_item_id = None
             row.response_id = None
@@ -2449,6 +2472,14 @@ class SqlAlchemyConversationStore(ConversationStore):
                         SqlConversationItem.workspace_id == current_workspace_id(),
                         SqlConversationItem.conversation_id == conversation_id,
                         SqlConversationItem.response_id == row.response_id,
+                    )
+                )
+            if row.user_item_id is not None:
+                session.execute(
+                    delete(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.id == _uuid_bytes(row.user_item_id),
                     )
                 )
             session.delete(row)

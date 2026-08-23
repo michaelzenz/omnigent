@@ -2192,7 +2192,6 @@ def register_events_routes(
                         "Agent text thread could not be bound to the submitted message",
                         code=ErrorCode.NOT_FOUND,
                     )
-                response["comment_thread_id"] = thread.id
         elif body.comment_thread_id is not None:
             raise OmnigentError(
                 "Threaded reply did not persist its user message",

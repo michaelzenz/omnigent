@@ -11801,11 +11801,27 @@ def create_runner_app(
                     }
                 )
             else:
-                all_bodies = list(buf)
-                buf.clear()
-                _session_message_buffers.pop(session_id, None)
+                # Threaded comments are independent turns. Preserve the existing
+                # coalescing for adjacent normal messages, but never merge across
+                # a threaded-comment boundary or two comments would share one
+                # assistant response and only the last thread could own it.
+                if buf[0].get("comment_thread_id"):
+                    next_bodies = [buf.pop(0)]
+                else:
+                    boundary = next(
+                        (
+                            index
+                            for index, body in enumerate(buf)
+                            if body.get("comment_thread_id")
+                        ),
+                        len(buf),
+                    )
+                    next_bodies = buf[:boundary]
+                    del buf[:boundary]
+                if not buf:
+                    _session_message_buffers.pop(session_id, None)
 
-                for body in all_bodies:
+                for body in next_bodies:
                     _session_histories.setdefault(session_id, []).append(
                         {
                             "type": "message",
@@ -11813,7 +11829,7 @@ def create_runner_app(
                             "content": body.get("content", []),
                         }
                     )
-                next_body = all_bodies[-1]
+                next_body = next_bodies[-1]
 
             _begin_turn_slot(session_id)
             _publish_turn_status(session_id, "running")
@@ -12519,11 +12535,17 @@ def create_runner_app(
                 await_notify=False,
             )
 
+        _comment_thread_id = (
+            str(msg_body["comment_thread_id"])
+            if msg_body.get("comment_thread_id")
+            else None
+        )
         try:
             response = await _stream_message_to_harness(
                 harness_body,
                 conv,
                 dispatch=ctx,
+                comment_thread_id=_comment_thread_id,
             )
         finally:
             _session_init_envelopes.pop(conv, None)
@@ -12598,6 +12620,7 @@ def create_runner_app(
         body: _JsonObject,
         conv_id: str,
         dispatch: TurnDispatch | None = None,
+        comment_thread_id: str | None = None,
     ) -> Response:
         manager = cast(HarnessProcessManager, process_manager)
         harness_name = dispatch.harness if dispatch else cast(str | None, body.get("harness"))
@@ -12858,6 +12881,12 @@ def create_runner_app(
 
                             _defer_publish = False
                             if event is not None:
+                                if (
+                                    comment_thread_id is not None
+                                    and event.get("type") == "response.in_progress"
+                                ):
+                                    event["comment_thread_id"] = comment_thread_id
+                                    raw_sse_bytes = _encode_sse_event(event)
                                 if event.get("type") == "response.created":
                                     resp_obj = event.get("response") or {}
                                     _response_id = resp_obj.get("id")
@@ -13223,6 +13252,7 @@ def create_runner_app(
                         not _native
                         and not _awaiting_approval
                         and conversation_id in _live_response_id
+                        and not message_body.get("comment_thread_id")
                     )
                     if _can_forward:
                         message_body["injection_id"] = f"inj_{uuid.uuid4().hex[:16]}"

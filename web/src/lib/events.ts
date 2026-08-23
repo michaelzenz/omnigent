@@ -48,6 +48,8 @@ export interface ResponseQueued {
 export interface ResponseInProgress {
   type: "response_in_progress";
   response: Response;
+  /** Threaded-comment turn owning this response, when applicable. */
+  commentThreadId?: string;
 }
 
 /** `response.completed` — agent finished successfully. */
@@ -721,6 +723,8 @@ export interface SessionInputConsumedEvent {
    * that matched no pending entry (e.g. typed directly in the TUI).
    */
   clearedPendingId?: string | null;
+  /** Threaded-comment turn owning this input; hidden from the main transcript. */
+  commentThreadId?: string;
 }
 
 /**

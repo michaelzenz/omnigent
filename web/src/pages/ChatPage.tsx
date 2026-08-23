@@ -1020,18 +1020,34 @@ export function ChatPage() {
   // sub-agent routing on shows them (see stripGatedSubagentRoutingChips).
   const subagentRoutingOverride = useChatStore((s) => s.subagentRoutingOverride);
 
+  const storeHiddenResponseIds = useChatStore((s) => s.hiddenThreadResponseIds);
   const threadResponseIds = useMemo(
+    () =>
+      new Set([
+        ...[...openThreadItems, ...resolvedThreadItems].flatMap((thread) =>
+          thread.response_id ? [thread.response_id] : [],
+        ),
+        ...storeHiddenResponseIds,
+      ]),
+    [openThreadItems, resolvedThreadItems, storeHiddenResponseIds],
+  );
+  const threadUserItemIds = useMemo(
     () =>
       new Set(
         [...openThreadItems, ...resolvedThreadItems].flatMap((thread) =>
-          thread.response_id ? [thread.response_id] : [],
+          thread.user_item_id ? [thread.user_item_id] : [],
         ),
       ),
     [openThreadItems, resolvedThreadItems],
   );
   const mainSurfaceBlocks = useMemo(
-    () => blocks.filter((block) => !threadResponseIds.has(block.responseId)),
-    [blocks, threadResponseIds],
+    () =>
+      blocks.filter(
+        (block) =>
+          !threadResponseIds.has(block.ctx.responseId) &&
+          !(block.ctx.itemId && threadUserItemIds.has(block.ctx.itemId)),
+      ),
+    [blocks, threadResponseIds, threadUserItemIds],
   );
   const mainSurfaceActiveResponse =
     activeResponse && threadResponseIds.has(activeResponse.responseId) ? null : activeResponse;
