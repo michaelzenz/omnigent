@@ -186,6 +186,7 @@ import {
   sortByUpdatedAtDesc,
   writeLegacyPinnedConversationIds,
 } from "./sidebarNav";
+import { DatabricksConnectionRow } from "./DatabricksConnectionRow";
 import { SidebarServerPicker } from "./SidebarServerPicker";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
@@ -1101,6 +1102,7 @@ export function Sidebar({
           Self-hiding: renders nothing outside the Electron shell (see
           SidebarServerPicker), so browsers keep an unchanged sidebar that ends
           with the list. */}
+          <DatabricksConnectionRow />
           <SidebarServerPicker />
         </>
       )}

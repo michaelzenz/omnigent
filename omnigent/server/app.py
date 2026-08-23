@@ -67,6 +67,7 @@ from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.agent_text_comments import create_agent_text_comments_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
+from omnigent.server.routes.databricks_auth import create_databricks_auth_router
 from omnigent.server.routes.default_policies import create_default_policies_router
 from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.harnesses import create_harnesses_router
@@ -2957,6 +2958,14 @@ def create_app(
             prefix="/v1",
             tags=["models"],
         )
+    app.include_router(
+        create_databricks_auth_router(
+            auth_provider=auth_provider,
+            server_config=server_config,
+        ),
+        prefix="/v1",
+        tags=["databricks"],
+    )
     if tool_preferences_store is not None:
         app.include_router(
             create_tool_preferences_router(
