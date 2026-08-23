@@ -3645,7 +3645,14 @@ export function JumpToTopButton({
       });
 
     // Find the user message to jump to within the currently loaded DOM.
-    const findTarget = (): { messages: HTMLElement[]; index: number } | null => {
+    // `atRoof` distinguishes "we're already at this message" (need the one
+    // before it) from "this message is above the roof" (already the correct
+    // previous message — no history loading needed).
+    const findTarget = (): {
+      messages: HTMLElement[];
+      index: number;
+      atRoof: boolean;
+    } | null => {
       const userMessages = Array.from(
         el.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
       );
@@ -3657,7 +3664,15 @@ export function JumpToTopButton({
         roof,
       );
       if (targetIndex < 0) return null;
-      return { messages: userMessages, index: targetIndex };
+      // Compare screen coordinates (not naturalElementTop) so the check works
+      // in jsdom tests that mock getBoundingClientRect: the target is "at the
+      // roof" when its painted top aligns with the banner bottom.
+      return {
+        messages: userMessages,
+        index: targetIndex,
+        atRoof:
+          Math.abs(userMessages[targetIndex].getBoundingClientRect().top - bannerBottom) <= 1,
+      };
     };
 
     setJumping(true);
@@ -3667,24 +3682,20 @@ export function JumpToTopButton({
       state.escapedFromLock = true;
 
       let target = findTarget();
-      // Track the element we'd scroll to before a load, so we can detect when
-      // a history page actually delivers an earlier user message.
-      let prevTargetEl: HTMLElement | null = target?.messages[target.index] ?? null;
 
-      // If no user message is above the roof, or the nearest one is the
-      // topmost in the loaded window (no earlier message to jump to), page in
-      // older history until an earlier user message appears or history is
-      // exhausted. Mirrors jumpToTop's loading loop.
+      // Load older history only when the correct "previous" user message is
+      // not yet in the DOM: either no user message is above the roof at all,
+      // or the nearest one is exactly at the roof (we're already at it) and is
+      // the topmost loaded message (no earlier message to step back to). When
+      // the target is above the roof it's already the correct previous message
+      // and no loading is needed. Mirrors jumpToTop's loading loop.
       /* oxlint-disable no-await-in-loop */
       for (let i = 0; i < 1000 && useChatStore.getState().hasMoreHistory; i++) {
-        // Stop if we have a target that's not the topmost (has a previous in
-        // DOM), or if loading gave us a different target than we started with.
-        if (target && (target.index > 0 || target.messages[target.index] !== prevTargetEl)) break;
+        if (target && (!target.atRoof || target.index > 0)) break;
         await useChatStore.getState().loadMoreHistory();
         state.isAtBottom = false;
         state.escapedFromLock = true;
         await nextFrame();
-        prevTargetEl = target?.messages[target.index] ?? null;
         target = findTarget();
       }
       /* oxlint-enable no-await-in-loop */
