@@ -521,6 +521,17 @@ describe("previous user turn selection", () => {
   it("selects the latest crossed bubble while viewing its reply", () => {
     expect(userMessageIndexNearestRoof(messages, 1_800)).toBe(2);
   });
+
+  it("falls back to the current message when there is no earlier one to step back to", () => {
+    // Single turn: only one user message, already aligned with the roof.
+    const single = [{ top: 500 }];
+    expect(userMessageIndexNearestRoof(single, 500)).toBe(0);
+  });
+
+  it("falls back to the first message when already at it with no earlier one", () => {
+    // Multiple messages but the nearest is the first one, aligned with roof.
+    expect(userMessageIndexNearestRoof(messages, 100)).toBe(0);
+  });
 });
 
 describe("UserBubble @-mention attachment chips", () => {

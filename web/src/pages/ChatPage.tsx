@@ -3785,7 +3785,10 @@ export function userMessageIndexNearestRoof(
         previousTop = top;
       }
     }
-    return previousIndex;
+    // No earlier message to step back to (single turn or already at the first
+    // message): fall back to the current one so the jump re-asserts position
+    // instead of returning -1 and silently doing nothing.
+    return previousIndex < 0 ? nearestIndex : previousIndex;
   }
   return nearestIndex;
 }
