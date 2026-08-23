@@ -1306,7 +1306,11 @@ class OpenAIAgentsSDKExecutor(Executor):
                                     status="completed",
                                     response_id=self._response_id or self.session_id,
                                     created_at=index,
-                                    data=MessageData(role=role, content=[]),
+                                    data=MessageData(
+                                        role=role,
+                                        content=[],
+                                        agent=self.model if role == "assistant" else None,
+                                    ),
                                 )
                             )
 

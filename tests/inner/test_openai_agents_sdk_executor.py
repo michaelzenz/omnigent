@@ -3373,6 +3373,65 @@ def test_databricks_compaction_uses_responses_create_for_local_summary() -> None
     _run(_t())
 
 
+def test_local_compaction_history_includes_function_call_assistant_role() -> None:
+    """``run_compaction`` builds MessageData for the summary LLM call.
+
+    Items classified as ``assistant`` (function_call or role=assistant)
+    within the summary boundary must get ``agent`` set so the
+    ``MessageData`` validator doesn't raise "assistant messages require
+    'agent'".
+    """
+
+    class _SummaryResponses:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create(self, **kwargs: Any) -> object:
+            self.calls.append(kwargs)
+            block = types.SimpleNamespace(text="Compacted summary")
+            return types.SimpleNamespace(
+                output=[types.SimpleNamespace(content=[block])],
+            )
+
+    async def _t() -> None:
+        responses = _SummaryResponses()
+        client = types.SimpleNamespace(
+            base_url="https://workspace.example.com/ai-gateway/codex/v1",
+            responses=responses,
+        )
+        executor = OpenAIAgentsSDKExecutor(client=client)
+        state = executor._get_or_create_session_state(_fake_agents_sdk(), "session-fc-compact")
+        set_model = getattr(state.sdk_session, "set_runtime_model")
+        set_model("system.ai.gpt-5.3-codex")
+        await state.sdk_session.add_items(
+            [
+                {"type": "message", "role": "user", "content": "Run the tool"},
+                {
+                    "type": "function_call",
+                    "name": "tool_a",
+                    "arguments": "{}",
+                    "call_id": "call_1",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "tool result",
+                },
+                {"type": "message", "role": "user", "content": "What did it say?"},
+            ]
+        )
+
+        run_compaction = getattr(state.sdk_session, "run_compaction")
+        getattr(state.sdk_session, "set_summary_boundary")(3)
+        # Should not raise "assistant messages require 'agent'"
+        await run_compaction({"force": True})
+        snapshot = getattr(state.sdk_session, "take_local_snapshot")()
+        assert snapshot is not None
+        assert snapshot.summary == "Compacted summary"
+
+    _run(_t())
+
+
 def test_compaction_item_emits_compaction_complete() -> None:
     """When a compaction_item appears in result.new_items, a CompactionComplete
     event is yielded before TurnComplete."""
