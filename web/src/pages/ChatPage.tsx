@@ -133,7 +133,7 @@ import {
   harnessWarningBadgeText,
 } from "@/lib/harnessSetup";
 import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
-import { getSessionSlim, retrySession, switchSessionAgent } from "@/lib/sessionsApi"
+import { getSessionSlim, retrySession, switchSessionAgent } from "@/lib/sessionsApi";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -142,7 +142,13 @@ import {
 } from "@/lib/agentLabels";
 import { useConversations } from "@/hooks/useConversations";
 import { usePermissions } from "@/hooks/usePermissions";
-import type { NativeModelOption, SandboxStatus, Session, SessionStatus, WorktreeStatus } from "@/lib/types";
+import type {
+  NativeModelOption,
+  SandboxStatus,
+  Session,
+  SessionStatus,
+  WorktreeStatus,
+} from "@/lib/types";
 import { usePromptHistory } from "@/hooks/usePromptHistory";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useDictationInsert } from "@/hooks/useDictationInsert";
@@ -934,6 +940,8 @@ export function ChatPage() {
   const resolvedThreadItemsQuery = useAgentTextThreads(urlConvId, "resolved");
   const openThreadItems = openThreadItemsQuery.data ?? EMPTY_AGENT_TEXT_THREADS;
   const resolvedThreadItems = resolvedThreadItemsQuery.data ?? EMPTY_AGENT_TEXT_THREADS;
+  const threadProjectionReady =
+    openThreadItemsQuery.isSuccess && resolvedThreadItemsQuery.isSuccess;
   const pendingUserMessages = useChatStore((s) => s.pendingUserMessages);
   const activeResponse = useChatStore((s) => s.activeResponse);
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);
@@ -958,10 +966,7 @@ export function ChatPage() {
     const poll = async (): Promise<void> => {
       try {
         const session = await getSessionSlim(sessionId, { signal: controller.signal });
-        if (
-          controller.signal.aborted ||
-          useChatStore.getState().conversationId !== sessionId
-        ) {
+        if (controller.signal.aborted || useChatStore.getState().conversationId !== sessionId) {
           return;
         }
         const snapshotLogLines = session.worktreeStatus?.logLines ?? [];
@@ -1024,9 +1029,10 @@ export function ChatPage() {
   const threadResponseIds = useMemo(
     () =>
       new Set([
-        ...[...openThreadItems, ...resolvedThreadItems].flatMap((thread) =>
-          thread.response_id ? [thread.response_id] : [],
-        ),
+        ...[...openThreadItems, ...resolvedThreadItems].flatMap((thread) => [
+          ...(thread.response_id ? [thread.response_id] : []),
+          ...thread.turns.flatMap((turn) => (turn.response_id ? [turn.response_id] : [])),
+        ]),
         ...storeHiddenResponseIds,
       ]),
     [openThreadItems, resolvedThreadItems, storeHiddenResponseIds],
@@ -1034,23 +1040,29 @@ export function ChatPage() {
   const threadUserItemIds = useMemo(
     () =>
       new Set(
-        [...openThreadItems, ...resolvedThreadItems].flatMap((thread) =>
-          thread.user_item_id ? [thread.user_item_id] : [],
-        ),
+        [...openThreadItems, ...resolvedThreadItems].flatMap((thread) => [
+          ...(thread.user_item_id ? [thread.user_item_id] : []),
+          ...thread.turns.flatMap((turn) => (turn.user_item_id ? [turn.user_item_id] : [])),
+        ]),
       ),
     [openThreadItems, resolvedThreadItems],
   );
   const mainSurfaceBlocks = useMemo(
     () =>
-      blocks.filter(
-        (block) =>
-          !threadResponseIds.has(block.ctx.responseId) &&
-          !(block.ctx.itemId && threadUserItemIds.has(block.ctx.itemId)),
-      ),
-    [blocks, threadResponseIds, threadUserItemIds],
+      threadProjectionReady
+        ? blocks.filter(
+            (block) =>
+              !threadResponseIds.has(block.ctx.responseId) &&
+              !(block.ctx.itemId && threadUserItemIds.has(block.ctx.itemId)),
+          )
+        : [],
+    [blocks, threadProjectionReady, threadResponseIds, threadUserItemIds],
   );
-  const mainSurfaceActiveResponse =
-    activeResponse && threadResponseIds.has(activeResponse.responseId) ? null : activeResponse;
+  const mainSurfaceActiveResponse = !threadProjectionReady
+    ? null
+    : activeResponse && threadResponseIds.has(activeResponse.responseId)
+      ? null
+      : activeResponse;
 
   // Build bubbles once per blocks/activeResponse change. Memo here so
   // unrelated store updates (status, loading flags) don't re-walk.
@@ -1314,14 +1326,11 @@ export function ChatPage() {
       )
       .map((a) => {
         const reason = harnessUnavailableReasonOnHost(a.harness, sessionHost);
-        const availability = a.harness
-          ? sessionHost?.configured_harnesses?.[a.harness]
-          : undefined;
+        const availability = a.harness ? sessionHost?.configured_harnesses?.[a.harness] : undefined;
         return {
           id: a.id,
           displayName: a.display_name,
-          warningText:
-            reason !== null ? harnessWarningBadgeText(reason, collapsedBadge) : null,
+          warningText: reason !== null ? harnessWarningBadgeText(reason, collapsedBadge) : null,
           configured: availability === true,
         };
       });
@@ -1686,9 +1695,7 @@ export function ChatPage() {
       runnerOnline={runnerOnline}
       liveness={liveness}
       agentsError={agentsError}
-      disabled={
-        !agentId || agentsError !== null || worktreeStatus !== null || switchingAgent
-      }
+      disabled={!agentId || agentsError !== null || worktreeStatus !== null || switchingAgent}
       onSend={onSend}
       onSendSlashCommand={onSendSlashCommand}
       onStop={onStop}
@@ -2338,10 +2345,8 @@ export function MainAgentSurface({
     useAgentTextThreads(agentTextCommentsUI ? (conversationId ?? undefined) : undefined, "open")
       .data ?? EMPTY_AGENT_TEXT_THREADS;
   const resolvedAgentTextThreads =
-    useAgentTextThreads(
-      agentTextCommentsUI ? (conversationId ?? undefined) : undefined,
-      "resolved",
-    ).data ?? EMPTY_AGENT_TEXT_THREADS;
+    useAgentTextThreads(agentTextCommentsUI ? (conversationId ?? undefined) : undefined, "resolved")
+      .data ?? EMPTY_AGENT_TEXT_THREADS;
   const threadNavigationItems = useMemo(
     () => [...openAgentTextThreads, ...resolvedAgentTextThreads],
     [openAgentTextThreads, resolvedAgentTextThreads],
@@ -2628,10 +2633,7 @@ export function MainAgentSurface({
                 {/* Scroll helpers — must live inside StickToBottom to access context. */}
                 <BottomLockController enabled={bottomLockEnabled} />
                 <ScrollToBottomOnSend nonce={sendScrollNonce} enabled={bottomLockEnabled} />
-                <ReleaseBottomLockOnResponseEnd
-                  status={status}
-                  enabled={bottomLockEnabled}
-                />
+                <ReleaseBottomLockOnResponseEnd status={status} enabled={bottomLockEnabled} />
                 {bottomLockEnabled && <KeepBottomOnViewportResize />}
                 <ConversationScrollRefBridge onScroller={setScroller} />
                 <HistoryAutoLoader scrollElement={scroller?.el ?? null} />
@@ -2735,10 +2737,7 @@ export function MainAgentSurface({
                 />
               </ConversationContent>
               <ConversationScrollButton />
-              <WorkingStatusPin
-                show={showWorkingIndicator}
-                suppress={subAgentLabel != null}
-              />
+              <WorkingStatusPin show={showWorkingIndicator} suppress={subAgentLabel != null} />
               <UserMessageNavConnected
                 goPrev={nav.goPrev}
                 goNext={nav.goNext}
@@ -3088,8 +3087,7 @@ export function ConversationScrollPosition({
         restoreConversationScrollPosition(el, saved);
         if (!wasRestored || el.scrollHeight !== lastScrollHeight) quietSince = now;
         lastScrollHeight = el.scrollHeight;
-        const settled =
-          isConversationScrollPositionRestored(el, saved) && now - quietSince >= 150;
+        const settled = isConversationScrollPositionRestored(el, saved) && now - quietSince >= 150;
         const done = settled || now >= deadline;
         if (!done) {
           frame = requestAnimationFrame(restore);
@@ -3725,7 +3723,9 @@ export function JumpToTopButton({
       const bannerBottom = buttonRef.current?.getBoundingClientRect().bottom ?? userMessageRoof(el);
       const roof = el.scrollTop + bannerBottom - el.getBoundingClientRect().top;
       const targetIndex = userMessageIndexNearestRoof(
-        userMessages.map((message) => ({ top: naturalElementTop(message) - naturalElementTop(el) })),
+        userMessages.map((message) => ({
+          top: naturalElementTop(message) - naturalElementTop(el),
+        })),
         roof,
       );
       if (targetIndex < 0) return null;
@@ -3735,8 +3735,7 @@ export function JumpToTopButton({
       return {
         messages: userMessages,
         index: targetIndex,
-        atRoof:
-          Math.abs(userMessages[targetIndex].getBoundingClientRect().top - bannerBottom) <= 1,
+        atRoof: Math.abs(userMessages[targetIndex].getBoundingClientRect().top - bannerBottom) <= 1,
       };
     };
 
@@ -3916,8 +3915,7 @@ function scrollToUserTurnStart(message: HTMLElement | null, viewportRoof?: numbe
   const scroller = scrollableAncestor(message);
   if (scroller) {
     const targetRoof = viewportRoof ?? scroller.getBoundingClientRect().top + stickyTop;
-    const targetTop =
-      scroller.scrollTop + message.getBoundingClientRect().top - targetRoof;
+    const targetTop = scroller.scrollTop + message.getBoundingClientRect().top - targetRoof;
     const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     animateScrollTop(scroller, Math.max(0, Math.min(targetTop, maxTop)));
   } else {
@@ -4158,10 +4156,7 @@ export function WorktreeCreationPanel({
   return (
     <div
       data-testid="worktree-creation-panel"
-      className={cn(
-        "mx-auto mb-4 flex w-full flex-col gap-2 px-6 py-3",
-        CHAT_COLUMN_WIDTH,
-      )}
+      className={cn("mx-auto mb-4 flex w-full flex-col gap-2 px-6 py-3", CHAT_COLUMN_WIDTH)}
     >
       <div className="flex items-center gap-2 text-sm font-medium">
         {failed ? (
@@ -4173,7 +4168,10 @@ export function WorktreeCreationPanel({
           </>
         ) : (
           <>
-            <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+            <Loader2Icon
+              className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+              aria-hidden
+            />
             <span className="text-muted-foreground">
               {status.stage === "relocating" || status.stage === "reacquiring"
                 ? "Restoring session workspace"
@@ -4774,11 +4772,12 @@ function UserBubble({
   const { isCopied, handleCopy } = useCopyMessage(() => text);
   const ts = formatBubbleTimestamp(bubble.createdAtS);
   const executionContext = bubble.executionContext;
-  const executionProfileNames = (executionContext?.profiles?.length
-    ? executionContext.profiles
-    : executionContext?.profile
-      ? [executionContext.profile]
-      : []
+  const executionProfileNames = (
+    executionContext?.profiles?.length
+      ? executionContext.profiles
+      : executionContext?.profile
+        ? [executionContext.profile]
+        : []
   ).map(agentDisplayLabel);
   const executionTargetSummary =
     [executionContext?.harness, executionContext?.model].filter(Boolean).join(" / ") || null;
@@ -5852,14 +5851,7 @@ function ComposerStatusLine({
   // for the remaining conditions (editor detection, SSH match), but the tray
   // must still render so the button has a place to appear.
   const showOpenProject = isElectronShell() && !!conversationId && !!session?.workspace;
-  if (
-    !showBranch &&
-    !showPlanMode &&
-    !showGoal &&
-    !showRing &&
-    !showHostBadge &&
-    !showOpenProject
-  )
+  if (!showBranch && !showPlanMode && !showGoal && !showRing && !showHostBadge && !showOpenProject)
     return null;
 
   return (
@@ -7551,7 +7543,12 @@ export function dispatchInitialPrompt(
   prompt: PendingInitialPrompt,
   agentId: string,
   send: (text: string, agentId: string, files: File[], opts?: SendOptions) => Promise<void>,
-  sendSlashCommand: (name: string, args: string, agentId: string, opts?: SendOptions) => Promise<void>,
+  sendSlashCommand: (
+    name: string,
+    args: string,
+    agentId: string,
+    opts?: SendOptions,
+  ) => Promise<void>,
   opts?: SendOptions,
 ): void {
   if (prompt.skill) {
@@ -8020,7 +8017,7 @@ function SessionConfigModal({
               ? { mode: "auto" }
               : draftProfileSelection === "auto_include"
                 ? { mode: "auto_include" }
-              : { mode: "fixed", profileId: draftProfileSelection },
+                : { mode: "fixed", profileId: draftProfileSelection },
           );
         }
         // Model/routing for SDK (OmniHarness) sessions lives in the composer
@@ -8730,17 +8727,15 @@ function ComposerExecutionTargetQuickSelect({
                   {agent.warningText}
                 </Badge>
               )}
-              {!hideUnconfigured &&
-                agent.warningText === null &&
-                agent.configured && (
-                  <Badge
-                    variant="outline"
-                    className="ml-auto self-center border-emerald-300 bg-emerald-50 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
-                    data-testid={`composer-execution-target-configured-${agent.id}`}
-                  >
-                    Configured
-                  </Badge>
-                )}
+              {!hideUnconfigured && agent.warningText === null && agent.configured && (
+                <Badge
+                  variant="outline"
+                  className="ml-auto self-center border-emerald-300 bg-emerald-50 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
+                  data-testid={`composer-execution-target-configured-${agent.id}`}
+                >
+                  Configured
+                </Badge>
+              )}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from "react";
+import { createPortal } from "react-dom";
 import { CheckIcon, Loader2Icon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
@@ -7,21 +15,25 @@ import { useThreadedCommentLayout } from "@/hooks/useThreadedCommentLayout";
 import {
   useAgentTextThreads,
   useCreateAgentTextThread,
+  useCreateAgentTextThreadTurn,
   useDeleteAgentTextThread,
   useResolveAgentTextThread,
   useRetryAgentTextThread,
+  useRetryAgentTextThreadTurn,
   type AgentTextThread,
+  type AgentTextThreadTurn,
   type AgentTextThreadView,
 } from "@/hooks/useAgentTextThreads";
+import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 import type { AgentTextCommentsUI } from "./AgentTextCommentsContext";
 
 const EMPTY_THREADS: AgentTextThread[] = [];
 
-function assistantText(thread: AgentTextThread): string {
+function assistantText(source: Pick<AgentTextThread | AgentTextThreadTurn, "items">): string {
   const parts: string[] = [];
-  for (const item of thread.items) {
+  for (const item of source.items) {
     if (item.type !== "message" || item.role !== "assistant" || !Array.isArray(item.content))
       continue;
     for (const block of item.content) {
@@ -101,6 +113,135 @@ function ThreadDraftEditor({
   );
 }
 
+function FollowUpComposer({
+  value,
+  placeholder = "Ask a follow-up…",
+  disabled,
+  autoFocus = false,
+  onChange,
+  onSend,
+}: {
+  value: string;
+  placeholder?: string;
+  disabled: boolean;
+  autoFocus?: boolean;
+  onChange: (value: string) => void;
+  onSend: () => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const resize = (element: HTMLTextAreaElement) => {
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 112)}px`;
+  };
+  useEffect(() => {
+    if (textareaRef.current) resize(textareaRef.current);
+  }, [value]);
+  return (
+    <div className="flex items-end gap-1.5 border-t border-border bg-background p-2">
+      <textarea
+        ref={textareaRef}
+        rows={1}
+        value={value}
+        autoFocus={autoFocus}
+        disabled={disabled}
+        placeholder={placeholder}
+        className="max-h-28 min-h-8 flex-1 resize-none overflow-y-auto rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-ring"
+        onChange={(event) => {
+          onChange(event.target.value);
+          resize(event.target);
+        }}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || !isSendMessageShortcut(event)) return;
+          event.preventDefault();
+          onSend();
+        }}
+      />
+      <Button
+        size="icon-xs"
+        aria-label="Send follow-up"
+        disabled={disabled || !value.trim()}
+        onClick={onSend}
+      >
+        <span aria-hidden>↑</span>
+      </Button>
+    </div>
+  );
+}
+
+function ThreadTurnView({
+  turn,
+  answer,
+  isStreaming,
+  canEdit,
+  retrying,
+  onRetry,
+}: {
+  turn: AgentTextThreadTurn;
+  answer: string;
+  isStreaming: boolean;
+  canEdit: boolean;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      <div className="space-y-1">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">You</p>
+        {turn.selected_quote && <Quote text={turn.selected_quote} />}
+        <p className="whitespace-pre-wrap text-sm">{turn.question}</p>
+      </div>
+      <div className="pl-2">
+        {turn.state === "initializing" ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2Icon className="size-3 animate-spin" /> Initializing…
+          </p>
+        ) : turn.state === "queued" || turn.state === "submitting" ? (
+          <p className="text-xs text-muted-foreground">Queued</p>
+        ) : turn.state === "failed" ? (
+          <div className="flex items-center justify-between gap-2 text-xs text-destructive">
+            <span>{turn.failure_message ?? "Could not send follow-up."}</span>
+            {canEdit && (
+              <Button size="xs" variant="ghost" disabled={retrying} onClick={onRetry}>
+                Retry
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div
+            data-agent-thread-response={turn.state === "answered" ? turn.thread_id : undefined}
+            className="space-y-1"
+          >
+            {answer && <FilePathAwareMessageResponse>{answer}</FilePathAwareMessageResponse>}
+            {isStreaming && (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2Icon className="size-3 animate-spin" /> Agent is answering…
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface QuoteDraft {
+  threadId: string;
+  quote: string;
+  x: number;
+  y: number;
+  editing: boolean;
+}
+
+function quoteOverlayPosition(rect: DOMRect): { x: number; y: number } {
+  const margin = 12;
+  const width = Math.min(320, Math.max(0, window.innerWidth - margin * 2));
+  const height = Math.min(190, Math.max(0, window.innerHeight - margin * 2));
+  return {
+    x: Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin)),
+    y: Math.max(margin, Math.min(rect.bottom + 8, window.innerHeight - height - margin)),
+  };
+}
+
 export function AgentTextThreadPanel({
   conversationId,
   canEdit,
@@ -113,7 +254,12 @@ export function AgentTextThreadPanel({
   const [view, setView] = useState<AgentTextThreadView>("open");
   const draftBody = ui.draftBody;
   const [error, setError] = useState<string | null>(null);
-  const draftRequestIdRef = useRef(crypto.randomUUID());
+  const [followupDrafts, setFollowupDrafts] = useState<Record<string, string>>({});
+  const [quoteDraft, setQuoteDraft] = useState<QuoteDraft | null>(null);
+  const [quoteBody, setQuoteBody] = useState("");
+  const draftRequestIdRef = useRef<string>(crypto.randomUUID());
+  const restoredDraftRequestIdRef = useRef<string | null>(null);
+  const followupRequestIdsRef = useRef(new Map<string, { signature: string; requestId: string }>());
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingAnchorRef = useRef(ui.pendingAnchor);
   pendingAnchorRef.current = ui.pendingAnchor;
@@ -126,13 +272,24 @@ export function AgentTextThreadPanel({
   const liveBlocks = useChatStore((state) => state.blocks);
   const activeResponse = useChatStore((state) => state.activeResponse);
   const threads = query.data ?? EMPTY_THREADS;
+  const activeThread = useMemo(
+    () => threads.find((thread) => thread.id === ui.activeCommentId) ?? null,
+    [threads, ui.activeCommentId],
+  );
+  const activeThreadIdRef = useRef(activeThread?.id ?? null);
+  activeThreadIdRef.current = activeThread?.id ?? null;
+  const followupBody = activeThread ? (followupDrafts[activeThread.id] ?? "") : "";
+  const setFollowupBody = (body: string) => {
+    if (!activeThread) return;
+    setFollowupDrafts((current) => ({ ...current, [activeThread.id]: body }));
+  };
+  const createTurn = useCreateAgentTextThreadTurn(conversationId, activeThread?.id ?? "");
+  const retryTurn = useRetryAgentTextThreadTurn(conversationId, activeThread?.id ?? "");
   const liveAnswers = useMemo(() => {
     const result = new Map<string, string>();
-    for (const thread of threads) {
-      if (!thread.response_id) continue;
-      const responseBlocks = liveBlocks.filter(
-        (block) => block.ctx.responseId === thread.response_id,
-      );
+    const collect = (id: string, responseId: string | null) => {
+      if (!responseId) return;
+      const responseBlocks = liveBlocks.filter((block) => block.ctx.responseId === responseId);
       const completed = responseBlocks.flatMap((block) =>
         block.type === "text_done" ? [block.fullText] : [],
       );
@@ -142,16 +299,31 @@ export function AgentTextThreadPanel({
           : responseBlocks
               .flatMap((block) => (block.type === "text_chunk" ? [block.text] : []))
               .join("");
-      if (text) result.set(thread.id, text);
+      if (text) result.set(id, text);
+    };
+    for (const thread of threads) {
+      collect(thread.id, thread.response_id);
+      for (const turn of thread.turns) collect(turn.id, turn.response_id);
     }
     return result;
   }, [liveBlocks, threads]);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const isMobile = useIsMobileViewport();
-  const processingCount = threads.filter(
-    (thread) =>
-      thread.state === "initializing" || thread.state === "queued" || thread.state === "running",
-  ).length;
+  const processingCount = threads.reduce(
+    (count, thread) =>
+      count +
+      (thread.state === "initializing" || thread.state === "queued" || thread.state === "running"
+        ? 1
+        : 0) +
+      thread.turns.filter(
+        (turn) =>
+          turn.state === "initializing" ||
+          turn.state === "queued" ||
+          turn.state === "submitting" ||
+          turn.state === "running",
+      ).length,
+    0,
+  );
   const responsePending = processingCount > 0;
   const { positions, draftTop, canvasHeight, onScroll } = useThreadedCommentLayout(
     threads,
@@ -161,9 +333,21 @@ export function AgentTextThreadPanel({
   );
 
   useEffect(() => {
-    draftRequestIdRef.current = crypto.randomUUID();
+    draftRequestIdRef.current = restoredDraftRequestIdRef.current ?? crypto.randomUUID();
+    restoredDraftRequestIdRef.current = null;
     setError(null);
   }, [ui.pendingAnchor]);
+
+  useEffect(() => {
+    if (!quoteDraft) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-thread-quote-overlay]")) return;
+      setQuoteDraft(null);
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [quoteDraft]);
 
   useEffect(() => {
     if (!ui.pendingAnchor || (!isMobile && draftTop === null)) return;
@@ -178,21 +362,22 @@ export function AgentTextThreadPanel({
     const requestId = draftRequestIdRef.current;
     setError(null);
 
-    // Consume this draft before the request. Keeping the pending anchor mounted
-    // while the thread query updates can briefly recreate the editor after Send.
-    // A failed request restores it only when no newer selection has replaced it.
+    // Insert the optimistic card before consuming the draft so the first
+    // comment never collapses the canvas (and both synchronized scrollers) to 0.
+    const request = create.mutateAsync({
+      ...anchor,
+      client_request_id: requestId,
+      comment,
+    });
     ui.cancelDraft();
     try {
-      await create.mutateAsync({
-        ...anchor,
-        client_request_id: requestId,
-        comment,
-      });
+      await request;
     } catch (cause) {
       if (
         useChatStore.getState().conversationId === conversationId &&
         pendingAnchorRef.current === null
       ) {
+        restoredDraftRequestIdRef.current = requestId;
         ui.openDraft(anchor);
         ui.setDraftBody(comment);
       }
@@ -201,10 +386,10 @@ export function AgentTextThreadPanel({
   };
 
   const openCount = openQuery.data?.length ?? 0;
-  const activeThread = useMemo(
-    () => threads.find((thread) => thread.id === ui.activeCommentId) ?? null,
-    [threads, ui.activeCommentId],
-  );
+  useEffect(() => {
+    setQuoteDraft(null);
+    setQuoteBody("");
+  }, [activeThread?.id]);
 
   useEffect(() => {
     if (!activeThread) return;
@@ -212,6 +397,79 @@ export function AgentTextThreadPanel({
       .querySelector<HTMLElement>(`[data-agent-thread-card="${CSS.escape(activeThread.id)}"]`)
       ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [activeThread]);
+
+  const sendFollowup = async (question: string, selectedQuote: string | null = null) => {
+    if (!activeThread || !question.trim()) return;
+    const threadId = activeThread.id;
+    const trimmedQuestion = question.trim();
+    const signature = `${trimmedQuestion}\u0000${selectedQuote ?? ""}`;
+    const previousRequest = followupRequestIdsRef.current.get(threadId);
+    const requestId =
+      previousRequest?.signature === signature ? previousRequest.requestId : crypto.randomUUID();
+    followupRequestIdsRef.current.set(threadId, { signature, requestId });
+    setFollowupBody("");
+    setQuoteBody("");
+    setQuoteDraft(null);
+    window.getSelection()?.removeAllRanges();
+    try {
+      await createTurn.mutateAsync({
+        client_request_id: requestId,
+        question: trimmedQuestion,
+        selected_quote: selectedQuote,
+      });
+      const currentRequest = followupRequestIdsRef.current.get(threadId);
+      if (currentRequest?.requestId === requestId) followupRequestIdsRef.current.delete(threadId);
+    } catch (cause) {
+      if (
+        useChatStore.getState().conversationId !== conversationId ||
+        activeThreadIdRef.current !== threadId
+      ) {
+        return;
+      }
+      if (selectedQuote) {
+        setQuoteBody(question);
+        setQuoteDraft({
+          threadId,
+          quote: selectedQuote,
+          ...quoteOverlayPosition(new DOMRect(16, 16, 0, 0)),
+          editing: true,
+        });
+      } else {
+        setFollowupBody(question);
+      }
+      setError(cause instanceof Error ? cause.message : "Could not send follow-up.");
+    }
+  };
+
+  const captureThreadSelection = (event: ReactMouseEvent<HTMLElement>) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
+    const anchorElement =
+      selection.anchorNode instanceof Element
+        ? selection.anchorNode
+        : selection.anchorNode?.parentElement;
+    const focusElement =
+      selection.focusNode instanceof Element
+        ? selection.focusNode
+        : selection.focusNode?.parentElement;
+    const anchorResponse = anchorElement?.closest<HTMLElement>("[data-agent-thread-response]");
+    const focusResponse = focusElement?.closest<HTMLElement>("[data-agent-thread-response]");
+    if (
+      !anchorResponse ||
+      anchorResponse !== focusResponse ||
+      !event.currentTarget.contains(anchorResponse)
+    ) {
+      return;
+    }
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    setQuoteBody("");
+    setQuoteDraft({
+      threadId: anchorResponse.dataset.agentThreadResponse ?? "",
+      quote: selection.toString().trim(),
+      ...quoteOverlayPosition(rect),
+      editing: false,
+    });
+  };
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Threaded agent comments">
@@ -303,6 +561,13 @@ export function AgentTextThreadPanel({
                 activeResponse?.responseId === thread.response_id &&
                 activeResponse.state === "streaming";
               const position = positions.get(thread.id);
+              const hasPendingTurns = thread.turns.some(
+                (turn) =>
+                  turn.state === "initializing" ||
+                  turn.state === "queued" ||
+                  turn.state === "submitting" ||
+                  turn.state === "running",
+              );
               return (
                 <article
                   key={thread.id}
@@ -314,13 +579,20 @@ export function AgentTextThreadPanel({
                   }
                   className={cn(
                     "space-y-2 rounded-lg border bg-card p-3 text-sm",
-                    selected && "border-purple-500 bg-purple-500/5",
+                    selected &&
+                      "flex max-h-[min(70vh,720px)] flex-col overflow-hidden border-purple-500 bg-purple-500/5",
                   )}
                   onClick={() => ui.activateComment(thread.id)}
                 >
                   <Quote text={thread.selected_text} />
                   <p className="whitespace-pre-wrap">{thread.user_comment}</p>
-                  <div className="border-t border-border pt-2">
+                  <div
+                    className={cn(
+                      "border-t border-border pt-2",
+                      selected && "min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]",
+                    )}
+                    onMouseUp={selected ? captureThreadSelection : undefined}
+                  >
                     {thread.state === "initializing" ? (
                       <p className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Loader2Icon className="size-3 animate-spin" />
@@ -365,18 +637,39 @@ export function AgentTextThreadPanel({
                         Agent is answering…
                       </p>
                     ) : selected ? (
-                      <FilePathAwareMessageResponse>
-                        {answer || "Agent answered."}
-                      </FilePathAwareMessageResponse>
+                      <div data-agent-thread-response={thread.id}>
+                        <FilePathAwareMessageResponse>
+                          {answer || "Agent answered."}
+                        </FilePathAwareMessageResponse>
+                      </div>
                     ) : (
                       <p className="text-xs text-muted-foreground">
                         Agent answered · Click to expand
                       </p>
                     )}
+                    {selected &&
+                      thread.turns.map((turn) => {
+                        const turnAnswer = liveAnswers.get(turn.id) ?? assistantText(turn);
+                        const turnStreaming =
+                          turn.response_id !== null &&
+                          activeResponse?.responseId === turn.response_id &&
+                          activeResponse.state === "streaming";
+                        return (
+                          <ThreadTurnView
+                            key={turn.id}
+                            turn={turn}
+                            answer={turnAnswer}
+                            isStreaming={turnStreaming}
+                            canEdit={canEdit}
+                            retrying={retryTurn.isPending}
+                            onRetry={() => retryTurn.mutate(turn.id)}
+                          />
+                        );
+                      })}
                   </div>
                   {canEdit && view === "open" && (
                     <div className="flex justify-end gap-1">
-                      {thread.state === "answered" && (
+                      {thread.state === "answered" && !hasPendingTurns && (
                         <Button
                           size="xs"
                           variant="ghost"
@@ -409,6 +702,14 @@ export function AgentTextThreadPanel({
                       )}
                     </div>
                   )}
+                  {selected && canEdit && view === "open" && thread.state !== "failed" && (
+                    <FollowUpComposer
+                      value={followupBody}
+                      disabled={false}
+                      onChange={setFollowupBody}
+                      onSend={() => void sendFollowup(followupBody)}
+                    />
+                  )}
                 </article>
               );
             })}
@@ -427,6 +728,48 @@ export function AgentTextThreadPanel({
           {processingCount} {processingCount === 1 ? "comment" : "comments"} being processed
         </div>
       )}
+      {quoteDraft &&
+        createPortal(
+          <div
+            data-thread-quote-overlay
+            className={cn(
+              "fixed z-[100]",
+              quoteDraft.editing &&
+                "max-h-[calc(100vh-1.5rem)] w-[min(20rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-border bg-popover p-2 shadow-lg",
+            )}
+            style={{ left: quoteDraft.x, top: quoteDraft.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            {quoteDraft.editing ? (
+              <div className="space-y-2">
+                <Quote text={quoteDraft.quote} />
+                <FollowUpComposer
+                  value={quoteBody}
+                  placeholder="Ask about this text…"
+                  disabled={false}
+                  autoFocus
+                  onChange={setQuoteBody}
+                  onSend={() => void sendFollowup(quoteBody, quoteDraft.quote)}
+                />
+                <div className="flex justify-end">
+                  <Button size="xs" variant="ghost" onClick={() => setQuoteDraft(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => setQuoteDraft((current) => current && { ...current, editing: true })}
+              >
+                Comment
+              </Button>
+            )}
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }

@@ -69,8 +69,6 @@ compatibility analysis or alternative threaded harness integration is required.
   same serialized session queue.
 - No child session per comment.
 - No duplication of thread responses in the main-chat surface.
-- No follow-up conversation inside a thread in v1. The storage and presentation model
-  should allow it later.
 - No synchronized side-by-side scrolling on mobile; mobile uses normal card
   navigation in the Comments drawer.
 - No cross-device preference synchronization in v1. The mode preference is local to
@@ -1087,7 +1085,32 @@ execution path.
 - Creation failure preserves the editor and pending highlight.
 - Unresolvable anchors do not highlight incorrect text.
 
-## 24. Acceptance criteria
+## 24. Multi-turn follow-ups
+
+An active, expanded thread has a one-row follow-up composer fixed below its internally
+scrollable message timeline. Inactive/collapsed and resolved threads do not show the
+composer. The textarea grows with its content to six lines, then scrolls internally.
+Sending follows the global **Keyboard shortcuts → Send messages** preference via the
+same `isSendMessageShortcut` helper as the main composer.
+
+Every follow-up is a durable `agent_text_thread_turn` with its own sequence,
+client-request ID, per-attempt submission ID, user-item ID, response ID, state, and optional
+selected quote. Retrying rotates the submission ID so late events from an older attempt
+cannot overwrite the new response pairing. Rapid
+submissions render immediately as independent turn groups and execute in sequence; each
+response is correlated by turn ID and always renders directly beneath its question.
+The processing footer counts initializing, queued, and running turns.
+
+The expanded card is capped at `min(70vh, 720px)`. Its anchor/original comment and
+composer remain visible while the turn timeline scrolls. Streamed response growth never
+auto-scrolls either the inner timeline or outer Comments sidebar.
+
+Selecting completed agent prose inside a thread response shows a temporary Comment
+action. It opens a small overlay with the selected quote and the same auto-growing
+composer. Sending appends a flat quoted follow-up at the thread bottom. The browser
+selection is cleared and is never stored as a persistent nested highlight.
+
+## 25. Acceptance criteria
 
 The feature is complete when:
 
@@ -1118,3 +1141,11 @@ The feature is complete when:
 - Mode switching preserves hidden work and shows only the selected mode's highlights.
 - Rewind deletes threads whose source text was removed and cancels their work.
 - Failures and retries cannot duplicate agent turns.
+- Active open threads expose a fixed, auto-growing follow-up composer that honors the
+  global send-message shortcut preference.
+- Multiple rapid follow-ups keep submission order and pair every response with its own
+  question after reload, retry, and reconnect.
+- Long expanded threads cap their height and scroll internally without following
+  generated response tails.
+- Selecting completed response text inside a thread can append a quoted flat follow-up
+  without creating a persistent nested highlight.

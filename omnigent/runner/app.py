@@ -8732,9 +8732,7 @@ def create_runner_app(
         _session_workspace_cache[session_id] = workspace
         cached = _session_snapshot_cache.get(session_id)
         if cached is not None:
-            _session_snapshot_cache[session_id] = dataclasses.replace(
-                cached, workspace=workspace
-            )
+            _session_snapshot_cache[session_id] = dataclasses.replace(cached, workspace=workspace)
 
     async def _load_legacy_session_init_context() -> _SessionInitContext:
         await _get_server_version(server_client)
@@ -11809,11 +11807,7 @@ def create_runner_app(
                     next_bodies = [buf.pop(0)]
                 else:
                     boundary = next(
-                        (
-                            index
-                            for index, body in enumerate(buf)
-                            if body.get("comment_thread_id")
-                        ),
+                        (index for index, body in enumerate(buf) if body.get("comment_thread_id")),
                         len(buf),
                     )
                     next_bodies = buf[:boundary]
@@ -12536,9 +12530,7 @@ def create_runner_app(
             )
 
         _comment_thread_id = (
-            str(msg_body["comment_thread_id"])
-            if msg_body.get("comment_thread_id")
-            else None
+            str(msg_body["comment_thread_id"]) if msg_body.get("comment_thread_id") else None
         )
         try:
             response = await _stream_message_to_harness(
@@ -12881,10 +12873,10 @@ def create_runner_app(
 
                             _defer_publish = False
                             if event is not None:
-                                if (
-                                    comment_thread_id is not None
-                                    and event.get("type") == "response.in_progress"
-                                ):
+                                if comment_thread_id is not None and event.get("type") in {
+                                    "response.in_progress",
+                                    "error",
+                                }:
                                     event["comment_thread_id"] = comment_thread_id
                                     raw_sse_bytes = _encode_sse_event(event)
                                 if event.get("type") == "response.created":

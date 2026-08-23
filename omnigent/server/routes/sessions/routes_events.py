@@ -230,7 +230,6 @@ from omnigent.server.schemas import (
     SessionEventInput,
     SessionRewindRequest,
 )
-
 from omnigent.session_lifecycle import (
     is_session_closed,
 )
@@ -610,9 +609,7 @@ def register_events_routes(
                 on_log=_on_log,
             )
         except WorktreeProxyError as exc:
-            _publish_worktree_status(
-                conv.id, "failed", branch=conv.git_branch, error=exc.message
-            )
+            _publish_worktree_status(conv.id, "failed", branch=conv.git_branch, error=exc.message)
             raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
         await asyncio.to_thread(
             conversation_store.set_host_id,
@@ -2024,8 +2021,7 @@ def register_events_routes(
                     code=ErrorCode.INVALID_INPUT,
                 )
             if not (
-                _uses_omniharness
-                or canonicalize_harness(_resolved_harness) == "openai-agents"
+                _uses_omniharness or canonicalize_harness(_resolved_harness) == "openai-agents"
             ):
                 raise OmnigentError(
                     "Threaded replies require OmniHarness or OpenAI Agents SDK",
@@ -2036,15 +2032,18 @@ def register_events_routes(
                 session_id,
                 body.comment_thread_id,
             )
+            _comment_turn = None
             if _comment_thread is None:
-                raise OmnigentError(
-                    "Agent text thread not found",
-                    code=ErrorCode.NOT_FOUND,
+                _comment_turn = await asyncio.to_thread(
+                    conversation_store.get_agent_text_thread_turn,
+                    session_id,
+                    body.comment_thread_id,
                 )
-            if _comment_thread.state != "queued":
+            correlation = _comment_thread or _comment_turn
+            if correlation is None:
                 raise OmnigentError(
-                    "Agent text thread has already been submitted",
-                    code=ErrorCode.CONFLICT,
+                    "Agent text thread or turn not found",
+                    code=ErrorCode.NOT_FOUND,
                 )
         _spec_model = None
         if _loaded_spec is not None:
@@ -2150,48 +2149,65 @@ def register_events_routes(
                 "Session history is being rewound; retry this message after it completes.",
                 code=ErrorCode.CONFLICT,
             )
-        dispatch = await _dispatch_session_event_to_runner(
-            session_id,
-            conv,
-            body,
-            conversation_store,
-            runner_client,
-            agent_name=_agent.name if _agent else None,
-            file_store=file_store,
-            artifact_store=artifact_store,
-            has_mcp_servers=_has_mcp_servers,
-            agent_version=_agent.version if _agent else None,
-            created_by=created_by,
-            runner_router=runner_router,
-            native_terminal_ready=native_terminal_ready,
-            profile_instructions=_profile_instructions,
-            memory_instructions=_memory_instructions,
-            # Read only for the gateway-backing check that decides which router
-            # serves this turn; absent, routing keeps its default posture.
-            host_store=getattr(request.app.state, "host_store", None),
-            # Global Omnigent routing settings are read for every user turn so
-            # admin updates apply without restarting the server.
-            model_settings_store=getattr(request.app.state, "model_settings_store", None),
-            prompt_profile_store=prompt_profile_store,
-            uses_omniharness=_uses_omniharness,
-        )
+        if body.comment_thread_id is not None:
+            claimed = await asyncio.to_thread(
+                conversation_store.claim_agent_text_thread_submission,
+                session_id,
+                body.comment_thread_id,
+            )
+            if not claimed:
+                raise OmnigentError(
+                    "Agent text thread turn has already been submitted",
+                    code=ErrorCode.CONFLICT,
+                )
+        try:
+            dispatch = await _dispatch_session_event_to_runner(
+                session_id,
+                conv,
+                body,
+                conversation_store,
+                runner_client,
+                agent_name=_agent.name if _agent else None,
+                file_store=file_store,
+                artifact_store=artifact_store,
+                has_mcp_servers=_has_mcp_servers,
+                agent_version=_agent.version if _agent else None,
+                created_by=created_by,
+                runner_router=runner_router,
+                native_terminal_ready=native_terminal_ready,
+                profile_instructions=_profile_instructions,
+                memory_instructions=_memory_instructions,
+                # Read only for the gateway-backing check that decides which router
+                # serves this turn; absent, routing keeps its default posture.
+                host_store=getattr(request.app.state, "host_store", None),
+                # Global Omnigent routing settings are read for every user turn so
+                # admin updates apply without restarting the server.
+                model_settings_store=getattr(request.app.state, "model_settings_store", None),
+                prompt_profile_store=prompt_profile_store,
+                uses_omniharness=_uses_omniharness,
+            )
+        except Exception as exc:
+            if body.comment_thread_id is not None:
+                message = str(exc) or "Threaded reply failed"
+                failed = await asyncio.to_thread(
+                    conversation_store.fail_agent_text_thread_turn,
+                    session_id,
+                    body.comment_thread_id,
+                    message,
+                )
+                if failed is None:
+                    await asyncio.to_thread(
+                        conversation_store.fail_agent_text_thread,
+                        session_id,
+                        body.comment_thread_id,
+                        message,
+                    )
+            raise
         if pending_background_title is not None:
             pending_background_title.schedule()
         response: dict[str, Any] = {"queued": True}
         if dispatch.item_id is not None:
             response["item_id"] = dispatch.item_id
-            if body.comment_thread_id is not None:
-                thread = await asyncio.to_thread(
-                    conversation_store.bind_agent_text_thread_item,
-                    session_id,
-                    body.comment_thread_id,
-                    dispatch.item_id,
-                )
-                if thread is None:
-                    raise OmnigentError(
-                        "Agent text thread could not be bound to the submitted message",
-                        code=ErrorCode.NOT_FOUND,
-                    )
         elif body.comment_thread_id is not None:
             raise OmnigentError(
                 "Threaded reply did not persist its user message",

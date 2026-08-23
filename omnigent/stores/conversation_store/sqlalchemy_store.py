@@ -33,6 +33,7 @@ from omnigent.db.db_models import (
     SqlAgent,
     SqlAgentTextComment,
     SqlAgentTextThread,
+    SqlAgentTextThreadTurn,
     SqlComment,
     SqlConversation,
     SqlConversationItem,
@@ -78,6 +79,7 @@ from omnigent.db.utils import (
 from omnigent.entities import (
     AgentTextComment,
     AgentTextThread,
+    AgentTextThreadTurn,
     Conversation,
     ConversationItem,
     NewConversationItem,
@@ -714,6 +716,30 @@ def _to_agent_text_thread(
         created_at=row.created_at,
         updated_at=row.updated_at,
         source_position=source_position,
+        items=items or [],
+    )
+
+
+def _to_agent_text_thread_turn(
+    row: SqlAgentTextThreadTurn,
+    *,
+    items: list[dict[str, Any]] | None = None,
+    state: str | None = None,
+) -> AgentTextThreadTurn:
+    return AgentTextThreadTurn(
+        id=row.id,
+        thread_id=row.thread_id,
+        sequence=row.sequence,
+        client_request_id=row.client_request_id,
+        submission_id=row.submission_id,
+        question=row.question,
+        selected_quote=row.selected_quote,
+        state=cast(Any, state or row.state),
+        user_item_id=row.user_item_id,
+        response_id=row.response_id,
+        failure_message=row.failure_message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
         items=items or [],
     )
 
@@ -2302,7 +2328,27 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlAgentTextThread.id,
                 )
             ).all()
+            thread_ids = [row.id for row, _ in rows]
+            turn_rows = (
+                list(
+                    session.execute(
+                        select(SqlAgentTextThreadTurn)
+                        .where(
+                            SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                            SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                            SqlAgentTextThreadTurn.thread_id.in_(thread_ids),
+                        )
+                        .order_by(
+                            SqlAgentTextThreadTurn.thread_id,
+                            SqlAgentTextThreadTurn.sequence,
+                        )
+                    ).scalars()
+                )
+                if thread_ids
+                else []
+            )
             response_ids = [row.response_id for row, _ in rows if row.response_id]
+            response_ids.extend(row.response_id for row in turn_rows if row.response_id)
             item_rows: list[SqlConversationItem] = []
             if response_ids:
                 item_rows = list(
@@ -2321,6 +2367,26 @@ class SqlAlchemyConversationStore(ConversationStore):
             for item_row, data_json in zip(item_rows, decoded, strict=True):
                 item = _to_item(item_row, data_json)
                 items_by_response.setdefault(item.response_id, []).append(item.to_api_dict())
+            turns_by_thread: dict[str, list[AgentTextThreadTurn]] = {}
+            for turn_row in turn_rows:
+                turn_items = items_by_response.get(turn_row.response_id or "", [])
+                turn_state = turn_row.state
+                if any(item.get("type") == "error" for item in turn_items):
+                    turn_state = "failed"
+                elif any(
+                    item.get("type") == "message"
+                    and item.get("role") == "assistant"
+                    and item.get("status") == "completed"
+                    for item in turn_items
+                ):
+                    turn_state = "answered"
+                turns_by_thread.setdefault(turn_row.thread_id, []).append(
+                    _to_agent_text_thread_turn(
+                        turn_row,
+                        items=turn_items,
+                        state=turn_state,
+                    )
+                )
             result: list[AgentTextThread] = []
             for row, position in rows:
                 items = items_by_response.get(row.response_id or "", [])
@@ -2335,14 +2401,14 @@ class SqlAlchemyConversationStore(ConversationStore):
                         for item in items
                     ):
                         state = "answered"
-                result.append(
-                    _to_agent_text_thread(
-                        row,
-                        source_position=position,
-                        items=items,
-                        state=state,
-                    )
+                thread = _to_agent_text_thread(
+                    row,
+                    source_position=position,
+                    items=items,
+                    state=state,
                 )
+                thread.turns = turns_by_thread.get(row.id, [])
+                result.append(thread)
             return result
 
     def get_agent_text_thread(
@@ -2354,6 +2420,65 @@ class SqlAlchemyConversationStore(ConversationStore):
                 (current_workspace_id(), conversation_id, thread_id),
             )
             return _to_agent_text_thread(row) if row is not None else None
+
+    def claim_agent_text_thread_submission(
+        self, conversation_id: str, correlation_id: str
+    ) -> bool:
+        with self._conv_session_immediate("claim_agent_text_thread_submission") as session:
+            parent = session.execute(
+                update(SqlAgentTextThread)
+                .where(
+                    SqlAgentTextThread.workspace_id == current_workspace_id(),
+                    SqlAgentTextThread.conversation_id == conversation_id,
+                    SqlAgentTextThread.id == correlation_id,
+                    SqlAgentTextThread.state == "queued",
+                )
+                .values(state="running", updated_at=now_epoch_us())
+            )
+            if parent.rowcount:
+                return True
+            turn = session.execute(
+                select(SqlAgentTextThreadTurn)
+                .where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    or_(
+                        SqlAgentTextThreadTurn.id == correlation_id,
+                        SqlAgentTextThreadTurn.submission_id == correlation_id,
+                    ),
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if turn is None or turn.state != "queued":
+                return False
+            # Lock the parent so claims for different turns in the same thread
+            # serialize too, not only duplicate claims for one turn.
+            parent_thread = session.execute(
+                select(SqlAgentTextThread)
+                .where(
+                    SqlAgentTextThread.workspace_id == current_workspace_id(),
+                    SqlAgentTextThread.conversation_id == conversation_id,
+                    SqlAgentTextThread.id == turn.thread_id,
+                )
+                .with_for_update()
+            ).scalar_one()
+            if parent_thread.user_item_id is None:
+                return False
+            earlier_unsubmitted = session.execute(
+                select(SqlAgentTextThreadTurn.id).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    SqlAgentTextThreadTurn.thread_id == turn.thread_id,
+                    SqlAgentTextThreadTurn.sequence < turn.sequence,
+                    SqlAgentTextThreadTurn.state.in_(("queued", "submitting", "failed")),
+                    SqlAgentTextThreadTurn.user_item_id.is_(None),
+                )
+            ).first()
+            if earlier_unsubmitted is not None:
+                return False
+            turn.state = "submitting"
+            turn.updated_at = now_epoch_us()
+            return True
 
     def bind_agent_text_thread_item(
         self, conversation_id: str, thread_id: str, item_id: str
@@ -2448,7 +2573,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                     delete(SqlConversationItem).where(
                         SqlConversationItem.workspace_id == current_workspace_id(),
                         SqlConversationItem.conversation_id == conversation_id,
-                        SqlConversationItem.id == _uuid_bytes(row.user_item_id),
+                        SqlConversationItem.id == row.user_item_id,
                     )
                 )
             row.state = "queued"
@@ -2457,6 +2582,205 @@ class SqlAlchemyConversationStore(ConversationStore):
             row.failure_message = None
             row.updated_at = now_epoch_us()
             return _to_agent_text_thread(row)
+
+    def add_agent_text_thread_turn(
+        self,
+        conversation_id: str,
+        thread_id: str,
+        *,
+        client_request_id: str,
+        question: str,
+        selected_quote: str | None,
+    ) -> AgentTextThreadTurn:
+        now = now_epoch_us()
+        with self._conv_session_immediate("insert_agent_text_thread_turn") as session:
+            existing = session.execute(
+                select(SqlAgentTextThreadTurn).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    SqlAgentTextThreadTurn.client_request_id == client_request_id,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return _to_agent_text_thread_turn(existing)
+            thread = session.execute(
+                select(SqlAgentTextThread)
+                .where(
+                    SqlAgentTextThread.workspace_id == current_workspace_id(),
+                    SqlAgentTextThread.conversation_id == conversation_id,
+                    SqlAgentTextThread.id == thread_id,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if thread is None:
+                raise LookupError(f"agent text thread not found: {thread_id!r}")
+            sequence = (
+                session.execute(
+                    select(func.max(SqlAgentTextThreadTurn.sequence)).where(
+                        SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                        SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                        SqlAgentTextThreadTurn.thread_id == thread_id,
+                    )
+                ).scalar_one_or_none()
+                or 0
+            ) + 1
+            row = SqlAgentTextThreadTurn(
+                id=uuid.uuid4().hex,
+                conversation_id=conversation_id,
+                thread_id=thread_id,
+                sequence=sequence,
+                client_request_id=client_request_id,
+                submission_id=uuid.uuid4().hex,
+                question=question,
+                selected_quote=selected_quote,
+                state="queued",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            return _to_agent_text_thread_turn(row)
+
+    def get_agent_text_thread_turn(
+        self, conversation_id: str, turn_id: str
+    ) -> AgentTextThreadTurn | None:
+        with self._conv_session("get_agent_text_thread_turn") as session:
+            row = session.execute(
+                select(SqlAgentTextThreadTurn).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    or_(
+                        SqlAgentTextThreadTurn.id == turn_id,
+                        SqlAgentTextThreadTurn.submission_id == turn_id,
+                    ),
+                )
+            ).scalar_one_or_none()
+            return _to_agent_text_thread_turn(row) if row is not None else None
+
+    def bind_agent_text_thread_turn_item(
+        self, conversation_id: str, turn_id: str, item_id: str
+    ) -> AgentTextThreadTurn | None:
+        with self._conv_session("bind_agent_text_thread_turn_item") as session:
+            row = session.execute(
+                select(SqlAgentTextThreadTurn).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    SqlAgentTextThreadTurn.submission_id == turn_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.user_item_id = item_id
+            row.updated_at = now_epoch_us()
+            return _to_agent_text_thread_turn(row)
+
+    def bind_agent_text_thread_turn_response(
+        self, conversation_id: str, turn_id: str, response_id: str
+    ) -> AgentTextThreadTurn | None:
+        with self._conv_session("bind_agent_text_thread_turn_response") as session:
+            row = session.execute(
+                select(SqlAgentTextThreadTurn).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    SqlAgentTextThreadTurn.submission_id == turn_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.response_id = response_id
+            row.state = "running"
+            row.failure_message = None
+            row.updated_at = now_epoch_us()
+            return _to_agent_text_thread_turn(row)
+
+    def fail_agent_text_thread_turn(
+        self, conversation_id: str, turn_id: str, message: str
+    ) -> AgentTextThreadTurn | None:
+        with self._conv_session_immediate("fail_agent_text_thread_turn") as session:
+            row = session.execute(
+                select(SqlAgentTextThreadTurn)
+                .where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    or_(
+                        SqlAgentTextThreadTurn.id == turn_id,
+                        SqlAgentTextThreadTurn.submission_id == turn_id,
+                    ),
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            if row.state not in {"queued", "submitting", "running"}:
+                return _to_agent_text_thread_turn(row)
+            if (
+                row.response_id
+                and session.execute(
+                    select(SqlConversationItem.id).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.response_id == row.response_id,
+                        SqlConversationItem.type == encode_item_type("message"),
+                        SqlConversationItem.status == encode_item_status("completed"),
+                    )
+                ).first()
+            ):
+                return _to_agent_text_thread_turn(row)
+            row.state = "failed"
+            row.failure_message = message
+            row.updated_at = now_epoch_us()
+            return _to_agent_text_thread_turn(row)
+
+    def retry_agent_text_thread_turn(
+        self, conversation_id: str, turn_id: str
+    ) -> AgentTextThreadTurn | None:
+        with self._conv_session_immediate("retry_agent_text_thread_turn") as session:
+            row = session.execute(
+                select(SqlAgentTextThreadTurn)
+                .where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    SqlAgentTextThreadTurn.id == turn_id,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            has_persisted_error = bool(
+                row.response_id
+                and session.execute(
+                    select(SqlConversationItem.id).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.response_id == row.response_id,
+                        SqlConversationItem.type == encode_item_type("error"),
+                    )
+                ).first()
+            )
+            if row.state != "failed" and not has_persisted_error:
+                return None
+            if row.response_id is not None:
+                session.execute(
+                    delete(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.response_id == row.response_id,
+                    )
+                )
+            if row.user_item_id is not None:
+                session.execute(
+                    delete(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.id == row.user_item_id,
+                    )
+                )
+            row.state = "queued"
+            row.submission_id = uuid.uuid4().hex
+            row.user_item_id = None
+            row.response_id = None
+            row.failure_message = None
+            row.updated_at = now_epoch_us()
+            return _to_agent_text_thread_turn(row)
 
     def delete_agent_text_thread(self, conversation_id: str, thread_id: str) -> bool:
         with self._conv_session("delete_agent_text_thread") as session:
@@ -2479,9 +2803,38 @@ class SqlAlchemyConversationStore(ConversationStore):
                     delete(SqlConversationItem).where(
                         SqlConversationItem.workspace_id == current_workspace_id(),
                         SqlConversationItem.conversation_id == conversation_id,
-                        SqlConversationItem.id == _uuid_bytes(row.user_item_id),
+                        SqlConversationItem.id == row.user_item_id,
                     )
                 )
+            turn_rows = list(
+                session.execute(
+                    select(SqlAgentTextThreadTurn).where(
+                        SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                        SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                        SqlAgentTextThreadTurn.thread_id == thread_id,
+                    )
+                ).scalars()
+            )
+            turn_response_ids = [turn.response_id for turn in turn_rows if turn.response_id]
+            turn_item_ids = [turn.user_item_id for turn in turn_rows if turn.user_item_id]
+            if turn_response_ids:
+                session.execute(
+                    delete(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.response_id.in_(turn_response_ids),
+                    )
+                )
+            if turn_item_ids:
+                session.execute(
+                    delete(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.id.in_(turn_item_ids),
+                    )
+                )
+            for turn in turn_rows:
+                session.delete(turn)
             session.delete(row)
             return True
 
@@ -4348,15 +4701,35 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlAgentTextComment.conversation_item_id.in_(removed_item_ids),
                 )
             )
+            removed_thread_ids = select(SqlAgentTextThread.id).where(
+                SqlAgentTextThread.workspace_id == current_workspace_id(),
+                SqlAgentTextThread.conversation_id == conversation_id,
+                or_(
+                    SqlAgentTextThread.source_item_id.in_(removed_item_ids),
+                    SqlAgentTextThread.user_item_id.in_(removed_item_ids),
+                    SqlAgentTextThread.response_id.in_(removed_response_ids),
+                ),
+            )
+            session.execute(
+                delete(SqlAgentTextThreadTurn).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id == conversation_id,
+                    or_(
+                        SqlAgentTextThreadTurn.thread_id.in_(removed_thread_ids),
+                        SqlAgentTextThreadTurn.user_item_id.in_(removed_item_ids),
+                        SqlAgentTextThreadTurn.response_id.in_(removed_response_ids),
+                        and_(
+                            SqlAgentTextThreadTurn.state.in_(("queued", "submitting")),
+                            SqlAgentTextThreadTurn.user_item_id.is_(None),
+                        ),
+                    ),
+                )
+            )
             session.execute(
                 delete(SqlAgentTextThread).where(
                     SqlAgentTextThread.workspace_id == current_workspace_id(),
                     SqlAgentTextThread.conversation_id == conversation_id,
-                    or_(
-                        SqlAgentTextThread.source_item_id.in_(removed_item_ids),
-                        SqlAgentTextThread.user_item_id.in_(removed_item_ids),
-                        SqlAgentTextThread.response_id.in_(removed_response_ids),
-                    ),
+                    SqlAgentTextThread.id.in_(removed_thread_ids),
                 )
             )
             session.execute(
@@ -4836,6 +5209,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                 delete(SqlAgentTextComment).where(
                     SqlAgentTextComment.workspace_id == current_workspace_id(),
                     SqlAgentTextComment.conversation_id.in_(subtree_ids),
+                )
+            )
+            ap_sess.execute(
+                delete(SqlAgentTextThreadTurn).where(
+                    SqlAgentTextThreadTurn.workspace_id == current_workspace_id(),
+                    SqlAgentTextThreadTurn.conversation_id.in_(subtree_ids),
                 )
             )
             ap_sess.execute(

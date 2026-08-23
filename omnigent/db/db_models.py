@@ -1275,6 +1275,70 @@ class SqlAgentTextThread(ConversationBase):
     )
 
 
+class SqlAgentTextThreadTurn(ConversationBase):
+    """One follow-up question and paired response in an agent-text thread."""
+
+    __tablename__ = "agent_text_thread_turns"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(Uuid16())
+    sequence: Mapped[int] = mapped_column(Integer)
+    client_request_id: Mapped[str] = mapped_column(String(64))
+    submission_id: Mapped[str] = mapped_column(Uuid16())
+    question: Mapped[str] = mapped_column(CompressedText)
+    selected_quote: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[str] = mapped_column(String(16))
+    user_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    response_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    created_at: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        Index(
+            "ix_agent_text_thread_turns_thread",
+            "workspace_id",
+            "conversation_id",
+            "thread_id",
+            "sequence",
+            unique=True,
+        ),
+        Index(
+            "ix_agent_text_thread_turns_response",
+            "workspace_id",
+            "conversation_id",
+            "response_id",
+        ),
+        Index(
+            "ux_agent_text_thread_turns_request",
+            "workspace_id",
+            "conversation_id",
+            "client_request_id",
+            unique=True,
+        ),
+        Index(
+            "ux_agent_text_thread_turns_submission",
+            "workspace_id",
+            "conversation_id",
+            "submission_id",
+            unique=True,
+        ),
+        CheckConstraint("sequence >= 1", name="ck_agent_text_thread_turns_sequence"),
+        CheckConstraint(
+            "state IN ('queued', 'submitting', 'running', 'answered', 'failed')",
+            name="ck_agent_text_thread_turns_state",
+        ),
+    )
+
+
 def policy_name_cksum(name: str) -> bytes:
     """Return the sha256 digest of a policy name.
 

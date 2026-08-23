@@ -63,6 +63,8 @@ export function useThreadedCommentLayout(
   const releaseTimerRef = useRef<number | null>(null);
   const lastChatScrollTopRef = useRef<number | null>(null);
   const hadPendingDraftRef = useRef(false);
+  const commentsUserScrollUntilRef = useRef(0);
+  const chatUserScrollUntilRef = useRef(0);
 
   useEffect(() => {
     if (isMobile) return;
@@ -168,14 +170,13 @@ export function useThreadedCommentLayout(
     const previousChatScrollTop = lastChatScrollTopRef.current;
     const chatMoved =
       previousChatScrollTop === null || Math.abs(detail.chatScrollTop - previousChatScrollTop) >= 1;
+    const userMovedChat = chatMoved && performance.now() <= chatUserScrollUntilRef.current;
     const draftOpened = hasPendingDraft && !hadPendingDraftRef.current;
     lastChatScrollTopRef.current = detail.chatScrollTop;
     hadPendingDraftRef.current = hasPendingDraft;
-    if (suppressAutoSync) return;
-    // Streamed response chunks change card heights and dispatch fresh layout
-    // events. They must not move either pane unless the user actually scrolled
-    // the chat or opened a new draft that needs initial alignment.
-    if (!chatMoved && !draftOpened) return;
+    // Streamed response chunks and programmatic chat scrolling must not move
+    // the sidebar. A new draft may align once only when no response is active.
+    if (!userMovedChat && (!draftOpened || suppressAutoSync)) return;
     const screenY = sharedAlignmentY(chatScroller, scroller);
     const chatReference =
       chatScroller.scrollTop + screenY - chatScroller.getBoundingClientRect().top;
@@ -196,6 +197,64 @@ export function useThreadedCommentLayout(
     }, 100);
   }, [detail, hasPendingDraft, isMobile, mappingPoints, scrollerRef, suppressAutoSync]);
 
+  useEffect(() => {
+    if (isMobile) return;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const markUserScroll = () => {
+      commentsUserScrollUntilRef.current = performance.now() + 250;
+    };
+    const markKeyboardScroll = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+        markUserScroll();
+      }
+    };
+    const markScrollbarDrag = (event: PointerEvent) => {
+      const scrollbarWidth = scroller.offsetWidth - scroller.clientWidth;
+      const right = scroller.getBoundingClientRect().right;
+      if (scrollbarWidth > 0 && event.clientX >= right - scrollbarWidth) markUserScroll();
+    };
+    scroller.addEventListener("wheel", markUserScroll, { passive: true });
+    scroller.addEventListener("touchmove", markUserScroll, { passive: true });
+    scroller.addEventListener("pointerdown", markScrollbarDrag, { passive: true });
+    scroller.addEventListener("keydown", markKeyboardScroll);
+    return () => {
+      scroller.removeEventListener("wheel", markUserScroll);
+      scroller.removeEventListener("touchmove", markUserScroll);
+      scroller.removeEventListener("pointerdown", markScrollbarDrag);
+      scroller.removeEventListener("keydown", markKeyboardScroll);
+    };
+  }, [isMobile, scrollerRef]);
+
+  useEffect(() => {
+    if (isMobile) return;
+    const chatScroller = document.querySelector<HTMLElement>(".transcript-hide-native-scrollbar");
+    if (!chatScroller) return;
+    const markUserScroll = () => {
+      chatUserScrollUntilRef.current = performance.now() + 250;
+    };
+    const markKeyboardScroll = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+        markUserScroll();
+      }
+    };
+    const markScrollbarDrag = (event: PointerEvent) => {
+      const scrollbarWidth = chatScroller.offsetWidth - chatScroller.clientWidth;
+      const right = chatScroller.getBoundingClientRect().right;
+      if (scrollbarWidth > 0 && event.clientX >= right - scrollbarWidth) markUserScroll();
+    };
+    chatScroller.addEventListener("wheel", markUserScroll, { passive: true });
+    chatScroller.addEventListener("touchmove", markUserScroll, { passive: true });
+    chatScroller.addEventListener("pointerdown", markScrollbarDrag, { passive: true });
+    chatScroller.addEventListener("keydown", markKeyboardScroll);
+    return () => {
+      chatScroller.removeEventListener("wheel", markUserScroll);
+      chatScroller.removeEventListener("touchmove", markUserScroll);
+      chatScroller.removeEventListener("pointerdown", markScrollbarDrag);
+      chatScroller.removeEventListener("keydown", markKeyboardScroll);
+    };
+  }, [isMobile]);
+
   useEffect(
     () => () => {
       if (releaseTimerRef.current !== null) window.clearTimeout(releaseTimerRef.current);
@@ -204,7 +263,14 @@ export function useThreadedCommentLayout(
   );
 
   const onScroll = useCallback(() => {
-    if (isMobile || syncingFromChatRef.current || mappingPoints.length === 0) return;
+    if (
+      isMobile ||
+      syncingFromChatRef.current ||
+      performance.now() > commentsUserScrollUntilRef.current ||
+      mappingPoints.length === 0
+    ) {
+      return;
+    }
     const commentsScroller = scrollerRef.current;
     const chatScroller = document.querySelector<HTMLElement>(".transcript-hide-native-scrollbar");
     if (!commentsScroller || !chatScroller) return;

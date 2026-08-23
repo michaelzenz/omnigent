@@ -2,14 +2,19 @@
 
 from omnigent.entities.account import Account, AccountToken
 from omnigent.entities.agent import Agent, LoadedAgent
-from omnigent.entities.agent_text_comment import AgentTextComment
-from omnigent.entities.agent_text_thread import AgentTextThread, AgentTextThreadState
 from omnigent.entities.agent_queue import (
     AGENT_QUEUE_ITEM_KINDS,
     AGENT_QUEUE_ROLES,
     AgentQueue,
     AgentQueueItem,
     AgentQueueKey,
+)
+from omnigent.entities.agent_text_comment import AgentTextComment
+from omnigent.entities.agent_text_thread import (
+    AgentTextThread,
+    AgentTextThreadState,
+    AgentTextThreadTurn,
+    AgentTextThreadTurnState,
 )
 from omnigent.entities.comment import Comment, CommentsFingerprint
 from omnigent.entities.conversation import (
@@ -74,11 +79,13 @@ __all__ = [
     "AccountToken",
     "Agent",
     "AgentQueue",
+    "AgentQueueItem",
+    "AgentQueueKey",
     "AgentTextComment",
     "AgentTextThread",
     "AgentTextThreadState",
-    "AgentQueueItem",
-    "AgentQueueKey",
+    "AgentTextThreadTurn",
+    "AgentTextThreadTurnState",
     "Comment",
     "CommentsFingerprint",
     "CompactionData",

@@ -5499,6 +5499,25 @@ async def _forward_event_to_runner(
         session_id,
         [item],
     )
+    if body.comment_thread_id is not None:
+        correlation = await asyncio.to_thread(
+            conversation_store.bind_agent_text_thread_item,
+            session_id,
+            body.comment_thread_id,
+            persisted_items[0].id,
+        )
+        if correlation is None:
+            correlation = await asyncio.to_thread(
+                conversation_store.bind_agent_text_thread_turn_item,
+                session_id,
+                body.comment_thread_id,
+                persisted_items[0].id,
+            )
+        if correlation is None:
+            raise OmnigentError(
+                "Agent text thread turn could not be bound to its persisted message",
+                code=ErrorCode.NOT_FOUND,
+            )
     await _seed_missing_title_from_user_message(
         conv,
         item,
@@ -6300,11 +6319,7 @@ async def _renew_active_auto_worktree_lease(
 
     host_registry = get_server_host_registry()
     host_conn = host_registry.get(conv.host_id) if host_registry is not None else None
-    if (
-        host_registry is None
-        or host_conn is None
-        or not host_conn.hello.managed_worktree_leases
-    ):
+    if host_registry is None or host_conn is None or not host_conn.hello.managed_worktree_leases:
         return
     try:
         renewed = await renew_worktree_lease_on_host(
@@ -6509,15 +6524,49 @@ async def _relay_runner_stream_once(
                             current_response_id = _rid
                             _thread_id = event.get("comment_thread_id")
                             if isinstance(_thread_id, str) and _thread_id:
-                                await asyncio.to_thread(
+                                correlation = await asyncio.to_thread(
                                     conversation_store.bind_agent_text_thread_response,
                                     session_id,
                                     _thread_id,
                                     _rid,
                                 )
+                                if correlation is None:
+                                    await asyncio.to_thread(
+                                        conversation_store.bind_agent_text_thread_turn_response,
+                                        session_id,
+                                        _thread_id,
+                                        _rid,
+                                    )
                         _model = resp_obj.get("model")
                         if isinstance(_model, str) and _model:
                             current_model = _model
+                    if evt_type == "error":
+                        _thread_id = event.get("comment_thread_id")
+                        if isinstance(_thread_id, str) and _thread_id:
+                            error_payload = event.get("error")
+                            error_message = event.get("message")
+                            if not isinstance(error_message, str) and isinstance(
+                                error_payload, dict
+                            ):
+                                error_message = error_payload.get("message")
+                            message = (
+                                error_message
+                                if isinstance(error_message, str) and error_message
+                                else "Threaded reply failed"
+                            )
+                            failed = await asyncio.to_thread(
+                                conversation_store.fail_agent_text_thread,
+                                session_id,
+                                _thread_id,
+                                message,
+                            )
+                            if failed is None:
+                                await asyncio.to_thread(
+                                    conversation_store.fail_agent_text_thread_turn,
+                                    session_id,
+                                    _thread_id,
+                                    message,
+                                )
 
                     # Accumulate response-scoped (scaffold) text deltas for
                     # persistence. Native message-scoped deltas (with a
@@ -9162,9 +9211,7 @@ async def _run_worktree_creation(
         return
     host_conn = host_registry.get(host_id)
     if host_conn is None:
-        _publish_worktree_status(
-            session_id, "failed", branch=branch_name, error="host is offline"
-        )
+        _publish_worktree_status(session_id, "failed", branch=branch_name, error="host is offline")
         return
     if auto_create and not host_conn.hello.managed_worktree_leases:
         _publish_worktree_status(
@@ -9194,9 +9241,7 @@ async def _run_worktree_creation(
         )
     except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:
         _logger.warning("Worktree creation failed for %s: %s", session_id, exc.message)
-        _publish_worktree_status(
-            session_id, "failed", branch=branch_name, error=exc.message
-        )
+        _publish_worktree_status(session_id, "failed", branch=branch_name, error=exc.message)
         return
     except Exception:  # noqa: BLE001
         _logger.exception("Worktree creation crashed for %s", session_id)

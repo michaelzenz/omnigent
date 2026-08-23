@@ -10,6 +10,7 @@ from omnigent.entities import (
     Agent,
     AgentTextComment,
     AgentTextThread,
+    AgentTextThreadTurn,
     Conversation,
     ConversationItem,
     NewConversationItem,
@@ -602,6 +603,13 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def claim_agent_text_thread_submission(
+        self, conversation_id: str, correlation_id: str
+    ) -> bool:
+        """Atomically claim one queued parent thread or follow-up turn."""
+        ...
+
+    @abstractmethod
     def bind_agent_text_thread_item(
         self, conversation_id: str, thread_id: str, item_id: str
     ) -> AgentTextThread | None:
@@ -634,6 +642,54 @@ class ConversationStore(ABC):
         self, conversation_id: str, thread_id: str
     ) -> AgentTextThread | None:
         """Reset a failed thread to queued."""
+        ...
+
+    @abstractmethod
+    def add_agent_text_thread_turn(
+        self,
+        conversation_id: str,
+        thread_id: str,
+        *,
+        client_request_id: str,
+        question: str,
+        selected_quote: str | None,
+    ) -> AgentTextThreadTurn:
+        """Create or return one idempotent queued follow-up turn."""
+        ...
+
+    @abstractmethod
+    def get_agent_text_thread_turn(
+        self, conversation_id: str, turn_id: str
+    ) -> AgentTextThreadTurn | None:
+        """Return one follow-up turn."""
+        ...
+
+    @abstractmethod
+    def bind_agent_text_thread_turn_item(
+        self, conversation_id: str, turn_id: str, item_id: str
+    ) -> AgentTextThreadTurn | None:
+        """Bind a follow-up turn to its persisted user item."""
+        ...
+
+    @abstractmethod
+    def bind_agent_text_thread_turn_response(
+        self, conversation_id: str, turn_id: str, response_id: str
+    ) -> AgentTextThreadTurn | None:
+        """Bind a follow-up turn to its assistant response."""
+        ...
+
+    @abstractmethod
+    def fail_agent_text_thread_turn(
+        self, conversation_id: str, turn_id: str, message: str
+    ) -> AgentTextThreadTurn | None:
+        """Mark one follow-up turn failed."""
+        ...
+
+    @abstractmethod
+    def retry_agent_text_thread_turn(
+        self, conversation_id: str, turn_id: str
+    ) -> AgentTextThreadTurn | None:
+        """Reset one failed follow-up turn to queued."""
         ...
 
     @abstractmethod
@@ -1217,7 +1273,6 @@ class ConversationStore(ABC):
             "total_cost_usd": 0.05}}}``.
         :returns: The updated ``session_usage`` dict after the increment.
         """
-        ...
 
     def record_usage_ledger(self, entry: dict[str, Any]) -> None:
         """Append one immutable Omnigent model-request usage row."""
