@@ -72,6 +72,8 @@ class AgentQueue:
     conversation_id: str | None = None
     lease_owner: str | None = None
     lease_expires_at: int | None = None
+    inspection_hold_token: str | None = None
+    inspection_hold_expires_at: int | None = None
     next_due_at: int | None = None
     inflight_item_id: str | None = None
     inflight_since: int | None = None
@@ -136,6 +138,8 @@ class AgentQueueItem:
     payload: str | None = None
     seq: int = 0
     not_before: int | None = None
+    edit_lease_token: str | None = None
+    edit_lease_expires_at: int | None = None
     last_error: str | None = None
     updated_at: int | None = None
     dispatched_at: int | None = None

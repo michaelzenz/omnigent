@@ -42,6 +42,8 @@ class Task:
     goal: str
     manager_conversation_id: str | None = None
     updated_at: int | None = None
+    priority: int = 2
+    queue_rank: int = 0
 
 
 @dataclass
@@ -206,6 +208,7 @@ class TaskAsset:
     title: str
     created_at: int
     url: str | None = None
+    category: str = "other"
 
 
 @dataclass

@@ -237,8 +237,29 @@ class AgentQueueStore(ABC):
         """
 
     @abstractmethod
+    def acquire_inspection_hold(
+        self,
+        key: AgentQueueKey,
+        token: str,
+        *,
+        now: int,
+        ttl_s: int,
+    ) -> AgentQueue:
+        """Temporarily block new dispatches without changing persistent queue state."""
+
+    @abstractmethod
+    def release_inspection_hold(self, key: AgentQueueKey, token: str) -> bool:
+        """Release a matching temporary inspection hold."""
+
+    @abstractmethod
     def get_item(self, item_id: str) -> AgentQueueItem | None:
         """Return one queue item by id."""
+
+    @abstractmethod
+    def find_open_item_for_source(
+        self, source_id: str, *, role: str | None = None
+    ) -> AgentQueueItem | None:
+        """Find the newest open queue delivery claiming a business source id."""
 
     @abstractmethod
     def list_items(
@@ -251,18 +272,38 @@ class AgentQueueStore(ABC):
         """List a queue's items in dispatch order."""
 
     @abstractmethod
+    def acquire_item_edit_lease(
+        self,
+        item_id: str,
+        token: str,
+        *,
+        now: int,
+        ttl_s: int,
+    ) -> AgentQueueItem | None:
+        """Hold one queued item so its payload cannot dispatch while edited."""
+
+    @abstractmethod
+    def release_item_edit_lease(self, item_id: str, token: str) -> bool:
+        """Release a matching queued-item edit lease."""
+
+    @abstractmethod
     def update_item(
         self,
         item_id: str,
         *,
         payload: str | None = _UNSET,
         not_before: int | None = _UNSET,
+        edit_lease_token: str | None = None,
     ) -> AgentQueueItem | None:
         """Edit a queued item before it is dispatched.
 
         Rejects edits to an item that already left the queue, so a payload
         cannot change out from under a running agent.
         """
+
+    @abstractmethod
+    def retry_parked_item(self, item_id: str, *, now: int) -> AgentQueueItem | None:
+        """Return an interrupted or dispatch-failed item to its active queue."""
 
     @abstractmethod
     def cancel_item(self, item_id: str, *, now: int) -> AgentQueueItem | None:

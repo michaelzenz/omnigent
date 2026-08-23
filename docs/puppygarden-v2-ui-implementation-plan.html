@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PuppyGarden V2 UI — Final Design and Implementation Plan</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #637087;
+      --line: #dfe4ec;
+      --soft: #f6f8fb;
+      --panel: #ffffff;
+      --blue: #3468d4;
+      --blue-soft: #edf3ff;
+      --green: #237b58;
+      --green-soft: #eaf7f1;
+      --amber: #9a6314;
+      --amber-soft: #fff7e8;
+      --red: #a53b45;
+      --red-soft: #fff0f1;
+      --purple: #6750a4;
+      --purple-soft: #f3efff;
+      --shadow: 0 14px 36px rgba(28, 39, 60, 0.08);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #f2f5f9;
+      font: 14px/1.55 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--blue); }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { font-size: .9em; }
+
+    .page {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      max-width: 1480px;
+      min-height: 100vh;
+      margin: 0 auto;
+      background: var(--panel);
+      box-shadow: 0 0 0 1px rgba(30, 42, 66, .03);
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      padding: 24px 18px;
+      border-right: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+    .brand { margin: 0 0 4px; font-size: 17px; letter-spacing: -.02em; }
+    .version { color: var(--muted); font-size: 12px; }
+    .toc { display: grid; gap: 2px; margin-top: 22px; }
+    .toc a {
+      padding: 7px 9px;
+      color: #4d5b71;
+      border-radius: 7px;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .toc a:hover { color: var(--blue); background: var(--blue-soft); }
+    .nav-note {
+      margin-top: 22px;
+      padding: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: white;
+      font-size: 11px;
+    }
+
+    main { min-width: 0; padding: 48px clamp(28px, 5vw, 72px) 88px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 42px;
+      color: white;
+      border-radius: 24px;
+      background: linear-gradient(135deg, #1f3f78 0%, #3468d4 55%, #6e5ac7 100%);
+      box-shadow: var(--shadow);
+    }
+    .hero::after {
+      position: absolute;
+      right: -70px;
+      bottom: -100px;
+      width: 320px;
+      height: 320px;
+      content: "";
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 50%;
+      box-shadow: 0 0 0 46px rgba(255,255,255,.06), 0 0 0 92px rgba(255,255,255,.04);
+    }
+    .eyebrow { text-transform: uppercase; letter-spacing: .14em; font-weight: 700; font-size: 11px; opacity: .8; }
+    h1 { max-width: 820px; margin: 10px 0 12px; font-size: clamp(34px, 5vw, 56px); line-height: 1.04; letter-spacing: -.045em; }
+    .hero p { max-width: 780px; margin: 0; font-size: 17px; opacity: .88; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; }
+    .hero-meta span { padding: 6px 10px; border: 1px solid rgba(255,255,255,.23); border-radius: 999px; background: rgba(255,255,255,.09); font-size: 12px; }
+
+    section { scroll-margin-top: 24px; margin-top: 58px; }
+    h2 { margin: 0 0 8px; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
+    h3 { margin: 28px 0 8px; font-size: 19px; line-height: 1.25; letter-spacing: -.015em; }
+    h4 { margin: 20px 0 7px; font-size: 15px; }
+    .lede { max-width: 880px; margin-top: 0; color: var(--muted); font-size: 15px; }
+    .rule { height: 1px; margin: 22px 0; background: var(--line); }
+
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      min-width: 0;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: 0 6px 20px rgba(28,39,60,.04);
+    }
+    .card h3, .card h4 { margin-top: 0; }
+    .card p:last-child { margin-bottom: 0; }
+    .metric { font-size: 27px; line-height: 1; font-weight: 760; letter-spacing: -.03em; }
+    .metric-label { margin-top: 7px; color: var(--muted); font-size: 12px; }
+
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    .chip.blue { color: var(--blue); background: var(--blue-soft); }
+    .chip.green { color: var(--green); background: var(--green-soft); }
+    .chip.amber { color: var(--amber); background: var(--amber-soft); }
+    .chip.red { color: var(--red); background: var(--red-soft); }
+    .chip.purple { color: var(--purple); background: var(--purple-soft); }
+
+    .callout { margin: 18px 0; padding: 16px 18px; border-left: 4px solid var(--blue); border-radius: 0 12px 12px 0; background: var(--blue-soft); }
+    .callout.warning { border-color: #d28a24; background: var(--amber-soft); }
+    .callout.danger { border-color: var(--red); background: var(--red-soft); }
+    .callout strong { display: block; margin-bottom: 3px; }
+
+    .mock-shell { overflow: hidden; margin-top: 20px; border: 1px solid #cfd6e2; border-radius: 18px; background: #f8fafc; box-shadow: var(--shadow); }
+    .mock-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 15px; border-bottom: 1px solid var(--line); background: white; }
+    .dots { display: flex; gap: 5px; }
+    .dots i { width: 8px; height: 8px; border-radius: 50%; background: #c6ceda; }
+    .mock-board { display: grid; grid-template-columns: minmax(0, 1fr) 270px; min-height: 610px; }
+    .mock-cards { padding: 18px; }
+    .task-card { overflow: hidden; border: 1px solid #d7dde7; border-radius: 13px; background: white; box-shadow: 0 8px 24px rgba(33,47,73,.07); }
+    .task-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 17px 18px; border-bottom: 1px solid var(--line); }
+    .task-head h3 { margin: 0; font-size: 18px; }
+    .goal { margin-top: 6px; color: var(--muted); }
+    .outline-button { flex: none; padding: 7px 10px; color: #36445a; border: 1px solid #cfd6e2; border-radius: 7px; background: white; font-size: 12px; }
+    .task-body { display: grid; grid-template-columns: minmax(190px, .85fr) minmax(280px, 1.25fr) minmax(190px, 230px); min-height: 410px; }
+    .column { min-width: 0; padding: 16px; border-right: 1px solid var(--line); }
+    .column:last-child { border-right: 0; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: #526077; }
+    .plus { display: grid; width: 25px; height: 25px; place-items: center; border: 1px solid #ccd4e0; border-radius: 6px; font-size: 17px; }
+    .overview-list { margin: 0 0 16px; padding-left: 18px; color: #46546a; font-size: 12px; }
+    .overview-list ul { margin: 3px 0; padding-left: 17px; }
+    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+    .meta-box { min-height: 66px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); }
+    .meta-box.manager { color: #294f9e; border-color: #9db8f0; background: var(--blue-soft); box-shadow: inset 0 0 0 1px rgba(52,104,212,.06); }
+    .meta-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+    .meta-value { margin-top: 4px; font-size: 12px; font-weight: 750; }
+    .item { margin-bottom: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; }
+    .item-title { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 750; }
+    .item p { margin: 6px 0 9px; color: var(--muted); font-size: 11px; }
+    .select { display: inline-flex; padding: 5px 8px; color: #46546a; border: 1px solid #cfd6e2; border-radius: 6px; background: #fbfcfe; font-size: 10px; }
+    .recent { margin: 13px 0 8px; color: #8791a2; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; margin: -4px 0 13px; padding: 3px; border-radius: 8px; background: #eef1f5; }
+    .tab { padding: 5px; text-align: center; border-radius: 6px; font-size: 10px; }
+    .tab.active { background: white; box-shadow: 0 1px 4px rgba(30,42,66,.1); font-weight: 750; }
+    .stack { margin-bottom: 13px; }
+    .stack-title { margin-bottom: 5px; color: #6d798d; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+    .asset { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: white; font-size: 10px; }
+    .asset + .asset { margin-top: -1px; border-radius: 0 0 7px 7px; }
+    .asset a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+    .x { color: #8b95a5; font-weight: 800; }
+    .mock-chat { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: white; }
+    .chat-head { padding: 14px; border-bottom: 1px solid var(--line); font-weight: 750; }
+    .chat-body { flex: 1; padding: 14px; background: #fbfcfe; }
+    .bubble { max-width: 88%; margin-bottom: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: white; color: #526077; font-size: 11px; }
+    .bubble.user { margin-left: auto; color: #244782; border-color: #c2d2f2; background: var(--blue-soft); }
+    .chat-input { margin: 12px; padding: 10px; color: #8b95a5; border: 1px solid #cfd6e2; border-radius: 8px; font-size: 11px; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(110px, 1fr)); gap: 26px; align-items: center; margin: 22px 0; }
+    .flow .step { position: relative; min-height: 82px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: white; }
+    .flow .step:not(:last-child)::after { position: absolute; top: 50%; right: -21px; width: 15px; content: "→"; color: #8490a2; font-size: 18px; transform: translateY(-50%); }
+    .step b { display: block; margin-bottom: 4px; font-size: 12px; }
+    .step span { color: var(--muted); font-size: 11px; }
+
+    .sequence { overflow-x: auto; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfe; }
+    .seq-row { display: grid; grid-template-columns: 140px 42px minmax(180px, 1fr); align-items: center; min-width: 620px; padding: 7px 0; }
+    .seq-who { font-weight: 750; font-size: 12px; }
+    .seq-arrow { color: var(--blue); text-align: center; font-weight: 800; }
+    .seq-action { padding: 7px 10px; border-left: 2px solid #b8c9ed; background: white; font-size: 12px; }
+
+    table { width: 100%; margin: 15px 0 22px; border-collapse: separate; border-spacing: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #526077; background: var(--soft); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    td { font-size: 12px; }
+    tr:last-child td { border-bottom: 0; }
+    .yes { color: var(--green); font-weight: 750; }
+    .no { color: var(--red); font-weight: 750; }
+
+    pre { overflow: auto; margin: 14px 0; padding: 15px; color: #dce6f5; border-radius: 11px; background: #1b2434; font-size: 12px; line-height: 1.55; }
+    ul.tight, ol.tight { padding-left: 20px; }
+    ul.tight li, ol.tight li { margin: 4px 0; }
+    .checklist { display: grid; gap: 7px; padding: 0; list-style: none; }
+    .checklist li { position: relative; padding-left: 24px; }
+    .checklist li::before { position: absolute; left: 0; top: 2px; width: 14px; height: 14px; content: ""; border: 1px solid #aab5c5; border-radius: 4px; background: white; }
+
+    .phase { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 14px; margin: 13px 0; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: white; }
+    .phase-num { display: grid; width: 38px; height: 38px; place-items: center; color: white; border-radius: 10px; background: var(--blue); font-weight: 800; }
+    .phase h3 { margin: 0 0 5px; font-size: 16px; }
+    .phase p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    footer { margin-top: 64px; padding-top: 22px; color: var(--muted); border-top: 1px solid var(--line); font-size: 12px; }
+
+    @media (max-width: 1050px) {
+      .page { grid-template-columns: 1fr; }
+      nav { display: none; }
+      .mock-board { grid-template-columns: 1fr; }
+      .mock-chat { min-height: 290px; border-top: 1px solid var(--line); border-left: 0; }
+      .task-body { grid-template-columns: 1fr 1.25fr; }
+      .task-body .column:last-child { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+      .flow { grid-template-columns: 1fr; }
+      .flow .step:not(:last-child)::after { top: auto; right: 50%; bottom: -24px; transform: translateX(50%) rotate(90deg); }
+    }
+    @media (max-width: 720px) {
+      main { padding: 20px 14px 60px; }
+      .hero { padding: 28px 22px; border-radius: 17px; }
+      .grid.two, .grid.three { grid-template-columns: 1fr; }
+      .task-body { grid-template-columns: 1fr; }
+      .task-body .column { border-right: 0; border-bottom: 1px solid var(--line); }
+      .task-body .column:last-child { grid-column: auto; }
+    }
+
+    @media print {
+      body { background: white; }
+      .page { display: block; max-width: none; box-shadow: none; }
+      nav { display: none; }
+      main { padding: 0; }
+      .hero { box-shadow: none; print-color-adjust: exact; }
+      section { break-inside: avoid; }
+      .mock-shell, .card, .phase { box-shadow: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <nav aria-label="Document navigation">
+    <h2 class="brand">PuppyGarden V2</h2>
+    <div class="version">Final UI and implementation plan</div>
+    <div class="toc">
+      <a href="#decisions">1. Final decisions</a>
+      <a href="#ui">2. UI design</a>
+      <a href="#items">3. Task-item behavior</a>
+      <a href="#chat">4. Chat and queue holds</a>
+      <a href="#ordering">5. Queue ordering and scrolling</a>
+      <a href="#assets">6. Assets</a>
+      <a href="#data">7. Data model</a>
+      <a href="#api">8. API plan</a>
+      <a href="#frontend">9. Frontend plan</a>
+      <a href="#gaps">10. Backend gaps</a>
+      <a href="#delivery">11. Delivery phases</a>
+      <a href="#tests">12. Test plan</a>
+    </div>
+    <div class="nav-note">
+      <strong>Source snapshot</strong><br />
+      Repository commit<br />
+      <code>2b6fdd8ac1f7</code><br /><br />
+      Inspected 2026-08-23 07:35 UTC.
+    </div>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">PuppyGarden product design</div>
+      <h1>V2 task-card board and system integration plan</h1>
+      <p>A consolidated, implementation-ready specification for large task cards, editable work, worker routing, shared chat, manager queue holds, stable ranking, bounded completed history, and grouped assets.</p>
+      <div class="hero-meta">
+        <span>One task per card</span>
+        <span>Secretary / Broker preserved</span>
+        <span>Manager and Worker chat</span>
+        <span>P0–P3 priorities</span>
+        <span>Queue-safe editing</span>
+      </div>
+    </header>
+
+    <section id="decisions">
+      <h2>1. Final product decisions</h2>
+      <p class="lede">These decisions are the contract for V2. Later sections describe how to implement them without changing their semantics.</p>
+      <div class="grid three">
+        <div class="card"><span class="chip blue">Board</span><h3>Large task cards</h3><p>Each task is one complete, vertically stacked card. Tasks are not compressed into a navigator.</p></div>
+        <div class="card"><span class="chip purple">Overview</span><h3>Markdown status</h3><p><code>description</code> is manager-authored Markdown. It supports nested bullets and recent status without a new overview model.</p></div>
+        <div class="card"><span class="chip green">Goal</span><h3>User editable</h3><p><code>goal</code> remains separate from Overview and can be edited inline by the user.</p></div>
+        <div class="card"><span class="chip amber">Items</span><h3>Actionable work first</h3><p>Show all active items, then at most three recent done items in the current worker scope.</p></div>
+        <div class="card"><span class="chip blue">Chat</span><h3>Shared conversations</h3><p>Secretary and Broker work as today. Manager and Worker selections reuse their existing conversation IDs.</p></div>
+        <div class="card"><span class="chip red">Cancel</span><h3>Removed means gone</h3><p>Cancelled items leave the dispatchable queue immediately and are not visible or editable in the user UI.</p></div>
+      </div>
+      <div class="callout">
+        <strong>Use existing fields where they already express the concept.</strong>
+        Show <code>created_at</code> as “Created”; use <code>description</code> for Markdown Overview; do not add <code>started_at</code> or a structured overview column.
+      </div>
+    </section>
+
+    <section id="ui">
+      <h2>2. Final UI design</h2>
+      <p class="lede">The board keeps today’s neutral Omnigent visual language while changing the information architecture to one complete task per card.</p>
+
+      <div class="callout">
+        <strong>Application-shell boundary: preserve the existing global left sidebar.</strong>
+        V2 changes only the PuppyGarden board surface rendered by <code>PuppyGardenShell</code>. The application’s existing left navigation—including Sessions and every other current sidebar destination—remains present, functional, and visually unchanged. The illustration below begins to the right of that global sidebar; it does not propose replacing or hiding it.
+      </div>
+
+      <div class="mock-shell" aria-label="Illustrative PuppyGarden V2 task card">
+        <div class="mock-toolbar"><div class="dots"><i></i><i></i><i></i></div><strong>PuppyGarden</strong><span class="chip green">Live board</span></div>
+        <div class="mock-board">
+          <div class="mock-cards">
+            <article class="task-card">
+              <header class="task-head">
+                <div><h3>Land upload retry fix</h3><div class="goal"><strong>Goal:</strong> Ship safe retry behavior and keep CI green</div></div>
+                <button class="outline-button">Move to queue end</button>
+              </header>
+              <div class="task-body">
+                <div class="column">
+                  <div class="section-title">Overview</div>
+                  <ul class="overview-list">
+                    <li>Retry behavior is implemented and under validation.
+                      <ul><li>Cancellation semantics remain unchanged.</li><li>Focused upload tests pass.</li></ul>
+                    </li>
+                    <li>Recent activity
+                      <ul><li>CI worker completed the baseline suite.</li></ul>
+                    </li>
+                  </ul>
+                  <div class="meta-grid">
+                    <button class="meta-box manager"><div class="meta-label">Manager</div><div class="meta-value">Open manager chat</div></button>
+                    <div class="meta-box"><div class="meta-label">Workers</div><div class="meta-value">3</div></div>
+                    <div class="meta-box"><div class="meta-label">Created</div><div class="meta-value">2 hours ago</div></div>
+                    <div class="meta-box"><div class="meta-label">Priority</div><div class="meta-value">P1</div></div>
+                  </div>
+                </div>
+                <div class="column">
+                  <div class="section-title"><span>Task Items</span><span class="plus">+</span></div>
+                  <div class="item"><div class="item-title"><span>Implement bounded retries</span><span class="chip amber">Queued</span></div><p>Apply the approved retry policy without changing cancellation behavior.</p><span class="select">Implementation Worker ▾</span></div>
+                  <div class="item"><div class="item-title"><span>Run focused CI suite</span><span class="chip blue">Running</span></div><p>Run upload and cancellation tests and report regressions.</p><span class="select">CI Worker ▾</span></div>
+                  <div class="recent">Recently done · maximum 3</div>
+                  <div class="item"><div class="item-title"><span>Inspect current retry path</span><span class="chip green">Done</span></div><p>Documented the failure and confirmed the affected call path.</p><span class="select">Review Worker</span></div>
+                </div>
+                <div class="column">
+                  <div class="tabs"><div class="tab active">Assets</div><div class="tab">Workers</div></div>
+                  <div class="stack"><div class="stack-title">Code</div><div class="asset"><a href="#assets">Pull request #123</a><span class="x">×</span></div><div class="asset"><a href="#assets">Retry implementation</a><span class="x">×</span></div></div>
+                  <div class="stack"><div class="stack-title">Tests</div><div class="asset"><a href="#assets">Focused upload suite</a><span class="x">×</span></div></div>
+                  <div class="stack"><div class="stack-title">Documents</div><div class="asset"><a href="#assets">Behavior notes</a><span class="x">×</span></div></div>
+                </div>
+              </div>
+            </article>
+          </div>
+          <aside class="mock-chat"><div class="chat-head">Task secretary ▾</div><div class="chat-body"><div class="bubble">The task is active. Two items are ready or running.</div><div class="bubble user">Show me the CI status.</div></div><div class="chat-input">Message Task secretary…</div></aside>
+        </div>
+      </div>
+
+      <h3>Card header</h3>
+      <ul class="tight">
+        <li>Task title and state.</li>
+        <li>Inline-editable goal; save on blur or Cmd/Ctrl+Enter, cancel with Escape.</li>
+        <li><strong>Move to queue end</strong> replaces Pause and the unused overflow menu.</li>
+        <li>No subtitle, progress bar, or completion count.</li>
+        <li>A compact <strong>+</strong> at the right edge of “Task Items” creates a new item.</li>
+      </ul>
+
+      <h3>Overview and metadata</h3>
+      <div class="grid two">
+        <div class="card"><h4>Single Overview section</h4><p>Render sanitized Markdown from <code>task.description</code>. Support nested lists, headings, links, emphasis, and code. Raw HTML is disabled.</p></div>
+        <div class="card"><h4>Fixed 2×2 metadata grid</h4><p>Manager / Workers / Created / Priority remain a 2×2 arrangement. Manager is a real interactive button; the other three are informational.</p></div>
+      </div>
+
+      <h3>Responsive layout</h3>
+      <ul class="tight">
+        <li>The global application left sidebar remains outside this layout and is not redesigned.</li>
+        <li>Wide card: Overview, Task Items, and Assets/Workers form three grid columns.</li>
+        <li>The Assets/Workers column has a guaranteed minimum width and is never absolutely positioned.</li>
+        <li>Use <code>min-width: 0</code> on content columns; do not clip the whole card body.</li>
+        <li>Use container queries to stack columns when the card—not merely the viewport—becomes narrow.</li>
+        <li>Verify with the global right chat sidebar open and closed.</li>
+      </ul>
+      <pre>.task-card-body {
+  display: grid;
+  grid-template-columns:
+    minmax(16rem, .9fr)
+    minmax(22rem, 1.3fr)
+    minmax(15rem, 18rem);
+}
+
+@container task-card (max-width: 58rem) {
+  .task-card-body { grid-template-columns: 1fr; }
+}</pre>
+    </section>
+
+    <section id="items">
+      <h2>3. Task-item behavior</h2>
+      <p class="lede">The task-item list is independent of worker lanes. Worker selection filters it; assignment controls route it.</p>
+
+      <h3>Visibility and editability</h3>
+      <table>
+        <thead><tr><th>State</th><th>Visible</th><th>Editable</th><th>User action</th></tr></thead>
+        <tbody>
+          <tr><td><code>pending</code></td><td class="yes">Yes</td><td class="yes">Yes</td><td>Accept or cancel</td></tr>
+          <tr><td><code>queued</code></td><td class="yes">Yes</td><td class="yes">Yes, with item hold</td><td>Await dispatch</td></tr>
+          <tr><td><code>running</code></td><td class="yes">Yes</td><td class="no">No</td><td>Await completion/interruption</td></tr>
+          <tr><td><code>interrupted</code></td><td class="yes">Yes</td><td class="yes">Yes</td><td>Retry or cancel</td></tr>
+          <tr><td><code>dispatch_failed</code></td><td class="yes">Yes</td><td class="yes">Yes</td><td>Retry or cancel</td></tr>
+          <tr><td><code>done</code></td><td>At most 3</td><td class="no">No</td><td>None</td></tr>
+          <tr><td><code>cancelled</code></td><td class="no">No</td><td class="no">No</td><td>None</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Bounded done history</h3>
+      <div class="grid two">
+        <div class="card"><span class="chip blue">No worker selected</span><h4>Whole-task scope</h4><p>Show every active/nonterminal item, followed by the three most recent done items across the task.</p></div>
+        <div class="card"><span class="chip purple">Worker selected</span><h4>Worker scope</h4><p>Show active/nonterminal items assigned to that worker, followed by that worker’s three most recent done items.</p></div>
+      </div>
+      <p>Sort done items by <code>updated_at DESC, id DESC</code>. Done items are immutable, so their final update is their completion transition; no <code>completed_at</code> column is required for V2.</p>
+      <pre>{
+  "active_items": [ ... ],
+  "recent_done_items": {
+    "all": [ /* maximum 3 */ ],
+    "by_worker": {
+      "worker-id": [ /* maximum 3 */ ]
+    }
+  }
+}</pre>
+
+      <h3>Cancelled means removed</h3>
+      <div class="callout danger">
+        <strong>Cancelled and interrupted are not interchangeable.</strong>
+        Cancellation atomically removes the dispatchable queue item, marks the business item cancelled, clears a halt when cancelling a parked item, and removes the item from user-facing reads. The internal record may remain for audit and garbage collection.
+      </div>
+
+      <h3>Worker assignment dropdown</h3>
+      <p>If <code>worker_id</code> is null, the closed control displays <strong>No worker specified</strong>. That phrase is display-only and is not selectable.</p>
+      <pre>Assign worker
+├── Implementation Worker
+├── CI Worker
+├── Review Worker
+└── New worker
+    ├── Claude Code provider
+    ├── Codex provider
+    └── Other available provider</pre>
+      <ul class="tight">
+        <li>Existing options must belong to the task and be valid assignment targets.</li>
+        <li>New Worker shows only available providers from <code>GET /v1/worker-providers</code>.</li>
+        <li>Infer host/workspace from the manager only when valid; otherwise show a compact configuration popover.</li>
+        <li>There is no “unassign” option in this UI.</li>
+      </ul>
+
+      <h3>Queue-safe instruction and assignment editing</h3>
+      <p>Opening the instruction editor or worker dropdown acquires a hold on that queued item. Earlier queue items may dispatch; the held item cannot dispatch, and later task items do not overtake it. Regular ChatPage messages remain untouched.</p>
+      <div class="sequence">
+        <div class="seq-row"><div class="seq-who">PuppyGarden</div><div class="seq-arrow">→</div><div class="seq-action">Acquire item edit lease</div></div>
+        <div class="seq-row"><div class="seq-who">Queue service</div><div class="seq-arrow">→</div><div class="seq-action">Verify still queued; return token and expiry</div></div>
+        <div class="seq-row"><div class="seq-who">User</div><div class="seq-arrow">→</div><div class="seq-action">Edit instructions or choose worker</div></div>
+        <div class="seq-row"><div class="seq-who">PuppyGarden</div><div class="seq-arrow">→</div><div class="seq-action">Save task item and queue payload atomically</div></div>
+        <div class="seq-row"><div class="seq-who">Queue service</div><div class="seq-arrow">→</div><div class="seq-action">Release hold and wake dispatcher</div></div>
+      </div>
+      <div class="callout warning"><strong>Existing <code>not_before</code> is not an edit lock.</strong> The current dispatcher filters future items before choosing the oldest eligible item, so a later item could overtake an edited item. Use a dedicated lease that blocks at the FIFO head.</div>
+    </section>
+
+    <section id="chat">
+      <h2>4. Chat selection and queue holds</h2>
+      <p class="lede">The global right sidebar remains today’s conversation surface. Selection changes which existing conversation it displays; it must not duplicate messages.</p>
+
+      <table>
+        <thead><tr><th>Interaction</th><th>Chat</th><th>Task-item filter</th><th>Dispatch effect</th><th>Regular ChatPage queue</th></tr></thead>
+        <tbody>
+          <tr><td>Select Manager</td><td>Manager</td><td>None</td><td>Hold that task’s manager queue</td><td>Unchanged</td></tr>
+          <tr><td>Select Worker</td><td>Worker</td><td>That worker</td><td>None</td><td>Unchanged</td></tr>
+          <tr><td>Select Secretary/Broker</td><td>Selected role</td><td>Clear</td><td>Release Manager hold</td><td>Unchanged</td></tr>
+          <tr><td>Ordinary board/card click</td><td>Previous Secretary/Broker role</td><td>Clear</td><td>Release Manager hold</td><td>Unchanged</td></tr>
+          <tr><td>Edit queued item</td><td>Unchanged</td><td>Unchanged</td><td>Hold that item only</td><td>Unchanged</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Secretary and Broker</h3>
+      <ul class="tight">
+        <li>Retain the existing Secretary/Broker dropdown and persisted last role.</li>
+        <li>Manager or Worker temporarily overrides the regular role chat.</li>
+        <li>Dismissal returns through today’s <code>dismissToRole()</code>, not always to Secretary.</li>
+        <li>No redesign of the regular role chat is required.</li>
+      </ul>
+
+      <h3>Shared ChatPage conversation path</h3>
+      <p>The current sidebar receives an existing conversation ID, calls <code>useChatStore.getState().switchTo(sessionId)</code>, and renders the same blocks and pending messages through <code>MainAgentSurface</code>. Therefore messages sent in regular <code>/c/{conversationId}</code> sessions and messages sent in the PuppyGarden sidebar share one persisted transcript. Add regression coverage; do not add a copying API.</p>
+
+      <h3>Manager selection hold</h3>
+      <p>Manager is special: selecting it temporarily stops new agent-queue items from dispatching to that task’s manager. A running manager turn continues, and regular ChatPage messages are unaffected.</p>
+      <div class="flow">
+        <div class="step"><b>Click Manager</b><span>Show loading state; do not switch chat yet.</span></div>
+        <div class="step"><b>Acquire hold</b><span>Task-scoped manager queue, tokenized and expiring.</span></div>
+        <div class="step"><b>Open chat</b><span>Only after the backend acknowledges the hold.</span></div>
+        <div class="step"><b>Inspect safely</b><span>No new manager system item dispatches.</span></div>
+        <div class="step"><b>Leave Manager</b><span>Release hold and wake the queue.</span></div>
+      </div>
+      <p>Do not implement this by blindly toggling the persistent queue state. A temporary tokenized hold must not accidentally resume a queue that was manually paused or halted before selection.</p>
+
+      <h3>UI propagation is not execution pausing</h3>
+      <p>Interactive controls still stop click propagation where needed to avoid a worker/manager selection immediately bubbling to the board dismissal handler. This only prevents an accidental UI target switch; it does not pause a queue. Backend holds occur only for Manager selection and queued item editing.</p>
+    </section>
+
+    <section id="ordering">
+      <h2>5. Queue ordering and scrolling</h2>
+      <p class="lede">Ordinary <code>updated_at</code> is audit metadata and changes for non-actionable edits. A dedicated sparse rank expresses board order.</p>
+
+      <h3>Rank model</h3>
+      <pre>tasks.queue_rank BIGINT NOT NULL
+
+ORDER BY queue_rank DESC, id DESC</pre>
+      <ul class="tight">
+        <li>New task: <code>MAX(queue_rank) + 1</code>.</li>
+        <li>New task item: move parent task to <code>MAX(queue_rank) + 1</code>.</li>
+        <li>Retrying interrupted/failed work does not change rank; it remains the same task item.</li>
+        <li>Move to queue end: <code>MIN(queue_rank) - 1</code>.</li>
+        <li>Goal, Overview, worker assignment, priority, chat, and asset edits do not affect rank.</li>
+        <li>Double advancement during create-then-add-item is harmless and accepted.</li>
+        <li>Gaps are intentional. Signed 64-bit <code>BIGINT</code> provides ample range.</li>
+        <li>Concurrent duplicate ranks are acceptable; task ID is a deterministic tie-breaker.</li>
+      </ul>
+
+      <h3>Background reorder: preserve reading position</h3>
+      <p>When polling, refetch, or another task receiving work changes ordering, preserve the topmost visible card at the same pixel offset. Record its task ID and relative top before render, then compensate <code>scrollTop</code> in <code>useLayoutEffect</code>. Disable native <code>overflow-anchor</code> for this container and do not animate reordering.</p>
+
+      <h3>Explicit Move to queue end: successor replaces the card</h3>
+      <div class="grid two">
+        <div class="card">
+          <span class="chip blue">Move upper visible card</span>
+          <pre>Before        After
+A ← move      B
+B             C
+C             …
+              A ← end</pre>
+          <p>B takes A’s former slot; C enters the viewport.</p>
+        </div>
+        <div class="card">
+          <span class="chip purple">Move lower visible card</span>
+          <pre>Before        After
+A             A
+B ← move      C
+C             …
+              B ← end</pre>
+          <p>A remains fixed because it precedes B; C replaces B.</p>
+        </div>
+      </div>
+      <ul class="tight">
+        <li>The moved card intentionally loses its anchor.</li>
+        <li>Cards before it stay in place; its immediate successor fills the vacated slot.</li>
+        <li>Blur the Move button before reordering so browser focus does not follow it to the bottom.</li>
+        <li>For keyboard use, focus the successor with <code>preventScroll: true</code>.</li>
+        <li>Disable the action when the card is already last.</li>
+      </ul>
+    </section>
+
+    <section id="assets">
+      <h2>6. Assets and Workers sidebar</h2>
+      <p class="lede">There is no “Context” heading. The third card column directly presents the Assets / Workers tabs.</p>
+
+      <h3>Keep both kind and category</h3>
+      <div class="grid two">
+        <div class="card"><h4><code>kind</code>: representation</h4><p>Determines how the asset opens or renders. V2 currently uses <code>url</code>; future kinds may include file, image, or generated artifact.</p></div>
+        <div class="card"><h4><code>category</code>: grouping</h4><p>Determines the always-expanded stack: <code>code</code>, <code>tests</code>, <code>documents</code>, <code>logs</code>, or <code>other</code>.</p></div>
+      </div>
+      <pre>{
+  "kind": "url",
+  "category": "tests",
+  "title": "Focused upload suite",
+  "url": "https://example.test/run/542"
+}</pre>
+
+      <h3>Asset interactions</h3>
+      <ul class="tight">
+        <li>All category stacks remain expanded; there is no disclosure interaction.</li>
+        <li>Clicking a URL asset’s title opens it directly in a new tab with <code>noopener noreferrer</code>.</li>
+        <li>An <strong>×</strong> at the right removes the asset through the existing DELETE route.</li>
+        <li>The current frontend already opens URL titles and deletes assets; preserve those behaviors while grouping rows.</li>
+        <li>Add the existing DELETE route to <code>puppygarden/docs/API_REFERENCE.md</code>.</li>
+      </ul>
+    </section>
+
+    <section id="data">
+      <h2>7. Data model and migrations</h2>
+      <p class="lede">Only concepts that do not already exist receive new storage.</p>
+
+      <table>
+        <thead><tr><th>Table</th><th>Change</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>tasks</code></td><td><code>priority INTEGER NOT NULL DEFAULT 2</code><br /><code>CHECK priority BETWEEN 0 AND 3</code></td><td>Display P0–P3; P0 is highest.</td></tr>
+          <tr><td><code>tasks</code></td><td><code>queue_rank BIGINT NOT NULL</code></td><td>Sparse, mutable board ordering.</td></tr>
+          <tr><td><code>task_assets</code></td><td><code>category VARCHAR(32) NOT NULL DEFAULT 'other'</code></td><td>Expanded asset stacks; <code>kind</code> remains separate.</td></tr>
+          <tr><td><code>agent_queues</code></td><td>Temporary manager hold token, expiry, and reason</td><td>Pause manager dispatch during UI inspection without changing persistent queue state.</td></tr>
+          <tr><td><code>agent_queue_items</code></td><td>Edit lease token and expiry</td><td>Prevent dispatch while queued instructions or target worker are being edited.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>No new fields for</h3>
+      <div class="grid three">
+        <div class="card"><div class="metric">No</div><div class="metric-label"><code>started_at</code>; display existing <code>created_at</code>.</div></div>
+        <div class="card"><div class="metric">No</div><div class="metric-label"><code>overview</code>; render existing <code>description</code> as Markdown.</div></div>
+        <div class="card"><div class="metric">No</div><div class="metric-label"><code>completed_at</code> on task items for V2; immutable done items use <code>updated_at</code>.</div></div>
+      </div>
+
+      <h3>Priority semantics</h3>
+      <table>
+        <thead><tr><th>Stored value</th><th>Display</th><th>Meaning</th></tr></thead>
+        <tbody><tr><td>0</td><td>P0</td><td>Highest / urgent</td></tr><tr><td>1</td><td>P1</td><td>High</td></tr><tr><td>2</td><td>P2</td><td>Normal default</td></tr><tr><td>3</td><td>P3</td><td>Low</td></tr></tbody>
+      </table>
+      <p>Priority is metadata in V2 and does not automatically change <code>queue_rank</code>.</p>
+
+      <h3>Dummy-data reset</h3>
+      <p>Current PuppyGarden records are disposable dummy data. Keep schema migration separate from a development reset/seed step. Do not put unconditional destructive deletion into a production migration.</p>
+    </section>
+
+    <section id="api">
+      <h2>8. API and read-model plan</h2>
+
+      <h3>Dashboard</h3>
+      <p>Extend <code>GET /v1/agent-tasks/{task_id}/dashboard</code>. Adding task items to this response is a read-model change only; existing <code>task_items</code> storage is reused.</p>
+      <pre>{
+  "task": {
+    "id": "task-id",
+    "title": "Land upload retry fix",
+    "goal": "Ship safe retry behavior and keep CI green",
+    "description": "- Markdown status...",
+    "created_at": 1787424689,
+    "priority": 1,
+    "queue_rank": 108,
+    "manager_conversation_id": "conversation-id"
+  },
+  "active_items": [ ... ],
+  "recent_done_items": {
+    "all": [ ... ],
+    "by_worker": { "worker-id": [ ... ] }
+  },
+  "workers": [ ... ],
+  "assets": [ ... ]
+}</pre>
+
+      <h3>Endpoint changes</h3>
+      <table>
+        <thead><tr><th>Method and path</th><th>Status</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>PATCH /v1/agent-tasks/{id}</code></td><td><span class="chip green">Extend client types</span></td><td>Edit goal, Markdown description, and priority.</td></tr>
+          <tr><td><code>POST /v1/agent-tasks/{id}/items</code></td><td><span class="chip amber">Integrate</span></td><td>Create an item and bump parent queue rank.</td></tr>
+          <tr><td><code>PATCH /v1/task-items/{id}</code></td><td><span class="chip amber">Strengthen</span></td><td>Queue-safe edit using an edit lease; update business row and queued payload together.</td></tr>
+          <tr><td><code>POST /v1/task-items/{id}/edit-lease</code></td><td><span class="chip red">New</span></td><td>Acquire item-specific FIFO dispatch hold.</td></tr>
+          <tr><td><code>DELETE /v1/task-items/{id}/edit-lease/{token}</code></td><td><span class="chip red">New</span></td><td>Release without saving.</td></tr>
+          <tr><td><code>POST /v1/agent-tasks/{id}/move-to-queue-end</code></td><td><span class="chip red">New</span></td><td>Set selected task to minimum rank minus one.</td></tr>
+          <tr><td><code>POST /v1/agent-tasks/{id}/manager-queue-hold</code></td><td><span class="chip red">New</span></td><td>Temporarily block task-manager queue dispatch.</td></tr>
+          <tr><td><code>DELETE /v1/agent-tasks/{id}/manager-queue-hold/{token}</code></td><td><span class="chip red">New</span></td><td>Release manager inspection hold.</td></tr>
+          <tr><td><code>POST /v1/agent-tasks/{id}/workers/assign</code></td><td><span class="chip green">Exists</span></td><td>Create/assign a worker using a valid provider, host, and workspace.</td></tr>
+          <tr><td><code>DELETE /v1/agent-tasks/{id}/assets/{asset_id}</code></td><td><span class="chip green">Exists</span></td><td>Remove asset; documentation is missing.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Lease requirements</h3>
+      <ul class="tight">
+        <li>Opaque token, owner/user validation, short TTL, optional heartbeat, idempotent release.</li>
+        <li>Reject acquisition if the queue item already dispatched.</li>
+        <li>Release and wake the dispatcher on save, cancel, expiry, navigation, or component teardown.</li>
+        <li>A manager hold blocks only new manager agent-queue dispatch; an in-flight turn continues.</li>
+        <li>Temporary holds must be additive to persistent queue state, never silently resume an existing manual pause/halt.</li>
+      </ul>
+    </section>
+
+    <section id="frontend">
+      <h2>9. Frontend implementation plan</h2>
+
+      <h3>Suggested component structure</h3>
+      <pre>PuppyGardenBoard
+├── TaskCard
+│   ├── TaskCardHeader
+│   │   └── MoveToQueueEndButton
+│   ├── EditableTaskGoal
+│   └── TaskCardBody
+│       ├── TaskOverview
+│       │   ├── MarkdownDescription
+│       │   └── TaskMetadataGrid (2×2)
+│       │       └── ManagerChatButton
+│       ├── TaskItemsPanel
+│       │   ├── AddTaskItemButton
+│       │   ├── TaskItemRow
+│       │   │   ├── EditableInstructions
+│       │   │   └── TaskItemWorkerPicker
+│       │   └── RecentDoneItems (≤3)
+│       └── TaskCardSidebar
+│           ├── AssetsWorkersTabs
+│           ├── ExpandedAssetStacks
+│           └── WorkerLanes
+└── PuppyGardenChatSidebar</pre>
+
+      <h3>Chat state</h3>
+      <p>Keep <code>PuppyGardenChatContext.target</code> as the single source of truth. Worker filtering is derived from a worker target for the same task. Do not create a second independent selected-worker store.</p>
+      <pre>const selectedWorkerId =
+  target.kind === "worker" && target.taskId === task.id
+    ? target.workerId
+    : null;</pre>
+
+      <h3>Data layer</h3>
+      <ul class="tight">
+        <li>Expand <code>agentTasksApi.ts</code> types for priority, rank, category, active items, and recent done buckets.</li>
+        <li>Add hooks for task patch, item create/edit, edit leases, worker assignment, move-to-end, and manager holds.</li>
+        <li>Optimistically update goal, description, and instruction text; roll back on failure.</li>
+        <li>Do not optimistically create a worker until provider/host/workspace validation succeeds.</li>
+        <li>Invalidate board order after item creation or move-to-end; retry does not change rank.</li>
+        <li>Keep asset deletion’s existing mutation and invalidation behavior.</li>
+      </ul>
+
+      <h3>Scroll controller</h3>
+      <ul class="tight">
+        <li>Before background reorder, record topmost visible task ID and its relative top.</li>
+        <li>After commit, restore that relative top in <code>useLayoutEffect</code>.</li>
+        <li>Set a one-shot “explicit move” cause so move-to-end skips anchor restoration.</li>
+        <li>Use stable task IDs as React keys; never index keys.</li>
+        <li>Blur/focus deliberately to prevent browser focus scrolling.</li>
+      </ul>
+
+      <h3>Manager hold lifecycle</h3>
+      <ul class="tight">
+        <li>Manager button enters pending state while acquiring the hold.</li>
+        <li>Open the conversation only after successful acquisition.</li>
+        <li>On manager-to-manager switch: acquire new hold, switch chat, then release old hold.</li>
+        <li>Release on role/worker selection, dismiss, unmount, and page exit; TTL remains the crash safety net.</li>
+      </ul>
+    </section>
+
+    <section id="gaps">
+      <h2>10. Confirmed backend gaps</h2>
+      <table>
+        <thead><tr><th>Requirement</th><th>Current state</th><th>Required work</th></tr></thead>
+        <tbody>
+          <tr><td>Dashboard active/recent items</td><td>Items exist, lane-oriented read model</td><td>Add bounded card read model; no new item table fields.</td></tr>
+          <tr><td>Priority P0–P3</td><td>Missing</td><td>Integer column, validation, APIs.</td></tr>
+          <tr><td>Stable board order</td><td><code>updated_at</code>-based</td><td><code>queue_rank BIGINT</code> and move endpoint.</td></tr>
+          <tr><td>Manager inspection hold</td><td>Persistent pause/resume exists</td><td>Temporary tokenized/expiring hold that preserves base queue state.</td></tr>
+          <tr><td>Queue-safe item editing</td><td>Business item and queued payload can diverge</td><td>Item edit lease and atomic payload update.</td></tr>
+          <tr><td>Worker reassignment while queued</td><td>Partial APIs exist</td><td>Atomic old-queue removal, worker update, and new enqueue.</td></tr>
+          <tr><td>Cancelled visibility</td><td>Cancellation exists</td><td>Ensure atomic queue/business cancellation and exclude from user read model.</td></tr>
+          <tr><td>Asset grouping</td><td><code>kind</code> only</td><td>Add <code>category</code> and dashboard/API support.</td></tr>
+          <tr><td>Asset deletion docs</td><td>Implementation exists</td><td>Add DELETE route to API reference.</td></tr>
+          <tr><td>Markdown Overview</td><td><code>description</code> exists</td><td>Safe renderer and manager instruction update; no schema change.</td></tr>
+          <tr><td>ChatPage/sidebar transcript sharing</td><td>Already shared by conversation ID/store</td><td>Regression tests only.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="delivery">
+      <h2>11. Recommended delivery phases</h2>
+      <p class="lede">Land vertical slices in an order that does not force the frontend to depend on temporary client-only semantics.</p>
+      <div class="phase"><div class="phase-num">1</div><div><h3>Schema and domain model</h3><p>Add priority, queue rank, asset category, manager hold storage, and item edit-lease storage. Reset and reseed dummy PuppyGarden data separately.</p></div></div>
+      <div class="phase"><div class="phase-num">2</div><div><h3>Dashboard read model</h3><p>Return task metadata, all active items, recent global done items, recent per-worker done items, workers, and assets. Exclude cancelled items.</p></div></div>
+      <div class="phase"><div class="phase-num">3</div><div><h3>Queue-order mutations</h3><p>Rank new tasks/items, implement move-to-end, preserve gap/tie semantics, and update board listing order.</p></div></div>
+      <div class="phase"><div class="phase-num">4</div><div><h3>Safe editing and assignment</h3><p>Add item edit leases, atomic instruction/payload updates, worker transfer, cancellation consistency, and retry behavior.</p></div></div>
+      <div class="phase"><div class="phase-num">5</div><div><h3>Manager inspection hold</h3><p>Add tokenized expiring holds, dispatcher enforcement, wake-up behavior, and lifecycle endpoints.</p></div></div>
+      <div class="phase"><div class="phase-num">6</div><div><h3>Frontend data layer</h3><p>Update TypeScript models, API calls, hooks, query invalidation, fixtures, and error handling.</p></div></div>
+      <div class="phase"><div class="phase-num">7</div><div><h3>Task-card composition</h3><p>Build header, editable goal, Markdown Overview, 2×2 metadata, task items, and unclipped Assets/Workers column.</p></div></div>
+      <div class="phase"><div class="phase-num">8</div><div><h3>Chat, filtering, and scrolling</h3><p>Wire Manager/Worker targets, role dismissal, manager hold lifecycle, shared transcript behavior, bounded done filtering, background anchors, and explicit move replacement.</p></div></div>
+      <div class="phase"><div class="phase-num">9</div><div><h3>Assets, tests, and documentation</h3><p>Add category stacks, retain title/X behavior, complete regression coverage, update API reference and Task Manager Markdown guidance.</p></div></div>
+    </section>
+
+    <section id="tests">
+      <h2>12. Verification plan</h2>
+
+      <h3>Backend and store tests</h3>
+      <ul class="checklist">
+        <li>Priority accepts only 0–3 and round-trips through create, patch, list, and dashboard.</li>
+        <li>New tasks and new items advance rank; unrelated edits do not.</li>
+        <li>Move-to-end changes only the selected task and tolerates rank gaps/duplicates.</li>
+        <li>Dashboard returns all active items plus at most three done globally and per worker.</li>
+        <li>Cancelled items are removed from the dispatchable queue and absent from user-facing reads.</li>
+        <li>Item edit lease loses to an already-dispatched item with a conflict.</li>
+        <li>Held FIFO item blocks later task items while earlier items still dispatch.</li>
+        <li>Instruction save updates the task item and queued payload atomically.</li>
+        <li>Worker reassignment atomically transfers queued work.</li>
+        <li>Manager hold blocks new manager dispatch, not an in-flight turn or worker queues.</li>
+        <li>Manager hold expiry/release wakes the queue and preserves prior manual pause/halt state.</li>
+        <li>Asset category defaults to <code>other</code> and round-trips.</li>
+      </ul>
+
+      <h3>Frontend tests</h3>
+      <ul class="checklist">
+        <li>The existing global left sidebar and Sessions navigation remain visible and functional on PuppyGarden.</li>
+        <li>Multiple large task cards render in rank order.</li>
+        <li>Overview renders nested Markdown safely; raw HTML is not executed.</li>
+        <li>Metadata remains 2×2 and Manager is keyboard-accessible and visibly interactive.</li>
+        <li>Created uses <code>created_at</code>; priority renders as P0–P3.</li>
+        <li>Goal editing saves, cancels, and rolls back on failure.</li>
+        <li>Worker selection filters active and three recent done items for that worker.</li>
+        <li>No worker selection shows active and three recent done items across the task.</li>
+        <li>Cancelled items never render.</li>
+        <li>“No worker specified” is a placeholder, not a dropdown option.</li>
+        <li>Opening item editors acquires a hold; save/cancel releases it.</li>
+        <li>Manager chat opens only after its queue hold is acknowledged.</li>
+        <li>Worker chat selection does not change regular ChatPage queued messages.</li>
+        <li>Sidebar and full ChatPage show the same persisted transcript in both directions.</li>
+        <li>Ordinary card click returns to the previously selected Secretary/Broker role.</li>
+        <li>Background reorder preserves the topmost visible card.</li>
+        <li>Explicit move-to-end lets the successor replace the moved card, including when two cards are visible.</li>
+        <li>Focus does not scroll to the moved card at the bottom.</li>
+        <li>Asset stacks are expanded, title opens the URL, and × removes the asset.</li>
+        <li>Assets/Workers column remains visible with global chat open at supported widths.</li>
+      </ul>
+
+      <h3>Manual acceptance walkthrough</h3>
+      <ol class="tight">
+        <li>Open PuppyGarden and confirm the existing global left sidebar, Sessions list, and navigation still work unchanged.</li>
+        <li>Open a board with at least four tasks and two visible cards.</li>
+        <li>Edit a goal and confirm the task does not reorder.</li>
+        <li>Open queued instructions and confirm that item does not dispatch while earlier work can continue.</li>
+        <li>Select a worker and confirm task-item filtering plus shared worker chat history.</li>
+        <li>Select Manager and confirm its queue is held before chat opens; leave and confirm dispatch resumes.</li>
+        <li>Switch Secretary/Broker and confirm later dismissal returns to the chosen role.</li>
+        <li>Create a task item and confirm the task ranks to the front without moving the card being read.</li>
+        <li>Move the upper visible card to the end and confirm the next card replaces it without animated scrolling.</li>
+        <li>Move the lower visible card and confirm the upper card remains stationary.</li>
+        <li>Cancel an item and confirm it disappears immediately and cannot be edited.</li>
+        <li>Select all/individual workers and confirm no more than three done items appear in either scope.</li>
+        <li>Open and remove assets from always-expanded category stacks.</li>
+      </ol>
+    </section>
+
+    <footer>
+      <strong>PuppyGarden V2 final plan.</strong> This document consolidates the product and implementation decisions reached in the design discussion. Repository source was inspected at commit <code>2b6fdd8ac1f711bd12a4b8315c77e2437a626df2</code> on 2026-08-23 07:35 UTC.
+    </footer>
+  </main>
+</div>
+</body>
+</html>

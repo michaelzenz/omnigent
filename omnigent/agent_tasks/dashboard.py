@@ -60,6 +60,19 @@ def build_task_dashboard(
         execution.status in _RUNNING_EXECUTION_STATUSES for execution in executions
     )
     assets = task_asset_store.list_assets_for_task(task.id) if task_asset_store is not None else []
+    active_items = [item for item in items if item.state not in {"done", "cancelled"}]
+    done_items = sorted(
+        (item for item in items if item.state == "done"),
+        key=lambda item: (item.updated_at or item.created_at, item.id),
+        reverse=True,
+    )
+    recent_by_worker: dict[str, list[dict[str, Any]]] = {}
+    for item in done_items:
+        if item.worker_id is None:
+            continue
+        bucket = recent_by_worker.setdefault(item.worker_id, [])
+        if len(bucket) < 3:
+            bucket.append(_item_summary(item))
 
     return {
         "object": "agent.task.dashboard",
@@ -67,11 +80,20 @@ def build_task_dashboard(
             "id": task.id,
             "title": task.title,
             "description": task.description,
+            "goal": task.goal,
             "state": task.state,
+            "created_at": task.created_at,
+            "priority": task.priority,
+            "queue_rank": task.queue_rank,
             "manager_conversation_id": task.manager_conversation_id,
         },
         "derived": {
             "has_running_workers": has_running_workers,
+        },
+        "active_items": [_item_summary(item) for item in active_items],
+        "recent_done_items": {
+            "all": [_item_summary(item) for item in done_items[:3]],
+            "by_worker": recent_by_worker,
         },
         "inbox_items": [_item_summary(item) for item in inbox_items],
         "reconcile_queue_count": len(reconcile_queue),
@@ -258,6 +280,7 @@ def _asset_summary(asset: TaskAsset) -> dict[str, Any]:
     return {
         "id": asset.id,
         "kind": asset.kind,
+        "category": asset.category,
         "title": asset.title,
         "url": asset.url,
         "created_at": asset.created_at,

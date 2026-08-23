@@ -15,6 +15,7 @@ def _asset_to_entity(row: SqlTaskAsset) -> TaskAsset:
         id=row.id,
         task_id=row.task_id,
         kind=row.kind,
+        category=row.category,
         title=row.title,
         url=row.url,
         created_at=row.created_at,
@@ -34,6 +35,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
         task_id: str,
         *,
         kind: str,
+        category: str = "other",
         title: str,
         url: str | None = None,
     ) -> TaskAsset:
@@ -51,6 +53,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 id=next_id,
                 task_id=task_id,
                 kind=kind,
+                category=category,
                 title=title,
                 url=url,
                 created_at=now,

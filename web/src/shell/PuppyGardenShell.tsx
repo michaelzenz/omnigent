@@ -11,7 +11,7 @@ export function PuppyGardenShell() {
   return (
     <PuppyGardenChatProvider>
       <div
-        className="grid h-full w-full min-w-0 flex-1 grid-cols-[minmax(0,1fr)_min(420px,40vw)]"
+        className="puppy-garden-shell grid h-full w-full min-w-0 flex-1"
         data-testid="puppy-garden-page"
       >
         <div

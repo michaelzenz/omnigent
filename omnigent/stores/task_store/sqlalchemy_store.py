@@ -38,6 +38,8 @@ def _to_entity(row: SqlTask) -> Task:
         created_at=row.created_at,
         goal=row.goal,
         updated_at=row.updated_at,
+        priority=row.priority,
+        queue_rank=row.queue_rank,
     )
 
 
@@ -61,6 +63,7 @@ class SqlAlchemyTaskStore(TaskStore):
         internal_note: str | None = None,
         manager_conversation_id: str | None = None,
         state: str = "idle",
+        priority: int = 2,
         tags: list[TaskTag] | None = None,
     ) -> Task:
         tag_rows = tags or []
@@ -74,10 +77,18 @@ class SqlAlchemyTaskStore(TaskStore):
             internal_note=internal_note,
             goal=goal,
             state=encode_task_state(state),
+            priority=priority,
+            queue_rank=0,
             created_at=now_epoch(),
             updated_at=None,
         )
         with self._session() as session:
+            next_rank = session.scalar(
+                select(func.coalesce(func.max(SqlTask.queue_rank), 0) + 1).where(
+                    SqlTask.workspace_id == current_workspace_id()
+                )
+            )
+            row.queue_rank = int(next_rank if next_rank is not None else 1)
             session.add(row)
             for tag in tag_rows:
                 session.add(
@@ -118,7 +129,7 @@ class SqlAlchemyTaskStore(TaskStore):
             stmt = select(SqlTask).where(SqlTask.workspace_id == current_workspace_id())
             if state is not None:
                 stmt = stmt.where(SqlTask.state == encode_task_state(state))
-            stmt = stmt.order_by(desc(SqlTask.updated_at), desc(SqlTask.id))
+            stmt = stmt.order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
@@ -134,6 +145,7 @@ class SqlAlchemyTaskStore(TaskStore):
         manager_role_key: str | None = None,
         state: str | None = None,
         goal: str | None = None,
+        priority: int | None = None,
     ) -> Task | None:
         with self._session() as session:
             row = session.get(SqlTask, (current_workspace_id(), task_id))
@@ -163,6 +175,9 @@ class SqlAlchemyTaskStore(TaskStore):
             if manager_role_key is not None and row.manager_role_key != manager_role_key:
                 row.manager_role_key = manager_role_key
                 changed = True
+            if priority is not None and row.priority != priority:
+                row.priority = priority
+                changed = True
             if state is not None:
                 encoded_state = encode_task_state(state)
                 if row.state != encoded_state:
@@ -170,6 +185,34 @@ class SqlAlchemyTaskStore(TaskStore):
                     changed = True
             if changed:
                 row.updated_at = now_epoch()
+            session.flush()
+            return _to_entity(row)
+
+    def bump_queue_rank(self, task_id: str) -> Task | None:
+        with self._session() as session:
+            row = session.get(SqlTask, (current_workspace_id(), task_id))
+            if row is None:
+                return None
+            next_rank = session.scalar(
+                select(func.coalesce(func.max(SqlTask.queue_rank), 0) + 1).where(
+                    SqlTask.workspace_id == current_workspace_id()
+                )
+            )
+            row.queue_rank = int(next_rank if next_rank is not None else 1)
+            session.flush()
+            return _to_entity(row)
+
+    def move_to_queue_end(self, task_id: str) -> Task | None:
+        with self._session() as session:
+            row = session.get(SqlTask, (current_workspace_id(), task_id))
+            if row is None:
+                return None
+            next_rank = session.scalar(
+                select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
+                    SqlTask.workspace_id == current_workspace_id()
+                )
+            )
+            row.queue_rank = int(next_rank if next_rank is not None else -1)
             session.flush()
             return _to_entity(row)
 

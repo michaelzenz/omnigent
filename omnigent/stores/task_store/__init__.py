@@ -29,6 +29,7 @@ class TaskStore(ABC):
         internal_note: str | None = None,
         manager_conversation_id: str | None = None,
         state: str = "idle",
+        priority: int = 2,
         tags: list[TaskTag] | None = None,
     ) -> Task:
         """Insert a new managed task."""
@@ -47,7 +48,7 @@ class TaskStore(ABC):
         *,
         state: str | None = None,
     ) -> list[Task]:
-        """List tasks ordered by ``updated_at DESC, id DESC``."""
+        """List tasks ordered by ``queue_rank DESC, id DESC``."""
 
     @abstractmethod
     def update(
@@ -62,8 +63,17 @@ class TaskStore(ABC):
         manager_role_key: str | None = None,
         state: str | None = None,
         goal: str | None = None,
+        priority: int | None = None,
     ) -> Task | None:
         """Update mutable task fields."""
+
+    @abstractmethod
+    def bump_queue_rank(self, task_id: str) -> Task | None:
+        """Move a task to the front of the board queue."""
+
+    @abstractmethod
+    def move_to_queue_end(self, task_id: str) -> Task | None:
+        """Move a task to the end of the board queue."""
 
     @abstractmethod
     def count_by_manager_role_key(

@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckIcon, CopyIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, PencilIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useResolveTaskItem, useUpdateTaskItem } from "@/hooks/useAgentTasks";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
-import type { TaskItemSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
+import {
+  acquireTaskItemEditLease,
+  releaseTaskItemEditLease,
+  type TaskItemSummary,
+  type TaskWorkerLane,
+} from "@/lib/agentTasksApi";
+import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 
 interface ItemEditorState {
   title: string;
@@ -40,8 +46,25 @@ export function TaskCardItemEditor({
   const updateItem = useUpdateTaskItem(taskId);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState(() => initialState(item));
+  const [editing, setEditing] = useState(mode !== "edit");
+  const [editLeaseToken, setEditLeaseToken] = useState<string | null>(null);
+  const [leaseError, setLeaseError] = useState<string | null>(null);
 
   useEffect(() => setEditor(initialState(item)), [item]);
+  useEffect(() => {
+    if (!editLeaseToken || isPuppyGardenFixtureMode()) return;
+    const heartbeat = window.setInterval(() => {
+      void acquireTaskItemEditLease(item.id, editLeaseToken).catch(() => {
+        setEditLeaseToken(null);
+        setEditing(false);
+        setLeaseError("The edit lease expired because the item started dispatching.");
+      });
+    }, 45_000);
+    return () => {
+      window.clearInterval(heartbeat);
+      void releaseTaskItemEditLease(item.id, editLeaseToken).catch(() => undefined);
+    };
+  }, [editLeaseToken, item.id]);
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12);
 
   const worker = workerLanes.find((lane) => lane.worker_id === item.worker_id);
@@ -68,6 +91,30 @@ export function TaskCardItemEditor({
     });
   };
 
+  const releaseLease = async () => {
+    const token = editLeaseToken;
+    setEditLeaseToken(null);
+    if (token && !isPuppyGardenFixtureMode()) {
+      await releaseTaskItemEditLease(item.id, token).catch(() => undefined);
+    }
+  };
+
+  const beginEdit = async () => {
+    setLeaseError(null);
+    if (isPuppyGardenFixtureMode()) {
+      setEditLeaseToken("fixture");
+      setEditing(true);
+      return;
+    }
+    try {
+      const lease = await acquireTaskItemEditLease(item.id);
+      setEditLeaseToken(lease.token);
+      setEditing(true);
+    } catch (error) {
+      setLeaseError(error instanceof Error ? error.message : "Item started dispatching");
+    }
+  };
+
   const saveEdit = async () => {
     await updateItem.mutateAsync({
       taskItemId: item.id,
@@ -75,9 +122,28 @@ export function TaskCardItemEditor({
         title: editor.title,
         description: editor.description,
         instructions: editor.instructions,
+        edit_lease_token: editLeaseToken ?? undefined,
       },
     });
+    await releaseLease();
+    setEditing(false);
   };
+
+  if (mode === "edit" && !editing) {
+    return (
+      <div className="space-y-2">
+        {item.instructions ? (
+          <p className="whitespace-pre-wrap text-xs text-muted-foreground">{item.instructions}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">No instructions.</p>
+        )}
+        <Button type="button" size="sm" variant="outline" onClick={() => void beginEdit()}>
+          <PencilIcon aria-hidden /> Edit instructions
+        </Button>
+        {leaseError ? <p className="text-xs text-destructive">{leaseError}</p> : null}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-1.5">
@@ -145,12 +211,27 @@ export function TaskCardItemEditor({
             </Button>
           )}
         </div>
-      ) : mode === "edit" ? (
-        <div className="flex justify-end pt-0.5">
+      ) : mode === "edit" || mode === "parked" ? (
+        <div className="flex justify-end gap-1.5 pt-0.5">
+          {mode === "edit" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={pending}
+              onClick={() => {
+                setEditor(initialState(item));
+                setEditing(false);
+                void releaseLease();
+              }}
+            >
+              Cancel
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
-            disabled={pending || !dirty}
+            disabled={pending || !dirty || (mode === "edit" && !editLeaseToken)}
             onClick={() => void saveEdit()}
           >
             <CheckIcon aria-hidden /> Save

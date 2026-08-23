@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   acceptAgentTaskPackage,
+  assignTaskItemWorker,
+  createTaskItem,
   initializeWorker,
-  cancelAgentQueueItem,
+  cancelTaskItem,
   deleteTaskAsset,
   ensureBrokerSession,
   ensureSecretarySession,
@@ -12,6 +14,7 @@ import {
   fetchSecretaryProfile,
   fetchTaskDashboard,
   interruptAgentQueueItem,
+  moveTaskToQueueEnd,
   rejectAgentTaskPackage,
   resetBrokerSession,
   resetSecretarySession,
@@ -19,8 +22,12 @@ import {
   resolveTaskItem,
   retryTaskItemDispatch,
   updateTaskItem,
+  type CreateTaskItemRequest,
   type DispatchPayload,
   type ItemResolution,
+  type UpdateAgentTaskRequest,
+  type UpdateTaskItemRequest,
+  type WorkerAssignmentInput,
   type TaskDashboard,
 } from "@/lib/agentTasksApi";
 import { interrupt as interruptSession } from "@/lib/sessionsApi";
@@ -203,7 +210,7 @@ export function useUpdateTaskItem(taskId: string) {
       body,
     }: {
       taskItemId: string;
-      body: DispatchPayload & { title?: string; instructions?: string; description?: string };
+      body: UpdateTaskItemRequest;
     }) => {
       if (fixtureEnabled) {
         fixtureUpdateItem(taskId, taskItemId, {
@@ -267,10 +274,8 @@ export function useRemoveTaskItem(taskId: string) {
         fixtureRemoveItem(taskId, taskItemId);
         return;
       }
-      if (!queueItemId) {
-        throw new Error("No queue item to remove");
-      }
-      await cancelAgentQueueItem(queueItemId);
+      void queueItemId;
+      await cancelTaskItem(taskItemId);
     },
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
@@ -351,5 +356,56 @@ export function useDeleteTaskAsset(taskId: string) {
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
     },
+  });
+}
+
+export function usePatchAgentTask(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateAgentTaskRequest) => patchAgentTask(taskId, body),
+    onMutate: async (body) => {
+      const key = ["agent-task-dashboard", taskId];
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<TaskDashboard>(key);
+      if (previous) {
+        queryClient.setQueryData<TaskDashboard>(key, {
+          ...previous,
+          task: { ...previous.task, ...body },
+        });
+      }
+      return { previous };
+    },
+    onError: (_error, _body, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["agent-task-dashboard", taskId], context.previous);
+      }
+    },
+    onSettled: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+export function useCreateTaskItem(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateTaskItemRequest) => createTaskItem(taskId, body),
+    onSuccess: async () => invalidateTaskQueries(queryClient, taskId),
+  });
+}
+
+export function useAssignTaskItemWorker(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (assignment: WorkerAssignmentInput) => assignTaskItemWorker(taskId, assignment),
+    onSuccess: async () => invalidateTaskQueries(queryClient, taskId),
+  });
+}
+
+export function useMoveTaskToQueueEnd(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => moveTaskToQueueEnd(taskId),
+    onSuccess: async () => invalidateTaskQueries(queryClient, taskId),
   });
 }

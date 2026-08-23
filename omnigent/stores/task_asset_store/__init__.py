@@ -19,6 +19,7 @@ class TaskAssetStore(ABC):
         task_id: str,
         *,
         kind: str,
+        category: str = "other",
         title: str,
         url: str | None = None,
     ) -> TaskAsset:

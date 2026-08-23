@@ -7,6 +7,11 @@ export interface AgentTaskSummary {
   state: string;
   manager_role_key: string;
   manager_conversation_id: string | null;
+  goal?: string;
+  created_at?: number;
+  updated_at?: number | null;
+  priority?: number;
+  queue_rank?: number;
 }
 
 export interface TaskEventSummary {
@@ -89,9 +94,12 @@ export interface TaskWorkerLane {
   executions: TaskExecutionSummary[];
 }
 
+export type TaskAssetCategory = "code" | "tests" | "documents" | "logs" | "other";
+
 export interface TaskAssetSummary {
   id: number;
   kind: "url";
+  category?: TaskAssetCategory;
   title: string;
   url: string | null;
   created_at: number;
@@ -104,11 +112,21 @@ export interface TaskDashboard {
     description: string | null;
     state: string;
     manager_conversation_id: string | null;
+    goal?: string;
+    created_at?: number;
+    priority?: number;
+    queue_rank?: number;
   };
   derived: {
     has_running_workers: boolean;
   };
   inbox_items: TaskItemSummary[];
+  /** V2 card read model. Optional while older servers are still deployed. */
+  active_items?: TaskItemSummary[];
+  recent_done_items?: {
+    all: TaskItemSummary[];
+    by_worker: Record<string, TaskItemSummary[]>;
+  };
   reconcile_queue_count: number;
   assets: TaskAssetSummary[];
   workers: TaskWorkerLane[];
@@ -188,8 +206,20 @@ export interface CreateManagerRoleProfileRequest {
   workspace?: string | null;
 }
 
+export interface UpdateTaskItemRequest {
+  title?: string;
+  description?: string | null;
+  instructions?: string | null;
+  internal_note?: string | null;
+  worker_id?: string;
+  edit_lease_token?: string;
+}
+
 export interface UpdateAgentTaskRequest {
   manager_role_key?: string;
+  goal?: string;
+  description?: string | null;
+  priority?: number;
 }
 
 export interface SecretarySession {
@@ -253,6 +283,106 @@ export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
 export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard> {
   const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}/dashboard`);
   return readJson<TaskDashboard>(res);
+}
+
+export interface CreateTaskItemRequest {
+  title: string;
+  description?: string | null;
+  instructions?: string | null;
+  worker_id?: string | null;
+  state?: string;
+  submit_for_user_ack?: boolean;
+}
+
+export async function createTaskItem(
+  taskId: string,
+  body: CreateTaskItemRequest,
+): Promise<TaskItemSummary> {
+  const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}/items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonOrApiError<TaskItemSummary>(res);
+}
+
+export interface WorkerAssignmentInput {
+  item_id: string;
+  worker_id?: string;
+  provider_id?: string;
+  host_id?: string;
+  workspace?: string;
+  edit_lease_token?: string;
+}
+
+export async function assignTaskItemWorker(
+  taskId: string,
+  assignment: WorkerAssignmentInput,
+): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/workers/assign`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignments: [assignment] }),
+    },
+  );
+  await readJsonOrApiError(res);
+}
+
+export interface QueueHold {
+  token: string;
+  expires_at: number;
+}
+
+export async function acquireManagerQueueHold(taskId: string, token?: string): Promise<QueueHold> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/manager-queue-hold`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    },
+  );
+  return readJsonOrApiError<QueueHold>(res);
+}
+
+export async function releaseManagerQueueHold(taskId: string, token: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/manager-queue-hold/${encodeURIComponent(token)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
+export type ItemEditLease = QueueHold;
+
+export async function acquireTaskItemEditLease(
+  itemId: string,
+  token?: string,
+): Promise<ItemEditLease> {
+  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(itemId)}/edit-lease`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  return readJsonOrApiError<ItemEditLease>(res);
+}
+
+export async function releaseTaskItemEditLease(itemId: string, token: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/task-items/${encodeURIComponent(itemId)}/edit-lease/${encodeURIComponent(token)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
+export async function moveTaskToQueueEnd(taskId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/move-to-queue-end`,
+    { method: "POST" },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
 }
 
 export async function deleteTaskAsset(taskId: string, assetId: number): Promise<void> {
@@ -435,7 +565,7 @@ export async function resolveTaskItem(
 
 export async function updateTaskItem(
   taskItemId: string,
-  body: DispatchPayload & { title?: string; instructions?: string },
+  body: UpdateTaskItemRequest,
 ): Promise<TaskItemSummary> {
   const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}`, {
     method: "PATCH",
@@ -443,6 +573,13 @@ export async function updateTaskItem(
     body: JSON.stringify(body),
   });
   return readJson<TaskItemSummary>(res);
+}
+
+export async function cancelTaskItem(taskItemId: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) await readJsonOrApiError(res);
 }
 
 export async function cancelAgentQueueItem(queueItemId: string): Promise<void> {

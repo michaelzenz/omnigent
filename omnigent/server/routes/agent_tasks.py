@@ -87,6 +87,7 @@ from omnigent.agent_tasks.task_packages import (
 )
 from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.enum_codecs import TASK_STATE
+from omnigent.db.utils import now_epoch
 from omnigent.entities import (
     FyiCluster,
     Task,
@@ -96,8 +97,8 @@ from omnigent.entities import (
     TaskTag,
     Worker,
 )
-from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.entities.agent_queue import AgentQueueKey
+from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
@@ -154,6 +155,7 @@ class CreateAgentTaskRequest(BaseModel):
     description: str | None = None
     internal_note: str | None = None
     state: str = "pending"
+    priority: int = Field(default=2, ge=0, le=3)
     tags: list[TaskTagInput] = Field(default_factory=list)
 
     @field_validator("title")
@@ -197,6 +199,7 @@ class UpdateAgentTaskRequest(BaseModel):
     manager_role_key: str | None = None
     manager_conversation_id: str | None = None
     state: str | None = None
+    priority: int | None = Field(default=None, ge=0, le=3)
 
     @field_validator("title")
     @classmethod
@@ -314,6 +317,7 @@ class CreateTaskAssetRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/{task_id}/assets``."""
 
     kind: Literal["url"] = "url"
+    category: Literal["code", "tests", "documents", "logs", "other"] = "other"
     title: str
     url: str
 
@@ -365,6 +369,12 @@ class CreateWorkerRequest(BaseModel):
     workspace: str = Field(min_length=1)
 
 
+class QueueHoldRequest(BaseModel):
+    """Optional token used to renew an existing temporary queue hold."""
+
+    token: str | None = None
+
+
 class WorkerAssignmentInput(BaseModel):
     """One item→lane assignment for batch worker assignment."""
 
@@ -373,6 +383,7 @@ class WorkerAssignmentInput(BaseModel):
     worker_id: str | None = None
     host_id: str | None = None
     workspace: str | None = None
+    edit_lease_token: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> WorkerAssignmentInput:
@@ -402,6 +413,7 @@ class UpdateTaskItemRequest(BaseModel):
     instructions: str | None = None
     internal_note: str | None = None
     worker_id: str | None = None
+    edit_lease_token: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -667,6 +679,8 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
         "state": task.state,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
+        "priority": task.priority,
+        "queue_rank": task.queue_rank,
     }
     if tags is not None:
         result["tags"] = [_tag_to_response(tag) for tag in tags]
@@ -826,6 +840,7 @@ def _asset_to_response(asset: TaskAsset) -> dict[str, Any]:
         "object": "agent.task.asset",
         "task_id": asset.task_id,
         "kind": asset.kind,
+        "category": asset.category,
         "title": asset.title,
         "url": asset.url,
         "created_at": asset.created_at,
@@ -955,6 +970,7 @@ def create_agent_tasks_router(
             internal_note=body.internal_note,
             goal=body.goal,
             state=body.state,
+            priority=body.priority,
             tags=tags,
         )
         if body.state == "active":
@@ -1430,6 +1446,7 @@ def create_agent_tasks_router(
             "goal",
             "manager_conversation_id",
             "state",
+            "priority",
         ):
             if field in body.model_fields_set:
                 update_kwargs[field] = getattr(body, field)
@@ -1467,6 +1484,64 @@ def create_agent_tasks_router(
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         tags = await asyncio.to_thread(task_store.get_tags, task_id)
         return _task_to_response(task, tags=tags)
+
+    @router.post("/agent-tasks/{task_id}/move-to-queue-end")
+    async def move_task_to_queue_end(request: Request, task_id: str) -> dict[str, Any]:
+        """Move one task to the end of the stable board ordering."""
+        user_id = require_user(request, auth_provider)
+        await _get_task_or_404(task_id, user_id)
+        task = await asyncio.to_thread(task_store.move_to_queue_end, task_id)
+        assert task is not None
+        return _task_to_response(task)
+
+    @router.post("/agent-tasks/{task_id}/manager-queue-hold")
+    async def hold_manager_queue(
+        request: Request, task_id: str, body: QueueHoldRequest
+    ) -> dict[str, Any]:
+        """Temporarily stop new manager dispatches while the user inspects chat."""
+        user_id = require_user(request, auth_provider)
+        await _get_task_or_404(task_id, user_id)
+        if agent_queue_store is None:
+            raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        token = body.token or uuid.uuid4().hex
+        now = now_epoch()
+        key = AgentQueueKey(
+            role="manager",
+            owner_user_id=_effective_user_id(user_id),
+            scope_id=task_id,
+        )
+        try:
+            queue = await asyncio.to_thread(
+                agent_queue_store.acquire_inspection_hold,
+                key,
+                token,
+                now=now,
+                ttl_s=90,
+            )
+        except ValueError as exc:
+            raise OmnigentError(str(exc), code=ErrorCode.CONFLICT) from exc
+        return {
+            "object": "agent.queue.hold",
+            "token": token,
+            "expires_at": queue.inspection_hold_expires_at,
+        }
+
+    @router.delete("/agent-tasks/{task_id}/manager-queue-hold/{token}")
+    async def release_manager_queue_hold(
+        request: Request, task_id: str, token: str
+    ) -> dict[str, Any]:
+        """Release the caller's temporary manager dispatch hold."""
+        user_id = require_user(request, auth_provider)
+        await _get_task_or_404(task_id, user_id)
+        if agent_queue_store is None:
+            raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        key = AgentQueueKey(
+            role="manager",
+            owner_user_id=_effective_user_id(user_id),
+            scope_id=task_id,
+        )
+        released = await asyncio.to_thread(agent_queue_store.release_inspection_hold, key, token)
+        return {"object": "agent.queue.hold.release", "released": released}
 
     @router.delete("/agent-tasks/{task_id}")
     async def delete_task(request: Request, task_id: str) -> dict[str, Any]:
@@ -1656,6 +1731,48 @@ def create_agent_tasks_router(
                     )
                     if worker is None or worker.task_id != task_id:
                         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    if (
+                        item.state in {"queued", "interrupted", "dispatch_failed"}
+                        and item.worker_id != worker.id
+                    ):
+                        if agent_queue_store is None:
+                            raise OmnigentError(
+                                "Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR
+                            )
+                        queue_item = agent_queue_store.find_open_item_for_source(
+                            item.id, role="worker"
+                        )
+                        now = now_epoch()
+                        if item.state == "queued" and (
+                            queue_item is None
+                            or not assignment.edit_lease_token
+                            or queue_item.edit_lease_token != assignment.edit_lease_token
+                            or queue_item.edit_lease_expires_at is None
+                            or queue_item.edit_lease_expires_at <= now
+                        ):
+                            raise OmnigentError(
+                                "An active edit lease is required to reassign queued work",
+                                code=ErrorCode.CONFLICT,
+                            )
+                        if (
+                            queue_item is not None
+                            and agent_queue_store.cancel_item(queue_item.id, now=now) is None
+                        ):
+                            raise OmnigentError(
+                                "Queued delivery could not be moved", code=ErrorCode.CONFLICT
+                            )
+                        if item.state == "queued":
+                            agent_queue_store.enqueue(
+                                uuid.uuid4().hex,
+                                AgentQueueKey(
+                                    role="worker",
+                                    owner_user_id=_effective_user_id(user_id),
+                                    scope_id=worker.id,
+                                ),
+                                kind="item.dispatch",
+                                source_ids=[item.id],
+                                payload=json.dumps(item_dispatch_payload(item)),
+                            )
                     task_item_store.update_item(item.id, worker_id=worker.id)
                     result.append({"item_id": item.id, "worker_id": worker.id})
                 return result
@@ -1782,6 +1899,7 @@ def create_agent_tasks_router(
                 return task_asset_store.create_asset(
                     task_id,
                     kind=body.kind,
+                    category=body.category,
                     title=body.title,
                     url=body.url,
                 )
@@ -1826,9 +1944,10 @@ def create_agent_tasks_router(
                 task_id,
                 state=state,
             )
+            visible_items = [item for item in items if item.state != "cancelled"]
             return {
                 "object": "list",
-                "data": [_item_to_response(item) for item in items],
+                "data": [_item_to_response(item) for item in visible_items],
             }
 
         @router.post("/agent-tasks/{task_id}/items")
@@ -1866,6 +1985,7 @@ def create_agent_tasks_router(
                 return item
 
             created = await asyncio.to_thread(_create)
+            await asyncio.to_thread(task_store.bump_queue_rank, task_id)
             return _item_to_response(created)
 
         @router.get("/agent-tasks/{task_id}/reconcile-queue")
@@ -1989,6 +2109,63 @@ def create_agent_tasks_router(
                 response["worker_conversation_id"] = execution.conversation_id
             return response
 
+        @router.post("/task-items/{item_id}/edit-lease")
+        async def acquire_task_item_edit_lease(
+            request: Request, item_id: str, body: QueueHoldRequest
+        ) -> dict[str, Any]:
+            """Hold one queued delivery while its instructions or worker are edited."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            if item.state != "queued":
+                raise OmnigentError(
+                    f"Cannot lease item in state {item.state!r}", code=ErrorCode.CONFLICT
+                )
+            if agent_queue_store is None:
+                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+            queue_item = await asyncio.to_thread(
+                agent_queue_store.find_open_item_for_source, item.id, role="worker"
+            )
+            if queue_item is None:
+                raise OmnigentError("Queued delivery not found", code=ErrorCode.CONFLICT)
+            token = body.token or uuid.uuid4().hex
+            now = now_epoch()
+            leased = await asyncio.to_thread(
+                agent_queue_store.acquire_item_edit_lease,
+                queue_item.id,
+                token,
+                now=now,
+                ttl_s=90,
+            )
+            if leased is None:
+                raise OmnigentError(
+                    "Task item is already dispatching or being edited",
+                    code=ErrorCode.CONFLICT,
+                )
+            return {
+                "object": "agent.queue.item.edit_lease",
+                "token": token,
+                "expires_at": leased.edit_lease_expires_at,
+            }
+
+        @router.delete("/task-items/{item_id}/edit-lease/{token}")
+        async def release_task_item_edit_lease(
+            request: Request, item_id: str, token: str
+        ) -> dict[str, Any]:
+            """Release a matching task-item edit lease."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            if agent_queue_store is None:
+                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+            queue_item = await asyncio.to_thread(
+                agent_queue_store.find_open_item_for_source, item.id, role="worker"
+            )
+            released = False
+            if queue_item is not None:
+                released = await asyncio.to_thread(
+                    agent_queue_store.release_item_edit_lease, queue_item.id, token
+                )
+            return {"object": "agent.queue.item.edit_lease.release", "released": released}
+
         @router.patch("/task-items/{item_id}")
         async def update_task_item_route(
             request: Request,
@@ -2011,7 +2188,75 @@ def create_agent_tasks_router(
                     worker_id=body.worker_id,
                 )
 
+            if (
+                item.state == "queued"
+                and (body.instructions is not None or body.worker_id is not None)
+                and not body.edit_lease_token
+            ):
+                raise OmnigentError(
+                    "An active edit lease is required for queued item changes",
+                    code=ErrorCode.CONFLICT,
+                )
+            if (
+                item.state in {"queued", "interrupted", "dispatch_failed"}
+                and body.instructions is not None
+            ):
+                if agent_queue_store is None:
+                    raise OmnigentError(
+                        "Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR
+                    )
+                queue_item = await asyncio.to_thread(
+                    agent_queue_store.find_open_item_for_source, item.id, role="worker"
+                )
+                if queue_item is None and item.state == "queued":
+                    raise OmnigentError("Queued delivery not found", code=ErrorCode.CONFLICT)
+                if queue_item is not None:
+                    proposed_payload = item_dispatch_payload(item)
+                    proposed_payload["instructions"] = body.instructions
+                    if body.internal_note is not None:
+                        proposed_payload["internal_note"] = body.internal_note
+                    queue_updated = await asyncio.to_thread(
+                        agent_queue_store.update_item,
+                        queue_item.id,
+                        payload=json.dumps(proposed_payload),
+                        edit_lease_token=body.edit_lease_token,
+                    )
+                    if queue_updated is None:
+                        raise OmnigentError(
+                            "The edit lease expired before the item was saved",
+                            code=ErrorCode.CONFLICT,
+                        )
             updated = await asyncio.to_thread(_patch)
+            return _item_to_response(updated)
+
+        @router.post("/task-items/{item_id}/cancel")
+        async def cancel_task_item(request: Request, item_id: str) -> dict[str, Any]:
+            """Remove queued or parked work from dispatch and hide it from the board."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            if item.state not in {"queued", "interrupted", "dispatch_failed"}:
+                raise OmnigentError(
+                    f"Cannot cancel item in state {item.state!r}", code=ErrorCode.CONFLICT
+                )
+            if agent_queue_store is None:
+                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+            queue_item = await asyncio.to_thread(
+                agent_queue_store.find_open_item_for_source, item.id, role="worker"
+            )
+            if queue_item is None and item.state == "queued":
+                raise OmnigentError("Queued delivery not found", code=ErrorCode.CONFLICT)
+            if queue_item is not None:
+                cancelled = await asyncio.to_thread(
+                    agent_queue_store.cancel_item, queue_item.id, now=now_epoch()
+                )
+                if cancelled is None:
+                    raise OmnigentError(
+                        "Queued delivery could not be cancelled", code=ErrorCode.CONFLICT
+                    )
+            updated = await asyncio.to_thread(
+                task_item_store.update_item, item.id, state="cancelled"
+            )
+            assert updated is not None
             return _item_to_response(updated)
 
         @router.post("/task-items/{item_id}/retry-dispatch")
@@ -2028,6 +2273,46 @@ def create_agent_tasks_router(
                     "Agent queue is unavailable",
                     code=ErrorCode.INTERNAL_ERROR,
                 )
+            if item.state in {"interrupted", "dispatch_failed"}:
+                queue_item = await asyncio.to_thread(
+                    agent_queue_store.find_open_item_for_source, item.id, role="worker"
+                )
+                if queue_item is None:
+                    worker = worker_for_item(item, worker_store=worker_store)
+                    if worker is None:
+                        raise OmnigentError(
+                            "Item must have a Worker before retry", code=ErrorCode.CONFLICT
+                        )
+                    retried = await asyncio.to_thread(
+                        agent_queue_store.enqueue,
+                        uuid.uuid4().hex,
+                        AgentQueueKey(
+                            role="worker",
+                            owner_user_id=_effective_user_id(user_id),
+                            scope_id=worker.id,
+                        ),
+                        kind="item.dispatch",
+                        source_ids=[item.id],
+                        payload=json.dumps(item_dispatch_payload(item)),
+                    )
+                else:
+                    retried = await asyncio.to_thread(
+                        agent_queue_store.retry_parked_item, queue_item.id, now=now_epoch()
+                    )
+                    if retried is None:
+                        raise OmnigentError(
+                            "Parked delivery could not be retried", code=ErrorCode.CONFLICT
+                        )
+                updated = await asyncio.to_thread(
+                    task_item_store.update_item, item.id, state="queued"
+                )
+                assert updated is not None
+                await asyncio.to_thread(task_store.bump_queue_rank, task.id)
+                return {
+                    "object": "agent.task.retry",
+                    "task_item_id": item.id,
+                    "agent_queue_item_id": retried.id,
+                }
             if item.state != "queued":
                 raise OmnigentError(
                     f"Cannot retry item in state {item.state!r}",
@@ -2086,6 +2371,7 @@ def create_agent_tasks_router(
                 source_ids=[item.id],
                 payload=json.dumps(item_dispatch_payload(item)),
             )
+            await asyncio.to_thread(task_store.bump_queue_rank, task.id)
             return {
                 "object": "agent.task.retry",
                 "task_item_id": item.id,
@@ -2254,6 +2540,11 @@ def create_agent_tasks_router(
                 )
 
             results = await asyncio.to_thread(_reconcile)
+            if any(
+                result is not None and spec.item_id is None
+                for spec, result in zip(specs, results, strict=True)
+            ):
+                await asyncio.to_thread(task_store.bump_queue_rank, task_id)
             if body.task_internal_note is not None:
                 await asyncio.to_thread(
                     task_store.update,

@@ -48,7 +48,8 @@ export function TaskCardRowActions({
     );
   }
 
-  if (!isParkedItemState(item.state)) {
+  const parked = isParkedItemState(item.state);
+  if (!parked && item.state !== "queued") {
     return null;
   }
 
@@ -70,20 +71,22 @@ export function TaskCardRowActions({
         <XIcon className="size-3.5" aria-hidden />
         Remove
       </Button>
-      <Button
-        type="button"
-        size="sm"
-        disabled={pending}
-        onClick={() => void retryItem.mutateAsync(item.id)}
-        aria-label="Retry dispatch"
-      >
-        {retryItem.isPending ? (
-          <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
-        ) : (
-          <RotateCcwIcon className="size-3.5" aria-hidden />
-        )}
-        Retry
-      </Button>
+      {parked ? (
+        <Button
+          type="button"
+          size="sm"
+          disabled={pending}
+          onClick={() => void retryItem.mutateAsync(item.id)}
+          aria-label="Retry dispatch"
+        >
+          {retryItem.isPending ? (
+            <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <RotateCcwIcon className="size-3.5" aria-hidden />
+          )}
+          Retry
+        </Button>
+      ) : null}
     </div>
   );
 }

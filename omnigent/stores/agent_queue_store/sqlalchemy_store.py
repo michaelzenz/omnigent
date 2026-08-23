@@ -54,6 +54,8 @@ def _queue_to_entity(row: SqlAgentQueue) -> AgentQueue:
         conversation_id=row.conversation_id,
         lease_owner=row.lease_owner,
         lease_expires_at=row.lease_expires_at,
+        inspection_hold_token=row.inspection_hold_token,
+        inspection_hold_expires_at=row.inspection_hold_expires_at,
         next_due_at=row.next_due_at,
         inflight_item_id=row.inflight_item_id,
         inflight_since=row.inflight_since,
@@ -75,6 +77,8 @@ def _item_to_entity(row: SqlAgentQueueItem) -> AgentQueueItem:
         payload=row.payload,
         seq=row.seq,
         not_before=row.not_before,
+        edit_lease_token=row.edit_lease_token,
+        edit_lease_expires_at=row.edit_lease_expires_at,
         last_error=row.last_error,
         updated_at=row.updated_at,
         dispatched_at=row.dispatched_at,
@@ -208,6 +212,13 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 .where(SqlAgentQueue.workspace_id == current_workspace_id())
                 .where(SqlAgentQueue.state == encode_agent_queue_state("active"))
                 .where(SqlAgentQueue.inflight_item_id.is_(None))
+                .where(
+                    or_(
+                        SqlAgentQueue.inspection_hold_token.is_(None),
+                        SqlAgentQueue.inspection_hold_expires_at.is_(None),
+                        SqlAgentQueue.inspection_hold_expires_at <= now,
+                    )
+                )
                 .where(
                     or_(
                         SqlAgentQueue.next_due_at.is_(None),
@@ -346,10 +357,25 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
             if row is None or row.state != encode_agent_queue_item_state("queued"):
                 return None
+            if (
+                row.edit_lease_token is not None
+                and row.edit_lease_expires_at is not None
+                and row.edit_lease_expires_at > now
+            ):
+                return None
             # Claiming the in-flight slot is the serialisation point, and it is
             # checked last so a lost race leaves nothing to undo. The claim only
-            # succeeds when the slot is empty, so a second dispatcher holding the
-            # same head item cannot also send it.
+            # succeeds when the slot is empty and no edit lease became active
+            # after the row was read.
+            active_item_hold = (
+                select(SqlAgentQueueItem.id)
+                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
+                .where(SqlAgentQueueItem.id == item_id)
+                .where(SqlAgentQueueItem.edit_lease_token.is_not(None))
+                .where(SqlAgentQueueItem.edit_lease_expires_at.is_not(None))
+                .where(SqlAgentQueueItem.edit_lease_expires_at > now)
+                .exists()
+            )
             claim = (
                 update(SqlAgentQueue)
                 .where(SqlAgentQueue.workspace_id == current_workspace_id())
@@ -357,6 +383,14 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 .where(SqlAgentQueue.owner_user_id == key.owner_user_id)
                 .where(SqlAgentQueue.scope_id == _scope_to_column(key.scope_id))
                 .where(SqlAgentQueue.inflight_item_id.is_(None))
+                .where(~active_item_hold)
+                .where(
+                    or_(
+                        SqlAgentQueue.inspection_hold_token.is_(None),
+                        SqlAgentQueue.inspection_hold_expires_at.is_(None),
+                        SqlAgentQueue.inspection_hold_expires_at <= now,
+                    )
+                )
                 .values(inflight_item_id=item_id, inflight_since=now, updated_at=now)
             )
             if session.execute(claim).rowcount != 1:
@@ -565,12 +599,76 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             session.flush()
             return _queue_to_entity(row)
 
+    def acquire_inspection_hold(
+        self,
+        key: AgentQueueKey,
+        token: str,
+        *,
+        now: int,
+        ttl_s: int,
+    ) -> AgentQueue:
+        scope = _scope_to_column(key.scope_id)
+        with self._session() as session:
+            row = self._get_queue_row(session, key)
+            if row is None:
+                row = SqlAgentQueue(
+                    role=key.role,
+                    owner_user_id=key.owner_user_id,
+                    scope_id=scope,
+                    state=encode_agent_queue_state("active"),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+                session.flush()
+            if (
+                row.inspection_hold_token is not None
+                and row.inspection_hold_token != token
+                and row.inspection_hold_expires_at is not None
+                and row.inspection_hold_expires_at > now
+            ):
+                raise ValueError("queue already has an active inspection hold")
+            row.inspection_hold_token = token
+            row.inspection_hold_expires_at = now + ttl_s
+            row.updated_at = now
+            session.flush()
+            return _queue_to_entity(row)
+
+    def release_inspection_hold(self, key: AgentQueueKey, token: str) -> bool:
+        with self._session() as session:
+            row = self._get_queue_row(session, key)
+            if row is None or row.inspection_hold_token != token:
+                return False
+            row.inspection_hold_token = None
+            row.inspection_hold_expires_at = None
+            row.next_due_at = None
+            row.updated_at = now_epoch()
+            session.flush()
+            return True
+
     def get_item(self, item_id: str) -> AgentQueueItem | None:
         with self._session() as session:
             row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
             if row is None:
                 return None
             return _item_to_entity(row)
+
+    def find_open_item_for_source(
+        self, source_id: str, *, role: str | None = None
+    ) -> AgentQueueItem | None:
+        with self._session() as session:
+            stmt = (
+                select(SqlAgentQueueItem)
+                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
+                .where(SqlAgentQueueItem.state.in_(_open_item_codes()))
+                .order_by(desc(SqlAgentQueueItem.seq), desc(SqlAgentQueueItem.id))
+            )
+            if role is not None:
+                stmt = stmt.where(SqlAgentQueueItem.role == role)
+            for row in session.execute(stmt).scalars().all():
+                if source_id in _decode_source_ids(row.source_ids):
+                    return _item_to_entity(row)
+            return None
 
     def list_items(
         self,
@@ -594,24 +692,117 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             rows = session.execute(stmt).scalars().all()
             return [_item_to_entity(row) for row in rows]
 
+    def acquire_item_edit_lease(
+        self,
+        item_id: str,
+        token: str,
+        *,
+        now: int,
+        ttl_s: int,
+    ) -> AgentQueueItem | None:
+        with self._session() as session:
+            stmt = (
+                update(SqlAgentQueueItem)
+                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
+                .where(SqlAgentQueueItem.id == item_id)
+                .where(SqlAgentQueueItem.state == encode_agent_queue_item_state("queued"))
+                .where(
+                    or_(
+                        SqlAgentQueueItem.edit_lease_token.is_(None),
+                        SqlAgentQueueItem.edit_lease_token == token,
+                        SqlAgentQueueItem.edit_lease_expires_at.is_(None),
+                        SqlAgentQueueItem.edit_lease_expires_at <= now,
+                    )
+                )
+                .values(
+                    edit_lease_token=token,
+                    edit_lease_expires_at=now + ttl_s,
+                    updated_at=now,
+                )
+            )
+            if session.execute(stmt).rowcount != 1:
+                return None
+            session.flush()
+            row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
+            return _item_to_entity(row) if row is not None else None
+
+    def release_item_edit_lease(self, item_id: str, token: str) -> bool:
+        with self._session() as session:
+            row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
+            if row is None or row.edit_lease_token != token:
+                return False
+            row.edit_lease_token = None
+            row.edit_lease_expires_at = None
+            row.updated_at = now_epoch()
+            queue = self._get_queue_row(session, _item_to_entity(row).key)
+            if queue is not None:
+                queue.next_due_at = None
+                queue.updated_at = row.updated_at
+            session.flush()
+            return True
+
     def update_item(
         self,
         item_id: str,
         *,
         payload: str | None = _UNSET,
         not_before: int | None = _UNSET,
+        edit_lease_token: str | None = None,
     ) -> AgentQueueItem | None:
+        now = now_epoch()
         with self._session() as session:
             row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
             if row is None:
                 return None
-            if row.state != encode_agent_queue_item_state("queued"):
+            editable_states = (
+                encode_agent_queue_item_state("queued"),
+                encode_agent_queue_item_state("interrupted"),
+                encode_agent_queue_item_state("dispatch_failed"),
+            )
+            if row.state not in editable_states:
+                return None
+            if (
+                row.state == encode_agent_queue_item_state("queued")
+                and edit_lease_token is not None
+                and (
+                    row.edit_lease_token != edit_lease_token
+                    or row.edit_lease_expires_at is None
+                    or row.edit_lease_expires_at <= now
+                )
+            ):
                 return None
             if payload is not _UNSET:
                 row.payload = payload
             if not_before is not _UNSET:
                 row.not_before = not_before
-            row.updated_at = now_epoch()
+            row.updated_at = now
+            session.flush()
+            return _item_to_entity(row)
+
+    def retry_parked_item(self, item_id: str, *, now: int) -> AgentQueueItem | None:
+        with self._session() as session:
+            row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
+            parked = (
+                encode_agent_queue_item_state("dispatch_failed"),
+                encode_agent_queue_item_state("interrupted"),
+            )
+            if row is None or row.state not in parked:
+                return None
+            row.state = encode_agent_queue_item_state("queued")
+            row.last_error = None
+            row.completed_at = None
+            row.dispatched_at = None
+            row.edit_lease_token = None
+            row.edit_lease_expires_at = None
+            row.updated_at = now
+            queue = self._get_queue_row(session, _item_to_entity(row).key)
+            if queue is not None:
+                queue.state = encode_agent_queue_state("active")
+                queue.last_error = None
+                queue.next_due_at = None
+                queue.lease_owner = None
+                queue.lease_expires_at = None
+                queue.updated_at = now
             session.flush()
             return _item_to_entity(row)
 

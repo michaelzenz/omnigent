@@ -2417,3 +2417,33 @@ aside[aria-label="Workspace"][data-maximized] {
   height: var(--emoji-picker-height, 420px) !important;
   min-height: 0 !important;
 }
+
+/* PuppyGarden cards own only the board surface; the global application sidebar
+ * remains outside this layout. Card columns stack based on card width so the
+ * assets/workers rail cannot be clipped by the chat sidebar. */
+.puppy-garden-shell {
+  grid-template-columns: minmax(0, 1fr) clamp(18rem, 36vw, 26.25rem);
+}
+
+.puppy-task-card {
+  container-name: task-card;
+  container-type: inline-size;
+}
+
+.puppy-task-card-body {
+  grid-template-columns: minmax(16rem, 0.9fr) minmax(22rem, 1.3fr) minmax(15rem, 18rem);
+}
+
+@container task-card (max-width: 58rem) {
+  .puppy-task-card-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 48rem) {
+  .puppy-garden-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(60%, 1fr) minmax(18rem, 40%);
+    overflow: auto;
+  }
+}

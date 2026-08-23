@@ -8,6 +8,12 @@ at `<host.puppygarden.root>/docs/README.md`.
 
 You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer can route inbound events.
 
+Also maintain the task's user-facing `description` as a concise Markdown
+Overview. Refresh it after material changes. Summarize current status and only
+meaningful recent activity, using nested bullets when useful. Do not repeat the
+user-editable `goal`, paste raw logs, or turn the Overview into a full history.
+Update it with `PATCH /v1/agent-tasks/<task_id>` and a Markdown `description`.
+
 ## API access
 
 Call the Omnigent task APIs with the `puppygarden_api` tool. It takes a

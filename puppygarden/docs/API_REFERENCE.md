@@ -33,6 +33,9 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/agent-tasks/batch` |
 | GET | `/v1/agent-tasks/{id}` |
 | PATCH | `/v1/agent-tasks/{id}` |
+| POST | `/v1/agent-tasks/{id}/move-to-queue-end` |
+| POST | `/v1/agent-tasks/{id}/manager-queue-hold` |
+| DELETE | `/v1/agent-tasks/{id}/manager-queue-hold/{token}` |
 | DELETE | `/v1/agent-tasks/{id}` |
 | PUT | `/v1/agent-tasks/{id}/tags` |
 | GET | `/v1/agent-tasks/{id}/executions` |
@@ -47,6 +50,30 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | POST | `/v1/agent-tasks/{id}/accept-package` |
 | POST | `/v1/agent-tasks/{id}/reject-package` |
 
+Task create and update bodies accept `priority` as an integer from 0 (P0,
+highest) through 3 (P3), defaulting to 2. Task responses include `priority` and
+`queue_rank`. Lists are ordered by `queue_rank DESC, id DESC`. Creating a task
+places it at the front; creating a task item bumps its parent to the front; the
+move endpoint places it at the end without changing audit timestamps.
+
+The dashboard task object includes `goal`, `created_at`, `priority`, and
+`queue_rank`. It also returns every nonterminal, non-cancelled task item in
+`active_items`, plus `recent_done_items.all` and
+`recent_done_items.by_worker`, each capped at the three newest done items by
+`updated_at DESC, id DESC`. Cancelled items are omitted from these V2 buckets
+and from the user-facing task-item list.
+
+Selecting a Manager acquires a tokenized, expiring queue hold. The hold blocks
+new manager dispatches without changing a pre-existing active, paused, or halted
+queue state; releasing it re-arms scanning. Opening a queued item's instruction
+editor or worker picker similarly acquires an item edit lease. PATCH/assignment
+requests for queued dispatch data must include that token, and the UI renews
+both hold types while the relevant control remains open.
+
+Task assets retain their format `kind` and add a grouping `category`: `code`,
+`tests`, `documents`, `logs`, or `other` (the default). Asset create and all
+asset/dashboard responses round-trip both fields.
+
 ## Task items
 
 | Method | Path |
@@ -55,6 +82,9 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | PATCH | `/v1/task-items/{id}` |
 | POST | `/v1/task-items/{id}/dispatch` |
 | POST | `/v1/task-items/{id}/retry-dispatch` |
+| POST | `/v1/task-items/{id}/cancel` |
+| POST | `/v1/task-items/{id}/edit-lease` |
+| DELETE | `/v1/task-items/{id}/edit-lease/{token}` |
 
 ## Agent queues
 

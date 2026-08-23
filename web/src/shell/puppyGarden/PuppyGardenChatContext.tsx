@@ -1,4 +1,15 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { acquireManagerQueueHold, releaseManagerQueueHold } from "@/lib/agentTasksApi";
+import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 
 const LAST_ROLE_KEY = "puppy-garden:last-role";
 
@@ -44,7 +55,7 @@ export interface PuppyGardenChatContextValue {
   target: PuppyGardenChatTarget;
   homeRole: PuppyGardenRole;
   setRole: (role: PuppyGardenRole) => void;
-  openManager: (taskId: string, conversationId: string | null, title: string) => void;
+  openManager: (taskId: string, conversationId: string | null, title: string) => Promise<void>;
   openWorker: (
     taskId: string,
     workerId: string,
@@ -65,29 +76,69 @@ export function PuppyGardenChatProvider({ children }: { children: ReactNode }) {
     role: readStoredRole(),
   }));
 
-  const setRole = useCallback((role: PuppyGardenRole) => {
-    writeStoredRole(role);
-    setHomeRole(role);
-    setTarget({ kind: "role", role });
+  const managerHoldRef = useRef<{ taskId: string; token: string } | null>(null);
+
+  const releaseManagerHold = useCallback(() => {
+    const hold = managerHoldRef.current;
+    managerHoldRef.current = null;
+    if (hold) void releaseManagerQueueHold(hold.taskId, hold.token).catch(() => undefined);
   }, []);
 
+  const setRole = useCallback(
+    (role: PuppyGardenRole) => {
+      releaseManagerHold();
+      writeStoredRole(role);
+      setHomeRole(role);
+      setTarget({ kind: "role", role });
+    },
+    [releaseManagerHold],
+  );
+
   const openManager = useCallback(
-    (taskId: string, conversationId: string | null, title: string) => {
+    async (taskId: string, conversationId: string | null, title: string) => {
+      if (isPuppyGardenFixtureMode()) {
+        setTarget({ kind: "manager", taskId, conversationId, title });
+        return;
+      }
+      const current = managerHoldRef.current;
+      if (current?.taskId === taskId) {
+        await acquireManagerQueueHold(taskId, current.token);
+        setTarget({ kind: "manager", taskId, conversationId, title });
+        return;
+      }
+      const hold = await acquireManagerQueueHold(taskId);
+      managerHoldRef.current = { taskId, token: hold.token };
       setTarget({ kind: "manager", taskId, conversationId, title });
+      if (current) {
+        void releaseManagerQueueHold(current.taskId, current.token).catch(() => undefined);
+      }
     },
     [],
   );
 
   const openWorker = useCallback(
     (taskId: string, workerId: string, conversationId: string | null, label: string) => {
+      releaseManagerHold();
       setTarget({ kind: "worker", taskId, workerId, conversationId, label });
     },
-    [],
+    [releaseManagerHold],
   );
 
   const dismissToRole = useCallback(() => {
+    releaseManagerHold();
     setTarget({ kind: "role", role: homeRole });
-  }, [homeRole]);
+  }, [homeRole, releaseManagerHold]);
+
+  useEffect(() => {
+    const heartbeat = window.setInterval(() => {
+      const hold = managerHoldRef.current;
+      if (hold) void acquireManagerQueueHold(hold.taskId, hold.token).catch(releaseManagerHold);
+    }, 45_000);
+    return () => {
+      window.clearInterval(heartbeat);
+      releaseManagerHold();
+    };
+  }, [releaseManagerHold]);
 
   const isManagerSelected = useCallback(
     (taskId: string) => target.kind === "manager" && target.taskId === taskId,

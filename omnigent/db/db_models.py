@@ -1436,9 +1436,7 @@ class SqlToolPreferences(OmnigentBase):
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    __table_args__ = (
-        CheckConstraint("id = 1", name="ck_tool_preferences_singleton"),
-    )
+    __table_args__ = (CheckConstraint("id = 1", name="ck_tool_preferences_singleton"),)
 
 
 class SqlHost(OmnigentBase):
@@ -2002,11 +2000,15 @@ class SqlTask(OmnigentBase):
     internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2")
+    queue_rank: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         CheckConstraint("state IN (1, 2, 3, 4)", name="ck_tasks_state"),
+        CheckConstraint("priority BETWEEN 0 AND 3", name="ck_tasks_priority"),
+        Index("ix_tasks_queue_rank", "workspace_id", "state", "queue_rank", "id"),
         Index("ix_tasks_state_updated", "workspace_id", "state", "updated_at", "id"),
         Index("ix_tasks_manager_role_key", "workspace_id", "manager_role_key", "id"),
         Index("ix_tasks_created_at", "workspace_id", "created_at", "id"),
@@ -2169,12 +2171,17 @@ class SqlTaskAsset(OmnigentBase):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, server_default="other")
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
 
     __table_args__ = (
         CheckConstraint("kind IN ('url')", name="ck_task_assets_kind"),
+        CheckConstraint(
+            "category IN ('code', 'tests', 'documents', 'logs', 'other')",
+            name="ck_task_assets_category",
+        ),
         Index("ix_task_assets_task", "workspace_id", "task_id", "id"),
     )
 
@@ -2484,6 +2491,8 @@ class SqlAgentQueue(OmnigentBase):
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inspection_hold_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    inspection_hold_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_due_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     inflight_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     inflight_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -2534,6 +2543,8 @@ class SqlAgentQueueItem(OmnigentBase):
     # arbitrarily. Assigned monotonically per workspace.
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     not_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edit_lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    edit_lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
