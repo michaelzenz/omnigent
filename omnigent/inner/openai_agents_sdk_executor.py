@@ -1201,26 +1201,19 @@ class OpenAIAgentsSDKExecutor(Executor):
                 )
 
                 class _SafeCompactionSession(OpenAIResponsesCompactionSession):
-                    """Compaction session that treats compaction failures as non-fatal.
+                    """Compaction session that raises on compaction failure.
 
                     The responses.compact API may not be available on all
-                    endpoints (mock servers, some proxies). A 404 or other
-                    failure should not kill the turn — the session continues
-                    without compaction.
+                    endpoints. A failure kills the turn — without compaction
+                    the context grows unbounded and the agent cannot function
+                    correctly.
                     """
 
                     async def run_compaction(
                         self,
                         args: OpenAIResponsesCompactionArgs | None = None,
                     ) -> None:
-                        try:
-                            await super().run_compaction(args)
-                        except Exception:  # noqa: BLE001
-                            logger.debug(
-                                "Compaction call failed (endpoint may not support "
-                                "responses.compact), continuing without compaction",
-                                exc_info=True,
-                            )
+                        await super().run_compaction(args)
 
                 sdk_session = cast(
                     _SDKSession,
