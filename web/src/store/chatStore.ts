@@ -1376,7 +1376,10 @@ export function gcPendingInitialPrompts(now: number = Date.now()): void {
 /** Arm the periodic GC timer if it isn't already running. */
 function ensurePendingPromptGcTimer(): void {
   if (pendingPromptGcTimer !== null) return;
-  pendingPromptGcTimer = setInterval(() => void gcPendingInitialPrompts(), PENDING_PROMPT_GC_INTERVAL_MS);
+  pendingPromptGcTimer = setInterval(
+    () => void gcPendingInitialPrompts(),
+    PENDING_PROMPT_GC_INTERVAL_MS,
+  );
 }
 
 /**
@@ -1753,9 +1756,11 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           ...fileBlocks,
           ...(head.text.trim() ? [{ type: "input_text" as const, text: head.text }] : []),
         ];
+        const modelOverride = setterForState(conversationId)?.sessionModelOverride ?? null;
         await postEvent(conversationId, {
           type: "message",
           data: { role: "user", content },
+          ...(modelOverride !== null ? { model_override: modelOverride } : {}),
         });
       })()
         .catch(() => {
@@ -1797,6 +1802,13 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // entry instead of the root store's active projection. Used by the
     // store-level initial-prompt auto-send for background sessions.
     const submitConversationId = opts?.pinnedConversationId ?? get().conversationId;
+    const submitState = opts?.pinnedConversationId
+      ? setterForState(opts.pinnedConversationId)
+      : get();
+    // Pin the optimistic picker value to this send. The model PATCH and the
+    // message POST use separate connections, so the POST can otherwise reach
+    // the server first and run one turn on the previous model.
+    const submitModelOverride = submitState?.sessionModelOverride ?? null;
     const targetSetter = opts?.pinnedConversationId
       ? setterFor(opts.pinnedConversationId)
       : setActive;
@@ -1913,6 +1925,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           content: serverContent,
         },
         ...(opts?.interruptFirst ? { interrupt_first: true } : {}),
+        ...(submitModelOverride !== null ? { model_override: submitModelOverride } : {}),
       });
       // Policy denied the input — the server returned immediately
       // without starting a turn or persisting the user message, so

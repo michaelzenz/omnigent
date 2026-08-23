@@ -168,7 +168,12 @@ export type SessionStatus = "idle" | "launching" | "running" | "waiting" | "fail
  * Mirrors `omnigent.server.schemas.SessionEventInput`.
  */
 export type SessionEventInput =
-  | { type: "message"; data: { role: "user"; content: ContentBlock[] }; interrupt_first?: boolean }
+  | {
+      type: "message";
+      data: { role: "user"; content: ContentBlock[] };
+      interrupt_first?: boolean;
+      model_override?: string;
+    }
   | { type: "function_call_output"; data: Record<string, unknown> }
   | { type: "approval"; data: Record<string, unknown> }
   | { type: "interrupt"; data?: Record<string, unknown> }
@@ -237,9 +242,7 @@ export interface ModelUsage {
 }
 
 export type PromptProfileSelection =
-  | { mode: "auto" }
-  | { mode: "auto_include" }
-  | { mode: "fixed"; profileId: string };
+  { mode: "auto" } | { mode: "auto_include" } | { mode: "fixed"; profileId: string };
 
 export interface Session {
   id: string;

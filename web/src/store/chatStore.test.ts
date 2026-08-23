@@ -2432,6 +2432,27 @@ describe("chatStore — send (first-send ordering)", () => {
     expect(state.sessionStatus).toBe("running");
   });
 
+  it("sends the selected model in-band so it cannot race its session PATCH", async () => {
+    useChatStore.setState({
+      conversationId: "conv_existing",
+      abortController: new AbortController(),
+      sessionModelOverride: "databricks-claude-opus-4-8",
+    });
+
+    await useChatStore.getState().send("use the selected model", "agent_xyz");
+
+    const post = fetchMock.mock.calls.find(
+      ([u, init]) =>
+        String(u) === "/v1/sessions/conv_existing/events" &&
+        (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(post).toBeDefined();
+    expect(JSON.parse((post![1] as RequestInit).body as string)).toMatchObject({
+      type: "message",
+      model_override: "databricks-claude-opus-4-8",
+    });
+  });
+
   it("duplicate-bind: navigation-triggered switchTo after first send is a no-op", async () => {
     // After send creates a session, it sets conversationId and calls
     // bindStream. The caller's onConversationCreated navigates to
@@ -9231,7 +9252,10 @@ describe("gcPendingInitialPrompts", () => {
     gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
 
     expect(peekPendingInitialPrompt("conv_mix_stale")).toBeNull();
-    expect(peekPendingInitialPrompt("conv_mix_creating")).toEqual({ text: "creating", skill: null });
+    expect(peekPendingInitialPrompt("conv_mix_creating")).toEqual({
+      text: "creating",
+      skill: null,
+    });
     releaseConversation("conv_mix_creating");
   });
 });
