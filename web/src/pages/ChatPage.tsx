@@ -98,6 +98,7 @@ import { CompactionMarker, RoutingDecisionCard } from "@/components/blocks/Statu
 import { SystemMessageView } from "@/components/blocks/SystemMessage";
 import { isSystemUserContent, parseSystemMessage } from "@/lib/systemMessage";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { BrandLogo } from "@/components/BrandLogo";
 import { useAppName } from "@/lib/branding";
 import { StreamBudgetBanner } from "@/components/StreamBudgetBanner";
@@ -125,6 +126,12 @@ import type { SshConnection } from "@/lib/sshConnectionPreferences";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { agentRootName, switchTargetCarriesHistory } from "@/lib/forkHarness";
+import {
+  harnessUnavailableReasonOnHost,
+  harnessUnconfiguredOnHost,
+  harnessWarningBadgeText,
+} from "@/lib/harnessSetup";
+import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { getSessionSlim, switchSessionAgent } from "@/lib/sessionsApi";
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
@@ -258,7 +265,7 @@ import {
   nativeModelLabel,
 } from "@/components/HarnessConfigControls";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
-import type { ServerInfo } from "@/lib/capabilities";
+import { isFeatureEnabled, type ServerInfo } from "@/lib/capabilities";
 import { MainTerminalView } from "@/shell/MainTerminalView";
 import { ChatPlanAccordion } from "@/shell/ChatPlanAccordion";
 import { UNTITLED_CONVERSATION_LABEL } from "@/shell/sidebarNav";
@@ -1237,16 +1244,34 @@ export function ChatPage() {
   const switchTargets = useMemo(() => {
     const currentName = boundAgentBySession?.name ?? null;
     const currentRoot = currentName ? agentRootName(currentName) : null;
+    // When "hide unconfigured" is ON, drop harnesses that can't launch on the
+    // session's host — mirroring the new-session picker. Fails open: unknown
+    // readiness (no host / no map) keeps the row visible.
+    const hideUnconfigured = readHideUnconfiguredHarnesses();
+    const collapsedBadge = isFeatureEnabled(serverInfo, "harness_install");
     return (availableAgents ?? [])
       .filter(
         (a) =>
           a.id !== boundAgentBySession?.id &&
           a.name !== currentName &&
           a.name !== currentRoot &&
-          switchTargetCarriesHistory(a.harness),
+          switchTargetCarriesHistory(a.harness) &&
+          !(hideUnconfigured && harnessUnconfiguredOnHost(a.harness, sessionHost)),
       )
-      .map((a) => ({ id: a.id, displayName: a.display_name }));
-  }, [availableAgents, boundAgentBySession]);
+      .map((a) => {
+        const reason = harnessUnavailableReasonOnHost(a.harness, sessionHost);
+        const availability = a.harness
+          ? sessionHost?.configured_harnesses?.[a.harness]
+          : undefined;
+        return {
+          id: a.id,
+          displayName: a.display_name,
+          warningText:
+            reason !== null ? harnessWarningBadgeText(reason, collapsedBadge) : null,
+          configured: availability === true,
+        };
+      });
+  }, [availableAgents, boundAgentBySession, sessionHost, serverInfo]);
   const handleSwitchAgent = useCallback(
     (targetAgentId: string) => {
       if (!urlConvId || switchingAgentRef.current) return;
@@ -8476,6 +8501,10 @@ export function ComposerSdkModelSelect({
 interface SwitchTargetRow {
   id: string;
   displayName: string;
+  /** Amber-badge text for an unconfigured harness, or null when ready/unknown. */
+  warningText: string | null;
+  /** Whether the harness is explicitly configured on the session's host. */
+  configured: boolean;
 }
 
 /**
@@ -8495,6 +8524,10 @@ function ComposerExecutionTargetQuickSelect({
   switchTargets?: readonly SwitchTargetRow[];
   onSwitchAgent?: (agentId: string) => void;
 }) {
+  // Read the "hide unconfigured" preference locally so it doesn't need to
+  // thread through every intermediate component — same localStorage read the
+  // new-session picker does.
+  const hideUnconfigured = readHideUnconfiguredHarnesses();
   const targets = switchTargets ?? [];
   const trigger = (
     <Button
@@ -8528,6 +8561,30 @@ function ComposerExecutionTargetQuickSelect({
               onSelect={() => onSwitchAgent?.(agent.id)}
             >
               <span className="truncate">{agent.displayName}</span>
+              {/* When "hide unconfigured" is ON, all visible targets are
+                  configured, so badges are redundant. When OFF, show amber for
+                  unconfigured and green "Configured" for the rest — mirroring
+                  the new-session picker. */}
+              {!hideUnconfigured && agent.warningText !== null && (
+                <Badge
+                  variant="outline"
+                  className="ml-auto self-center border-amber-300 bg-amber-50 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400"
+                  data-testid={`composer-execution-target-warning-${agent.id}`}
+                >
+                  {agent.warningText}
+                </Badge>
+              )}
+              {!hideUnconfigured &&
+                agent.warningText === null &&
+                agent.configured && (
+                  <Badge
+                    variant="outline"
+                    className="ml-auto self-center border-emerald-300 bg-emerald-50 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
+                    data-testid={`composer-execution-target-configured-${agent.id}`}
+                  >
+                    Configured
+                  </Badge>
+                )}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

@@ -1125,6 +1125,11 @@ export function AgentHarnessPicker({
     () => new Set(harnessEntries.map((agent) => agent.id)),
     [harnessEntries],
   );
+  // Opt-in "hide unconfigured harnesses" filter (Settings › Appearance). When
+  // on, drop harness rows that can't launch on the selected host. Fails open:
+  // harnessUnconfiguredOnHost returns false with no host / no readiness map, so
+  // nothing is hidden in those cases, and unrecognized harnesses stay visible.
+  const hideUnconfigured = useMemo(() => readHideUnconfiguredHarnesses(), []);
   const renderBadge = (agent: AvailableAgent) => {
     const unavailableReason = harnessUnavailableReasonOnHost(agent.harness, host);
     if (unavailableReason !== null) {
@@ -1138,6 +1143,10 @@ export function AgentHarnessPicker({
         </Badge>
       );
     }
+    // When "hide unconfigured" is ON, every visible harness is configured by
+    // definition (unconfigured ones are filtered out below), so the green
+    // "Configured" badge is redundant — only show it when the toggle is OFF.
+    if (hideUnconfigured) return null;
     const availability = agent.harness ? host?.configured_harnesses?.[agent.harness] : undefined;
     return harnessEntryIds.has(agent.id) && availability === true ? (
       <Badge
@@ -1170,11 +1179,6 @@ export function AgentHarnessPicker({
     );
   };
 
-  // Opt-in "hide unconfigured harnesses" filter (Settings › Appearance). When
-  // on, drop harness rows that can't launch on the selected host. Fails open:
-  // harnessUnconfiguredOnHost returns false with no host / no readiness map, so
-  // nothing is hidden in those cases, and unrecognized harnesses stay visible.
-  const hideUnconfigured = useMemo(() => readHideUnconfiguredHarnesses(), []);
   const { recentHarnesses } = useRecentHarnesses();
   // Split harnesses by support level: the fully supported ones lead the primary
   // list, and every other harness folds into "More" whether or not it is

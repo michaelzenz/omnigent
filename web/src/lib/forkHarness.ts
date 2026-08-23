@@ -123,22 +123,27 @@ const PREAMBLE_FORK_HARNESSES: ReadonlySet<string> = new Set([
  * failed to load) and for native harnesses with no carry path
  * (kiro/kimi/goose).
  *
- * NOTE: the SDK branch is `harnessFamily(h) !== null`, which also matches the
- * one native harness that has a single family today — antigravity-native
- * (gemini). That preserves Antigravity's prior presence in the pickers, but a
- * native Antigravity fork is in NEITHER server carry-set, so whether it truly
- * carries is unverified. TODO(fork-switch): confirm, then move it to a carry
- * set or drop it rather than leaning on this proxy.
+ * The SDK branch uses `harnessFamily(h) !== null` to catch SDK harnesses
+ * (claude-sdk, openai-agents) that replay the transcript as context. A
+ * native harness with a known family (antigravity-native → gemini) would
+ * slip through that proxy, but the server declares ForkHistory.NONE for it
+ * (no rebuild, no preamble, no SDK replay), so `isNativeHarness` gates the
+ * SDK branch to exclude it.
  *
  * @param targetHarness - The harness the fork would bind.
  */
 export function forkTargetCarriesHistory(targetHarness: string | null | undefined): boolean {
   if (!targetHarness) return false;
-  return (
+  if (
     NATIVE_REBUILD_HARNESSES.has(targetHarness) ||
-    PREAMBLE_FORK_HARNESSES.has(targetHarness) ||
-    harnessFamily(targetHarness) !== null
-  );
+    PREAMBLE_FORK_HARNESSES.has(targetHarness)
+  )
+    return true;
+  // SDK harnesses replay AP items as context. A native TUI with a family
+  // (antigravity-native → gemini) is NOT an SDK agent — the server declares
+  // ForkHistory.NONE — so exclude it from the SDK branch.
+  if (isNativeHarness(targetHarness)) return false;
+  return harnessFamily(targetHarness) !== null;
 }
 
 /**
@@ -151,11 +156,20 @@ export function forkTargetCarriesHistory(targetHarness: string | null | undefine
  * carry-history only for `_FORK_HISTORY_NATIVE_HARNESSES`, never the cursor
  * set.
  *
+ * A native harness with a known family (antigravity-native → gemini) is
+ * excluded the same way as in fork: the server declares ForkHistory.NONE for
+ * it, so `isNativeHarness` gates the SDK branch.
+ *
  * @param targetHarness - The harness the switch would bind.
  */
 export function switchTargetCarriesHistory(targetHarness: string | null | undefined): boolean {
   if (!targetHarness) return false;
-  return NATIVE_REBUILD_HARNESSES.has(targetHarness) || harnessFamily(targetHarness) !== null;
+  if (NATIVE_REBUILD_HARNESSES.has(targetHarness)) return true;
+  // SDK harnesses replay AP items as context. A native TUI with a family
+  // (antigravity-native → gemini) is NOT an SDK agent — the server declares
+  // ForkHistory.NONE — so exclude it from the SDK branch.
+  if (isNativeHarness(targetHarness)) return false;
+  return harnessFamily(targetHarness) !== null;
 }
 
 /**
