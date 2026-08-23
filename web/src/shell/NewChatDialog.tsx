@@ -5461,9 +5461,7 @@ export function NewChatLandingScreen() {
                       <button
                         type="button"
                         aria-pressed={autoCreateWorktree}
-                        aria-label={
-                          autoCreateWorktree ? "Auto new worktree" : "Custom new worktree"
-                        }
+                        aria-label="Auto new worktree"
                         onClick={() => {
                           setAutoCreateWorktree((enabled) => {
                             const next = !enabled;
@@ -5482,9 +5480,7 @@ export function NewChatLandingScreen() {
                         data-testid="new-chat-auto-worktree-toggle"
                       >
                         <WandSparklesIcon className="size-3.5" />
-                        <span>
-                          {autoCreateWorktree ? "Auto new worktree" : "Custom new worktree"}
-                        </span>
+                        <span>Auto new worktree</span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
