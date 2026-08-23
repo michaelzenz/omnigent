@@ -9,6 +9,7 @@ import {
   GitBranchIcon,
   InfoIcon,
   MonitorIcon,
+  WandSparklesIcon,
 } from "lucide-react";
 import {
   Dialog,
@@ -38,6 +39,7 @@ import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
 import { agentRootName, forkTargetCarriesHistory } from "@/lib/forkHarness";
 import { checkHostDirectory } from "@/hooks/useHostFilesystem";
+import { useHostRepository } from "@/hooks/useHostWorktrees";
 import { getCliServerUrl } from "@/lib/host";
 import { WorkspacePicker, isNavigablePath } from "./WorkspacePicker";
 import { WorkspacePathField } from "./WorkspacePathField";
@@ -141,14 +143,12 @@ function defaultForkTitle(sourceTitle: string | null | undefined): string {
  * failure (nothing created) surfaces inline and the inputs stay editable for
  * a straight resubmit.
  *
- * Host/dir prefill from the *source*: its host is the default (when online)
- * and its workspace the default directory. When the source ran in a
- * server-created worktree, the prefill is instead the ORIGINAL repo as the
- * directory plus the source branch in the worktree field; submitted
- * untouched, the clone binds to the source's existing worktree directory
- * (renaming the branch creates a fresh worktree, automatically based off
- * the source branch). The Fork button greys out until a valid
- * online host + directory are chosen (no CLI fallback).
+ * Host/dir prefill comes from the source. For a Git workspace on a capable
+ * source host, auto worktree mode is the default: the fork endpoint creates
+ * and leases an isolated worktree before launching. Turning it off preserves
+ * the existing reuse/custom flow, including the source-worktree prefill and
+ * manual branch field. The Fork button greys out until repository inspection
+ * completes and a valid online host + directory are available.
  *
  * All form state lives here, inside the dialog content, so closing the
  * dialog unmounts the form and resets it — no manual reset needed.
@@ -209,6 +209,8 @@ export function ForkSessionForm({
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState("");
   const [branchName, setBranchName] = useState("");
+  const [autoCreateWorktree, setAutoCreateWorktree] = useState(false);
+  const autoWorktreeInitializedRef = useRef(false);
   const [browsing, setBrowsing] = useState(false);
   const [browseNonce, setBrowseNonce] = useState(0);
   // Whether the "connect another host" CLI hint is expanded (only shown when
@@ -363,6 +365,24 @@ export function ForkSessionForm({
   // Directory the clone will actually start in — feeds the conflict check,
   // the reuse-dir tooltip, the pre-flight, and the launch itself.
   const effectiveWorkspace = usingSourceWorktree ? (sourceWorkspaceNorm ?? "") : workspaceTrimmed;
+  const { data: sourceRepository, isLoading: sourceRepositoryLoading } = useHostRepository(
+    onSourceHost ? selectedHostId : null,
+    onSourceHost ? sourceWorkspaceNorm : null,
+  );
+  const autoWorktreeSupported = sourceRepository?.autoWorktreesSupported === true;
+  const sourceIsGitRepository = sourceRepository?.isGitRepository === true;
+
+  useEffect(() => {
+    if (!onSourceHost || !sourceIsGitRepository || !autoWorktreeSupported) {
+      setAutoCreateWorktree(false);
+      return;
+    }
+    if (!autoWorktreeInitializedRef.current) {
+      autoWorktreeInitializedRef.current = true;
+      setAutoCreateWorktree(true);
+    }
+  }, [onSourceHost, sourceIsGitRepository, autoWorktreeSupported]);
+
   // The picked host must still be ONLINE, not merely selected: hosts refetch
   // periodically, so a previously-picked host can go offline while selected.
   // Gating on online-ness keeps the button greyed (and avoids a launchRunner
@@ -370,7 +390,10 @@ export function ForkSessionForm({
   const selectedHostOnline =
     selectedHostId !== null && onlineHosts.some((h) => h.host_id === selectedHostId);
   // A coding source can only start once a live host + valid directory are picked.
-  const canSubmit = !isCodingSource || (selectedHostOnline && workspaceValid);
+  const repositoryInspectionPending =
+    onSourceHost && sourceWorkspaceNorm !== null && sourceRepositoryLoading;
+  const canSubmit =
+    !isCodingSource || (selectedHostOnline && workspaceValid && !repositoryInspectionPending);
 
   // Conflict hint: other *connected* sessions already working in the picked
   // directory on this host (same wiring as NewChatDialog).
@@ -400,7 +423,9 @@ export function ForkSessionForm({
   // A NEW branch means an isolated worktree, so no conflict; reusing the
   // source's existing worktree shares its directory like a blank branch does.
   const showConflictHint =
-    (branchName.trim() === "" || usingSourceWorktree) && conflictingSessions.length > 0;
+    !autoCreateWorktree &&
+    (branchName.trim() === "" || usingSourceWorktree) &&
+    conflictingSessions.length > 0;
 
   // Reveal Advanced (once) only when running on a DIFFERENT host than the
   // source — a fresh directory must be picked there, so the field can't stay
@@ -461,20 +486,16 @@ export function ForkSessionForm({
       }
       const trimmed = title.trim();
       // Empty title → omit so the server derives "Fork of <source title>".
-      const fork = await forkSession(
-        sourceSessionId,
-        trimmed === "" ? undefined : trimmed,
-        switching ? agentChoice : undefined,
-        upToResponseId ?? undefined,
-      );
-      // Coding fork: launch the runner in the BACKGROUND, then navigate
-      // into the (already-created, unbound) clone immediately — awaiting the
-      // launch would block the modal for a worktree create (up to minutes)
-      // and hang on a dropped response. If the launch fails the clone stays
-      // unbound; ChatPage's existing unbound-fork path lets the user retry
-      // the bind via the directory picker. (A follow-up will surface the
-      // failure proactively + show "Connecting…" for the whole launch.)
-      if (isCodingSource && selectedHostId) {
+      const fork = await forkSession(sourceSessionId, {
+        title: trimmed === "" ? undefined : trimmed,
+        agentId: switching ? agentChoice : undefined,
+        upToResponseId: upToResponseId ?? undefined,
+        autoWorktree: autoCreateWorktree,
+      });
+      // Manual/reuse mode keeps the existing detached launch. Auto mode is
+      // provisioned by the fork endpoint so it can retain the managed lease
+      // and publish worktree status while this page navigates immediately.
+      if (isCodingSource && selectedHostId && !autoCreateWorktree) {
         const trimmedBranch = branchName.trim();
         addRecent(workspaceTrimmed);
         // Reusing the source's worktree binds its directory directly (no
@@ -670,9 +691,33 @@ export function ForkSessionForm({
           </Select>
         </div>
 
+        {isCodingSource && onSourceHost && sourceIsGitRepository && autoWorktreeSupported && (
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              aria-pressed={autoCreateWorktree}
+              onClick={() => setAutoCreateWorktree((enabled) => !enabled)}
+              className={`flex h-8 cursor-pointer items-center gap-2 self-start rounded-full px-3 text-sm font-medium transition-colors ${
+                autoCreateWorktree
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+              data-testid="fork-session-auto-worktree-toggle"
+            >
+              <WandSparklesIcon className="size-3.5" />
+              Auto new worktree
+            </button>
+            <p className="text-sm text-muted-foreground">
+              {autoCreateWorktree
+                ? "Creates a managed branch and isolated worktree from the original session's branch. Uncommitted changes are not included."
+                : "Off — the clone will use the working directory settings below."}
+            </p>
+          </div>
+        )}
+
         {/* Indicator: by default the clone reuses the source's working
               directory; changing it lives under Advanced settings. */}
-        {usingSourceDir && (
+        {usingSourceDir && !autoCreateWorktree && (
           <p className="text-sm text-muted-foreground" data-testid="fork-session-reuse-dir-hint">
             By default the clone reuses the original session's{" "}
             <Tooltip>
@@ -759,7 +804,7 @@ export function ForkSessionForm({
                 />
               </div>
 
-              {isCodingSource && (
+              {isCodingSource && !autoCreateWorktree && (
                 <>
                   <div className="flex flex-col gap-2">
                     <span className="text-sm font-medium text-muted-foreground">

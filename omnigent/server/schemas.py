@@ -2383,6 +2383,15 @@ class ClearCodexGoalResponse(BaseModel):
     cleared: bool
 
 
+class SessionForkWorktreeOptions(BaseModel):
+    """Managed worktree requested while forking a coding session."""
+
+    mode: Literal["auto"]
+    auto_fetch_base: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SessionForkRequest(BaseModel):
     """
     Request body for ``POST /v1/sessions/{source_id}/fork``.
@@ -2402,11 +2411,15 @@ class SessionForkRequest(BaseModel):
         the last item of that response are copied — items after it are
         dropped from the fork. When ``None`` (default), the full history
         is copied.
+    :param worktree: Optional managed-worktree request. Auto mode creates
+        an isolated worktree from the source session's repository and
+        launches the fork there in the background.
     """
 
     title: str | None = None
     agent_id: str | None = None
     up_to_response_id: str | None = None
+    worktree: SessionForkWorktreeOptions | None = None
 
     model_config = ConfigDict(extra="forbid")
 

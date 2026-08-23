@@ -364,9 +364,9 @@ def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
             deadline = time.monotonic() + 120.0
             while True:
                 try:
-                    getattr(msvcrt, "locking")(
+                    msvcrt.locking(
                         lock_file.fileno(),
-                        getattr(msvcrt, "LK_NBLCK"),
+                        msvcrt.LK_NBLCK,
                         1,
                     )
                     break
@@ -391,9 +391,9 @@ def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             elif msvcrt is not None:  # pragma: no cover - Windows.
                 lock_file.seek(0)
-                getattr(msvcrt, "locking")(
+                msvcrt.locking(
                     lock_file.fileno(),
-                    getattr(msvcrt, "LK_UNLCK"),
+                    msvcrt.LK_UNLCK,
                     1,
                 )
 
@@ -432,9 +432,12 @@ def acquire_auto_worktree_streaming(
     if base_branch is not None and auto_fetch_base:
         _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
     base_ref = branch_name if reuse_existing_branch else (base_branch or "HEAD")
+    # Follow the selected linked worktree's HEAD rather than the main work
+    # tree's branch when auto creation has no explicit base ref.
+    base_cwd = repo_path if base_branch is None and not reuse_existing_branch else repo_root
     base_result = _run_git(
         ["rev-parse", "--verify", "--end-of-options", base_ref],
-        cwd=repo_root,
+        cwd=base_cwd,
     )
     if base_result.returncode != 0:
         raise WorktreeError(f"base branch does not exist: {base_ref}")
@@ -494,7 +497,8 @@ def acquire_auto_worktree_streaming(
             previous_generation = entry.get("generation")
             generation = (
                 previous_generation
-                if isinstance(previous_generation, int) and not isinstance(previous_generation, bool)
+                if isinstance(previous_generation, int)
+                and not isinstance(previous_generation, bool)
                 else 0
             ) + 1
             entry.update(

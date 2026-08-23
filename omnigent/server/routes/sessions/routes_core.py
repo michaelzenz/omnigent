@@ -336,9 +336,7 @@ def register_core_routes(
             and conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE
         )
         if _terminal_first_create and not (
-            body.git is not None
-            and not body.git.existing_worktree
-            and body.host_id is not None
+            body.git is not None and not body.git.existing_worktree and body.host_id is not None
         ):
             # The background worktree task sets terminal_pending right
             # before launching the runner; setting it here would spin
@@ -509,9 +507,7 @@ def register_core_routes(
         # isn't the worktree path yet, so launching now would run the
         # runner in the source repo instead of the worktree).
         _pending_worktree = (
-            body.git is not None
-            and not body.git.existing_worktree
-            and body.host_id is not None
+            body.git is not None and not body.git.existing_worktree and body.host_id is not None
         )
         if launch_host_id is not None and resp.runner_id is None and not _pending_worktree:
             host_registry = getattr(request.app.state, "host_registry", None)
@@ -2144,8 +2140,7 @@ def register_core_routes(
         if set_workspace:
             if body.workspace is None:
                 raise OmnigentError(
-                    "workspace must be a non-empty path; omit the field to "
-                    "leave it unchanged",
+                    "workspace must be a non-empty path; omit the field to leave it unchanged",
                     code=ErrorCode.INVALID_INPUT,
                 )
             workspace_value = body.workspace.strip()
@@ -2239,7 +2234,9 @@ def register_core_routes(
         including that response is copied into the fork (a "fork from
         this response"); a native target then rebuilds its transcript
         from the truncated items instead of resuming the source's full
-        native transcript.
+        native transcript. When ``body.worktree`` requests auto mode,
+        the server creates a managed worktree on the source host and
+        launches the fork there in the background.
 
         A sub-agent source is allowed, which is how a sub-agent is
         promoted to a session of its own: the fork is always a fresh
@@ -2256,13 +2253,18 @@ def register_core_routes(
             created fork (status ``"idle"``).
         :raises OmnigentError: 404 if *source_id* does not exist
             or ``body.agent_id`` is not a bindable built-in agent;
-            403 if the caller lacks read access; 400 if the source
-            has no agent binding, or ``body.up_to_response_id`` names
-            no response in the source session.
+            403 if the caller lacks read access (owner access for auto
+            worktrees); 400 if the source has no agent binding/workspace,
+            or ``body.up_to_response_id`` names no response in the source
+            session; 409 if the source host is offline.
         """
         user_id = _get_user_id(request, auth_provider)
         access = await _require_access_and_level(
-            user_id, source_id, LEVEL_READ, permission_store, conversation_store
+            user_id,
+            source_id,
+            LEVEL_OWNER if body.worktree is not None else LEVEL_READ,
+            permission_store,
+            conversation_store,
         )
         source = access.conversation
         if source is None:
@@ -2277,6 +2279,38 @@ def register_core_routes(
                 "Source session has no agent binding — cannot fork.",
                 code=ErrorCode.INVALID_INPUT,
             )
+        if body.worktree is not None:
+            if source.host_id is None or source.workspace is None:
+                raise OmnigentError(
+                    "Auto worktree creation requires a source host and workspace.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if user_id is not None:
+                from omnigent.server.routes._host_launch import resolve_host_owner
+
+                host_store = getattr(request.app.state, "host_store", None)
+                if host_store is None:
+                    raise OmnigentError(
+                        "Host store is not configured.",
+                        code=ErrorCode.INTERNAL_ERROR,
+                    )
+                await asyncio.to_thread(
+                    resolve_host_owner,
+                    user_id=user_id,
+                    host_id=source.host_id,
+                    host_store=host_store,
+                )
+            host_conn = host_registry.get(source.host_id) if host_registry is not None else None
+            if host_conn is None:
+                raise OmnigentError(
+                    "The source host must be online to create an auto worktree.",
+                    code=ErrorCode.CONFLICT,
+                )
+            if not host_conn.hello.managed_worktree_leases:
+                raise OmnigentError(
+                    "The source host must be upgraded before auto worktrees can be used.",
+                    code=ErrorCode.INVALID_INPUT,
+                )
 
         source_agent = await asyncio.to_thread(agent_store.get, source.agent_id)
         if source_agent is None:
@@ -2418,6 +2452,29 @@ def register_core_routes(
             await asyncio.to_thread(permission_store.grant, user_id, new_conv.id, LEVEL_OWNER)
         # Push the forked session to this user's other open tabs.
         _announce_session_added(user_id, new_conv.id)
+
+        if body.worktree is not None:
+            # Auto-worktree sources retain their canonical parent repo in a
+            # label; otherwise the host resolves the source workspace back to
+            # its main work tree. Branch from the source session's branch when
+            # known so the fork continues from the same committed code.
+            source_repo = (
+                source.labels.get("omnigent.auto_worktree.source_repo") or source.workspace
+            )
+            assert source.host_id is not None and source_repo is not None
+            _spawn_worktree_creation_task(
+                session_id=new_conv.id,
+                host_id=source.host_id,
+                source_repo=source_repo,
+                branch_name=None,
+                base_branch=source.git_branch,
+                auto_fetch_base=body.worktree.auto_fetch_base,
+                auto_create=True,
+                initial_prompt=body.title or source.title,
+                user_id=user_id,
+                conversation_store=conversation_store,
+                request=request,
+            )
 
         fork_items = await asyncio.to_thread(
             conversation_store.list_items, new_conv.id, limit=10000

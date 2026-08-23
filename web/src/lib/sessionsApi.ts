@@ -140,10 +140,7 @@ interface SessionResponseWire {
   title?: string | null;
   labels?: Record<string, string>;
   prompt_profile:
-    | { mode: "auto" }
-    | { mode: "auto_include" }
-    | { mode: "fixed"; profile_id: string }
-    | null;
+    { mode: "auto" } | { mode: "auto_include" } | { mode: "fixed"; profile_id: string } | null;
   /** Canonical working directory; ``null`` when unbound. */
   workspace?: string | null;
   /**
@@ -497,10 +494,7 @@ export async function createSession(
     sub_agent_name?: string | null;
     title?: string;
     prompt_profile?:
-      | { mode: "auto" }
-      | { mode: "auto_include" }
-      | { mode: "fixed"; profile_id: string }
-      | null;
+      { mode: "auto" } | { mode: "auto_include" } | { mode: "fixed"; profile_id: string } | null;
   } = { agent_id: agentId, initial_items: initialItems };
   if (options.parentSessionId !== undefined) {
     body.parent_session_id = options.parentSessionId;
@@ -573,38 +567,43 @@ export async function createBundledSession(
  * Fork (clone) a session into a new one via
  * POST /v1/sessions/{source_id}/fork.
  *
- * The server deep-copies the source's transcript and clones its agent
- * into a fresh, unbound session owned by the caller (read access on the
- * source is required). Comments and permissions are NOT copied, and the
- * fork starts `idle` with no runner — the caller binds their own via
- * `PATCH /v1/sessions/{id}`. `title` is only sent when provided; omitted,
- * the server derives `"Fork of <source title>"`.
+ * The server deep-copies the source's transcript and clones its agent.
+ * Comments and permissions are not copied. With `autoWorktree`, the server
+ * provisions a managed worktree on the source host and launches the runner;
+ * otherwise the caller binds or launches a runner separately.
  *
  * @param sourceId - Session to fork, e.g. "conv_abc123".
- * @param title - Optional title for the new fork.
- * @param agentId - Optional built-in agent to switch the fork to (e.g.
- *   fork a Claude-SDK session into Claude Code). Omitted → keep the
- *   source's agent. The server carries model settings (and native
- *   history) across only within the same provider family.
- * @param upToResponseId - Optional truncation point, e.g. "resp_abc". When
- *   set, the fork copies history only up to and including that response
- *   ("fork from here"); omitted, the full history is copied.
+ * @param options - Optional title, agent switch, truncation point, and
+ *   managed-worktree request.
  */
+export interface ForkSessionOptions {
+  title?: string;
+  agentId?: string;
+  upToResponseId?: string;
+  autoWorktree?: boolean;
+}
+
 export async function forkSession(
   sourceId: string,
-  title?: string,
-  agentId?: string,
-  upToResponseId?: string,
+  options: ForkSessionOptions = {},
 ): Promise<Session> {
-  const body: { title?: string; agent_id?: string; up_to_response_id?: string } = {};
-  if (title !== undefined) {
-    body.title = title;
+  const body: {
+    title?: string;
+    agent_id?: string;
+    up_to_response_id?: string;
+    worktree?: { mode: "auto" };
+  } = {};
+  if (options.title !== undefined) {
+    body.title = options.title;
   }
-  if (agentId !== undefined) {
-    body.agent_id = agentId;
+  if (options.agentId !== undefined) {
+    body.agent_id = options.agentId;
   }
-  if (upToResponseId !== undefined) {
-    body.up_to_response_id = upToResponseId;
+  if (options.upToResponseId !== undefined) {
+    body.up_to_response_id = options.upToResponseId;
+  }
+  if (options.autoWorktree) {
+    body.worktree = { mode: "auto" };
   }
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sourceId)}/fork`, {
     method: "POST",
