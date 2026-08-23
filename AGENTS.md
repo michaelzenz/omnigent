@@ -24,16 +24,25 @@ Use `just` for common tasks; run `just --list` for grouped recipes.
 
 `scripts/fork_local_instance.py` spins up an isolated server + Electron
 window from a snapshot of your current instance. Each fork gets its own
-SQLite DB (online backup), artifacts, port, and host daemon, while sharing
+SQLite DB (online backup), artifacts, port, host daemon, and Electron
+user-data-dir (isolated window state), while sharing
 `~/.omnigent/config.yaml` for provider credentials.
 
+The fork launches a **separate** Electron process with its own
+`--user-data-dir` and `settings.json`, so it auto-connects to the forked
+server and does not interfere with the main Electron window.
+
 ```bash
-# Fork the default instance into "experiment-a"
+# Fork the default instance into "experiment-a" (builds web UI, runs DB
+# migrations, starts server + host daemon, opens isolated Electron window)
 ./scripts/fork_local_instance.py experiment-a
 
 # Fork from a specific source instance
 ./scripts/fork_local_instance.py experiment-b \
   --source-data-dir ~/.omnigent/instances/experiment-a
+
+# Fork without building the web UI (use whatever is already built)
+./scripts/fork_local_instance.py experiment-c --no-build-web
 
 # Fork without opening an Electron window
 ./scripts/fork_local_instance.py experiment-c --no-open

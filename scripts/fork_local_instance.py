@@ -15,7 +15,6 @@ import sys
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 _INSTANCE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +48,10 @@ def _parser() -> argparse.ArgumentParser:
         help="Shared config directory (default: $OMNIGENT_CONFIG_HOME or ~/.omnigent)",
     )
     parser.add_argument(
+        "--no-build-web", action="store_true",
+        help="Skip building the web UI; use whatever is in omnigent/server/static/web-ui/",
+    )
+    parser.add_argument(
         "--no-open", action="store_true", help="Do not open an Electron window (fork mode)"
     )
     parser.add_argument(
@@ -76,24 +79,58 @@ def _snapshot_database(source: Path, destination: Path) -> None:
         source_db.backup(destination_db)
 
 
-def _open_deep_link(deep_link: str) -> None:
+def _find_electron_binary() -> str | None:
+    """Find the Electron binary in the repo's node_modules."""
+    candidates = [
+        _REPO_ROOT / "node_modules" / ".pnpm",
+    ]
+    for pnpm_dir in candidates:
+        if not pnpm_dir.is_dir():
+            continue
+        for entry in pnpm_dir.iterdir():
+            if entry.name.startswith("electron@"):
+                electron_app = entry / "node_modules" / "electron" / "dist"
+                if sys.platform == "darwin":
+                    binary = electron_app / "Electron.app" / "Contents" / "MacOS" / "Electron"
+                elif sys.platform.startswith("linux"):
+                    binary = electron_app / "electron"
+                else:
+                    binary = electron_app / "electron.exe"
+                if binary.is_file():
+                    return str(binary)
+    return None
+
+
+def _open_isolated_electron(server_url: str, instance_name: str) -> None:
+    """Launch a separate Electron window with its own user-data-dir and settings."""
+    electron_bin = _find_electron_binary()
+    electron_app_dir = _REPO_ROOT / "web" / "electron"
+
+    if not electron_bin:
+        raise SystemExit("Electron binary not found in node_modules; run `pnpm install` first")
+    if not electron_app_dir.is_dir():
+        raise SystemExit(f"Electron app directory not found: {electron_app_dir}")
+
+    # Use a per-instance user-data-dir so the experiment gets its own settings,
+    # window state, and session storage — completely isolated from the main app.
     if sys.platform == "darwin":
-        subprocess.run(["open", deep_link], check=True)
+        user_data_dir = Path.home() / "Library" / "Application Support" / f"Omnigent-{instance_name}"
     elif sys.platform.startswith("linux"):
-        subprocess.run(["xdg-open", deep_link], check=True)
-    elif os.name == "nt":
-        os.startfile(deep_link)  # type: ignore[attr-defined]
+        user_data_dir = Path.home() / ".config" / f"Omnigent-{instance_name}"
     else:
-        raise SystemExit(
-            f"opening Electron is unsupported on platform {sys.platform!r}; use {deep_link}"
-        )
+        user_data_dir = Path.home() / "AppData" / "Roaming" / f"Omnigent-{instance_name}"
 
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = user_data_dir / "settings.json"
+    settings_path.write_text(json.dumps({"server_url": server_url}, indent=2) + "\n")
 
-def _server_url_to_deep_link(server_url: str, path: str) -> str:
-    parsed = urlparse(server_url)
-    if parsed.scheme != "http" or not parsed.netloc:
-        raise SystemExit(f"cannot build an Electron deep link from {server_url!r}")
-    return f"omnigent://{parsed.netloc}{path}"
+    # Chromium switches with values must use --name=value here; otherwise Electron
+    # treats the value as the app path.
+    subprocess.Popen(
+        [electron_bin, f"--user-data-dir={user_data_dir}", str(electron_app_dir)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _parse_instance_env(instance_dir: Path) -> dict[str, str]:
@@ -137,40 +174,90 @@ def _stop_instance(args: argparse.Namespace) -> None:
     print("  Server + daemon stopped.")
 
     if not args.no_close_window:
-        print("  Closing Electron window...")
-        _open_deep_link(_server_url_to_deep_link(server_url, "/close"))
+        # Close the isolated Electron window by user-data-dir match.
+        # The deep-link /close path only works for the main Electron instance.
+        label = f"Omnigent-{args.name}"
+        if sys.platform == "darwin":
+            subprocess.run(
+                ["pkill", "-f", label],
+                capture_output=True,
+            )
+        elif sys.platform.startswith("linux"):
+            subprocess.run(
+                ["pkill", "-f", label],
+                capture_output=True,
+            )
+        print(f"  Electron window closed.")
 
     print(f"\nInstance {args.name!r} is stopped. Files kept at:")
     print(f"  {instance_dir}")
     print(f"\nTo delete the files:  rm -rf {shlex.quote(str(instance_dir))}")
 
 
-def _stamp_db_to_head(db_path: Path) -> None:
-    """Stamp a forked DB to the current Alembic head (tables already exist from snapshot)."""
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    cfg = Config(str(_REPO_ROOT / "omnigent" / "db" / "alembic.ini"))
-    sd = ScriptDirectory.from_config(cfg)
-    head = sd.get_heads()
-    if len(head) != 1:
-        raise RuntimeError(
-            f"Alembic has {len(head)} heads — run "
-            f"  alembic -c omnigent/db/alembic.ini merge -m 'merge heads' {' '.join(head)}"
+def _check_single_alembic_head() -> str:
+    """Return the single Alembic head using the repository virtualenv."""
+    result = subprocess.run(
+        [
+            str(_OMNIGENT_PYTHON),
+            "-m",
+            "alembic",
+            "-c",
+            str(_REPO_ROOT / "omnigent" / "db" / "alembic.ini"),
+            "heads",
+        ],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "Could not inspect Alembic heads:\n"
+            f"{result.stderr.strip() or result.stdout.strip()}"
         )
-    head_rev = head[0]
+    heads = [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
+    if len(heads) != 1:
+        raise SystemExit(
+            f"Alembic has {len(heads)} heads — merge them before forking: {' '.join(heads)}"
+        )
+    return heads[0]
 
-    import sqlite3
 
-    with sqlite3.connect(str(db_path)) as conn:
-        row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
-        if row and row[0] == head_rev:
-            return  # already at head
-        if row:
-            conn.execute("UPDATE alembic_version SET version_num = ?", (head_rev,))
-        else:
-            conn.execute("INSERT INTO alembic_version (version_num) VALUES (?)", (head_rev,))
-        conn.commit()
+def _upgrade_db_to_head(db_path: Path) -> None:
+    """Run alembic upgrade head on the forked DB to apply any new migrations.
+
+    The source DB snapshot already has all tables from its own migrations.
+    If the worktree has additional migrations (e.g. new feature tables),
+    upgrade applies them. If the DB is already at head, this is a no-op.
+    """
+    _check_single_alembic_head()
+
+    # Run alembic upgrade via the CLI, pointing at the forked DB.
+    env = {
+        **os.environ,
+        # alembic.ini reads the DB URL from the environment or a hardcoded default.
+        # Override to point at our forked DB.
+        "OMNIGENT_DATABASE_URI": f"sqlite:///{db_path}",
+    }
+    result = subprocess.run(
+        [
+            str(_OMNIGENT_PYTHON),
+            "-m",
+            "alembic",
+            "-c",
+            str(_REPO_ROOT / "omnigent" / "db" / "alembic.ini"),
+            "upgrade",
+            "head",
+        ],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "Database migration failed:\n"
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
 
 
 def _fork_instance(args: argparse.Namespace) -> None:
@@ -203,8 +290,26 @@ def _fork_instance(args: argparse.Namespace) -> None:
         dest_db = instance_dir / "chat.db"
         _snapshot_database(source_db, dest_db)
 
-        print("Stamping DB to current Alembic head...")
-        _stamp_db_to_head(dest_db)
+        print("Running DB migrations to head...")
+        _upgrade_db_to_head(dest_db)
+
+        if not args.no_build_web:
+            print("Building web UI...")
+            vite_bin = _REPO_ROOT / "web" / "node_modules" / ".bin" / "vite"
+            if not vite_bin.is_file():
+                raise SystemExit("vite not found; run `pnpm install` first")
+            build_result = subprocess.run(
+                [str(vite_bin), "build"],
+                cwd=str(_REPO_ROOT / "web"),
+                capture_output=True,
+                text=True,
+            )
+            if build_result.returncode != 0:
+                raise SystemExit(
+                    "Web UI build failed:\n"
+                    f"{build_result.stderr.strip() or build_result.stdout.strip()}"
+                )
+            print("  Web UI built successfully.")
 
         print("Copying artifacts...")
         if source_artifacts.is_dir():
@@ -212,10 +317,19 @@ def _fork_instance(args: argparse.Namespace) -> None:
         else:
             artifacts_dir.mkdir()
 
+        inherited_pythonpath = os.environ.get("PYTHONPATH")
         env = {
             **os.environ,
             "OMNIGENT_DATA_DIR": str(instance_dir),
             "OMNIGENT_CONFIG_HOME": str(config_home),
+            # Runner zygotes use Python -P, so cwd is intentionally absent from
+            # sys.path. Put this worktree first instead of inheriting another
+            # checkout's PYTHONPATH and silently running stale runner code.
+            "PYTHONPATH": os.pathsep.join(
+                part
+                for part in (str(_REPO_ROOT), inherited_pythonpath)
+                if part
+            ),
         }
 
         print("Starting isolated server...")
@@ -242,8 +356,8 @@ def _fork_instance(args: argparse.Namespace) -> None:
         )
 
         if not args.no_open:
-            print("Opening a new Electron window...")
-            _open_deep_link(_server_url_to_deep_link(server_url, "/"))
+            print("Opening an isolated Electron window...")
+            _open_isolated_electron(server_url, args.name)
 
         print(f"Instance {args.name!r} is running at {server_url}")
         print("Stop it with:")
