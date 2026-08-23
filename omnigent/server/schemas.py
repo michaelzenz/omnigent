@@ -1320,6 +1320,7 @@ class SessionEventInput(BaseModel):
     tools: list[dict[str, Any]] | None = None
     created_by: str | None = None
     interrupt_first: bool = False
+    comment_thread_id: str | None = None
 
 
 class SessionGitOptions(BaseModel):

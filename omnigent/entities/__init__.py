@@ -3,6 +3,7 @@
 from omnigent.entities.account import Account, AccountToken
 from omnigent.entities.agent import Agent, LoadedAgent
 from omnigent.entities.agent_text_comment import AgentTextComment
+from omnigent.entities.agent_text_thread import AgentTextThread, AgentTextThreadState
 from omnigent.entities.agent_queue import (
     AGENT_QUEUE_ITEM_KINDS,
     AGENT_QUEUE_ROLES,
@@ -74,6 +75,8 @@ __all__ = [
     "Agent",
     "AgentQueue",
     "AgentTextComment",
+    "AgentTextThread",
+    "AgentTextThreadState",
     "AgentQueueItem",
     "AgentQueueKey",
     "Comment",

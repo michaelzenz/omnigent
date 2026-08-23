@@ -172,6 +172,7 @@ export type SessionEventInput =
       type: "message";
       data: { role: "user"; content: ContentBlock[] };
       interrupt_first?: boolean;
+      comment_thread_id?: string;
       model_override?: string;
     }
   | { type: "function_call_output"; data: Record<string, unknown> }

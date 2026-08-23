@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { AgentTextCommentAnchor } from "@/hooks/useAgentTextComments";
+import type { CommentMode } from "@/lib/commentModePreference";
 
 export interface AgentTextCommentSendState {
   isSending: boolean;
@@ -8,6 +9,11 @@ export interface AgentTextCommentSendState {
 
 export interface AgentTextCommentsUI {
   canEdit: boolean;
+  mode: CommentMode;
+  preferredMode: CommentMode;
+  threadedModeError: string | null;
+  threadedModeLoading: boolean;
+  setMode: (mode: CommentMode) => void;
   pendingAnchor: AgentTextCommentAnchor | null;
   activeCommentId: string | null;
   sendState: AgentTextCommentSendState;

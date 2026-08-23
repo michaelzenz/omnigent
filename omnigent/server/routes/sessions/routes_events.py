@@ -29,6 +29,7 @@ from omnigent.execution_targets import (
     conversation_uses_omniharness,
     is_omniharness_agent,
 )
+from omnigent.harness_aliases import canonicalize_harness
 from omnigent.host.frames import (
     HARNESS_NOT_CONFIGURED_ERROR_CODE as _HARNESS_NOT_CONFIGURED_ERROR_CODE,
 )
@@ -2016,6 +2017,35 @@ def register_events_routes(
             agent_cache=agent_cache,
         )
         _uses_omniharness = is_omniharness_agent(_agent)
+        if body.comment_thread_id is not None:
+            if body.type != "message" or body.data.get("role") != "user":
+                raise OmnigentError(
+                    "Threaded replies must submit a user message",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if not (
+                _uses_omniharness
+                or canonicalize_harness(_resolved_harness) == "openai-agents"
+            ):
+                raise OmnigentError(
+                    "Threaded replies require OmniHarness or OpenAI Agents SDK",
+                    code=ErrorCode.CONFLICT,
+                )
+            _comment_thread = await asyncio.to_thread(
+                conversation_store.get_agent_text_thread,
+                session_id,
+                body.comment_thread_id,
+            )
+            if _comment_thread is None:
+                raise OmnigentError(
+                    "Agent text thread not found",
+                    code=ErrorCode.NOT_FOUND,
+                )
+            if _comment_thread.state != "queued":
+                raise OmnigentError(
+                    "Agent text thread has already been submitted",
+                    code=ErrorCode.CONFLICT,
+                )
         _spec_model = None
         if _loaded_spec is not None:
             _spec_model = _loaded_spec.executor.model or (
@@ -2150,6 +2180,24 @@ def register_events_routes(
         response: dict[str, Any] = {"queued": True}
         if dispatch.item_id is not None:
             response["item_id"] = dispatch.item_id
+            if body.comment_thread_id is not None:
+                thread = await asyncio.to_thread(
+                    conversation_store.bind_agent_text_thread_item,
+                    session_id,
+                    body.comment_thread_id,
+                    dispatch.item_id,
+                )
+                if thread is None:
+                    raise OmnigentError(
+                        "Agent text thread could not be bound to the submitted message",
+                        code=ErrorCode.NOT_FOUND,
+                    )
+                response["comment_thread_id"] = thread.id
+        elif body.comment_thread_id is not None:
+            raise OmnigentError(
+                "Threaded reply did not persist its user message",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
         # Native-terminal web message: hand back the pending-input id. It
         # identifies the snapshot's replayed bubble on rebind and is the
         # cleared_pending_id the consume event carries to drop it. Clients

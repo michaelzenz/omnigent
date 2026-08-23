@@ -6,6 +6,7 @@ import { conversationDisplayLabel, UNTITLED_CONVERSATION_LABEL } from "./sidebar
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
 import { useAgentTextComments, type AgentTextCommentAnchor } from "@/hooks/useAgentTextComments";
+import { useAgentTextThreadCapability } from "@/hooks/useAgentTextThreads";
 import { useSidebarToggleHotkeys } from "@/hooks/useSidebarToggleHotkeys";
 import { useCommandPaletteHotkey, useSearchHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useNewSessionHotkey } from "@/hooks/useNewSessionHotkey";
@@ -33,6 +34,11 @@ import {
 } from "@/lib/designModePrompt";
 import { readSessionWorkspaceState, writeSessionWorkspaceState } from "@/lib/sessionWorkspaceState";
 import { readDefaultWorkspacePanelOpen } from "@/lib/workspacePanelPreferences";
+import {
+  readCommentMode,
+  writeCommentMode,
+  type CommentMode,
+} from "@/lib/commentModePreference";
 import {
   Dialog,
   DialogContent,
@@ -110,7 +116,7 @@ import {
   type AgentTextCommentSendState,
   type AgentTextCommentsUI,
 } from "./AgentTextCommentsContext";
-import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
+import { AgentTextCommentsSurface } from "./AgentTextCommentsSurface";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
 
@@ -315,17 +321,29 @@ export function AppShell() {
   const [subagentsPanelOpen, setSubagentsPanelOpen] = useState(false);
   const [shellsPanelOpen, setShellsPanelOpen] = useState(false);
   const [agentTextCommentsPanelOpen, setAgentTextCommentsPanelOpen] = useState(false);
+  const [preferredCommentMode, setPreferredCommentMode] =
+    useState<CommentMode>(readCommentMode);
   const [pendingAgentTextComment, setPendingAgentTextComment] =
     useState<AgentTextCommentAnchor | null>(null);
   const [activeAgentTextCommentId, setActiveAgentTextCommentId] = useState<string | null>(null);
+  const threadCapability = useAgentTextThreadCapability(conversationId);
+  const [threadedModeError, setThreadedModeError] = useState<string | null>(null);
+  const agentTextCommentMode: CommentMode =
+    preferredCommentMode === "threaded" && threadCapability.data?.supported
+      ? "threaded"
+      : "batch";
   const [agentTextCommentSendState, setAgentTextCommentSendState] =
     useState<AgentTextCommentSendState>({ isSending: false, sentBatchIds: null });
   useEffect(() => {
     setPendingAgentTextComment(null);
     setActiveAgentTextCommentId(null);
     setAgentTextCommentSendState({ isSending: false, sentBatchIds: null });
+    setThreadedModeError(null);
     setAgentTextCommentsPanelOpen(false);
   }, [conversationId]);
+  useEffect(() => {
+    if (threadCapability.data?.supported) setThreadedModeError(null);
+  }, [threadCapability.data?.supported]);
   // The right "Workspace" rail (WorkspacePanel) remembers its open/closed
   // state per session. A brand-new session (no saved `open`) follows the
   // Appearance "Workspace panel" default; reopening a session restores how
@@ -1594,20 +1612,58 @@ export function AppShell() {
     !executionLogsOpen &&
     !filesPanelOpen,
   );
+  const setCommentMode = useCallback(
+    (mode: CommentMode) => {
+      if (mode !== agentTextCommentMode && pendingAgentTextComment !== null) {
+        setThreadedModeError("Add or cancel the current comment before switching modes.");
+        return;
+      }
+      if (mode === "threaded" && !threadCapability.data?.supported) {
+        const message =
+          threadCapability.data?.reason === "openai_sdk_unavailable"
+            ? "OpenAI Agents SDK isn't configured on this host."
+            : threadCapability.isError
+              ? "Could not check whether Threaded replies are available."
+              : "Threaded replies require OmniHarness or OpenAI Agents SDK.";
+        setThreadedModeError(message);
+        return;
+      }
+      writeCommentMode(mode);
+      setPreferredCommentMode(mode);
+      setThreadedModeError(null);
+      setPendingAgentTextComment(null);
+      setActiveAgentTextCommentId(null);
+    },
+    [
+      agentTextCommentMode,
+      pendingAgentTextComment,
+      threadCapability.data,
+      threadCapability.isError,
+    ],
+  );
   const agentTextCommentsUI = useMemo<AgentTextCommentsUI>(
     () => ({
       canEdit: isEditorLevel(permissionLevel),
+      mode: agentTextCommentMode,
+      preferredMode: preferredCommentMode,
+      threadedModeError,
+      threadedModeLoading: threadCapability.isLoading,
+      setMode: setCommentMode,
       pendingAnchor: pendingAgentTextComment,
       activeCommentId: activeAgentTextCommentId,
       sendState: agentTextCommentSendState,
       openDraft: (anchor: AgentTextCommentAnchor) => {
+        setThreadedModeError(null);
         setPendingAgentTextComment(anchor);
         setActiveAgentTextCommentId(null);
         handleRightRailTabChange("comments");
         if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
         else setRightPanelOpen(true);
       },
-      cancelDraft: () => setPendingAgentTextComment(null),
+      cancelDraft: () => {
+        setPendingAgentTextComment(null);
+        setThreadedModeError(null);
+      },
       activateComment: (commentId: string | null) => {
         setActiveAgentTextCommentId(commentId);
         if (commentId) {
@@ -1631,6 +1687,11 @@ export function AppShell() {
       pendingAgentTextComment,
       activeAgentTextCommentId,
       agentTextCommentSendState,
+      agentTextCommentMode,
+      preferredCommentMode,
+      threadedModeError,
+      threadCapability.isLoading,
+      setCommentMode,
     ],
   );
 
@@ -1959,7 +2020,7 @@ export function AppShell() {
                   onClose={() => setAgentTextCommentsPanelOpen(false)}
                   testId="agent-text-comments-panel-drawer"
                 >
-                  <AgentTextCommentsPanel
+                  <AgentTextCommentsSurface
                     conversationId={conversationId}
                     canEdit={isEditorLevel(permissionLevel)}
                     ui={agentTextCommentsUI}

@@ -16,6 +16,18 @@
   background-color: rgb(59 130 246 / 28%);
 }
 
+::highlight(omnigent-agent-thread) {
+  background-color: rgb(168 85 247 / 22%);
+}
+
+::highlight(omnigent-agent-thread-active) {
+  background-color: rgb(168 85 247 / 42%);
+}
+
+::highlight(omnigent-agent-thread-pending) {
+  background-color: rgb(59 130 246 / 28%);
+}
+
 /* Streamdown ships utility classes pre-compiled in its dist; this @source
  * pragma tells Tailwind v4 to scan those files so the classes survive the
  * production build. Required by ai-elements/MessageResponse, which uses

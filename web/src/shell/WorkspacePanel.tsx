@@ -39,7 +39,7 @@ import { FilesPanel } from "./FilesPanel";
 import { FileViewer } from "./FileViewer";
 import type { ChangedSort } from "./FlatFileList";
 import { SubagentsPanel } from "./SubagentsPanel";
-import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
+import { AgentTextCommentsSurface } from "./AgentTextCommentsSurface";
 import type { AgentTextCommentsUI } from "./AgentTextCommentsContext";
 import { useTerminalStatuses } from "./useTerminalStatuses";
 import { type RightRailTab, TAB_BADGE_BASE } from "./railTabs";
@@ -944,11 +944,13 @@ export function WorkspacePanel({
             sort={filesPanelSort}
           />
         ) : rightRailTab === "comments" ? (
-          <AgentTextCommentsPanel
-            conversationId={conversationId}
-            canEdit={isEditorLevel(permissionLevel)}
-            ui={commentsUI}
-          />
+          commentsUI && (
+            <AgentTextCommentsSurface
+              conversationId={conversationId}
+              canEdit={isEditorLevel(permissionLevel)}
+              ui={commentsUI}
+            />
+          )
         ) : rightRailTab === "browser" && showBrowserTab ? (
           // Embedded browser (Electron only) — BrowserPane self-gates and
           // measures this rail slot to position the native view over it.

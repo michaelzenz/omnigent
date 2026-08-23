@@ -19,10 +19,12 @@ export function AgentTextCommentsPanel({
   conversationId,
   canEdit,
   ui: providedUI,
+  showHeader = true,
 }: {
   conversationId: string;
   canEdit: boolean;
   ui?: AgentTextCommentsUI;
+  showHeader?: boolean;
 }) {
   const contextUI = useAgentTextCommentsUI();
   const ui = providedUI ?? contextUI;
@@ -171,14 +173,16 @@ export function AgentTextCommentsPanel({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Agent response comments">
-      <header className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
-        <span className="text-sm font-semibold">Comments</span>
-        {comments.length > 0 && (
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums">
-            {comments.length}
-          </span>
-        )}
-      </header>
+      {showHeader && (
+        <header className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+          <span className="text-sm font-semibold">Comments</span>
+          {comments.length > 0 && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums">
+              {comments.length}
+            </span>
+          )}
+        </header>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {ui?.pendingAnchor && (

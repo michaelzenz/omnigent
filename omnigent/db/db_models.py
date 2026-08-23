@@ -1216,6 +1216,65 @@ class SqlAgentTextComment(ConversationBase):
     )
 
 
+class SqlAgentTextThread(ConversationBase):
+    """Individually-sent reply thread anchored to finalized agent text."""
+
+    __tablename__ = "agent_text_threads"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    source_item_id: Mapped[str] = mapped_column(Uuid16())
+    client_request_id: Mapped[str] = mapped_column(String(64))
+    start_offset: Mapped[int] = mapped_column(Integer)
+    end_offset: Mapped[int] = mapped_column(Integer)
+    selected_text: Mapped[str] = mapped_column(CompressedText)
+    prefix_context: Mapped[str] = mapped_column(CompressedText)
+    suffix_context: Mapped[str] = mapped_column(CompressedText)
+    user_comment: Mapped[str] = mapped_column(CompressedText)
+    state: Mapped[str] = mapped_column(String(16))
+    user_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    response_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    resolved_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        Index(
+            "ix_agent_text_threads_item",
+            "workspace_id",
+            "conversation_id",
+            "source_item_id",
+        ),
+        Index(
+            "ix_agent_text_threads_response",
+            "workspace_id",
+            "conversation_id",
+            "response_id",
+        ),
+        Index(
+            "ux_agent_text_threads_request",
+            "workspace_id",
+            "conversation_id",
+            "client_request_id",
+            unique=True,
+        ),
+        CheckConstraint("start_offset >= 0", name="ck_agent_text_threads_start"),
+        CheckConstraint("end_offset > start_offset", name="ck_agent_text_threads_range"),
+        CheckConstraint(
+            "state IN ('queued', 'running', 'answered', 'failed', 'resolved')",
+            name="ck_agent_text_threads_state",
+        ),
+    )
+
+
 def policy_name_cksum(name: str) -> bytes:
     """Return the sha256 digest of a policy name.
 

@@ -195,6 +195,8 @@ import {
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
 import { useAgentTextComments, type AgentTextCommentAnchor } from "@/hooks/useAgentTextComments";
 import { useAgentTextCommentHighlights } from "@/hooks/useAgentTextCommentHighlights";
+import { useAgentTextThreads, type AgentTextThread } from "@/hooks/useAgentTextThreads";
+import { useAgentTextThreadHighlights } from "@/hooks/useAgentTextThreadHighlights";
 import { captureAgentTextSelection } from "@/lib/agentTextSelection";
 import { useAgentTextCommentsUI } from "@/shell/AgentTextCommentsContext";
 // Re-exported so existing tests importing these from "./ChatPage" keep working
@@ -301,6 +303,8 @@ import {
   OMNIHARNESS_AGENT_NAME,
   type OmniHarnessModelOption,
 } from "@/lib/omniharnessModels";
+
+const EMPTY_AGENT_TEXT_THREADS: AgentTextThread[] = [];
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -926,6 +930,10 @@ export function ChatPage() {
   // field changes — no `useShallow` needed.
   const activeConversationId = useChatStore((s) => s.conversationId);
   const blocks = useChatStore((s) => s.blocks);
+  const openThreadItemsQuery = useAgentTextThreads(urlConvId, "open");
+  const resolvedThreadItemsQuery = useAgentTextThreads(urlConvId, "resolved");
+  const openThreadItems = openThreadItemsQuery.data ?? EMPTY_AGENT_TEXT_THREADS;
+  const resolvedThreadItems = resolvedThreadItemsQuery.data ?? EMPTY_AGENT_TEXT_THREADS;
   const pendingUserMessages = useChatStore((s) => s.pendingUserMessages);
   const activeResponse = useChatStore((s) => s.activeResponse);
   const interruptedResponseIds = useChatStore((s) => s.interruptedResponseIds);
@@ -1012,6 +1020,22 @@ export function ChatPage() {
   // sub-agent routing on shows them (see stripGatedSubagentRoutingChips).
   const subagentRoutingOverride = useChatStore((s) => s.subagentRoutingOverride);
 
+  const threadResponseIds = useMemo(
+    () =>
+      new Set(
+        [...openThreadItems, ...resolvedThreadItems].flatMap((thread) =>
+          thread.response_id ? [thread.response_id] : [],
+        ),
+      ),
+    [openThreadItems, resolvedThreadItems],
+  );
+  const mainSurfaceBlocks = useMemo(
+    () => blocks.filter((block) => !threadResponseIds.has(block.responseId)),
+    [blocks, threadResponseIds],
+  );
+  const mainSurfaceActiveResponse =
+    activeResponse && threadResponseIds.has(activeResponse.responseId) ? null : activeResponse;
+
   // Build bubbles once per blocks/activeResponse change. Memo here so
   // unrelated store updates (status, loading flags) don't re-walk.
   // Pending user messages (POSTed but not yet acked by
@@ -1031,8 +1055,8 @@ export function ChatPage() {
     const committed = stripGatedSubagentRoutingChips(
       reorderCommittedRequestElicitations(
         buildBubbles(
-          blocks,
-          activeResponse,
+          mainSurfaceBlocks,
+          mainSurfaceActiveResponse,
           bubbleCacheRef.current,
           interruptedResponseIds,
           // Spin the newest turn's in-flight tools while the session runs —
@@ -1054,8 +1078,8 @@ export function ChatPage() {
       buildPendingBubbles(pendingUserMessages, getCurrentAuthorId()),
     );
   }, [
-    blocks,
-    activeResponse,
+    mainSurfaceBlocks,
+    mainSurfaceActiveResponse,
     interruptedResponseIds,
     pendingUserMessages,
     subagentRoutingOverride,
@@ -1296,6 +1320,9 @@ export function ChatPage() {
           await switchSessionAgent(urlConvId, targetAgentId);
           await queryClient.invalidateQueries({ queryKey: ["session", urlConvId] });
           await queryClient.invalidateQueries({ queryKey: ["session-agent", urlConvId] });
+          await queryClient.invalidateQueries({
+            queryKey: ["agent-text-threads", urlConvId, "capability"],
+          });
           await queryClient.invalidateQueries({ queryKey: ["conversations"] });
         } catch (e) {
           const detail = e instanceof Error ? e.message : "unknown error";
@@ -2291,6 +2318,18 @@ export function MainAgentSurface({
   const agentTextComments =
     useAgentTextComments(agentTextCommentsUI ? (conversationId ?? undefined) : undefined).data ??
     [];
+  const openAgentTextThreads =
+    useAgentTextThreads(agentTextCommentsUI ? (conversationId ?? undefined) : undefined, "open")
+      .data ?? EMPTY_AGENT_TEXT_THREADS;
+  const resolvedAgentTextThreads =
+    useAgentTextThreads(
+      agentTextCommentsUI ? (conversationId ?? undefined) : undefined,
+      "resolved",
+    ).data ?? EMPTY_AGENT_TEXT_THREADS;
+  const threadNavigationItems = useMemo(
+    () => [...openAgentTextThreads, ...resolvedAgentTextThreads],
+    [openAgentTextThreads, resolvedAgentTextThreads],
+  );
   const activateAgentTextComment = useCallback(
     (commentId: string) => agentTextCommentsUI?.activateComment(commentId),
     [agentTextCommentsUI],
@@ -2301,7 +2340,17 @@ export function MainAgentSurface({
     pendingAnchor: agentTextCommentsUI?.pendingAnchor ?? null,
     activeCommentId: agentTextCommentsUI?.activeCommentId ?? null,
     onActivate: activateAgentTextComment,
-    enabled: agentTextCommentsUI !== null,
+    enabled: agentTextCommentsUI?.mode === "batch",
+  });
+  useAgentTextThreadHighlights({
+    containerRef: conversationRef,
+    threads: openAgentTextThreads,
+    navigationThreads: threadNavigationItems,
+    pendingAnchor:
+      agentTextCommentsUI?.mode === "threaded" ? agentTextCommentsUI.pendingAnchor : null,
+    activeThreadId: agentTextCommentsUI?.activeCommentId ?? null,
+    onActivate: activateAgentTextComment,
+    enabled: agentTextCommentsUI?.mode === "threaded",
   });
   const [terminalSurfaceEl, setTerminalSurfaceEl] = useState<HTMLElement | null>(null);
   // True only while the chat/terminal surface is the frontmost thing on screen.

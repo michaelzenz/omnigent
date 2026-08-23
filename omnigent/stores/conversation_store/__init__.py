@@ -9,6 +9,7 @@ from typing import Any
 from omnigent.entities import (
     Agent,
     AgentTextComment,
+    AgentTextThread,
     Conversation,
     ConversationItem,
     NewConversationItem,
@@ -567,6 +568,70 @@ class ConversationStore(ABC):
         self, comment_ids: list[str], conversation_id: str
     ) -> list[str]:
         """Idempotently delete the requested comments from one conversation."""
+        ...
+
+    @abstractmethod
+    def add_agent_text_thread(
+        self,
+        conversation_id: str,
+        source_item_id: str,
+        *,
+        client_request_id: str,
+        start_offset: int,
+        end_offset: int,
+        selected_text: str,
+        prefix_context: str,
+        suffix_context: str,
+        user_comment: str,
+    ) -> AgentTextThread:
+        """Create or return an idempotent queued agent-text thread."""
+        ...
+
+    @abstractmethod
+    def list_agent_text_threads(
+        self, conversation_id: str, *, resolved: bool = False
+    ) -> list[AgentTextThread]:
+        """List open or resolved threads in source-document order."""
+        ...
+
+    @abstractmethod
+    def get_agent_text_thread(
+        self, conversation_id: str, thread_id: str
+    ) -> AgentTextThread | None:
+        """Return one agent-text thread, if it belongs to the conversation."""
+        ...
+
+    @abstractmethod
+    def bind_agent_text_thread_item(
+        self, conversation_id: str, thread_id: str, item_id: str
+    ) -> AgentTextThread | None:
+        """Bind a thread to its persisted user item and response id."""
+        ...
+
+    @abstractmethod
+    def resolve_agent_text_thread(
+        self, conversation_id: str, thread_id: str
+    ) -> AgentTextThread | None:
+        """Resolve a thread without deleting its history."""
+        ...
+
+    @abstractmethod
+    def fail_agent_text_thread(
+        self, conversation_id: str, thread_id: str, message: str
+    ) -> AgentTextThread | None:
+        """Mark a threaded send as failed."""
+        ...
+
+    @abstractmethod
+    def retry_agent_text_thread(
+        self, conversation_id: str, thread_id: str
+    ) -> AgentTextThread | None:
+        """Reset a failed thread to queued."""
+        ...
+
+    @abstractmethod
+    def delete_agent_text_thread(self, conversation_id: str, thread_id: str) -> bool:
+        """Delete one thread before it is answered."""
         ...
 
     @abstractmethod
