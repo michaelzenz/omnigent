@@ -140,6 +140,15 @@ export interface SendOptions {
    * turn. The server handles the interrupt + settle atomically.
    */
   interruptFirst?: boolean;
+  /**
+   * Target a specific conversation instead of the active one. Used by the
+   * store-level initial-prompt auto-send (triggered when a background
+   * conversation's worktree becomes ready via SSE) so the message lands in
+   * the right session without requiring the user to switch back first.
+   * When set, optimistic bubbles and streaming status are written to the
+   * pinned conversation's entry, not the root store's projection.
+   */
+  pinnedConversationId?: string;
 }
 
 /**
@@ -1416,6 +1425,35 @@ export function deletePendingInitialPrompt(conversationId: string): void {
   pendingInitialPrompts.delete(conversationId);
 }
 
+/**
+ * Auto-send a pending initial prompt for a conversation whose worktree just
+ * became ready. Called from the `session_worktree_status` SSE handler so a
+ * backgrounded session starts working without the user needing to switch
+ * back. No-op when there is no pending prompt, the entry is gone, or the
+ * agent binding hasn't resolved yet.
+ *
+ * Routes through `send`/`sendSlashCommand` with `pinnedConversationId` so
+ * the optimistic bubble and streaming status land on the background
+ * conversation's entry, not the root store's active projection.
+ */
+function maybeAutoSendInitialPrompt(conversationId: string): void {
+  const prompt = peekPendingInitialPrompt(conversationId);
+  if (prompt === null) return;
+  const state = setterForState(conversationId);
+  if (state === null || state.boundAgentId === null) return;
+  // Delete before dispatching so a concurrent ChatPage auto-send effect
+  // (e.g. the user switches back at the same instant) sees the prompt is
+  // gone and skips — the pending map is the single source of truth.
+  deletePendingInitialPrompt(conversationId);
+  const { send, sendSlashCommand } = useChatStore.getState();
+  const opts: SendOptions = { pinnedConversationId: conversationId };
+  if (prompt.skill) {
+    void sendSlashCommand(prompt.skill.name, prompt.skill.args, state.boundAgentId, opts);
+  } else {
+    void send(prompt.text, state.boundAgentId, prompt.files ?? [], opts);
+  }
+}
+
 export const useChatStore = create<ChatState>((_rootSet, get) => ({
   conversationId: null,
   redirectToConversationId: null,
@@ -1753,12 +1791,21 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // into the running task's inbox. Keep `activeResponse` untouched in
     // that case so the in-flight bubble keeps its "streaming" lifecycle
     // until its own `response.completed` arrives.
-    const alreadyStreaming = get().status === "streaming";
+    // When pinned, route optimistic writes to the pinned conversation's
+    // entry instead of the root store's active projection. Used by the
+    // store-level initial-prompt auto-send for background sessions.
+    const submitConversationId = opts?.pinnedConversationId ?? get().conversationId;
+    const targetSetter = opts?.pinnedConversationId
+      ? setterFor(opts.pinnedConversationId)
+      : setActive;
+    const alreadyStreaming = opts?.pinnedConversationId
+      ? setterForState(opts.pinnedConversationId)?.status === "streaming"
+      : get().status === "streaming";
     if (!alreadyStreaming) {
       // Latch on the SAME entry as `status`, in one patch, so they can't
       // diverge — a new chat buffers both on root and `adoptPreSessionState`
       // moves them onto the entry together.
-      setActive({ status: "streaming", activeResponse: null, sendLatchedAt: Date.now() });
+      targetSetter({ status: "streaming", activeResponse: null, sendLatchedAt: Date.now() });
     }
 
     // Push to `pendingUserMessages` BEFORE the POST so the bubble
@@ -1780,7 +1827,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       ...(text.trim() ? [{ type: "input_text" as const, text }] : []),
     ];
     const selfAuthor = getCurrentAuthorId();
-    setActive((s) => ({
+    targetSetter((s) => ({
       pendingUserMessages: [
         ...s.pendingUserMessages,
         {
@@ -1803,7 +1850,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // Pin the destination before joining the send chain: a stalled prior
     // send can delay this POST past a session switch, and resolving the
     // target afterward would leak the message into the now-active session.
-    const submitConversationId = get().conversationId;
+    // `submitConversationId` was resolved above (pinned or active).
 
     // Take our place in THIS conversation's send chain: wait for its prior
     // send's network work, then hand off to the next via `releaseSend` in the
@@ -2008,10 +2055,16 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     }
     // Mirror `send`'s lifecycle scaffolding (streaming flag + send-chain
     // serialization) so a skill invocation behaves like any other turn.
-    const alreadyStreaming = get().status === "streaming";
+    const submitConversationId = opts?.pinnedConversationId ?? get().conversationId;
+    const targetSetter = opts?.pinnedConversationId
+      ? setterFor(opts.pinnedConversationId)
+      : setActive;
+    const alreadyStreaming = opts?.pinnedConversationId
+      ? setterForState(opts.pinnedConversationId)?.status === "streaming"
+      : get().status === "streaming";
     if (!alreadyStreaming) {
       // See `send`: latch and status on one entry, in one patch.
-      setActive({ status: "streaming", activeResponse: null, sendLatchedAt: Date.now() });
+      targetSetter({ status: "streaming", activeResponse: null, sendLatchedAt: Date.now() });
     }
     // Optimistic echo of the typed command, mirroring `send`. Without it
     // the chat shows nothing until the server's `slash_command` receipt
@@ -2025,7 +2078,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     const tempId = `pend_${pendingSeq}`;
     const commandText = args ? `/${name} ${args}` : `/${name}`;
     const selfAuthor = getCurrentAuthorId();
-    setActive((s) => ({
+    targetSetter((s) => ({
       pendingUserMessages: [
         ...s.pendingUserMessages,
         {
@@ -2039,7 +2092,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
 
     // Pin the destination at submit time — see `send` above for why a late
     // resolve mis-routes to the session the user has since switched to.
-    const submitConversationId = get().conversationId;
+    // `submitConversationId` was resolved above (pinned or active).
 
     const { waitForPrior, rekey, releaseSend } = enterSendChain(submitConversationId);
 
@@ -3608,6 +3661,17 @@ async function bindStream(
       rootSetState({ selectedEffort: effectiveEffort, selectedModel: resolvedStickyModel });
     }
     racedNativeModelOptions.delete(id);
+    // If the worktree was already ready when the snapshot landed (it
+    // completed during the fetch), the SSE "ready" event was skipped by
+    // the loadingConversation guard. The snapshot sets worktreeStatus to
+    // null, so auto-send any pending initial prompt — but only for a
+    // background conversation. When the user is viewing this conversation,
+    // ChatPage's auto-send effect handles it (the pending-map delete
+    // prevents a duplicate even if both fire, but restricting to background
+    // avoids the redundant send+skip cycle).
+    if (session.worktreeStatus == null && useChatStore.getState().conversationId !== id) {
+      maybeAutoSendInitialPrompt(id);
+    }
   } catch (err) {
     if (controller.signal.aborted || isConversationDisposed(id)) return;
     set({
@@ -5390,10 +5454,28 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
         worktreeLogLines: [...s.worktreeLogLines, event.line],
       }));
       return;
-    case "session_worktree_status":
-      // Worktree status is snapshot-polled while creating. Keeping one
-      // authority avoids racing this transient event against bind hydration.
+    case "session_worktree_status": {
+      // During cold bind the snapshot is authoritative — a transient SSE
+      // event that raced ahead of the snapshot would be overwritten when
+      // the (staler) snapshot lands. Skip until loadingConversation clears.
+      if (sourceConversationId === null) return;
+      const convState = setterForState(sourceConversationId);
+      if (convState === null || convState.loadingConversation) return;
+      applyToConversation({
+        worktreeStatus:
+          event.stage === "ready"
+            ? null
+            : { stage: event.stage, branch: event.branch ?? null, error: event.error ?? null },
+      });
+      // When the worktree is ready, auto-send any pending initial prompt
+      // so the agent starts working without the user needing to switch
+      // back. This is the background path — when the conversation is
+      // active, ChatPage's auto-send effect handles it.
+      if (event.stage === "ready") {
+        maybeAutoSendInitialPrompt(sourceConversationId);
+      }
       return;
+    }
     case "session_mcp_startup": {
       // Mirror the harness's per-MCP-server startup map. Cleared once
       // every server settles `ready` (the band disappears); failures and

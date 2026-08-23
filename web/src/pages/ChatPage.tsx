@@ -165,6 +165,7 @@ import {
   type PendingInitialPrompt,
   type PendingUserMessage,
   type QueuedMessage,
+  type SendOptions,
   useChatStore,
 } from "@/store/chatStore";
 import {
@@ -1118,6 +1119,15 @@ export function ChatPage() {
     // re-check to narrow the types for send()/the template literal. The
     // predicate already guarantees these, so this never fires at runtime.
     if (initialPrompt === null || !agentId || !urlConvId) return;
+    // Guard against duplicate send: the store-level background auto-send
+    // (triggered by session_worktree_status SSE when the worktree becomes
+    // ready) may have already dispatched this prompt while the user was
+    // viewing another conversation. The pending map is the single source
+    // of truth — if the prompt is gone, it was sent.
+    if (peekPendingInitialPrompt(urlConvId) === null) {
+      initialPromptSentForConvRef.current = urlConvId;
+      return;
+    }
     initialPromptSentForConvRef.current = urlConvId;
     // The prompt has been dispatched — remove it from the pending map so a
     // return to this session can't replay it. The non-destructive peek kept
@@ -7362,13 +7372,14 @@ export function shouldSendInitialPrompt(params: {
 export function dispatchInitialPrompt(
   prompt: PendingInitialPrompt,
   agentId: string,
-  send: (text: string, agentId: string, files: File[]) => Promise<void>,
-  sendSlashCommand: (name: string, args: string, agentId: string) => Promise<void>,
+  send: (text: string, agentId: string, files: File[], opts?: SendOptions) => Promise<void>,
+  sendSlashCommand: (name: string, args: string, agentId: string, opts?: SendOptions) => Promise<void>,
+  opts?: SendOptions,
 ): void {
   if (prompt.skill) {
-    void sendSlashCommand(prompt.skill.name, prompt.skill.args, agentId);
+    void sendSlashCommand(prompt.skill.name, prompt.skill.args, agentId, opts);
   } else {
-    void send(prompt.text, agentId, prompt.files ?? []);
+    void send(prompt.text, agentId, prompt.files ?? [], opts);
   }
 }
 

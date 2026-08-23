@@ -850,7 +850,7 @@ describe("chatStore — switchTo", () => {
     expect(useChatStore.getState().worktreeLogLines).toEqual(["Updating files: 42%"]);
   });
 
-  it("leaves worktree status to snapshot polling instead of SSE ordering", async () => {
+  it("applies worktree status from SSE after the snapshot has landed", async () => {
     seedSession("conv_worktree_status", []);
     await useChatStore.getState().switchTo("conv_worktree_status");
     useChatStore.setState({
@@ -862,6 +862,27 @@ describe("chatStore — switchTo", () => {
       conversationId: "conv_worktree_status",
       stage: "ready",
       branch: "feature/status",
+      error: null,
+    });
+
+    expect(useChatStore.getState().worktreeStatus).toBe(null);
+  });
+
+  it("skips worktree status SSE while the snapshot is still loading", async () => {
+    seedSession("conv_worktree_loading", []);
+    // Simulate cold bind in progress — loadingConversation is true,
+    // so the snapshot (not the SSE event) should be authoritative.
+    useChatStore.setState({
+      conversationId: "conv_worktree_loading",
+      worktreeStatus: { stage: "creating", branch: "feature/loading", error: null },
+      loadingConversation: true,
+    });
+
+    handleSessionEvent({
+      type: "session_worktree_status",
+      conversationId: "conv_worktree_loading",
+      stage: "ready",
+      branch: "feature/loading",
       error: null,
     });
 
