@@ -1180,6 +1180,42 @@ class SqlComment(OmnigentBase):
     __table_args__ = (CheckConstraint("status IN (1, 2)", name="ck_comments_status"),)
 
 
+class SqlAgentTextComment(ConversationBase):
+    """Unsent review comment anchored to one finalized agent text item."""
+
+    __tablename__ = "agent_text_comments"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    conversation_item_id: Mapped[str] = mapped_column(Uuid16())
+    start_offset: Mapped[int] = mapped_column(Integer)
+    end_offset: Mapped[int] = mapped_column(Integer)
+    selected_text: Mapped[str] = mapped_column(CompressedText)
+    prefix_context: Mapped[str] = mapped_column(CompressedText)
+    suffix_context: Mapped[str] = mapped_column(CompressedText)
+    body: Mapped[str] = mapped_column(CompressedText)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        Index(
+            "ix_agent_text_comments_item",
+            "workspace_id",
+            "conversation_id",
+            "conversation_item_id",
+        ),
+        CheckConstraint("start_offset >= 0", name="ck_agent_text_comments_start"),
+        CheckConstraint("end_offset > start_offset", name="ck_agent_text_comments_range"),
+    )
+
+
 def policy_name_cksum(name: str) -> bytes:
     """Return the sha256 digest of a policy name.
 

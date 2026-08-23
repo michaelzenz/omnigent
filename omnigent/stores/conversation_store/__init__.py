@@ -8,6 +8,7 @@ from typing import Any
 
 from omnigent.entities import (
     Agent,
+    AgentTextComment,
     Conversation,
     ConversationItem,
     NewConversationItem,
@@ -519,6 +520,53 @@ class ConversationStore(ABC):
             matching direct child ids. Parents with no direct sub-agent
             children, or ids that do not exist, map to an empty list.
         """
+        ...
+
+    @abstractmethod
+    def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
+        """Return one item scoped to its conversation."""
+        ...
+
+    @abstractmethod
+    def add_agent_text_comment(
+        self,
+        conversation_id: str,
+        conversation_item_id: str,
+        *,
+        start_offset: int,
+        end_offset: int,
+        selected_text: str,
+        prefix_context: str,
+        suffix_context: str,
+        body: str,
+    ) -> AgentTextComment:
+        """Create an unsent comment on finalized agent text."""
+        ...
+
+    @abstractmethod
+    def list_agent_text_comments(self, conversation_id: str) -> list[AgentTextComment]:
+        """List unsent agent-text comments in transcript order."""
+        ...
+
+    @abstractmethod
+    def update_agent_text_comment(
+        self, comment_id: str, conversation_id: str, *, body: str
+    ) -> AgentTextComment | None:
+        """Update one agent-text comment body."""
+        ...
+
+    @abstractmethod
+    def delete_agent_text_comment(
+        self, comment_id: str, conversation_id: str
+    ) -> AgentTextComment | None:
+        """Delete one agent-text comment."""
+        ...
+
+    @abstractmethod
+    def delete_agent_text_comments(
+        self, comment_ids: list[str], conversation_id: str
+    ) -> list[str]:
+        """Idempotently delete the requested comments from one conversation."""
         ...
 
     @abstractmethod

@@ -64,6 +64,7 @@ from omnigent.server.performance_metrics import (
     set_request_user_agent_for_access_log,
 )
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
+from omnigent.server.routes.agent_text_comments import create_agent_text_comments_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -2770,6 +2771,15 @@ def create_app(
         ),
         prefix="/v1",
         tags=["session_mcp_servers"],
+    )
+    app.include_router(
+        create_agent_text_comments_router(
+            conversation_store,
+            auth_provider=auth_provider,
+            permission_store=permission_store,
+        ),
+        prefix="/v1",
+        tags=["agent_text_comments"],
     )
     if comment_store is not None:
         app.include_router(

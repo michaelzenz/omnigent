@@ -6,6 +6,7 @@ import {
   FileDiffIcon,
   GlobeIcon,
   Loader2Icon,
+  MessageSquareTextIcon,
   MaximizeIcon,
   MinimizeIcon,
   PlusIcon,
@@ -30,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { TerminalView } from "@/components/blocks/TerminalView";
 import { BrowserPane } from "@/components/BrowserPane/BrowserPane";
 import { useSessionAgent } from "@/hooks/useAgents";
+import { useAgentTextComments } from "@/hooks/useAgentTextComments";
 import type { SessionLiveness } from "@/hooks/useSessionLiveness";
 import { terminalTabKey, useCreateTerminal, useTerminals } from "@/hooks/useTerminals";
 import { SuppressBrowserView } from "@/hooks/useSuppressBrowserView";
@@ -37,6 +39,8 @@ import { FilesPanel } from "./FilesPanel";
 import { FileViewer } from "./FileViewer";
 import type { ChangedSort } from "./FlatFileList";
 import { SubagentsPanel } from "./SubagentsPanel";
+import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
+import type { AgentTextCommentsUI } from "./AgentTextCommentsContext";
 import { useTerminalStatuses } from "./useTerminalStatuses";
 import { type RightRailTab, TAB_BADGE_BASE } from "./railTabs";
 import { Button } from "../components/ui/button";
@@ -530,6 +534,7 @@ interface WorkspacePanelProps {
   conversationId: string;
   /** Current rail width (px), driven by the resize handle. */
   width: number;
+  commentsUI?: AgentTextCommentsUI;
   /** Whether the panel is closed/collapsed (hides it from keyboard nav + assistive tech). */
   inert?: boolean;
   /**
@@ -634,6 +639,7 @@ interface WorkspacePanelProps {
 export function WorkspacePanel({
   conversationId,
   width,
+  commentsUI,
   handleProps,
   inert,
   rightRailTab,
@@ -675,6 +681,7 @@ export function WorkspacePanel({
   // Resolve shell tab keys to display labels. The terminals list is already
   // fetched elsewhere for the session, so this shares the same query cache.
   const { terminals } = useTerminals(conversationId);
+  const agentTextComments = useAgentTextComments(conversationId).data ?? [];
   const terminalLabelFor = useCallback(
     (key: string) => {
       const t = terminals.find((term) => terminalTabKey(term) === key);
@@ -800,6 +807,23 @@ export function WorkspacePanel({
                 </span>
               </TabsTrigger>
             </WorkspaceTabTooltip>
+            <WorkspaceTabTooltip label="Comments">
+              <TabsTrigger
+                value="comments"
+                aria-label={
+                  agentTextComments.length > 0 ? `Comments ${agentTextComments.length}` : "Comments"
+                }
+                className="relative size-6 shrink-0 p-0 hover:border-1 hover:border-muted rounded-md!"
+              >
+                <MessageSquareTextIcon />
+                <span className="sr-only">Comments</span>
+                {agentTextComments.length > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground">
+                    {agentTextComments.length > 9 ? "9+" : agentTextComments.length}
+                  </span>
+                )}
+              </TabsTrigger>
+            </WorkspaceTabTooltip>
             {showBrowserTab && (
               <WorkspaceTabTooltip label="Browser">
                 <TabsTrigger
@@ -918,6 +942,12 @@ export function WorkspacePanel({
             permissionLevel={permissionLevel}
             onCommentsOpenChange={onCommentsOpenChange}
             sort={filesPanelSort}
+          />
+        ) : rightRailTab === "comments" ? (
+          <AgentTextCommentsPanel
+            conversationId={conversationId}
+            canEdit={isEditorLevel(permissionLevel)}
+            ui={commentsUI}
           />
         ) : rightRailTab === "browser" && showBrowserTab ? (
           // Embedded browser (Electron only) — BrowserPane self-gates and

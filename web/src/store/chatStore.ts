@@ -149,6 +149,8 @@ export interface SendOptions {
    * pinned conversation's entry, not the root store's projection.
    */
   pinnedConversationId?: string;
+  /** Notify a caller that policy rejected the message without treating it as a transport error. */
+  onPolicyDenied?: () => void;
 }
 
 /**
@@ -1918,6 +1920,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // bubble. Settle local state from the POST response instead of
       // depending on the live stream being connected.
       if (postResult.denied) {
+        opts?.onPolicyDenied?.();
         // Target the session this send posted to: the user may have navigated
         // away while the POST was open, and settling the VISIBLE conversation
         // would clobber an unrelated chat's composer state.

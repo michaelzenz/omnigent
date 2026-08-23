@@ -1,0 +1,322 @@
+import { useEffect, useRef, useState } from "react";
+import { Loader2Icon, PencilIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useSessionAgent } from "@/hooks/useAgents";
+import {
+  useAddAgentTextComment,
+  useAgentTextComments,
+  useDeleteAgentTextComment,
+  useDeleteAgentTextCommentsBatch,
+  useUpdateAgentTextComment,
+} from "@/hooks/useAgentTextComments";
+import { formatAgentTextComments } from "@/lib/formatAgentTextComments";
+import { useChatStore } from "@/store/chatStore";
+import { cn } from "@/lib/utils";
+import { useAgentTextCommentsUI, type AgentTextCommentsUI } from "./AgentTextCommentsContext";
+
+export function AgentTextCommentsPanel({
+  conversationId,
+  canEdit,
+  ui: providedUI,
+}: {
+  conversationId: string;
+  canEdit: boolean;
+  ui?: AgentTextCommentsUI;
+}) {
+  const contextUI = useAgentTextCommentsUI();
+  const ui = providedUI ?? contextUI;
+  const query = useAgentTextComments(conversationId);
+  const add = useAddAgentTextComment(conversationId);
+  const update = useUpdateAgentTextComment(conversationId);
+  const remove = useDeleteAgentTextComment(conversationId);
+  const removeBatch = useDeleteAgentTextCommentsBatch(conversationId);
+  const { data: agent } = useSessionAgent(conversationId);
+  const comments = query.data ?? [];
+  const [draftBody, setDraftBody] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState("");
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [sentBatchIds, setSentBatchIds] = useState<string[] | null>(null);
+  const selectedCardRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!ui?.pendingAnchor) return;
+    setDraftBody("");
+    requestAnimationFrame(() => draftRef.current?.focus());
+  }, [ui?.pendingAnchor]);
+
+  useEffect(() => {
+    if (!ui?.activeCommentId) return;
+    requestAnimationFrame(() =>
+      selectedCardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
+    );
+  }, [ui?.activeCommentId]);
+
+  const saveDraft = async () => {
+    if (!ui?.pendingAnchor || !draftBody.trim()) return;
+    setSendError(null);
+    try {
+      const comment = await add.mutateAsync({ ...ui.pendingAnchor, body: draftBody.trim() });
+      setDraftBody("");
+      ui.cancelDraft();
+      ui.activateComment(comment.id);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not add comment.");
+    }
+  };
+
+  const clearSentBatch = async (ids: string[]) => {
+    await removeBatch.mutateAsync(ids);
+    setSentBatchIds(null);
+    setSendError(null);
+    ui?.activateComment(null);
+  };
+
+  const sendAll = async () => {
+    if (
+      !agent ||
+      comments.length === 0 ||
+      sentBatchIds ||
+      isSending ||
+      editingId ||
+      ui?.pendingAnchor
+    )
+      return;
+    const batch = comments.map((comment) => ({ ...comment }));
+    const ids = batch.map((comment) => comment.id);
+    setSendError(null);
+    setIsSending(true);
+    let policyDenied = false;
+    try {
+      await useChatStore.getState().send(formatAgentTextComments(batch), agent.id, [], {
+        onPolicyDenied: () => {
+          policyDenied = true;
+        },
+      });
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not send comments.");
+      setIsSending(false);
+      return;
+    }
+    if (policyDenied) {
+      setSendError("The message was denied by policy. Comments were not cleared.");
+      setIsSending(false);
+      return;
+    }
+
+    setSentBatchIds(ids);
+    try {
+      await clearSentBatch(ids);
+    } catch {
+      setSendError("Comments were sent, but could not be cleared. Retry clearing them.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const busy = isSending || add.isPending || removeBatch.isPending || sentBatchIds !== null;
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col" aria-label="Agent response comments">
+      <header className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+        <span className="text-sm font-semibold">Comments</span>
+        {comments.length > 0 && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums">
+            {comments.length}
+          </span>
+        )}
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {ui?.pendingAnchor && (
+          <div className="space-y-2 border-b border-border p-3">
+            <Quote text={ui.pendingAnchor.selected_text} />
+            <textarea
+              ref={draftRef}
+              rows={3}
+              value={draftBody}
+              disabled={!canEdit || busy}
+              placeholder="Add a comment…"
+              className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-ring"
+              onChange={(event) => setDraftBody(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && !draftBody) ui.cancelDraft();
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void saveDraft();
+                }
+              }}
+            />
+            <div className="flex justify-end gap-2">
+              <Button type="button" size="xs" variant="ghost" onClick={ui.cancelDraft}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                disabled={!canEdit || !draftBody.trim() || add.isPending}
+                onClick={() => void saveDraft()}
+              >
+                {add.isPending && <Loader2Icon className="size-3 animate-spin" />}
+                Add
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {query.isLoading ? (
+          <div className="flex justify-center p-8 text-sm text-muted-foreground">Loading…</div>
+        ) : comments.length === 0 && !ui?.pendingAnchor ? (
+          <div className="flex justify-center p-8 text-center text-sm text-muted-foreground">
+            Select completed agent text and choose Comment.
+          </div>
+        ) : (
+          <div className="space-y-2 p-3">
+            {comments.map((comment) => {
+              const selected = ui?.activeCommentId === comment.id;
+              const editing = editingId === comment.id;
+              return (
+                <div
+                  key={comment.id}
+                  ref={selected ? selectedCardRef : undefined}
+                  role="button"
+                  tabIndex={0}
+                  className={cn(
+                    "cursor-pointer space-y-2 rounded-lg border p-3 text-sm",
+                    selected ? "border-primary bg-primary/5" : "border-border bg-card",
+                  )}
+                  onClick={() => ui?.activateComment(comment.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") ui?.activateComment(comment.id);
+                  }}
+                >
+                  <Quote text={comment.selected_text} />
+                  {editing ? (
+                    <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
+                      <textarea
+                        autoFocus
+                        rows={3}
+                        value={editBody}
+                        className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5"
+                        onChange={(event) => setEditBody(event.target.value)}
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          size="xs"
+                          disabled={!editBody.trim() || update.isPending}
+                          onClick={async () => {
+                            setSendError(null);
+                            try {
+                              await update.mutateAsync({ id: comment.id, body: editBody.trim() });
+                              setEditingId(null);
+                            } catch (error) {
+                              setSendError(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Could not update comment.",
+                              );
+                            }
+                          }}
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap text-foreground">{comment.body}</p>
+                  )}
+                  {canEdit && !editing && (
+                    <div
+                      className="flex justify-end gap-1"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        aria-label="Edit comment"
+                        disabled={busy}
+                        onClick={() => {
+                          setEditingId(comment.id);
+                          setEditBody(comment.body);
+                        }}
+                      >
+                        <PencilIcon className="size-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        aria-label="Delete comment"
+                        disabled={busy || remove.isPending}
+                        onClick={() => {
+                          setSendError(null);
+                          remove.mutate(comment.id, {
+                            onError: (error) => setSendError(error.message),
+                          });
+                        }}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <footer className="shrink-0 space-y-2 border-t border-border p-3">
+        {sendError && <p className="text-xs text-destructive">{sendError}</p>}
+        <div className="flex justify-end">
+          {sentBatchIds ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={removeBatch.isPending}
+              onClick={() => void clearSentBatch(sentBatchIds)}
+            >
+              {removeBatch.isPending && <Loader2Icon className="size-4 animate-spin" />}
+              Retry clear
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              disabled={
+                !canEdit ||
+                comments.length === 0 ||
+                !agent ||
+                busy ||
+                editingId !== null ||
+                ui?.pendingAnchor != null
+              }
+              onClick={() => void sendAll()}
+            >
+              {busy ? (
+                <Loader2Icon className="size-4 animate-spin" />
+              ) : (
+                <SendIcon className="size-4" />
+              )}
+              {comments.length > 0 ? `Send ${comments.length} comments` : "Send comments"}
+            </Button>
+          )}
+        </div>
+      </footer>
+    </section>
+  );
+}
+
+function Quote({ text }: { text: string }) {
+  return (
+    <blockquote className="line-clamp-3 border-l-2 border-yellow-400/70 pl-2 text-xs text-muted-foreground">
+      {text}
+    </blockquote>
+  );
+}

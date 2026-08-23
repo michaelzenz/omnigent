@@ -31,6 +31,7 @@ from omnigent.db.converters import sql_agent_to_entity
 from omnigent.db.db_models import (
     LABEL_VALUE_MAX_LEN,
     SqlAgent,
+    SqlAgentTextComment,
     SqlComment,
     SqlConversation,
     SqlConversationItem,
@@ -70,9 +71,11 @@ from omnigent.db.utils import (
     insert_fts_bulk,
     make_named_managed_session_maker,
     now_epoch,
+    now_epoch_us,
     strip_nul_bytes,
 )
 from omnigent.entities import (
+    AgentTextComment,
     Conversation,
     ConversationItem,
     NewConversationItem,
@@ -666,6 +669,22 @@ def _fetch_search_snippets(
         if snippet is not None:
             out[conv_id] = snippet
     return out
+
+
+def _to_agent_text_comment(row: SqlAgentTextComment) -> AgentTextComment:
+    return AgentTextComment(
+        id=row.id,
+        conversation_id=row.conversation_id,
+        conversation_item_id=row.conversation_item_id,
+        start_offset=row.start_offset,
+        end_offset=row.end_offset,
+        selected_text=row.selected_text,
+        prefix_context=row.prefix_context,
+        suffix_context=row.suffix_context,
+        body=row.body,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 def _to_item(row: SqlConversationItem, data_json: str) -> ConversationItem:
@@ -2050,6 +2069,130 @@ class SqlAlchemyConversationStore(ConversationStore):
             ordered = sorted(rows, key=lambda r: order[r.id])
             decoded = self._decode_item_data_batch([r.data for r in ordered])
             return [_to_item(r, d) for r, d in zip(ordered, decoded, strict=True)]
+
+    def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
+        with self._conv_session("get_conversation_item") as session:
+            row = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == item_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            decoded = self._decode_item_data_batch([row.data])[0]
+            return _to_item(row, decoded)
+
+    def add_agent_text_comment(
+        self,
+        conversation_id: str,
+        conversation_item_id: str,
+        *,
+        start_offset: int,
+        end_offset: int,
+        selected_text: str,
+        prefix_context: str,
+        suffix_context: str,
+        body: str,
+    ) -> AgentTextComment:
+        created_us = now_epoch_us()
+        with self._conv_session("insert_agent_text_comment") as session:
+            item = session.execute(
+                select(SqlConversationItem.id).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == conversation_item_id,
+                )
+            ).scalar_one_or_none()
+            if item is None:
+                raise LookupError(f"conversation item not found: {conversation_item_id!r}")
+            row = SqlAgentTextComment(
+                id=uuid.uuid4().hex,
+                conversation_id=conversation_id,
+                conversation_item_id=conversation_item_id,
+                start_offset=start_offset,
+                end_offset=end_offset,
+                selected_text=selected_text,
+                prefix_context=prefix_context,
+                suffix_context=suffix_context,
+                body=body,
+                created_at=created_us // 1_000_000,
+                updated_at=created_us,
+            )
+            session.add(row)
+            return _to_agent_text_comment(row)
+
+    def list_agent_text_comments(self, conversation_id: str) -> list[AgentTextComment]:
+        stmt = (
+            select(SqlAgentTextComment)
+            .join(
+                SqlConversationItem,
+                (SqlConversationItem.workspace_id == SqlAgentTextComment.workspace_id)
+                & (SqlConversationItem.conversation_id == SqlAgentTextComment.conversation_id)
+                & (SqlConversationItem.id == SqlAgentTextComment.conversation_item_id),
+            )
+            .where(
+                SqlAgentTextComment.workspace_id == current_workspace_id(),
+                SqlAgentTextComment.conversation_id == conversation_id,
+            )
+            .order_by(
+                SqlConversationItem.position,
+                SqlAgentTextComment.start_offset,
+                SqlAgentTextComment.created_at,
+                SqlAgentTextComment.id,
+            )
+        )
+        with self._conv_session("list_agent_text_comments") as session:
+            return [_to_agent_text_comment(row) for row in session.execute(stmt).scalars()]
+
+    def update_agent_text_comment(
+        self, comment_id: str, conversation_id: str, *, body: str
+    ) -> AgentTextComment | None:
+        with self._conv_session("update_agent_text_comment") as session:
+            row = session.get(
+                SqlAgentTextComment,
+                (current_workspace_id(), conversation_id, comment_id),
+            )
+            if row is None:
+                return None
+            row.body = body
+            row.updated_at = now_epoch_us()
+            return _to_agent_text_comment(row)
+
+    def delete_agent_text_comment(
+        self, comment_id: str, conversation_id: str
+    ) -> AgentTextComment | None:
+        with self._conv_session("delete_agent_text_comment") as session:
+            row = session.get(
+                SqlAgentTextComment,
+                (current_workspace_id(), conversation_id, comment_id),
+            )
+            if row is None:
+                return None
+            entity = _to_agent_text_comment(row)
+            session.delete(row)
+            return entity
+
+    def delete_agent_text_comments(
+        self, comment_ids: list[str], conversation_id: str
+    ) -> list[str]:
+        if not comment_ids:
+            return []
+        unique_ids = list(dict.fromkeys(comment_ids))
+        with self._conv_session("delete_agent_text_comments_batch") as session:
+            rows = list(
+                session.execute(
+                    select(SqlAgentTextComment).where(
+                        SqlAgentTextComment.workspace_id == current_workspace_id(),
+                        SqlAgentTextComment.conversation_id == conversation_id,
+                        SqlAgentTextComment.id.in_(unique_ids),
+                    )
+                ).scalars()
+            )
+            for row in rows:
+                session.delete(row)
+            return [row.id for row in rows]
 
     def list_items(
         self,
@@ -3897,6 +4040,18 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .all()
             )
             delete_fts_by_conversation(session, conversation_id)
+            removed_item_ids = select(SqlConversationItem.id).where(
+                SqlConversationItem.workspace_id == current_workspace_id(),
+                SqlConversationItem.conversation_id == conversation_id,
+                SqlConversationItem.position >= target.position,
+            )
+            session.execute(
+                delete(SqlAgentTextComment).where(
+                    SqlAgentTextComment.workspace_id == current_workspace_id(),
+                    SqlAgentTextComment.conversation_id == conversation_id,
+                    SqlAgentTextComment.conversation_item_id.in_(removed_item_ids),
+                )
+            )
             session.execute(
                 delete(SqlConversationItem).where(
                     SqlConversationItem.workspace_id == current_workspace_id(),
@@ -4370,6 +4525,12 @@ class SqlAlchemyConversationStore(ConversationStore):
             )
             bound_agent_ids = candidate_agent_ids - surviving_refs
             delete_fts_by_conversation_ids(ap_sess, list(subtree_ids))
+            ap_sess.execute(
+                delete(SqlAgentTextComment).where(
+                    SqlAgentTextComment.workspace_id == current_workspace_id(),
+                    SqlAgentTextComment.conversation_id.in_(subtree_ids),
+                )
+            )
             ap_sess.execute(
                 delete(SqlConversationItem).where(
                     SqlConversationItem.workspace_id == current_workspace_id(),

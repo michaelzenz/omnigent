@@ -1,4 +1,16 @@
 @import "tailwindcss";
+
+::highlight(omnigent-agent-comment) {
+  background-color: rgb(250 204 21 / 28%);
+}
+
+::highlight(omnigent-agent-comment-active) {
+  background-color: rgb(250 204 21 / 55%);
+}
+
+::highlight(omnigent-agent-comment-pending) {
+  background-color: rgb(59 130 246 / 28%);
+}
 @plugin "@tailwindcss/typography";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

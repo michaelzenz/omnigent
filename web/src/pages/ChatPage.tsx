@@ -32,6 +32,7 @@ import {
   GitForkIcon,
   ImageIcon,
   Loader2Icon,
+  MessageSquareTextIcon,
   PaperclipIcon,
   PencilIcon,
   SettingsIcon,
@@ -132,7 +133,7 @@ import {
   harnessWarningBadgeText,
 } from "@/lib/harnessSetup";
 import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
-import { getSessionSlim, switchSessionAgent } from "@/lib/sessionsApi";
+import { getSessionSlim, retrySession, switchSessionAgent } from "@/lib/sessionsApi"
 import { agentDisplayLabel } from "@/components/AgentInfo";
 import {
   BRAIN_HARNESS_LABELS,
@@ -163,7 +164,6 @@ import {
   liveCandidateAssistantIndex,
 } from "@/lib/renderItems";
 import { getCurrentAuthorId } from "@/lib/identity";
-import { retrySession } from "@/lib/sessionsApi";
 import { codexEffortLevelsForModel, findNativeModelOption } from "@/lib/codexNativeModels";
 import {
   composerAttachmentKey,
@@ -193,6 +193,10 @@ import {
   rankMentionEntries,
 } from "@/lib/composerMentions";
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
+import { useAgentTextComments, type AgentTextCommentAnchor } from "@/hooks/useAgentTextComments";
+import { useAgentTextCommentHighlights } from "@/hooks/useAgentTextCommentHighlights";
+import { captureAgentTextSelection } from "@/lib/agentTextSelection";
+import { useAgentTextCommentsUI } from "@/shell/AgentTextCommentsContext";
 // Re-exported so existing tests importing these from "./ChatPage" keep working
 // after the pure helpers moved to the shared lib.
 export { detectMentionAt, mentionMarkerFor };
@@ -1770,50 +1774,48 @@ function SessionLayout({ mainAgent }: SessionLayoutProps) {
 function SelectionPopup({
   containerRef,
   onReply,
+  onComment,
 }: {
   containerRef: React.RefObject<HTMLElement | null>;
   onReply: (text: string) => void;
+  onComment?: (anchor: AgentTextCommentAnchor) => void;
 }) {
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
-  const selectedTextRef = useRef<string>("");
+  const selectedTextRef = useRef("");
+  const commentAnchorRef = useRef<AgentTextCommentAnchor | null>(null);
+
+  const clear = () => {
+    setPopupPos(null);
+    selectedTextRef.current = "";
+    commentAnchorRef.current = null;
+  };
 
   const updatePopup = useCallback(() => {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setPopupPos(null);
-      selectedTextRef.current = "";
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      clear();
       return;
     }
-
-    const text = sel.toString().trim();
-    if (!text) {
-      setPopupPos(null);
-      selectedTextRef.current = "";
-      return;
-    }
-
-    // Scope to the conversation container — ignore selections in the composer.
+    const text = selection.toString().trim();
     const container = containerRef.current;
-    if (!container) {
-      setPopupPos(null);
-      selectedTextRef.current = "";
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (
+      !text ||
+      !container ||
+      !anchorNode ||
+      !focusNode ||
+      !container.contains(anchorNode) ||
+      !container.contains(focusNode)
+    ) {
+      clear();
       return;
     }
-    const anchor = sel.anchorNode;
-    if (!anchor || !container.contains(anchor)) {
-      setPopupPos(null);
-      selectedTextRef.current = "";
-      return;
-    }
-
-    const range = sel.getRangeAt(0);
+    const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    // Position the button just above the selection, horizontally centered.
-    setPopupPos({
-      x: rect.left + rect.width / 2,
-      y: rect.top,
-    });
+    setPopupPos({ x: rect.left + rect.width / 2, y: rect.top });
     selectedTextRef.current = text;
+    commentAnchorRef.current = captureAgentTextSelection(selection);
   }, [containerRef]);
 
   useEffect(() => {
@@ -1843,25 +1845,38 @@ function SelectionPopup({
         type="button"
         variant="secondary"
         size="sm"
-        // Override shared-variant translucent hover — this button floats over text.
-        className="gap-1 shadow-md hover:bg-secondary hover:brightness-95 dark:hover:brightness-110"
-        onMouseDown={(e) => {
-          // Prevent the mousedown from clearing the selection before we read it.
-          e.preventDefault();
-        }}
+        className="gap-1 rounded-none shadow-none hover:bg-secondary hover:brightness-95 dark:hover:brightness-110"
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           const text = selectedTextRef.current;
-          if (text) {
-            onReply(text);
-            window.getSelection()?.removeAllRanges();
-            setPopupPos(null);
-            selectedTextRef.current = "";
-          }
+          if (!text) return;
+          onReply(text);
+          window.getSelection()?.removeAllRanges();
+          clear();
         }}
       >
         <CornerUpLeftIcon className="size-3.5" />
         Reply ↵
       </Button>
+      {commentAnchorRef.current && onComment && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="gap-1 rounded-none border-l border-border shadow-none hover:bg-secondary hover:brightness-95 dark:hover:brightness-110"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const anchor = commentAnchorRef.current;
+            if (!anchor) return;
+            onComment(anchor);
+            window.getSelection()?.removeAllRanges();
+            clear();
+          }}
+        >
+          <MessageSquareTextIcon className="size-3.5" />
+          Comment
+        </Button>
+      )}
     </div>
   );
 }
@@ -2272,6 +2287,22 @@ export function MainAgentSurface({
     conversationRef.current = el;
     setContainerEl(el);
   }, []);
+  const agentTextCommentsUI = useAgentTextCommentsUI();
+  const agentTextComments =
+    useAgentTextComments(agentTextCommentsUI ? (conversationId ?? undefined) : undefined).data ??
+    [];
+  const activateAgentTextComment = useCallback(
+    (commentId: string) => agentTextCommentsUI?.activateComment(commentId),
+    [agentTextCommentsUI],
+  );
+  useAgentTextCommentHighlights({
+    containerRef: conversationRef,
+    comments: agentTextComments,
+    pendingAnchor: agentTextCommentsUI?.pendingAnchor ?? null,
+    activeCommentId: agentTextCommentsUI?.activeCommentId ?? null,
+    onActivate: activateAgentTextComment,
+    enabled: agentTextCommentsUI !== null,
+  });
   const [terminalSurfaceEl, setTerminalSurfaceEl] = useState<HTMLElement | null>(null);
   // True only while the chat/terminal surface is the frontmost thing on screen.
   // Drives both native overlays so neither floats over an opened drawer.
@@ -2699,6 +2730,7 @@ export function MainAgentSurface({
                 { id: `reply-quote-${nextReplyQuoteId.current++}`, text },
               ])
             }
+            onComment={agentTextCommentsUI?.canEdit ? agentTextCommentsUI.openDraft : undefined}
           />
 
           <Composer
@@ -4582,6 +4614,7 @@ function UserBubble({
   const sessionHarness = useChatStore((s) => s.sessionHarness);
   const boundAgentId = useChatStore((s) => s.boundAgentId);
   const rewindAndSend = useChatStore((s) => s.rewindAndSend);
+  const queryClient = useQueryClient();
   const canRewindSession = useContext(SessionRewindContext);
   const [editing, setEditing] = useState(false);
   const [editedText, setEditedText] = useState("");
@@ -4667,6 +4700,9 @@ function UserBubble({
     setRewindError(null);
     try {
       await rewindAndSend(bubble.itemId, editedText, bubble.content, boundAgentId);
+      if (sessionId) {
+        await queryClient.invalidateQueries({ queryKey: ["agent-text-comments", sessionId] });
+      }
       setEditing(false);
     } catch (error) {
       setRewindError(error instanceof Error ? error.message : "Couldn't rewind this message.");

@@ -5,6 +5,7 @@ import { PROJECT_LABEL_KEY, useConversations, useProjects } from "@/hooks/useCon
 import { conversationDisplayLabel, UNTITLED_CONVERSATION_LABEL } from "./sidebarNav";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
+import { useAgentTextComments, type AgentTextCommentAnchor } from "@/hooks/useAgentTextComments";
 import { useSidebarToggleHotkeys } from "@/hooks/useSidebarToggleHotkeys";
 import { useCommandPaletteHotkey, useSearchHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useNewSessionHotkey } from "@/hooks/useNewSessionHotkey";
@@ -15,7 +16,7 @@ import { PolicyConnectionWarning } from "@/hooks/PolicyConnectionWarning";
 import { useSeedReadState } from "@/hooks/useUnseenConversations";
 import { useIOSViewportLock } from "@/hooks/useIOSViewportLock";
 import { readFilesPanelPreferences, writeFilesPanelPreferences } from "@/lib/filesPanelPreferences";
-import { derivePermissionLevel, isOwnerLevel } from "@/lib/permissionsApi";
+import { derivePermissionLevel, isEditorLevel, isOwnerLevel } from "@/lib/permissionsApi";
 import {
   detachActiveBrowserView,
   isAndroidShell,
@@ -104,6 +105,8 @@ import { ForkSessionDialog } from "./ForkSessionDialog";
 import { ForkDialogContextProvider, type ForkDialogContextValue } from "./ForkDialogContext";
 import { InlineTerminalsSection } from "./InlineTerminalsSection";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { AgentTextCommentsProvider } from "./AgentTextCommentsContext";
+import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
 
@@ -307,6 +310,14 @@ export function AppShell() {
   // on a phone they open as full-screen overlays from the session-menu FAB.
   const [subagentsPanelOpen, setSubagentsPanelOpen] = useState(false);
   const [shellsPanelOpen, setShellsPanelOpen] = useState(false);
+  const [agentTextCommentsPanelOpen, setAgentTextCommentsPanelOpen] = useState(false);
+  const [pendingAgentTextComment, setPendingAgentTextComment] =
+    useState<AgentTextCommentAnchor | null>(null);
+  const [activeAgentTextCommentId, setActiveAgentTextCommentId] = useState<string | null>(null);
+  useEffect(() => {
+    setPendingAgentTextComment(null);
+    setActiveAgentTextCommentId(null);
+  }, [conversationId]);
   // The right "Workspace" rail (WorkspacePanel) remembers its open/closed
   // state per session. A brand-new session (no saved `open`) follows the
   // Appearance "Workspace panel" default; reopening a session restores how
@@ -628,6 +639,7 @@ export function AppShell() {
   // (the panel's "main" row links back to the root, so an empty tree is
   // a one-entry list, not a dead end).
   const agentCount = childSessions.length + 1;
+  const agentTextCommentCount = useAgentTextComments(conversationId).data?.length ?? 0;
 
   // Hide the files panel entirely when the agent spec has no os_env. Probe
   // the default environment resource instead of the root filesystem listing:
@@ -653,6 +665,7 @@ export function AppShell() {
         // Agents tab is unconditional: the panel always lists at least
         // the main agent (its "main" row), so there's never a dead end.
         subagents: true,
+        comments: true,
         // Shells have no nav tab — they open as closable soft tabs in the
         // rail's tab strip (see WorkspacePanel's TerminalTabsStrip / "+"
         // menu). Mobile keeps a shells drawer (see ``showShellsTab`` below).
@@ -671,7 +684,7 @@ export function AppShell() {
   // this convergent even when several tabs vanish at once.
   useEffect(() => {
     if (railTabsAvailable[rightRailTab]) return;
-    const next = (["files", "changes", "subagents", "browser"] as const).find(
+    const next = (["files", "changes", "subagents", "comments", "browser"] as const).find(
       (t) => railTabsAvailable[t],
     );
     if (next) setRightRailTab(next);
@@ -1368,6 +1381,7 @@ export function AppShell() {
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setAgentTextCommentsPanelOpen(false);
     setExecutionLogsKey(key);
   }
 
@@ -1380,6 +1394,7 @@ export function AppShell() {
     setExecutionLogsKey(null); // close execution-logs panel
     setSubagentsPanelOpen(false); // close mobile agents drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setAgentTextCommentsPanelOpen(false);
     setFilesDrawerFlatView(flatView);
     setFilesPanelOpen(true);
   }
@@ -1395,6 +1410,7 @@ export function AppShell() {
     setExecutionLogsKey(null); // close execution-logs panel
     setFilesPanelOpen(false); // close files drawer
     setShellsPanelOpen(false); // close mobile shells drawer
+    setAgentTextCommentsPanelOpen(false);
     setSubagentsPanelOpen(true);
   }
 
@@ -1409,7 +1425,19 @@ export function AppShell() {
     setExecutionLogsKey(null); // close execution-logs panel
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
+    setAgentTextCommentsPanelOpen(false);
     setShellsPanelOpen(true);
+  }
+
+  function openAgentTextCommentsPanel() {
+    setSelectedFilePath(null);
+    clearFileViewerUrl();
+    setPanelInitialKey(null);
+    setExecutionLogsKey(null);
+    setFilesPanelOpen(false);
+    setSubagentsPanelOpen(false);
+    setShellsPanelOpen(false);
+    setAgentTextCommentsPanelOpen(true);
   }
 
   function openMainExecutionLog() {
@@ -1558,6 +1586,28 @@ export function AppShell() {
     !executionLogsOpen &&
     !filesPanelOpen,
   );
+  const agentTextCommentsUI = {
+    canEdit: isEditorLevel(permissionLevel),
+    pendingAnchor: pendingAgentTextComment,
+    activeCommentId: activeAgentTextCommentId,
+    openDraft: (anchor: AgentTextCommentAnchor) => {
+      setPendingAgentTextComment(anchor);
+      setActiveAgentTextCommentId(null);
+      handleRightRailTabChange("comments");
+      if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
+      else setRightPanelOpen(true);
+    },
+    cancelDraft: () => setPendingAgentTextComment(null),
+    activateComment: (commentId: string | null) => {
+      setActiveAgentTextCommentId(commentId);
+      if (commentId) {
+        setPendingAgentTextComment(null);
+        handleRightRailTabChange("comments");
+        if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
+        else setRightPanelOpen(true);
+      }
+    },
+  };
 
   return (
     <FileViewerContext.Provider value={fileViewerContextValue}>
@@ -1718,6 +1768,7 @@ export function AppShell() {
                     filesPanelOpen,
                     subagentsPanelOpen,
                     shellsPanelOpen,
+                    commentsPanelOpen: agentTextCommentsPanelOpen,
                     hideTerminalsTab,
                     // Mobile: reachable when a shell exists OR the agent
                     // declares shell access (so the drawer's "+ New shell" row
@@ -1729,16 +1780,20 @@ export function AppShell() {
                     debugMode,
                     changedCount,
                     subagentsWorking,
+                    commentsCount: agentTextCommentCount,
                     agentCount,
                     onOpenFiles: openFilesPanel,
                     onOpenChanges: openChangesPanel,
                     onOpenShells: openShellsPanel,
                     onOpenSubagents: openSubagentsPanel,
+                    onOpenComments: openAgentTextCommentsPanel,
                     onOpenMainExecutionLog: openMainExecutionLog,
                   }}
                 />
                 <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-                  <Outlet />
+                  <AgentTextCommentsProvider value={agentTextCommentsUI}>
+                    <Outlet />
+                  </AgentTextCommentsProvider>
                 </main>
 
                 {/* Debug-mode execution-logs rail — desktop only, hidden when a
@@ -1769,6 +1824,7 @@ export function AppShell() {
                   <WorkspacePanel
                     conversationId={conversationId}
                     width={inlinePanelWidth}
+                    commentsUI={agentTextCommentsUI}
                     inert={inlinePanelWidth === 0}
                     handleProps={inlinePanelHandleProps}
                     rightRailTab={rightRailTab}
@@ -1868,6 +1924,20 @@ export function AppShell() {
                     // Mobile has no tab strip "+" menu, so the drawer carries
                     // the "+ New shell" create row.
                     showNewShell
+                  />
+                </MobilePanelDrawer>
+              )}
+              {conversationId && (
+                <MobilePanelDrawer
+                  open={agentTextCommentsPanelOpen}
+                  title="Comments"
+                  onClose={() => setAgentTextCommentsPanelOpen(false)}
+                  testId="agent-text-comments-panel-drawer"
+                >
+                  <AgentTextCommentsPanel
+                    conversationId={conversationId}
+                    canEdit={isEditorLevel(permissionLevel)}
+                    ui={agentTextCommentsUI}
                   />
                 </MobilePanelDrawer>
               )}

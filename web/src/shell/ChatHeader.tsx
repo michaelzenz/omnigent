@@ -5,6 +5,7 @@ import {
   GitCompareIcon,
   InfoIcon,
   ListIcon,
+  MessageSquareTextIcon,
   PanelLeftIcon,
   PanelRightCloseIcon,
   PanelRightIcon,
@@ -52,6 +53,8 @@ interface MobileSessionMenuProps {
   subagentsPanelOpen: boolean;
   /** True while the mobile shells drawer is open. */
   shellsPanelOpen: boolean;
+  /** True while the mobile comments drawer is open. */
+  commentsPanelOpen?: boolean;
   /** Hide the Shells entry (claude-native sub-agents only). */
   hideTerminalsTab: boolean;
   /** Whether the Shells entry is available. */
@@ -64,6 +67,8 @@ interface MobileSessionMenuProps {
   changedCount: number;
   /** Working child-agent count (Agents entry badge). */
   subagentsWorking: number;
+  /** Number of unsent agent-text comments. */
+  commentsCount?: number;
   /**
    * Total agents in the session tree, main agent included (Agents
    * entry badge) — starts at 1 for a lone agent.
@@ -77,6 +82,8 @@ interface MobileSessionMenuProps {
   onOpenShells: () => void;
   /** Open the mobile agents drawer. */
   onOpenSubagents: () => void;
+  /** Open the mobile agent-text comments drawer. */
+  onOpenComments?: () => void;
   /** Open the main execution-log push panel. */
   onOpenMainExecutionLog: () => void;
 }
@@ -438,6 +445,7 @@ export function ChatHeader({
           !mobileMenu.filesPanelOpen &&
           !mobileMenu.subagentsPanelOpen &&
           !mobileMenu.shellsPanelOpen &&
+          !mobileMenu.commentsPanelOpen &&
           (hasRailContent || mobileMenu.debugMode) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -500,6 +508,22 @@ export function ChatHeader({
                       : mobileMenu.agentCount}
                   </span>
                 </DropdownMenuItem>
+                {mobileMenu.onOpenComments && (
+                  <DropdownMenuItem
+                    onSelect={mobileMenu.onOpenComments}
+                    className="gap-2.5 px-2.5 py-2 text-ui"
+                  >
+                    <MessageSquareTextIcon className="size-4" />
+                    Comments
+                    {(mobileMenu.commentsCount ?? 0) > 0 && (
+                      <span
+                        className={cn(TAB_BADGE_BASE, "ml-auto bg-muted text-muted-foreground")}
+                      >
+                        {mobileMenu.commentsCount}
+                      </span>
+                    )}
+                  </DropdownMenuItem>
+                )}
                 {/* Shells — the mobile entry into the session's shells
                     (desktop has no Shells tab; it opens shells as soft tabs):
                     visible when a real shell exists, or when the agent spec
