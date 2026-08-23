@@ -385,12 +385,25 @@ class _HelperProcessClient:
         # the live listener; the policy already carries it for the
         # helper itself. Cleared in :meth:`_stop_egress_proxy_locked`.
         self._egress_relay_port: int | None = None
+        # Allocate the private scratch directory and grant the system temp
+        # dir before the environment is exposed to file tools. This keeps
+        # their reach metadata in sync with the sandbox policy used by the
+        # helper process. The system temp dir grant lets file tools write
+        # to /tmp (Linux) or the per-user temp dir (macOS/Windows) — the
+        # same path the shell already uses via $TMPDIR.
+        self._tmpdir: Path | None = None
+        if sandbox.active:
+            self._tmpdir = create_private_tmpdir()
+            system_tmp = Path(tempfile.gettempdir())
+            sandbox = with_additional_write_roots(
+                sandbox, [self._tmpdir, system_tmp]
+            )
+            self.sandbox = sandbox
         self._proc: subprocess.Popen[str] | None = None
         # Parent-held containment handle from the sandbox backend's
         # post_spawn hook (e.g. a Windows Job Object). Closed in
         # ``_stop_locked`` to tear down the helper's process tree.
         self._sandbox_handle: ContainmentHandle | None = None
-        self._tmpdir: Path | None = None
         self._egress_proxy: EgressProxy | None = None
         self._egress_loop: asyncio.AbstractEventLoop | None = None
         self._egress_thread: threading.Thread | None = None
@@ -438,7 +451,9 @@ class _HelperProcessClient:
                 return result
             return {"error": f"Helper returned non-object response: {result!r}"}
         except Exception as exc:  # noqa: BLE001 — helper IO failures are retried or surfaced via error dict
-            self._stop_locked()
+            # Keep the private $TMPDIR across a helper restart; the file
+            # facade has already advertised this path as reachable.
+            self._stop_locked(cleanup_tmpdir=False)
             if allow_retry and not self._closed:
                 self._ensure_started_locked()
                 return self._request_locked(payload, allow_retry=False)
@@ -463,8 +478,7 @@ class _HelperProcessClient:
         helper_cwd = self.cwd
         credential_runtime: CredentialProxyRuntime | None = None
         if sandbox.active:
-            self._tmpdir = create_private_tmpdir()
-            sandbox = with_additional_write_roots(sandbox, [self._tmpdir])
+            assert self._tmpdir is not None
             set_temp_env(env, self._tmpdir)
             if self.start_in_scratch:
                 helper_cwd = self._tmpdir
@@ -606,8 +620,8 @@ class _HelperProcessClient:
                 **popen_kwargs,
             )
         except Exception:
-            cleanup_private_tmpdir(self._tmpdir)
-            self._tmpdir = None
+            # Keep the allocated scratch path and its policy grant intact so
+            # a retry cannot leave the file facade advertising a deleted path.
             raise
         finally:
             # Close the parent's copy of the read end either way —
@@ -642,7 +656,7 @@ class _HelperProcessClient:
             return f"OS environment helper exited with code {returncode}: {stderr}"
         return f"OS environment helper exited with code {returncode}"
 
-    def _stop_locked(self) -> None:
+    def _stop_locked(self, *, cleanup_tmpdir: bool = True) -> None:
         proc = self._proc
         self._proc = None
         try:
@@ -679,8 +693,9 @@ class _HelperProcessClient:
                     self._sandbox_handle.close()
                 self._sandbox_handle = None
             self._stop_egress_proxy_locked()
-            cleanup_private_tmpdir(self._tmpdir)
-            self._tmpdir = None
+            if cleanup_tmpdir:
+                cleanup_private_tmpdir(self._tmpdir)
+                self._tmpdir = None
 
     # ------------------------------------------------------------------
     # Egress proxy lifecycle
@@ -845,6 +860,9 @@ class CallerProcessOSEnvironment(OSEnvironment):
             egress_rules=self._egress_rules,
             egress_allow_private_destinations=self._egress_allow_private_destinations,
         )
+        # The helper allocates and grants its private $TMPDIR eagerly so the
+        # filesystem facade advertises the same reach that the helper enforces.
+        self.sandbox = self._helper.sandbox
 
     async def read(
         self,
