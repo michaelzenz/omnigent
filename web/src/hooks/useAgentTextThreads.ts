@@ -4,7 +4,8 @@ import { authenticatedFetch } from "@/lib/identity";
 import { postEvent } from "@/lib/sessionsApi";
 import type { AgentTextCommentAnchor } from "./useAgentTextComments";
 
-export type AgentTextThreadState = "queued" | "running" | "answered" | "failed" | "resolved";
+export type AgentTextThreadState =
+  "initializing" | "queued" | "running" | "answered" | "failed" | "resolved";
 export type AgentTextThreadView = "open" | "resolved";
 
 export interface AgentTextThread {
@@ -130,6 +131,7 @@ export function useAgentTextThreads(
 
 export function useCreateAgentTextThread(sessionId: string) {
   const client = useQueryClient();
+  const openKey = key(sessionId, "open");
   return useMutation({
     mutationFn: async (payload: AddAgentTextThreadPayload) => {
       const thread = await jsonOrThrow<AgentTextThread>(
@@ -147,8 +149,47 @@ export function useCreateAgentTextThread(sessionId: string) {
       );
       return submitThread(sessionId, thread);
     },
-    onSuccess: () => invalidate(client, sessionId),
-    onError: () => invalidate(client, sessionId),
+    onMutate: async (payload) => {
+      await client.cancelQueries({ queryKey: openKey });
+      const previous = client.getQueryData<AgentTextThread[]>(openKey);
+      const now = Date.now() * 1_000;
+      const optimisticId = `initializing:${payload.client_request_id}`;
+      const optimistic: AgentTextThread = {
+        id: optimisticId,
+        conversation_id: sessionId,
+        source_item_id: payload.conversation_item_id,
+        start_offset: payload.start_offset,
+        end_offset: payload.end_offset,
+        selected_text: payload.selected_text,
+        prefix_context: payload.prefix_context,
+        suffix_context: payload.suffix_context,
+        user_comment: payload.comment,
+        state: "initializing",
+        user_item_id: null,
+        response_id: null,
+        failure_message: null,
+        resolved_at: null,
+        created_at: now,
+        updated_at: now,
+        source_position: null,
+        items: [],
+      };
+      client.setQueryData<AgentTextThread[]>(openKey, [...(previous ?? []), optimistic]);
+      return { optimisticId, previous };
+    },
+    onSuccess: (thread, _payload, context) => {
+      client.setQueryData<AgentTextThread[]>(openKey, (current = []) => {
+        const withoutOptimistic = current.filter((item) => item.id !== context.optimisticId);
+        return withoutOptimistic.some((item) => item.id === thread.id)
+          ? withoutOptimistic
+          : [...withoutOptimistic, thread];
+      });
+      return invalidate(client, sessionId);
+    },
+    onError: (_error, _payload, context) => {
+      client.setQueryData(openKey, context?.previous ?? []);
+      return invalidate(client, sessionId);
+    },
   });
 }
 

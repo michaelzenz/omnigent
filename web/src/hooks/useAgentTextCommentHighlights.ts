@@ -52,7 +52,7 @@ export function useAgentTextCommentHighlights({
   comments: AgentTextComment[];
   pendingAnchor: AgentTextCommentAnchor | null;
   activeCommentId: string | null;
-  onActivate: (commentId: string) => void;
+  onActivate: (commentId: string | null) => void;
   enabled?: boolean;
 }): void {
   const rangesRef = useRef<{ comment: AgentTextComment; range: Range }[]>([]);
@@ -157,7 +157,7 @@ export function useAgentTextCommentHighlights({
         }
       });
       matches.sort((a, b) => a.comment.selected_text.length - b.comment.selected_text.length);
-      if (matches[0]) onActivate(matches[0].comment.id);
+      onActivate(matches[0]?.comment.id ?? null);
     };
     container.addEventListener("click", handleClick);
     return () => container.removeEventListener("click", handleClick);

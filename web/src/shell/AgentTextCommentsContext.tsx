@@ -15,6 +15,8 @@ export interface AgentTextCommentsUI {
   threadedModeLoading: boolean;
   setMode: (mode: CommentMode) => void;
   pendingAnchor: AgentTextCommentAnchor | null;
+  draftBody: string;
+  setDraftBody: (body: string) => void;
   activeCommentId: string | null;
   sendState: AgentTextCommentSendState;
   openDraft: (anchor: AgentTextCommentAnchor) => void;

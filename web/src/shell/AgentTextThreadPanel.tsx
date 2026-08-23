@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { CheckIcon, Loader2Icon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,8 @@ const EMPTY_THREADS: AgentTextThread[] = [];
 function assistantText(thread: AgentTextThread): string {
   const parts: string[] = [];
   for (const item of thread.items) {
-    if (item.type !== "message" || item.role !== "assistant" || !Array.isArray(item.content)) continue;
+    if (item.type !== "message" || item.role !== "assistant" || !Array.isArray(item.content))
+      continue;
     for (const block of item.content) {
       if (block && typeof block === "object" && "text" in block && typeof block.text === "string") {
         parts.push(block.text);
@@ -40,6 +41,66 @@ function Quote({ text }: { text: string }) {
   );
 }
 
+function ThreadDraftEditor({
+  anchorText,
+  body,
+  canEdit,
+  isPending,
+  textareaRef,
+  onBodyChange,
+  onCancel,
+  onSave,
+  top,
+}: {
+  anchorText: string;
+  body: string;
+  canEdit: boolean;
+  isPending: boolean;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onBodyChange: (body: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  top?: number;
+}) {
+  const positioned = top !== undefined;
+  return (
+    <div
+      data-agent-thread-draft
+      style={positioned ? { position: "absolute", top, left: 12, right: 12 } : undefined}
+      className={cn(
+        "z-10 space-y-2 bg-background p-3",
+        positioned ? "rounded-lg border border-purple-400 shadow-sm" : "border-b border-border",
+      )}
+    >
+      <Quote text={anchorText} />
+      <textarea
+        ref={textareaRef}
+        rows={4}
+        value={body}
+        placeholder="Ask about this response…"
+        className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-ring"
+        onChange={(event) => onBodyChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !body) onCancel();
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            onSave();
+          }
+        }}
+      />
+      <div className="flex justify-end gap-2">
+        <Button size="xs" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="xs" disabled={!canEdit || !body.trim() || isPending} onClick={onSave}>
+          {isPending && <Loader2Icon className="size-3 animate-spin" />}
+          Send comment
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function AgentTextThreadPanel({
   conversationId,
   canEdit,
@@ -50,9 +111,10 @@ export function AgentTextThreadPanel({
   ui: AgentTextCommentsUI;
 }) {
   const [view, setView] = useState<AgentTextThreadView>("open");
-  const [draftBody, setDraftBody] = useState("");
+  const draftBody = ui.draftBody;
   const [error, setError] = useState<string | null>(null);
   const draftRequestIdRef = useRef(crypto.randomUUID());
+  const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingAnchorRef = useRef(ui.pendingAnchor);
   pendingAnchorRef.current = ui.pendingAnchor;
   const query = useAgentTextThreads(conversationId, view);
@@ -86,38 +148,54 @@ export function AgentTextThreadPanel({
   }, [liveBlocks, threads]);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const isMobile = useIsMobileViewport();
-  const { positions, canvasHeight, onScroll } = useThreadedCommentLayout(threads, scrollerRef);
+  const processingCount = threads.filter(
+    (thread) =>
+      thread.state === "initializing" || thread.state === "queued" || thread.state === "running",
+  ).length;
+  const responsePending = processingCount > 0;
+  const { positions, draftTop, canvasHeight, onScroll } = useThreadedCommentLayout(
+    threads,
+    scrollerRef,
+    ui.pendingAnchor !== null && view === "open",
+    responsePending,
+  );
 
   useEffect(() => {
     draftRequestIdRef.current = crypto.randomUUID();
-    setDraftBody("");
     setError(null);
   }, [ui.pendingAnchor]);
 
+  useEffect(() => {
+    if (!ui.pendingAnchor || (!isMobile && draftTop === null)) return;
+    const frame = requestAnimationFrame(() => draftRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [draftTop, isMobile, ui.pendingAnchor]);
+
   const saveDraft = async () => {
     const anchor = ui.pendingAnchor;
-    if (!anchor || !draftBody.trim()) return;
+    const comment = draftBody.trim();
+    if (!anchor || !comment) return;
     const requestId = draftRequestIdRef.current;
     setError(null);
+
+    // Consume this draft before the request. Keeping the pending anchor mounted
+    // while the thread query updates can briefly recreate the editor after Send.
+    // A failed request restores it only when no newer selection has replaced it.
+    ui.cancelDraft();
     try {
-      const thread = await create.mutateAsync({
+      await create.mutateAsync({
         ...anchor,
         client_request_id: requestId,
-        comment: draftBody.trim(),
+        comment,
       });
-      // A newer text selection may have opened another draft while this send
-      // was pending. Never let the older completion clear or replace it.
+    } catch (cause) {
       if (
         useChatStore.getState().conversationId === conversationId &&
-        pendingAnchorRef.current === anchor &&
-        draftRequestIdRef.current === requestId
+        pendingAnchorRef.current === null
       ) {
-        setDraftBody("");
-        ui.cancelDraft();
-        ui.activateComment(thread.id);
-        setView("open");
+        ui.openDraft(anchor);
+        ui.setDraftBody(comment);
       }
-    } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not create threaded comment.");
     }
   };
@@ -138,62 +216,85 @@ export function AgentTextThreadPanel({
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Threaded agent comments">
       <div className="flex shrink-0 gap-1 border-b border-border px-3 py-2">
-        <Button size="xs" variant={view === "open" ? "secondary" : "ghost"} onClick={() => setView("open")}>
+        <Button
+          size="xs"
+          variant={view === "open" ? "secondary" : "ghost"}
+          onClick={() => setView("open")}
+        >
           Open {openCount > 0 ? openCount : ""}
         </Button>
-        <Button size="xs" variant={view === "resolved" ? "secondary" : "ghost"} onClick={() => setView("resolved")}>
+        <Button
+          size="xs"
+          variant={view === "resolved" ? "secondary" : "ghost"}
+          onClick={() => setView("resolved")}
+        >
           Resolved
         </Button>
       </div>
       <div
         ref={scrollerRef}
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
         data-agent-thread-scroller
         onScroll={onScroll}
+        onClick={(event) => {
+          const target = event.target;
+          if (
+            !(target instanceof Element) ||
+            !target.closest("[data-agent-thread-card], [data-agent-thread-draft]")
+          ) {
+            ui.activateComment(null);
+          }
+        }}
       >
-        {ui.pendingAnchor && view === "open" && (
-          <div className="space-y-2 border-b border-border p-3">
-            <Quote text={ui.pendingAnchor.selected_text} />
-            <textarea
-              autoFocus
-              rows={4}
-              value={draftBody}
-              placeholder="Ask about this response…"
-              className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-ring"
-              onChange={(event) => setDraftBody(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void saveDraft();
-                }
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <Button size="xs" variant="ghost" onClick={ui.cancelDraft}>Cancel</Button>
-              <Button size="xs" disabled={!canEdit || !draftBody.trim() || create.isPending} onClick={() => void saveDraft()}>
-                {create.isPending && <Loader2Icon className="size-3 animate-spin" />}
-                Send comment
-              </Button>
-            </div>
-          </div>
+        {isMobile && ui.pendingAnchor && view === "open" && (
+          <ThreadDraftEditor
+            anchorText={ui.pendingAnchor.selected_text}
+            body={draftBody}
+            canEdit={canEdit}
+            isPending={create.isPending}
+            textareaRef={draftRef}
+            onBodyChange={ui.setDraftBody}
+            onCancel={ui.cancelDraft}
+            onSave={() => void saveDraft()}
+          />
         )}
         {query.isError ? (
           <div className="flex flex-col items-center gap-2 p-8 text-sm text-destructive">
             Could not load threaded replies.
-            <Button size="xs" variant="ghost" onClick={() => query.refetch()}>Retry</Button>
+            <Button size="xs" variant="ghost" onClick={() => query.refetch()}>
+              Retry
+            </Button>
           </div>
         ) : query.isLoading ? (
           <div className="flex justify-center p-8 text-sm text-muted-foreground">Loading…</div>
         ) : threads.length === 0 && !ui.pendingAnchor ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            {view === "open" ? "Select completed agent text and choose Comment." : "No resolved threads."}
+            {view === "open"
+              ? "Select completed agent text and choose Comment."
+              : "No resolved threads."}
           </div>
         ) : (
           <div
-            className={cn("relative p-3", (isMobile || positions.size === 0) && "space-y-3")}
+            className={cn(
+              "relative",
+              (isMobile || (positions.size === 0 && draftTop === null)) && "space-y-3 p-3",
+            )}
             style={!isMobile && canvasHeight > 0 ? { height: canvasHeight } : undefined}
             data-agent-thread-canvas
           >
+            {!isMobile && ui.pendingAnchor && view === "open" && draftTop !== null && (
+              <ThreadDraftEditor
+                anchorText={ui.pendingAnchor.selected_text}
+                body={draftBody}
+                canEdit={canEdit}
+                isPending={create.isPending}
+                textareaRef={draftRef}
+                onBodyChange={ui.setDraftBody}
+                onCancel={ui.cancelDraft}
+                onSave={() => void saveDraft()}
+                top={draftTop}
+              />
+            )}
             {threads.map((thread) => {
               const selected = ui.activeCommentId === thread.id;
               const answer = liveAnswers.get(thread.id) ?? assistantText(thread);
@@ -220,7 +321,12 @@ export function AgentTextThreadPanel({
                   <Quote text={thread.selected_text} />
                   <p className="whitespace-pre-wrap">{thread.user_comment}</p>
                   <div className="border-t border-border pt-2">
-                    {thread.state === "failed" ? (
+                    {thread.state === "initializing" ? (
+                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2Icon className="size-3 animate-spin" />
+                        Initializing…
+                      </p>
+                    ) : thread.state === "failed" ? (
                       <div className="space-y-2">
                         <p className="text-xs text-destructive">
                           {thread.failure_message ?? "Could not send this comment."}
@@ -258,12 +364,14 @@ export function AgentTextThreadPanel({
                         <Loader2Icon className="size-3 animate-spin" />
                         Agent is answering…
                       </p>
+                    ) : selected ? (
+                      <FilePathAwareMessageResponse>
+                        {answer || "Agent answered."}
+                      </FilePathAwareMessageResponse>
                     ) : (
-                      <div className={cn(!selected && "max-h-32 overflow-hidden")}>
-                        <FilePathAwareMessageResponse>
-                          {answer || "Agent answered."}
-                        </FilePathAwareMessageResponse>
-                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Agent answered · Click to expand
+                      </p>
                     )}
                   </div>
                   {canEdit && view === "open" && (
@@ -307,7 +415,18 @@ export function AgentTextThreadPanel({
           </div>
         )}
       </div>
-      {error && <p className="shrink-0 border-t border-border p-3 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p className="shrink-0 border-t border-border p-3 text-xs text-destructive">{error}</p>
+      )}
+      {processingCount > 0 && (
+        <div
+          className="flex shrink-0 items-center gap-2 border-t border-border bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground"
+          aria-live="polite"
+        >
+          <Loader2Icon className="size-3 animate-spin" />
+          {processingCount} {processingCount === 1 ? "comment" : "comments"} being processed
+        </div>
+      )}
     </section>
   );
 }

@@ -2347,7 +2347,7 @@ export function MainAgentSurface({
     [openAgentTextThreads, resolvedAgentTextThreads],
   );
   const activateAgentTextComment = useCallback(
-    (commentId: string) => agentTextCommentsUI?.activateComment(commentId),
+    (commentId: string | null) => agentTextCommentsUI?.activateComment(commentId),
     [agentTextCommentsUI],
   );
   useAgentTextCommentHighlights({

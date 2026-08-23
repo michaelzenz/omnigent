@@ -28,6 +28,7 @@ export function AgentTextCommentsPanel({
 }) {
   const contextUI = useAgentTextCommentsUI();
   const ui = providedUI ?? contextUI;
+  if (!ui) throw new Error("AgentTextCommentsPanel requires AgentTextCommentsProvider");
   const queryClient = useQueryClient();
   const query = useAgentTextComments(conversationId);
   const add = useAddAgentTextComment(conversationId);
@@ -35,7 +36,7 @@ export function AgentTextCommentsPanel({
   const remove = useDeleteAgentTextComment(conversationId);
   const { data: agent } = useSessionAgent(conversationId);
   const comments = query.data ?? [];
-  const [draftBody, setDraftBody] = useState("");
+  const draftBody = ui.draftBody;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
@@ -48,8 +49,7 @@ export function AgentTextCommentsPanel({
 
   useEffect(() => {
     if (!ui?.pendingAnchor) return;
-    setDraftBody("");
-    requestAnimationFrame(() => draftRef.current?.focus());
+    requestAnimationFrame(() => draftRef.current?.focus({ preventScroll: true }));
   }, [ui?.pendingAnchor]);
 
   useEffect(() => {
@@ -65,7 +65,7 @@ export function AgentTextCommentsPanel({
     setSendError(null);
     try {
       const comment = await add.mutateAsync({ ...ui.pendingAnchor, body: draftBody.trim() });
-      setDraftBody("");
+      ui.setDraftBody("");
       ui.cancelDraft();
       // Only activate if still on the same session — the POST may resolve
       // after the user has already switched away.
@@ -165,9 +165,7 @@ export function AgentTextCommentsPanel({
       await update.mutateAsync({ id: commentId, body: editBody.trim() });
       setEditingId(null);
     } catch (error) {
-      setSendError(
-        error instanceof Error ? error.message : "Could not update comment.",
-      );
+      setSendError(error instanceof Error ? error.message : "Could not update comment.");
     }
   };
 
@@ -195,7 +193,7 @@ export function AgentTextCommentsPanel({
               disabled={!canEdit || busy}
               placeholder="Add a comment…"
               className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-ring"
-              onChange={(event) => setDraftBody(event.target.value)}
+              onChange={(event) => ui.setDraftBody(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape" && !draftBody) ui.cancelDraft();
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -224,12 +222,7 @@ export function AgentTextCommentsPanel({
         {query.isError ? (
           <div className="flex flex-col items-center gap-2 p-8 text-center text-sm text-destructive">
             Could not load comments.
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              onClick={() => query.refetch()}
-            >
+            <Button type="button" size="xs" variant="ghost" onClick={() => query.refetch()}>
               Retry
             </Button>
           </div>

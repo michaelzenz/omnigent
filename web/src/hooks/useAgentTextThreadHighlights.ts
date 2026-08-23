@@ -19,8 +19,7 @@ export interface AgentTextThreadLayoutAnchor {
 }
 
 export const AGENT_TEXT_THREAD_LAYOUT_EVENT = "omnigent:agent-text-thread-layout";
-export const AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT =
-  "omnigent:agent-text-thread-layout-request";
+export const AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT = "omnigent:agent-text-thread-layout-request";
 
 const BASE = "omnigent-agent-thread";
 const ACTIVE = "omnigent-agent-thread-active";
@@ -75,7 +74,7 @@ export function useAgentTextThreadHighlights({
   navigationThreads?: AgentTextThread[];
   pendingAnchor: AgentTextCommentAnchor | null;
   activeThreadId: string | null;
-  onActivate: (threadId: string) => void;
+  onActivate: (threadId: string | null) => void;
   enabled: boolean;
 }): void {
   const rangesRef = useRef<{ thread: AgentTextThread; range: Range }[]>([]);
@@ -92,7 +91,9 @@ export function useAgentTextThreadHighlights({
       const active: Range[] = [];
       const resolved: { thread: AgentTextThread; range: Range }[] = [];
       const layout: AgentTextThreadLayoutAnchor[] = [];
-      const scrollElement = container.querySelector<HTMLElement>(".transcript-hide-native-scrollbar");
+      const scrollElement = container.querySelector<HTMLElement>(
+        ".transcript-hide-native-scrollbar",
+      );
       const scrollRect = scrollElement?.getBoundingClientRect();
 
       for (const thread of threads) {
@@ -115,10 +116,19 @@ export function useAgentTextThreadHighlights({
       }
 
       const pending: Range[] = [];
+      let pendingAnchorY: number | null = null;
       if (pendingAnchor) {
         const root = rootFor(container, pendingAnchor.conversation_item_id);
         const range = root ? resolveAgentTextCommentRange(root, pendingAnchor) : null;
-        if (range) pending.push(range);
+        if (range) {
+          pending.push(range);
+          const rect = Array.from(range.getClientRects()).find(
+            (candidate) => candidate.width > 0 && candidate.height > 0,
+          );
+          if (rect && scrollElement && scrollRect) {
+            pendingAnchorY = rect.top - scrollRect.top + scrollElement.scrollTop;
+          }
+        }
       }
 
       rangesRef.current = resolved;
@@ -129,6 +139,7 @@ export function useAgentTextThreadHighlights({
         new CustomEvent(AGENT_TEXT_THREAD_LAYOUT_EVENT, {
           detail: {
             anchors: layout,
+            pendingAnchorY,
             chatScrollHeight: scrollElement?.scrollHeight ?? 0,
             chatClientHeight: scrollElement?.clientHeight ?? 0,
             chatScrollTop: scrollElement?.scrollTop ?? 0,
@@ -205,7 +216,7 @@ export function useAgentTextThreadHighlights({
         }
       });
       matches.sort((a, b) => a.thread.selected_text.length - b.thread.selected_text.length);
-      if (matches[0]) onActivate(matches[0].thread.id);
+      onActivate(matches[0]?.thread.id ?? null);
     };
     container.addEventListener("click", handleClick);
     return () => container.removeEventListener("click", handleClick);

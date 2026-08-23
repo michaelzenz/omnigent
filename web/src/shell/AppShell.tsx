@@ -34,11 +34,7 @@ import {
 } from "@/lib/designModePrompt";
 import { readSessionWorkspaceState, writeSessionWorkspaceState } from "@/lib/sessionWorkspaceState";
 import { readDefaultWorkspacePanelOpen } from "@/lib/workspacePanelPreferences";
-import {
-  readCommentMode,
-  writeCommentMode,
-  type CommentMode,
-} from "@/lib/commentModePreference";
+import { readCommentMode, writeCommentMode, type CommentMode } from "@/lib/commentModePreference";
 import {
   Dialog,
   DialogContent,
@@ -321,21 +317,20 @@ export function AppShell() {
   const [subagentsPanelOpen, setSubagentsPanelOpen] = useState(false);
   const [shellsPanelOpen, setShellsPanelOpen] = useState(false);
   const [agentTextCommentsPanelOpen, setAgentTextCommentsPanelOpen] = useState(false);
-  const [preferredCommentMode, setPreferredCommentMode] =
-    useState<CommentMode>(readCommentMode);
+  const [preferredCommentMode, setPreferredCommentMode] = useState<CommentMode>(readCommentMode);
   const [pendingAgentTextComment, setPendingAgentTextComment] =
     useState<AgentTextCommentAnchor | null>(null);
+  const [agentTextCommentDraftBody, setAgentTextCommentDraftBody] = useState("");
   const [activeAgentTextCommentId, setActiveAgentTextCommentId] = useState<string | null>(null);
   const threadCapability = useAgentTextThreadCapability(conversationId);
   const [threadedModeError, setThreadedModeError] = useState<string | null>(null);
   const agentTextCommentMode: CommentMode =
-    preferredCommentMode === "threaded" && threadCapability.data?.supported
-      ? "threaded"
-      : "batch";
+    preferredCommentMode === "threaded" && threadCapability.data?.supported ? "threaded" : "batch";
   const [agentTextCommentSendState, setAgentTextCommentSendState] =
     useState<AgentTextCommentSendState>({ isSending: false, sentBatchIds: null });
   useEffect(() => {
     setPendingAgentTextComment(null);
+    setAgentTextCommentDraftBody("");
     setActiveAgentTextCommentId(null);
     setAgentTextCommentSendState({ isSending: false, sentBatchIds: null });
     setThreadedModeError(null);
@@ -1614,10 +1609,6 @@ export function AppShell() {
   );
   const setCommentMode = useCallback(
     (mode: CommentMode) => {
-      if (mode !== agentTextCommentMode && pendingAgentTextComment !== null) {
-        setThreadedModeError("Add or cancel the current comment before switching modes.");
-        return;
-      }
       if (mode === "threaded" && !threadCapability.data?.supported) {
         const message =
           threadCapability.data?.reason === "openai_sdk_unavailable"
@@ -1631,15 +1622,9 @@ export function AppShell() {
       writeCommentMode(mode);
       setPreferredCommentMode(mode);
       setThreadedModeError(null);
-      setPendingAgentTextComment(null);
       setActiveAgentTextCommentId(null);
     },
-    [
-      agentTextCommentMode,
-      pendingAgentTextComment,
-      threadCapability.data,
-      threadCapability.isError,
-    ],
+    [threadCapability.data, threadCapability.isError],
   );
   const agentTextCommentsUI = useMemo<AgentTextCommentsUI>(
     () => ({
@@ -1650,10 +1635,13 @@ export function AppShell() {
       threadedModeLoading: threadCapability.isLoading,
       setMode: setCommentMode,
       pendingAnchor: pendingAgentTextComment,
+      draftBody: agentTextCommentDraftBody,
+      setDraftBody: setAgentTextCommentDraftBody,
       activeCommentId: activeAgentTextCommentId,
       sendState: agentTextCommentSendState,
       openDraft: (anchor: AgentTextCommentAnchor) => {
         setThreadedModeError(null);
+        setAgentTextCommentDraftBody("");
         setPendingAgentTextComment(anchor);
         setActiveAgentTextCommentId(null);
         handleRightRailTabChange("comments");
@@ -1662,12 +1650,14 @@ export function AppShell() {
       },
       cancelDraft: () => {
         setPendingAgentTextComment(null);
+        setAgentTextCommentDraftBody("");
         setThreadedModeError(null);
       },
       activateComment: (commentId: string | null) => {
         setActiveAgentTextCommentId(commentId);
         if (commentId) {
           setPendingAgentTextComment(null);
+          setAgentTextCommentDraftBody("");
           handleRightRailTabChange("comments");
           if (isMobileViewport()) setAgentTextCommentsPanelOpen(true);
           else setRightPanelOpen(true);
@@ -1685,6 +1675,7 @@ export function AppShell() {
     [
       permissionLevel,
       pendingAgentTextComment,
+      agentTextCommentDraftBody,
       activeAgentTextCommentId,
       agentTextCommentSendState,
       agentTextCommentMode,
