@@ -13,6 +13,20 @@ const assert = require("node:assert/strict");
 const { parseOmnigentDeepLink, chooseDeepLinkStrategy } = require("../src/deepLink");
 
 describe("parseOmnigentDeepLink", () => {
+  it("parses a server-root link", () => {
+    assert.deepEqual(parseOmnigentDeepLink("omnigent://localhost:8000/"), {
+      origin: "http://localhost:8000",
+      path: "/",
+    });
+  });
+
+  it("parses a /close link", () => {
+    assert.deepEqual(parseOmnigentDeepLink("omnigent://localhost:8000/close"), {
+      origin: "http://localhost:8000",
+      path: "/close",
+    });
+  });
+
   it("parses a loopback host with a port as http", () => {
     assert.deepEqual(parseOmnigentDeepLink("omnigent://localhost:8000/c/conv_abc"), {
       origin: "http://localhost:8000",
@@ -73,7 +87,6 @@ describe("parseOmnigentDeepLink", () => {
     assert.equal(parseOmnigentDeepLink("omnigent://localhost:8000/settings/appearance"), null);
     assert.equal(parseOmnigentDeepLink("omnigent://localhost:8000/c/"), null); // empty id
     assert.equal(parseOmnigentDeepLink("omnigent://localhost:8000/c/a/b"), null); // nested path
-    assert.equal(parseOmnigentDeepLink("omnigent://localhost:8000/"), null);
   });
 
   it("rejects unparseable / non-string input", () => {

@@ -3,8 +3,9 @@
 // from open-url / second-instance / argv, the queue, and the orchestrator
 // that acts on these decisions); see README "Deep links".
 //
-// An `omnigent://<hostname>/c/<session_id>` URL names a server by host (with
-// port if non-default) and a conversation by the SPA's own `/c/:id` route.
+// An `omnigent://<hostname>/` URL opens a server home,
+// `omnigent://<hostname>/close` closes the window for that server, and
+// `omnigent://<hostname>/c/<session_id>` opens a conversation.
 // The link carries no http/https scheme — we infer it with the SAME rule the
 // setup page uses (defaultSchemeFor: http for loopback, https for remote),
 // so a deep link and a pasted URL can never disagree on scheme. The
@@ -17,27 +18,27 @@
 const { defaultSchemeFor } = require("./url");
 
 /**
- * v1 accepted SPA path. `/c/<conversationId>` — a single path segment after
- * `/c/`, with an optional trailing slash. Anything else (other routes,
- * nested paths, empty id) is dropped silently: an unrecognized deep link
+ * Accepted SPA paths are `/`, `/close`, and `/c/<conversationId>` (a single
+ * path segment after `/c/`, with an optional trailing slash). Anything else
+ * is dropped silently: an unrecognized deep link
  * must never crash or mis-navigate, and the SPA's own router stays the
  * authority on what a valid conversation id is.
  */
-const DEEP_LINK_PATH_RE = /^\/c\/[^/]+\/?$/;
+const DEEP_LINK_PATH_RE = /^(?:\/|\/close|\/c\/[^/]+\/?)$/;
 
 /**
  * Parse an `omnigent://` deep link into a server origin + an in-app path.
  *
  * The origin is the http(s) origin inferred from the link's host (loopback →
- * http, else https), normalized via normalizeUrl. The path is the SPA
- * conversation route (`/c/<id>`), basename-less — the same shape the SPA
- * already emits for notification `navigatePath`, so the embedded
+ * http, else https), normalized via normalizeUrl. The path is `/`, `/close`,
+ * or the SPA conversation route (`/c/<id>`), basename-less — the same shape
+ * the SPA already emits for notification `navigatePath`, so the embedded
  * (workspace) build's `basenamedRouting` rebases it under the mount.
  *
- * @param {string} raw e.g. ``"omnigent://localhost:8000/c/conv_abc"``.
+ * @param {string} raw e.g. ``"omnigent://localhost:8000/"`` or
+ *   ``"omnigent://localhost:8000/close"``.
  * @returns {{ origin: string, path: string } | null} ``null`` for anything
- *   that isn't a valid `omnigent://.../c/<id>` link (wrong scheme, no host,
- *   non-`/c/` path, unparseable input).
+ *   that isn't a valid server-root, close, or conversation link.
  */
 function parseOmnigentDeepLink(raw) {
   let url;

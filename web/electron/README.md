@@ -673,10 +673,12 @@ count and notification titles are prefixed with the firing server's hostname.
 
 ## Deep links
 
-An `omnigent://<hostname>/c/<session_id>` URL opens that session on that
-server in the desktop app — the way a browser deep link opens a page:
+An `omnigent://<hostname>/` URL opens that server in a desktop window. Adding
+`/c/<session_id>` opens a specific session — the way a browser deep link opens
+a page:
 
 ```
+omnigent://localhost:8000/                         → http://localhost:8000/
 omnigent://localhost:8000/c/conv_abc              → http://localhost:8000/c/conv_abc
 omnigent://my-workspace.cloud.databricks.com/c/x → https://…/omnigent/c/x
 ```

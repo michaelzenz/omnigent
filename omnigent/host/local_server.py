@@ -79,6 +79,37 @@ def _local_data_dir() -> Path:
     return Path.home() / ".omnigent"
 
 
+def _default_data_dir() -> Path:
+    """Return the canonical default data dir (``~/.omnigent``), ignoring overrides.
+
+    The untracked-server sweep (:func:`stop_untracked_local_server`) targets the
+    canonical port 6767, which only belongs to THIS dir. A forked instance
+    (``OMNIGENT_DATA_DIR`` pointed elsewhere) runs its server on a free port
+    tracked by its own pidfile under that data dir, so sweeping 6767 from a
+    fork would kill the default instance's unrelated server.
+
+    :returns: ``Path.home() / ".omnigent"``.
+    """
+    return Path.home() / ".omnigent"
+
+
+def _is_default_data_dir() -> bool:
+    """Return whether this process's data dir is the canonical default.
+
+    Compares resolved paths so a symlinked ``OMNIGENT_DATA_DIR=~/.omnigent``
+    still counts as the default (and thus still sweeps 6767), while any other
+    location does not.
+
+    :returns: ``True`` when :func:`_local_data_dir` resolves to the default.
+    """
+    try:
+        return _local_data_dir().resolve() == _default_data_dir().resolve()
+    except OSError:
+        # resolve() can raise on a non-existent path on some platforms; fall
+        # back to a literal expanded comparison so the gate still works.
+        return _local_data_dir() == _default_data_dir()
+
+
 # Pidfile carrying the background local server's PID + port (two lines).
 # Read back by the CLI to discover the daemon-started server's URL.
 _LOCAL_SERVER_PID_PATH = _local_data_dir() / "local_server.pid"

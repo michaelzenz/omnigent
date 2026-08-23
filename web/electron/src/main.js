@@ -2953,10 +2953,23 @@ async function handleDeepLink(raw) {
   const parsed = parseOmnigentDeepLink(raw);
   if (!parsed) return;
 
+  const targetOrigin = parsed.origin;
+
+  // `/close` — close the window(s) pinned to this server origin. No consent
+  // gate (closing is not a privilege grant), no new window, no reload.
+  if (parsed.path === "/close") {
+    const winList = [...windows.keys()];
+    for (const win of winList) {
+      if (!win.isDestroyed() && windows.get(win)?.origin === targetOrigin) {
+        win.close();
+      }
+    }
+    return;
+  }
+
   // The origin is fixed by the link itself — no network request needed for the
   // decision. expandDatabricksWorkspaceUrl only appends a mount path under this
   // same origin, so approving the origin is approving the server.
-  const targetOrigin = parsed.origin;
   // A KNOWN server: reuse its recorded URL (already mount-bearing, e.g.
   // `https://host/omnigent`) so we SKIP the probe entirely. null for an
   // unknown server — the mount is discovered AFTER consent (see consent-unknown).

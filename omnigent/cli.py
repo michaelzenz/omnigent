@@ -58,7 +58,9 @@ from omnigent.config import (
 from omnigent.harness_aliases import canonicalize_harness
 from omnigent.host.local_server import (
     _DEFAULT_LOCAL_PORT,
+    _is_default_data_dir,
     _pid_alive,
+    _read_local_server_pid_file,
     ensure_local_omnigent_server,
     local_server_status,
     local_server_url_if_healthy,
@@ -4020,6 +4022,7 @@ def server(
     from omnigent.stores.tool_preferences_store.sqlalchemy_store import (
         SqlAlchemyToolPreferencesStore,
     )
+
     tool_preferences_store = SqlAlchemyToolPreferencesStore(db_uri)
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
@@ -4344,11 +4347,34 @@ def _stop_local_server_and_daemon(*, force: bool) -> bool:
         # A stubborn daemon shouldn't block stopping the server.
         with contextlib.suppress(click.ClickException):
             _terminate_daemon(local_record, force=force)
+    # Capture THIS instance's own port from its pidfile BEFORE
+    # stop_local_omnigent_server clears it, so the orphan sweep below targets
+    # the port this instance actually used (a fork runs on a free port, the
+    # default instance on 6767) instead of always 6767 — which would kill
+    # another instance's unrelated server that happens to hold 6767.
+    tracked = _read_local_server_pid_file()
+    tracked_port = tracked[1] if tracked is not None else None
     stop_local_omnigent_server()
     # Also catch an orphan on the canonical port whose pidfile was lost, so
     # `server stop` isn't blind to it (it reported "No background server is
     # running" while one was still listening on the default port).
-    orphan_pid = stop_untracked_local_server()
+    if tracked_port is not None:
+        # Sweep this instance's own port for an orphan the pidfile lost track
+        # of (a respawn that landed elsewhere, a torn record). A fork's orphan
+        # is on its own free port, never on 6767.
+        orphan_pid = stop_untracked_local_server(port=tracked_port)
+    elif _is_default_data_dir():
+        # Pidfile absent for the default instance: a true orphan on the
+        # canonical 6767 — the original "server stop reported nothing while
+        # one was still on the default port" symptom.
+        orphan_pid = stop_untracked_local_server(port=_DEFAULT_LOCAL_PORT)
+    else:
+        # A forked instance (OMNIGENT_DATA_DIR pointed elsewhere) with no
+        # pidfile: its orphan is on an unknown free port we cannot discover
+        # without the record. Sweeping 6767 here would kill the default
+        # instance's unrelated server, so skip it — the fork's files are the
+        # only trace, and the user can `rm -rf` the instance dir to clean up.
+        orphan_pid = None
     return was_running or orphan_pid is not None
 
 
@@ -4543,12 +4569,24 @@ def stop(force: bool) -> None:
         except click.ClickException as exc:
             failures.append(exc.message)
     server_was_running = local_server_url_if_healthy() is not None
+    # Capture THIS instance's own port before stop_local_omnigent_server clears
+    # the pidfile, so the orphan sweep targets the port this instance actually
+    # used instead of always 6767 (which a fork never uses and which belongs
+    # to the default instance — sweeping it from a fork would kill that
+    # unrelated server).
+    tracked = _read_local_server_pid_file()
+    tracked_port = tracked[1] if tracked is not None else None
     stop_local_omnigent_server()
-    # Sweep the canonical port for an orphaned server the pidfile lost track
-    # of (a torn/cleared record, or a respawn that landed elsewhere). Without
-    # this, that server survives the off-switch — the exact "I ran stop and a
-    # server is still on the default port" symptom.
-    orphan_pid = stop_untracked_local_server()
+    # Sweep for an orphaned server the pidfile lost track of (a torn/cleared
+    # record, or a respawn that landed elsewhere). Without this, that server
+    # survives the off-switch — the exact "I ran stop and a server is still on
+    # the default port" symptom.
+    if tracked_port is not None:
+        orphan_pid = stop_untracked_local_server(port=tracked_port)
+    elif _is_default_data_dir():
+        orphan_pid = stop_untracked_local_server(port=_DEFAULT_LOCAL_PORT)
+    else:
+        orphan_pid = None
 
     parts: list[str] = []
     if stopped:
@@ -4556,7 +4594,8 @@ def stop(force: bool) -> None:
     if server_was_running:
         parts.append("the background server")
     if orphan_pid is not None:
-        parts.append(f"an untracked server on :{_DEFAULT_LOCAL_PORT} (pid {orphan_pid})")
+        swept_port = tracked_port if tracked_port is not None else _DEFAULT_LOCAL_PORT
+        parts.append(f"an untracked server on :{swept_port} (pid {orphan_pid})")
     if parts:
         click.echo("Stopped " + " and ".join(parts) + ".")
     else:

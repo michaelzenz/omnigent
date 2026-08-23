@@ -20,6 +20,34 @@ Use `just` for common tasks; run `just --list` for grouped recipes.
 - `just lint` / `just lint-all` — run pre-commit
 - `just normalize-locks` — rewrite lockfile registries to PyPI/npmjs.org
 
+## Running multiple local instances
+
+`scripts/fork_local_instance.py` spins up an isolated server + Electron
+window from a snapshot of your current instance. Each fork gets its own
+SQLite DB (online backup), artifacts, port, and host daemon, while sharing
+`~/.omnigent/config.yaml` for provider credentials.
+
+```bash
+# Fork the default instance into "experiment-a"
+./scripts/fork_local_instance.py experiment-a
+
+# Fork from a specific source instance
+./scripts/fork_local_instance.py experiment-b \
+  --source-data-dir ~/.omnigent/instances/experiment-a
+
+# Fork without opening an Electron window
+./scripts/fork_local_instance.py experiment-c --no-open
+
+# Stop the instance (server + daemon + Electron window)
+./scripts/fork_local_instance.py --stop experiment-a
+
+# Stop without closing the Electron window
+./scripts/fork_local_instance.py --stop experiment-a --no-close-window
+```
+
+Stopped instances keep their files under `~/.omnigent/instances/<name>/` for
+inspection. Delete with `rm -rf ~/.omnigent/instances/<name>`.
+
 ## Pull requests
 
 When you open a pull request, fill in the repo's PR template at

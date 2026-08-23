@@ -412,7 +412,13 @@ def test_stop_reports_untracked_orphan_server(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("omnigent.cli._list_daemon_records", list)
     monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: 93359)
+    # Model the default instance (~/.omnigent) with a lost pidfile: the orphan
+    # sweep must still target the canonical 6767. The harness sets
+    # OMNIGENT_DATA_DIR to a temp dir, so patch _is_default_data_dir True and
+    # _read_local_server_pid_file None to reproduce the lost-pidfile default.
+    monkeypatch.setattr("omnigent.cli._is_default_data_dir", lambda: True)
+    monkeypatch.setattr("omnigent.cli._read_local_server_pid_file", lambda: None)
+    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda *a, **k: 93359)
 
     result = CliRunner().invoke(cli, ["stop"])
 
@@ -434,9 +440,75 @@ def test_server_stop_finds_untracked_orphan_when_pidfile_lost(
     monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
     monkeypatch.setattr("omnigent.cli._find_daemon_record", lambda target: None)
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: 93359)
+    # Model the default instance with a lost pidfile; the orphan sweep must
+    # still target 6767. See test_stop_reports_untracked_orphan_server for the
+    # harness rationale.
+    monkeypatch.setattr("omnigent.cli._is_default_data_dir", lambda: True)
+    monkeypatch.setattr("omnigent.cli._read_local_server_pid_file", lambda: None)
+    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda *a, **k: 93359)
 
     result = CliRunner().invoke(cli, ["server", "stop"])
 
     assert result.exit_code == 0, result.output
     assert "Stopped the background server." in result.output
+
+
+# ── fork-safety: a parallel (forked) instance must not kill the canonical one ──
+
+
+def test_server_stop_fork_sweeps_own_port_not_canonical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forked instance's ``server stop`` sweeps its own port, never 6767.
+
+    Regression for the parallel-instance bug: a fork runs its server on a free
+    port (here 8123) tracked by its own pidfile under a non-default
+    OMNIGENT_DATA_DIR. Stopping it must sweep 8123 — not the canonical 6767,
+    which belongs to the unrelated default instance and would be killed by the
+    old hardcoded sweep.
+    """
+    monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
+    monkeypatch.setattr("omnigent.cli._find_daemon_record", lambda target: None)
+    monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
+    # Fork: non-default data dir, pidfile tracks its own free port 8123.
+    monkeypatch.setattr("omnigent.cli._is_default_data_dir", lambda: False)
+    monkeypatch.setattr("omnigent.cli._read_local_server_pid_file", lambda: (11111, 8123))
+    swept_ports: list[int] = []
+    monkeypatch.setattr(
+        "omnigent.cli.stop_untracked_local_server",
+        lambda port: swept_ports.append(port) or 93359,
+    )
+
+    result = CliRunner().invoke(cli, ["server", "stop"])
+
+    assert result.exit_code == 0, result.output
+    assert swept_ports == [8123]  # swept the fork's own port, not 6767
+    assert "Stopped the background server." in result.output
+
+
+def test_server_stop_fork_without_pidfile_does_not_sweep_canonical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forked instance with a lost pidfile must NOT sweep the canonical 6767.
+
+    The fork's orphan is on an unknown free port we cannot rediscover without
+    the pidfile; sweeping 6767 here would kill the default instance's unrelated
+    server. The safe choice is to skip the sweep — the fork's files are the
+    only trace, and the user can clean up the instance dir.
+    """
+    monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
+    monkeypatch.setattr("omnigent.cli._find_daemon_record", lambda target: None)
+    monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
+    monkeypatch.setattr("omnigent.cli._is_default_data_dir", lambda: False)
+    monkeypatch.setattr("omnigent.cli._read_local_server_pid_file", lambda: None)
+    swept_ports: list[int] = []
+    monkeypatch.setattr(
+        "omnigent.cli.stop_untracked_local_server",
+        lambda port: swept_ports.append(port),
+    )
+
+    result = CliRunner().invoke(cli, ["server", "stop"])
+
+    assert result.exit_code == 0, result.output
+    assert swept_ports == []  # never touched the canonical 6767
+    assert "No background server is running." in result.output
