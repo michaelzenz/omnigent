@@ -1181,12 +1181,14 @@ describe("JumpToTopButton", () => {
     });
     const metrics = scroll as unknown as { scrollTop: number };
     scroll.style.overflowY = "auto";
-    // Only one user message in the DOM — the topmost. The previous user
-    // message is in an unloaded history page.
+    // Only one user message in the DOM — the topmost, sitting exactly at the
+    // roof (screen top = 0 = bannerBottom in jsdom). The "previous" user
+    // message is in an unloaded history page, so the button must page in older
+    // history before jumping.
     const currentMessage = document.createElement("div");
     currentMessage.dataset.role = "user";
     currentMessage.dataset.userMessageId = "current-turn";
-    vi.spyOn(currentMessage, "getBoundingClientRect").mockReturnValue(rect(-50));
+    vi.spyOn(currentMessage, "getBoundingClientRect").mockReturnValue(rect(0));
     scroll.append(currentMessage);
     const originalMatchMedia = window.matchMedia;
     window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
@@ -1230,6 +1232,58 @@ describe("JumpToTopButton", () => {
     await waitFor(() => expect(metrics.scrollTop).toBe(100));
     expect(scroller.state.isAtBottom).toBe(false);
     expect(scroller.state.escapedFromLock).toBe(true);
+    window.matchMedia = originalMatchMedia;
+  });
+
+  it("does not load history when the topmost user message is above the roof", () => {
+    const { container, scroll, scroller } = makeScroller({
+      scrollTop: 300,
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+    const metrics = scroll as unknown as { scrollTop: number };
+    scroll.style.overflowY = "auto";
+    // Two user messages. The topmost is well above the roof (screen top = -200,
+    // far from bannerBottom = 0), so it's already the correct "previous"
+    // message — no history loading needed even though it's the topmost in DOM.
+    const previousMessage = document.createElement("div");
+    previousMessage.dataset.role = "user";
+    previousMessage.dataset.userMessageId = "previous-turn";
+    vi.spyOn(previousMessage, "getBoundingClientRect").mockReturnValue(rect(-200));
+    scroll.append(previousMessage);
+    const currentMessage = document.createElement("div");
+    currentMessage.dataset.role = "user";
+    currentMessage.dataset.userMessageId = "current-turn";
+    vi.spyOn(currentMessage, "getBoundingClientRect").mockReturnValue(rect(-50));
+    scroll.append(currentMessage);
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
+
+    const loadMoreHistory = vi.fn(async () => {});
+    useChatStore.setState({ hasMoreHistory: true, loadMoreHistory });
+
+    render(
+      <JumpToTopButton
+        containerEl={container}
+        scroller={scroller}
+        hasMoreHistory
+        mode="jump-to-previous-message"
+      />,
+    );
+    act(() => {
+      fireEvent.mouseMove(container, { clientY: 10 });
+    });
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Jump to the previous message"]',
+      )!,
+    );
+
+    // Should NOT have loaded history — the topmost message is already the
+    // correct target because it's above the roof, not at it.
+    expect(loadMoreHistory).not.toHaveBeenCalled();
+    // Scrolls directly to the previous message: 300 + (-200) = 100.
+    expect(metrics.scrollTop).toBe(100);
     window.matchMedia = originalMatchMedia;
   });
 
