@@ -132,6 +132,19 @@ export function AgentTextCommentsPanel({
     });
   };
 
+  const saveEdit = async (commentId: string) => {
+    if (!editBody.trim() || update.isPending) return;
+    setSendError(null);
+    try {
+      await update.mutateAsync({ id: commentId, body: editBody.trim() });
+      setEditingId(null);
+    } catch (error) {
+      setSendError(
+        error instanceof Error ? error.message : "Could not update comment.",
+      );
+    }
+  };
+
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Agent response comments">
       <header className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
@@ -227,6 +240,13 @@ export function AgentTextCommentsPanel({
                         value={editBody}
                         className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5"
                         onChange={(event) => setEditBody(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                            event.preventDefault();
+                            void saveEdit(comment.id);
+                          }
+                          if (event.key === "Escape") setEditingId(null);
+                        }}
                       />
                       <div className="flex justify-end gap-2">
                         <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>
@@ -235,19 +255,7 @@ export function AgentTextCommentsPanel({
                         <Button
                           size="xs"
                           disabled={!editBody.trim() || update.isPending}
-                          onClick={async () => {
-                            setSendError(null);
-                            try {
-                              await update.mutateAsync({ id: comment.id, body: editBody.trim() });
-                              setEditingId(null);
-                            } catch (error) {
-                              setSendError(
-                                error instanceof Error
-                                  ? error.message
-                                  : "Could not update comment.",
-                              );
-                            }
-                          }}
+                          onClick={() => void saveEdit(comment.id)}
                         >
                           Save
                         </Button>
