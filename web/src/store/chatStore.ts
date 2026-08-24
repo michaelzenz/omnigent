@@ -780,6 +780,13 @@ export interface ChatActions {
   ) => Promise<void>;
   stop: () => void;
   switchTo: (conversationId: string | null) => Promise<void>;
+  /** Bind a background stream to a session the user navigated away from
+   *  before it could be opened. See the implementation for details. */
+  bindBackgroundSession: (
+    sessionId: string,
+    agentId: string,
+    agentName: string | null,
+  ) => Promise<void>;
   submitApproval: (
     elicitationId: string,
     action: "accept" | "decline" | "cancel",
@@ -2343,6 +2350,36 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         pendingForegroundBinds.delete(conversationId);
       }
     }
+  },
+
+  bindBackgroundSession: async (sessionId, agentId, agentName) => {
+    // The user started a new session from the landing dialog but navigated
+    // to another session before the create returned — so the eager URL
+    // promotion was skipped (onScreenRef guard in NewChatDialog) and no
+    // switchTo/bindStream ever connected a stream to this session. The
+    // pending initial prompt is parked in the pendingInitialPrompts map
+    // but nobody is listening for the worktree-ready SSE event, so the
+    // agent never starts until the user manually opens the session.
+    //
+    // Fix: bind a background stream here (without setting the session
+    // active or touching the visible conversation) so the SSE handler's
+    // worktree-status path and the snapshot's worktreeStatus == null path
+    // can both fire maybeAutoSendInitialPrompt for this background session.
+    if (useChatStore.getState().conversationId === sessionId) return;
+    if (isConversationStreamCurrent(sessionId)) return;
+
+    conversationRegistry.release(sessionId);
+    const entry = conversationRegistry.acquire(sessionId);
+    entry.setState({
+      boundAgentId: agentId,
+      boundAgentName: agentName,
+      loadingConversation: true,
+    });
+    // Re-check after the awaits inside acquire: the user may have
+    // switched back to this session, in which case switchTo handles the
+    // bind and we must not compete with it.
+    if (useChatStore.getState().conversationId === sessionId) return;
+    await bindStream(sessionId, entrySetter(entry), entryGetter(entry));
   },
 
   submitApproval: async (elicitationId, action, content) => {

@@ -102,7 +102,7 @@ import {
   rankedSlashCommandNames,
   SlashCommandMenu,
 } from "@/components/SlashCommandMenu";
-import { setPendingInitialPrompt } from "@/store/chatStore";
+import { setPendingInitialPrompt, useChatStore } from "@/store/chatStore";
 import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
@@ -4593,7 +4593,20 @@ export function NewChatLandingScreen() {
       // session; jumping them into this one now would hijack that. The
       // session is created either way and its first message stays held
       // for whenever they open it.
-      if (onScreenRef.current) navigate(`/c/${data.id}`);
+      if (onScreenRef.current) {
+        navigate(`/c/${data.id}`);
+      } else {
+        // The user navigated away before the create returned, so the
+        // eager URL promotion was skipped. Bind a background stream so
+        // the worktree-ready SSE event (or the snapshot's worktreeStatus
+        // == null path) can fire maybeAutoSendInitialPrompt and start
+        // the agent without the user needing to switch back.
+        void useChatStore.getState().bindBackgroundSession(
+          data.id,
+          sessionAgentId,
+          sessionAgent?.display_name ?? null,
+        );
+      }
     } catch {
       returnDraftToUser();
       setCreateError("Couldn't reach the server. Check your connection and try again.");
