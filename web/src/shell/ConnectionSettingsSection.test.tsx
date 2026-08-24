@@ -34,6 +34,7 @@ function connection(overrides: Partial<SshConnection> = {}): SshConnection {
     nextRetryAt: null,
     updatedAt: "2026-01-01T00:00:00.000Z",
     status: "online",
+    warning: null,
     ...overrides,
   };
 }
@@ -141,6 +142,19 @@ describe("ConnectionSettingsBody", () => {
     render(<ConnectionSettingsBody />);
     await screen.findByTestId("ssh-connection-row-saved-1");
     expect(screen.queryByTestId("ssh-connection-expand-saved-1")).toBeNull();
+  });
+
+  it("shows a flaky warning when the backend reports rapid disconnects", async () => {
+    mocks.connections = [
+      connection({
+        phase: "backoff",
+        status: "offline",
+        warning: "Connection is flaky — possibly bad network or another server is competing for the socket.",
+      }),
+    ];
+    render(<ConnectionSettingsBody />);
+    expect(await screen.findByTestId("ssh-connection-warning-saved-1")).toBeTruthy();
+    expect(screen.getByText(/Connection is flaky/)).toBeTruthy();
   });
 
   it("saves a custom package index URL", async () => {

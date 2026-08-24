@@ -20,6 +20,10 @@ from omnigent.entities.ssh_connection import (
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.ssh_probe import SshProbeRequest, probe_ssh
+from omnigent.stores.host_store import (
+    RAPID_DISCONNECT_WARNING_THRESHOLD,
+    host_is_live,
+)
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 from omnigent.version import VERSION
@@ -59,6 +63,7 @@ def _connections_response(
     snapshots: Mapping[str, object],
     host_store: object | None,
     online_by_host_id: dict[str, bool] | None = None,
+    rapid_disconnects_by_host_id: dict[str, int] | None = None,
 ) -> dict[str, object]:
     result: list[dict[str, object]] = []
     for profile in profiles:
@@ -100,6 +105,20 @@ def _connections_response(
                     "status": "offline",
                 }
             )
+        # Surface a "connection flaky" warning when the host has been
+        # rapidly disconnecting — the hallmark of SSH tunnel thrashing
+        # (two server instances competing for the same remote socket)
+        # or a bad network causing repeated drops.
+        rapid_count = (
+            rapid_disconnects_by_host_id.get(state.host_id, 0)  # type: ignore[union-attr]
+            if state is not None and rapid_disconnects_by_host_id is not None
+            else 0
+        )
+        if rapid_count >= RAPID_DISCONNECT_WARNING_THRESHOLD:
+            item["warning"] = (
+                "Connection is flaky — possibly bad network or another "
+                "server is competing for the socket."
+            )
         result.append(item)
     return {
         "connections": result,
@@ -117,16 +136,22 @@ async def _build_connections_payload(
     settings = await asyncio.to_thread(store.get_settings)
     host_store = getattr(request.app.state, "host_store", None)
     online_by_host_id: dict[str, bool] = {}
+    rapid_disconnects_by_host_id: dict[str, int] = {}
     if host_store is not None:
         for state in snapshots.values():
             host_id = state.host_id  # type: ignore[union-attr]
-            online_by_host_id[host_id] = await asyncio.to_thread(host_store.is_online, host_id)
+            host = await asyncio.to_thread(host_store.get_host, host_id)  # type: ignore[union-attr]
+            online_by_host_id[host_id] = host is not None and host_is_live(host)
+            rapid_disconnects_by_host_id[host_id] = (
+                host.consecutive_rapid_disconnects if host is not None else 0
+            )
     return _connections_response(
         profiles,
         settings=settings,
         snapshots=snapshots,
         host_store=host_store,
         online_by_host_id=online_by_host_id,
+        rapid_disconnects_by_host_id=rapid_disconnects_by_host_id,
     )
 
 

@@ -29,6 +29,8 @@ export interface SshConnection {
   nextRetryAt: string | null;
   updatedAt: string;
   status: "online" | "offline";
+  /** Non-null when the host is rapidly disconnecting (tunnel thrashing). */
+  warning: string | null;
 }
 
 export function createSshConnectionId(): string {

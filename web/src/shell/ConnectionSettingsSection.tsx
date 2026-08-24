@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertTriangleIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -149,6 +150,7 @@ export function ConnectionSettingsBody() {
       nextRetryAt: null,
       updatedAt: new Date().toISOString(),
       status: "offline",
+      warning: null,
     };
 
     setSaving(true);
@@ -420,6 +422,15 @@ function SshConnectionRow({
                 data-testid={`ssh-connection-last-error-${connection.id}`}
               >
                 {connection.lastError}
+              </div>
+            )}
+            {connection.warning && (
+              <div
+                className="mt-1 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-500"
+                data-testid={`ssh-connection-warning-${connection.id}`}
+              >
+                <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{connection.warning}</span>
               </div>
             )}
           </div>
