@@ -36,8 +36,6 @@ else:  # pragma: no cover - Windows-only module.
 # time. Let git finish or fail naturally.
 _GIT_TIMEOUT_S: float | None = None
 
-# Max directory-collision suffixes (``-2`` .. ``-N``) before giving up.
-_MAX_DIR_COLLISION_SUFFIX: int = 50
 _AUTO_LEASE_SECONDS = 86_400
 _AUTO_CACHE_PROCESS_LOCK = threading.RLock()
 
@@ -101,15 +99,13 @@ def validate_branch_name(name: str) -> None:
         raise WorktreeError(f"branch name path components must not start with '.': {name!r}")
 
 
-def _sanitize_dirname(branch_name: str) -> str:
-    """Derive a single-segment directory name from a branch name.
+def _sanitize_repo_name(name: str) -> str:
+    """Sanitize a repo directory name for use as a path segment.
 
-    Slashes collapse to ``-`` so the worktree lives in one directory.
-
-    :param branch_name: Validated branch name, e.g. ``"feature/login"``.
-    :returns: Filesystem-safe single segment, e.g. ``"feature-login"``.
+    :param name: Last path segment of the repo root, e.g. ``"myrepo"``.
+    :returns: Filesystem-safe single segment, e.g. ``"myrepo"``.
     """
-    return branch_name.strip("/").replace("/", "-")
+    return re.sub(r"[^a-zA-Z0-9._-]", "-", name).strip("-") or "repo"
 
 
 def _run_git(
@@ -261,33 +257,22 @@ def list_worktrees(*, repo_path: str) -> list[WorktreeInfo]:
     return worktrees
 
 
-def _resolve_worktree_path(branch_name: str) -> Path:
-    """Compute a collision-free Omnigent worktree directory path.
+def _resolve_worktree_path(repo_root: str) -> Path:
+    """Compute a unique Omnigent worktree directory path.
 
     Places the worktree at
-    ``~/.omnigent/worktrees/<sanitized-branch>``, appending a numeric
-    suffix if that path already exists on disk.
+    ``~/.omnigent/worktrees/<repo-name>/worktree-<timestamp>``, using
+    nanosecond precision for collision-free uniqueness without a suffix
+    loop.
 
-    :param branch_name: Validated branch name, e.g.
-        ``"feature/login"``.
+    :param repo_root: Absolute path of the repository's main work tree,
+        e.g. ``"/Users/alice/myrepo"``.
     :returns: A path that does not yet exist, e.g.
-        ``Path("/Users/alice/.omnigent/worktrees/feature-login")``.
-    :raises WorktreeError: If no free path is found within
-        :data:`_MAX_DIR_COLLISION_SUFFIX` attempts.
+        ``Path("/Users/alice/.omnigent/worktrees/myrepo/worktree-1709123456789012345")``.
     """
     base_dir = Path.home() / ".omnigent" / "worktrees"
-    dirname = _sanitize_dirname(branch_name)
-    candidate = base_dir / dirname
-    if not candidate.exists():
-        return candidate
-    for suffix in range(2, _MAX_DIR_COLLISION_SUFFIX + 1):
-        candidate = base_dir / f"{dirname}-{suffix}"
-        if not candidate.exists():
-            return candidate
-    raise WorktreeError(
-        f"could not find a free worktree directory under {base_dir} "
-        f"after {_MAX_DIR_COLLISION_SUFFIX} attempts"
-    )
+    repo_name = _sanitize_repo_name(Path(repo_root).name)
+    return base_dir / repo_name / f"worktree-{time.time_ns()}"
 
 
 def _ensure_base_resolvable(repo_root: str, base_branch: str) -> None:
@@ -544,7 +529,7 @@ def acquire_auto_worktree_streaming(
             return CreatedWorktree(worktree_path=path, branch=branch_name)
 
         if reuse_existing_branch:
-            worktree_path = _resolve_worktree_path(branch_name)
+            worktree_path = _resolve_worktree_path(repo_root)
             worktree_path.parent.mkdir(parents=True, exist_ok=True)
             result = _run_git_streaming(
                 ["worktree", "add", str(worktree_path), branch_name],
@@ -632,7 +617,7 @@ def create_worktree(
     repo_root = _main_work_tree(repo_path)
     if base_branch is not None and auto_fetch_base:
         _ensure_base_resolvable(repo_root, base_branch)
-    worktree_path = _resolve_worktree_path(branch_name)
+    worktree_path = _resolve_worktree_path(repo_root)
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
     add_args = ["worktree", "add", "-b", branch_name, str(worktree_path)]
@@ -798,7 +783,7 @@ def create_worktree_streaming(
         if on_log is not None:
             on_log(f"Resolving base branch '{base_branch}'…")
         _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
-    worktree_path = _resolve_worktree_path(branch_name)
+    worktree_path = _resolve_worktree_path(repo_root)
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
     add_args = ["worktree", "add", "-b", branch_name, str(worktree_path)]
     if base_branch is not None:
