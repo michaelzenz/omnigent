@@ -2060,6 +2060,70 @@ describe("Composer config gear", () => {
     expect(setModel).not.toHaveBeenCalled();
   });
 
+  it("shows the execution-target switcher for a native harness with switch targets", async () => {
+    // Switching into a native CLI (e.g. Claude Code) used to drop the in-place
+    // harness switcher — it was gated to OmniHarness (SDK) only, leaving the
+    // user unable to switch back from the composer. With switch targets
+    // present the switcher stays, regardless of the bound harness family.
+    const onSwitchAgent = vi.fn();
+    useChatStore.setState({ llmModel: "sonnet" });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: true,
+          showModels: true,
+          modelPickerKind: "claude",
+          agents: [{ id: "a_omni", name: "OmniHarness" } as never],
+          selectedAgentId: "a_claude",
+          switchTargets: [
+            {
+              id: "a_omni",
+              displayName: "OmniHarness",
+              warningText: null,
+              configured: true,
+            },
+          ],
+          onSwitchAgent,
+        })}
+      />,
+    );
+
+    const trigger = screen.getByTestId("composer-execution-target-select");
+    // composerHarnessLabel resolves to "Claude" for a claude-native session.
+    expect(trigger).toHaveTextContent("Claude");
+    // The plain model/effort label is replaced by the actionable switcher.
+    expect(screen.queryByTestId("composer-model-effort-label")).toBeNull();
+    // Opening the menu lists the available switch target. Radix DropdownMenu
+    // opens on pointerdown, not click.
+    fireEvent.pointerDown(trigger, { button: 0 });
+    const option = await screen.findByTestId("composer-execution-target-option-a_omni");
+    expect(option).toHaveTextContent("OmniHarness");
+    fireEvent.click(option);
+    expect(onSwitchAgent).toHaveBeenCalledWith("a_omni");
+  });
+
+  it("falls back to the model label for a native harness with no switch targets", () => {
+    // No history-preserving targets (e.g. a single configured CLI): the slot
+    // shows the read-only model/effort label instead of a dead switcher
+    // trigger, matching the pre-fix behavior for the no-targets case.
+    useChatStore.setState({ llmModel: "opus", selectedEffort: "high" });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: true,
+          showModels: true,
+          modelPickerKind: "claude",
+          agents: [{ id: "a1", name: "claude" }],
+          selectedAgentId: "a1",
+          switchTargets: [],
+          codexModelOptions: CLAUDE_MODEL_OPTIONS,
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("composer-execution-target-select")).toBeNull();
+    expect(screen.getByTestId("composer-model-effort-label")).toHaveTextContent("Opus");
+  });
+
   it("uses the Default sentinel when Kiro marks no catalog row as default", async () => {
     const options = [
       { id: "auto", displayName: "Automatic", isDefault: false },
