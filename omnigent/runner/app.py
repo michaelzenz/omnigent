@@ -12266,6 +12266,22 @@ def create_runner_app(
             cached_spec_entry = _rewrap_like(cached_spec_entry, cached_spec, cached_spec_workdir)
             _session_spec_cache[conv] = cached_spec_entry
 
+        # Re-resolve external MCP servers from ~/.omnigent/mcp-servers.yaml on
+        # every turn so updates take effect for existing sessions, not just new
+        # ones. The cached spec is never mutated; resolve_session_mcp_servers
+        # returns a fresh copy via dataclasses.replace. expand_env is preserved
+        # from the initial resolution via ResolvedSpec so ${VAR} references in
+        # the yaml are handled consistently.
+        if cached_spec is not None:
+            from omnigent.spec import resolve_session_mcp_servers
+
+            _mcp_expand_env = getattr(cached_spec_entry, "expand_env", False)
+            _fresh_spec = resolve_session_mcp_servers(cached_spec, expand_env=_mcp_expand_env)
+            if _fresh_spec.mcp_servers != cached_spec.mcp_servers:
+                cached_spec = _spec_with_workdir_paths(_fresh_spec, cached_spec_workdir)
+                cached_spec_entry = _rewrap_like(cached_spec_entry, cached_spec, cached_spec_workdir)
+                _session_spec_cache[conv] = cached_spec_entry
+
         harness_name: str | None = None
         spawn_env: dict[str, str] | None = None
         instructions: str | None = None

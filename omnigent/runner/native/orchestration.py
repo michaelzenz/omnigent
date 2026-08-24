@@ -7840,6 +7840,7 @@ async def _session_labels_for_runner_spawn(
 class ResolvedSpec:
     spec: AgentSpec
     workdir: Path | None
+    expand_env: bool = False
 
     def __getattr__(self, name: str) -> Any:  # type: ignore[explicit-any]
         """Delegate compatibility attributes to the wrapped agent spec."""
@@ -7940,6 +7941,7 @@ def _resolve_sub_agent_spec_entry(parent_entry: Any, sub_agent_name: str) -> Res
     return ResolvedSpec(
         spec=child_spec,
         workdir=_sub_agent_bundle_workdir(parent_entry, parent_spec, child_spec),
+        expand_env=getattr(parent_entry, "expand_env", False),
     )
 
 
@@ -7982,7 +7984,13 @@ def _rewrap_like(previous: object, spec: AgentSpec, workdir: Path | None) -> Any
     that never carried bundle information stays bare so it keeps the workspace
     fallback ordinary top-level sessions rely on.
     """
-    return ResolvedSpec(spec=spec, workdir=workdir) if isinstance(previous, ResolvedSpec) else spec
+    if not isinstance(previous, ResolvedSpec):
+        return spec
+    return ResolvedSpec(
+        spec=spec,
+        workdir=workdir,
+        expand_env=previous.expand_env,
+    )
 
 
 def _is_spec_local_native_python_tool(
