@@ -2124,6 +2124,47 @@ describe("Composer config gear", () => {
     expect(screen.getByTestId("composer-model-effort-label")).toHaveTextContent("Opus");
   });
 
+  it("shows the execution-target switcher for an SDK/bundle agent with switch targets", async () => {
+    // Switching from OmniHarness to Debby (claude-sdk) used to drop the
+    // in-place switcher — it was gated behind showModels (modelPickerKind
+    // !== null), and Debby's modelPickerKind is null. With switch targets
+    // present the switcher stays so the user can switch back.
+    const onSwitchAgent = vi.fn();
+    useChatStore.setState({ llmModel: null, sessionHarness: "claude-sdk" });
+    renderWithTooltips(
+      <Composer
+        {...composerProps({
+          showEffort: false,
+          showModels: false,
+          modelPickerKind: null,
+          agents: [{ id: "a_omni", name: "OmniHarness" } as never],
+          selectedAgentId: "a_debby",
+          switchTargets: [
+            {
+              id: "a_omni",
+              displayName: "OmniHarness",
+              warningText: null,
+              configured: true,
+            },
+          ],
+          onSwitchAgent,
+        })}
+      />,
+    );
+
+    const trigger = screen.getByTestId("composer-execution-target-select");
+    // Debby's harnessLabel is "Debby".
+    expect(trigger).toHaveTextContent("Debby");
+    // The read-only label is replaced by the actionable switcher.
+    expect(screen.queryByTestId("composer-model-effort-label")).toBeNull();
+    // Opening the menu lists OmniHarness as a switch target.
+    fireEvent.pointerDown(trigger, { button: 0 });
+    const option = await screen.findByTestId("composer-execution-target-option-a_omni");
+    expect(option).toHaveTextContent("OmniHarness");
+    fireEvent.click(option);
+    expect(onSwitchAgent).toHaveBeenCalledWith("a_omni");
+  });
+
   it("uses the Default sentinel when Kiro marks no catalog row as default", async () => {
     const options = [
       { id: "auto", displayName: "Automatic", isDefault: false },

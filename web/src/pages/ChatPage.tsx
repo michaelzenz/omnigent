@@ -8805,12 +8805,13 @@ function ComposerModelEffortLabel({
   // The execution-target quick-select is the composer's in-place harness
   // switcher — show it for any harness that has history-preserving switch
   // targets, not just OmniHarness (SDK). Native CLIs (Claude Code, Codex, …)
-  // otherwise lose the switcher the moment they become the bound harness,
-  // trapping the user on them with no way to switch back from the composer.
-  // SDK keeps it unconditionally (its model lives elsewhere); a native CLI
-  // with no switch targets falls through to the model/effort label below.
+  // and SDK/bundle agents (Debby, Polly) otherwise lose the switcher the
+  // moment they become the bound harness, trapping the user on them with no
+  // way to switch back from the composer. SDK keeps it unconditionally (its
+  // model lives elsewhere); a native CLI or bundle agent with no switch
+  // targets falls through to the model/effort label below.
   const hasSwitchTargets = (switchTargets?.length ?? 0) > 0;
-  if (showModels && (modelPickerKind === "sdk" || hasSwitchTargets)) {
+  if (modelPickerKind === "sdk" || hasSwitchTargets) {
     return (
       <ComposerExecutionTargetQuickSelect
         disabled={disabled}
