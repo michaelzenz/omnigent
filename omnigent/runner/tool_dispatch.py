@@ -560,12 +560,6 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
         SysAgentListTool,
     )
     from omnigent.tools.builtins.list_comments import ListCommentsTool
-    from omnigent.tools.builtins.os_env import (
-        SysOsEditTool,
-        SysOsReadTool,
-        SysOsShellTool,
-        SysOsWriteTool,
-    )
     from omnigent.tools.builtins.session_project import (
         SysProjectCreateTool,
         SysProjectListTool,
@@ -631,11 +625,34 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
                 _append(function)
 
     # OS tools (sys_os_*), relayed unconditionally to override any harness-static
-    # versions and centralize policy enforcement. Create a minimal OSEnvironment
-    # purely for schema extraction.
+    # versions and centralize policy enforcement.
+    schemas.extend(build_os_env_tool_schemas())
+
+    return schemas
+
+
+def build_os_env_tool_schemas() -> list[_JsonObject]:
+    """Build flat ``sys_os_*`` tool schemas unconditionally.
+
+    Creates a minimal :class:`OSEnvironment` purely for schema extraction —
+    the actual execution is handled by the runner-side
+    :func:`_execute_os_env_tool`, which builds its own ``OSEnvironment`` from
+    the agent spec at call time.
+
+    Used by :func:`build_native_relay_tool_schemas` (native relay path) and by
+    the inner-executor harness path (e.g. ``openai-agents``) to ensure
+    ``sys_os_*`` tools are always advertised to the model even when the spec
+    does not declare ``os_env``. Without this, ``ToolManager(spec)`` omits
+    ``sys_os_*`` (it only registers them when ``spec.os_env`` is set), and
+    the inner executor raises ``Tool sys_os_read not found in agent Omnigent``.
+
+    :returns: Flat ``{"name", "description", "parameters"}`` dicts for the four
+        ``sys_os_*`` tools. Empty list on failure (best-effort).
+    """
     from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
     from omnigent.inner.os_env import create_os_environment
 
+    schemas: list[_JsonObject] = []
     _os_spec = OSEnvSpec(
         type="caller_process",
         cwd=str(Path.cwd()),
@@ -658,11 +675,23 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
                     _string_object_dict(tool_schema.get("function")) if tool_schema else None
                 )
                 if function is not None:
-                    _append(function)
+                    name = function.get("name")
+                    description = function.get("description")
+                    parameters = _string_object_dict(function.get("parameters")) or {
+                        "type": "object",
+                        "properties": {},
+                    }
+                    schemas.append(
+                        {
+                            "name": name if isinstance(name, str) else "",
+                            "description": description if isinstance(description, str) else "",
+                            "parameters": parameters,
+                        }
+                    )
         finally:
             _os_env.close()
     except Exception:  # noqa: BLE001 — OS env setup is best-effort for schema only
-        _logger.debug("Could not create OSEnvironment for native relay OS tool schemas")
+        _logger.debug("Could not create OSEnvironment for OS tool schemas")
 
     return schemas
 
