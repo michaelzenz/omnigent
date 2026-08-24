@@ -2,9 +2,10 @@
 
 The system will send you event batch with prompt, wait for the instruction
 
-For other manuals, resolve `host.puppygarden.root` from
-`~/.omnigent/config.yaml` and use its `docs/` directory. See the manual index
-at `<host.puppygarden.root>/docs/README.md`.
+For other manuals, resolve the data dir from `$OMNIGENT_DATA_DIR`
+(falling back to `~/.omnigent` when unset), read `host.puppygarden.root`
+from `<data_dir>/config.yaml`, and use its `docs/` directory. See the
+manual index at `<host.puppygarden.root>/docs/README.md`.
 
 ## API access
 

@@ -29,7 +29,7 @@ The host scans two roots inclusively and merges the results:
    local/runtime plugins.
 2. `<puppygarden_root>/timer_plugins` — the shared, version-controlled plugins
    from a repo checkout, when `host.puppygarden.root` is set in
-   `~/.omnigent/config.yaml`:
+   `$OMNIGENT_DATA_DIR/config.yaml` (or `~/.omnigent/config.yaml` when unset):
 
    ```yaml
    host:
@@ -82,7 +82,8 @@ Timer plugins SHOULD support `python3 run.py --healthcheck` with the same
 contract as poll plugins (exit 0 + `{"ok": true, "detail": "..."}` on
 success). It is for later server-side monitoring, not scheduling.
 
-Host-wide defaults (when a plugin omits a field) live in `~/.omnigent/config.yaml`:
+Host-wide defaults (when a plugin omits a field) live in
+`$OMNIGENT_DATA_DIR/config.yaml` (or `~/.omnigent/config.yaml` when unset):
 
 ```yaml
 host:
@@ -115,7 +116,7 @@ seconds. For each plugin whose `fire_at` has been reached and whose
 `state.yaml` `fired_at` is older than `fire_at`, the host runs:
 
 ```bash
-<omnigent-host-python> ~/.omnigent/timer_plugins/<plugin_name>/run.py
+<omnigent-host-python> $OMNIGENT_DATA_DIR/timer_plugins/<plugin_name>/run.py
 ```
 
 ### Python runtime

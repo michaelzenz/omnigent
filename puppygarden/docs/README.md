@@ -4,8 +4,10 @@ This is a task system whose goal is to create an immersive working environment, 
 
 ## Finding the manuals
 
-Read `host.puppygarden.root` from `~/.omnigent/config.yaml`. This directory is
-the PuppyGarden root; all manuals are under its `docs/` directory:
+Resolve the data dir from `$OMNIGENT_DATA_DIR` (falling back to
+`~/.omnigent` when unset), then read `host.puppygarden.root` from
+`<data_dir>/config.yaml`. This directory is the PuppyGarden root; all
+manuals are under its `docs/` directory:
 
 ```yaml
 host:

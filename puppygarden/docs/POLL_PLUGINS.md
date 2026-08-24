@@ -19,9 +19,9 @@ Each plugin is one folder; the host only executes **`run.py`**.
 The host scans two roots inclusively and merges the results:
 
 1. `~/.omnigent/poll_plugins` (or `$OMNIGENT_DATA_DIR/poll_plugins`)
-2. `<puppygarden_root>/poll_plugins` — 
+2. `<puppygarden_root>/poll_plugins` —
     when `host.puppygarden.root` is set in
-   `~/.omnigent/config.yaml`:
+   `$OMNIGENT_DATA_DIR/config.yaml` (or `~/.omnigent/config.yaml` when unset):
 
    ```yaml
    host:
@@ -79,7 +79,8 @@ Plugins SHOULD support `python3 run.py --healthcheck`:
 - Exit non-zero + `{"ok": false, "detail": "..."}` otherwise.
 - Cheap, side-effect-free.
 
-Host-wide defaults (when a plugin omits a field) live in `~/.omnigent/config.yaml`:
+Host-wide defaults (when a plugin omits a field) live in
+`$OMNIGENT_DATA_DIR/config.yaml` (or `~/.omnigent/config.yaml` when unset):
 
 ```yaml
 host:
@@ -110,7 +111,7 @@ Rules:
 The host `ScriptPollPluginsPoller` invokes each plugin on a schedule:
 
 ```bash
-<omnigent-host-python> ~/.omnigent/poll_plugins/<plugin_name>/run.py
+<omnigent-host-python> $OMNIGENT_DATA_DIR/poll_plugins/<plugin_name>/run.py
 ```
 
 ### Python runtime

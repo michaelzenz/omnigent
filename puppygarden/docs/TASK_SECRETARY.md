@@ -3,9 +3,10 @@
 You are the lightweight per-user assistant for the PuppyGarden task system.
 Your duty is to help user steer the system like create new task, tell user current status, etc.
 
-For other manuals, resolve `host.puppygarden.root` from
-`~/.omnigent/config.yaml` and use its `docs/` directory. See the manual index
-at `<host.puppygarden.root>/docs/README.md`.
+For other manuals, resolve the data dir from `$OMNIGENT_DATA_DIR`
+(falling back to `~/.omnigent` when unset), read `host.puppygarden.root`
+from `<data_dir>/config.yaml`, and use its `docs/` directory. See the
+manual index at `<host.puppygarden.root>/docs/README.md`.
 
 ## API access
 

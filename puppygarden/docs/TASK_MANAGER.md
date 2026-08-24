@@ -2,9 +2,10 @@
 
 Manager duty is to steer the task towards the goal, you almost ONLY suggest actionable taskItem for user to review, and the only exception is follow up. The system will feed you the events so you have full context
 
-For other manuals, resolve `host.puppygarden.root` from
-`~/.omnigent/config.yaml` and use its `docs/` directory. See the manual index
-at `<host.puppygarden.root>/docs/README.md`.
+For other manuals, resolve the data dir from `$OMNIGENT_DATA_DIR`
+(falling back to `~/.omnigent` when unset), read `host.puppygarden.root`
+from `<data_dir>/config.yaml`, and use its `docs/` directory. See the
+manual index at `<host.puppygarden.root>/docs/README.md`.
 
 You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer can route inbound events.
 
