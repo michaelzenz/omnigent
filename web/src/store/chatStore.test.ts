@@ -1724,6 +1724,71 @@ describe("chatStore — switchTo", () => {
     expect(useChatStore.getState().conversationId).toBe("conv_other");
     expect(useChatStore.getState().blocks).toEqual([]);
   });
+
+  it("bindBackgroundSession connects a background stream and auto-sends the pending prompt", async () => {
+    // Simulate the NewChatDialog flow: session created, pending prompt set,
+    // but the user navigated away before the URL promotion — so no switchTo
+    // ever connected a stream. bindBackgroundSession must bind the stream
+    // in the background so the snapshot path fires maybeAutoSendInitialPrompt.
+    seedSession("conv_bg", []);
+    seedSession("conv_active", []);
+
+    // Switch to a different session so conv_bg is a background session.
+    await useChatStore.getState().switchTo("conv_active");
+    expect(useChatStore.getState().conversationId).toBe("conv_active");
+
+    // Park the initial prompt as the NewChatDialog does.
+    setPendingInitialPrompt("conv_bg", { text: "hello from background", skill: null });
+
+    // Spy on send so we can verify the auto-send fired.
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ send: sendSpy });
+
+    // Bind the background session's stream (as NewChatDialog does when
+    // onScreenRef is false).
+    await useChatStore.getState().bindBackgroundSession(
+      "conv_bg",
+      "agent_xyz",
+      "Test Agent",
+    );
+
+    // The snapshot path (worktreeStatus == null, not the active conversation)
+    // should have fired maybeAutoSendInitialPrompt, which calls send with
+    // pinnedConversationId routing to the background entry.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual([
+      "hello from background",
+      "agent_xyz",
+    ]);
+
+    // The prompt was consumed (deleted from the pending map).
+    expect(peekPendingInitialPrompt("conv_bg")).toBeNull();
+
+    // The active conversation was NOT changed — bindBackgroundSession must
+    // not hijack the user's session switch.
+    expect(useChatStore.getState().conversationId).toBe("conv_active");
+  });
+
+  it("bindBackgroundSession skips when the session is already active", async () => {
+    seedSession("conv_active_bg", []);
+
+    await useChatStore.getState().switchTo("conv_active_bg");
+    setPendingInitialPrompt("conv_active_bg", { text: "no-op", skill: null });
+
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ send: sendSpy });
+
+    // The session is already active — bindBackgroundSession should be a no-op.
+    await useChatStore.getState().bindBackgroundSession(
+      "conv_active_bg",
+      "agent_xyz",
+      "Test Agent",
+    );
+
+    // send was NOT called — switchTo already bound the stream and ChatPage's
+    // auto-send effect owns the foreground dispatch.
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("chatStore — send (first-send ordering)", () => {

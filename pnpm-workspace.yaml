@@ -88,6 +88,7 @@ allowBuilds:
   '@google/genai': true
   '@vscode/vsce-sign': true
   canvas: true
+  electron: true
   electron-winstaller: true
   esbuild: true
   keytar: true

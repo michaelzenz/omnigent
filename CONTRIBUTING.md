@@ -79,6 +79,17 @@ Install local prerequisites first:
   `npm install -g pnpm`) when working on `web/`.
 - A Rust toolchain for the recommended `omnidev` local development supervisor.
 
+On the Databricks corporate network, public package registries (PyPI,
+npmjs.com) are blocked. Installs must go through the internal proxies:
+
+- **PyPI:** `https://pypi-proxy.cloud.databricks.com/simple/` — set as
+  `UV_DEFAULT_INDEX` env var or in `~/.config/uv/uv.toml`.
+- **npm:** `registry=https://npm-proxy.cloud.databricks.com/` — set in
+  `~/.npmrc` (not committed; the repo has no `.npmrc`).
+
+If you cannot reach these proxies (e.g. outside the VPN), stop — `uv sync`
+and `pnpm install` will fail. See go/registry-access for details.
+
 ```bash
 git clone https://github.com/omnigent-ai/omnigent.git
 cd omnigent
