@@ -12420,6 +12420,21 @@ def create_runner_app(
                         conv,
                         exc_info=True,
                     )
+            # Ensure sys_os_* tools are always advertised to the inner
+            # executor even when the spec does not declare os_env.
+            # ToolManager only registers them when spec.os_env is set; without
+            # this, the model calls sys_os_read and the inner executor raises
+            # "Tool sys_os_read not found in agent Omnigent".
+            _existing_names = {
+                t["name"]
+                for t in all_tools
+                if isinstance(t, dict) and isinstance(t.get("name"), str)
+            }
+            from omnigent.runner.tool_dispatch import build_os_env_tool_schemas
+
+            for _os_schema in build_os_env_tool_schemas():
+                if _os_schema.get("name") not in _existing_names:
+                    all_tools.append(_os_schema)
             _session_tool_schemas[conv] = all_tools
 
         if cached_spec and cached_spec.mcp_servers:
