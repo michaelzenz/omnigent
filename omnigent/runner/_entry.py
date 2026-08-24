@@ -1183,7 +1183,7 @@ async def _resolve_agent_spec_from_server(
     from omnigent.spec import resolve_session_mcp_servers
 
     spec = resolve_session_mcp_servers(spec, expand_env=expand_env)
-    return ResolvedSpec(spec=spec, workdir=dest)
+    return ResolvedSpec(spec=spec, workdir=dest, expand_env=expand_env)
 
 
 def create_app(
