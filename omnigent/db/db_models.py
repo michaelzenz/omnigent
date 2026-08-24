@@ -1642,6 +1642,15 @@ class SqlHost(OmnigentBase):
     configured_harnesses: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     skill_sync_harnesses: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     skill_search_roots: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    # Unix epoch seconds of the last WebSocket connect. Used to detect rapid
+    # connect/disconnect cycles that indicate tunnel thrashing (e.g. two
+    # server instances competing for the same remote socket).
+    last_connect_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Incremented when a disconnect happens within RAPID_DISCONNECT_THRESHOLD_S
+    # of the last connect; reset to 0 on a stable disconnect or heartbeat.
+    consecutive_rapid_disconnects: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
 
     __table_args__ = (
         CheckConstraint(

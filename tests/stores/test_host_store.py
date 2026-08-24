@@ -12,6 +12,7 @@ from omnigent.stores.host_store import (
     HOST_LIVENESS_TTL_S,
     Host,
     HostStore,
+    RAPID_DISCONNECT_THRESHOLD_S,
     host_is_live,
 )
 
@@ -40,6 +41,24 @@ def _set_updated_at(db_uri: str, host_id: str, value: int) -> None:
     engine = get_or_create_engine(db_uri)
     with Session(engine) as session:
         session.execute(update(SqlHost).where(SqlHost.host_id == host_id).values(updated_at=value))
+        session.commit()
+
+
+def _set_last_connect_at(db_uri: str, host_id: str, value: int) -> None:
+    """Force a host row's ``last_connect_at`` to an exact epoch value.
+
+    Lets a test simulate a connect that happened at a precise time,
+    to probe the rapid-disconnect threshold without sleeping.
+
+    :param db_uri: SQLite URI shared with the store under test.
+    :param host_id: Host whose timestamp to set.
+    :param value: Unix epoch seconds to write into ``last_connect_at``.
+    """
+    engine = get_or_create_engine(db_uri)
+    with Session(engine) as session:
+        session.execute(
+            update(SqlHost).where(SqlHost.host_id == host_id).values(last_connect_at=value)
+        )
         session.commit()
 
 
@@ -434,6 +453,66 @@ def test_set_offline_noop_for_unknown_host(
     it must not raise.
     """
     host_store.set_offline("aababcc3941edb738172734a9ab7bb8c")
+
+
+def test_rapid_disconnect_increments_counter(
+    host_store: HostStore,
+    db_uri: str,
+) -> None:
+    """A disconnect within the threshold increments the rapid counter."""
+    host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+    # Simulate a connect 5s ago (well within the 15s threshold).
+    _set_last_connect_at(db_uri, "7b463227e479b3a677307588a5d9e44f", now_epoch() - 5)
+
+    host_store.set_offline("7b463227e479b3a677307588a5d9e44f")
+
+    fetched = host_store.get_host("7b463227e479b3a677307588a5d9e44f")
+    assert fetched is not None
+    assert fetched.consecutive_rapid_disconnects == 1
+
+
+def test_slow_disconnect_resets_counter(
+    host_store: HostStore,
+    db_uri: str,
+) -> None:
+    """A disconnect after the threshold resets the rapid counter to 0."""
+    host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+    # Simulate a rapid disconnect to build up the counter.
+    _set_last_connect_at(db_uri, "7b463227e479b3a677307588a5d9e44f", now_epoch() - 5)
+    host_store.set_offline("7b463227e479b3a677307588a5d9e44f")
+    assert host_store.get_host("7b463227e479b3a677307588a5d9e44f").consecutive_rapid_disconnects == 1
+
+    # Reconnect, then disconnect after a long time — counter should reset.
+    host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+    _set_last_connect_at(db_uri, "7b463227e479b3a677307588a5d9e44f", now_epoch() - 60)
+    host_store.set_offline("7b463227e479b3a677307588a5d9e44f")
+
+    fetched = host_store.get_host("7b463227e479b3a677307588a5d9e44f")
+    assert fetched is not None
+    assert fetched.consecutive_rapid_disconnects == 0
+
+
+def test_heartbeat_resets_rapid_disconnect_counter(
+    host_store: HostStore,
+    db_uri: str,
+) -> None:
+    """A heartbeat resets the rapid disconnect counter (host is stable)."""
+    host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+    # Build up the counter with two rapid disconnects.
+    for _ in range(2):
+        host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+        _set_last_connect_at(db_uri, "7b463227e479b3a677307588a5d9e44f", now_epoch() - 5)
+        host_store.set_offline("7b463227e479b3a677307588a5d9e44f")
+
+    assert host_store.get_host("7b463227e479b3a677307588a5d9e44f").consecutive_rapid_disconnects == 2
+
+    # Host reconnects and heartbeats — counter should reset.
+    host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+    host_store.heartbeat("7b463227e479b3a677307588a5d9e44f")
+
+    fetched = host_store.get_host("7b463227e479b3a677307588a5d9e44f")
+    assert fetched is not None
+    assert fetched.consecutive_rapid_disconnects == 0
 
 
 def test_heartbeat_advances_updated_at_without_changing_status(

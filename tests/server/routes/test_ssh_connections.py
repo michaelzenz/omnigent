@@ -11,6 +11,8 @@ from fastapi import FastAPI
 from omnigent.entities import SshConnectionProfile, SshSettings
 from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.ssh_probe import SshProbeResult
+from omnigent.stores.host_store import Host
+from omnigent.db.utils import now_epoch
 
 
 async def test_ssh_test_route_returns_probe_result(client: httpx.AsyncClient) -> None:
@@ -93,7 +95,17 @@ async def test_get_includes_lifecycle_and_host_status(
         updated_at=1_786_000_000,
     )
     app.state.ssh_host_manager = SimpleNamespace(snapshot=lambda: {"profile-1": state})
-    app.state.host_store = SimpleNamespace(is_online=lambda _host_id: True)
+    app.state.host_store = SimpleNamespace(
+        get_host=lambda _host_id: Host(
+            host_id=_host_id,
+            name="laptop",
+            user_id="local",
+            status="online",
+            created_at=1_786_000_000,
+            updated_at=now_epoch(),
+            consecutive_rapid_disconnects=0,
+        ),
+    )
     ssh_store = app.state.ssh_host_installation_store
     ssh_store.sync_connections({profile.id: profile}, bundle_version="test", owner="local")
     ssh_store.update_settings(package_index_url="https://pypi.example.com/simple")
@@ -107,6 +119,48 @@ async def test_get_includes_lifecycle_and_host_status(
     assert connection["status"] == "online"
     assert connection["attempt"] == 2
     assert body["package_index_url"] == "https://pypi.example.com/simple"
+
+
+async def test_get_includes_flaky_warning_for_rapid_disconnects(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+) -> None:
+    """The warning field appears when consecutive_rapid_disconnects >= 3."""
+    profile = SshConnectionProfile(
+        id="profile-1",
+        label="Arca",
+        alias="arca.ssh",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    state = SimpleNamespace(
+        host_id="e932ccae9eeb8f2a86f7ebfc5089c28d",
+        desired_state="connected",
+        phase="backoff",
+        last_error="remote host did not become online before timeout",
+        attempt=10,
+        next_attempt_at=None,
+        updated_at=1_786_000_000,
+    )
+    app.state.ssh_host_manager = SimpleNamespace(snapshot=lambda: {"profile-1": state})
+    app.state.host_store = SimpleNamespace(
+        get_host=lambda _host_id: Host(
+            host_id=_host_id,
+            name="laptop",
+            user_id="local",
+            status="offline",
+            created_at=1_786_000_000,
+            updated_at=1_786_000_000,
+            consecutive_rapid_disconnects=5,
+        ),
+    )
+    ssh_store = app.state.ssh_host_installation_store
+    ssh_store.sync_connections({profile.id: profile}, bundle_version="test", owner="local")
+    with patch.object(ssh_store, "snapshots", return_value={"profile-1": state}):
+        response = await client.get("/v1/ssh/connections")
+    assert response.status_code == 200
+    connection = response.json()["connections"][0]
+    assert "warning" in connection
+    assert "flaky" in connection["warning"].lower()
 
 
 async def test_retry_action_queues_immediate_attempt(

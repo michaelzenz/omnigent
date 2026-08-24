@@ -47,6 +47,17 @@ from omnigent.harness_availability import HarnessAvailability, is_harness_availa
 # still heart-beating is never falsely aged out.
 HOST_LIVENESS_TTL_S = 90
 
+# A disconnect within this many seconds of the last connect counts as a
+# "rapid disconnect" — the hallmark of SSH tunnel thrashing (two server
+# instances unlinking each other's remote socket every ~10s). Well below
+# the ping interval (30s) so a healthy host that drops after one missed
+# ping is never flagged.
+RAPID_DISCONNECT_THRESHOLD_S = 15
+
+# Show the "connection flaky" warning after this many consecutive rapid
+# disconnects. At ~10s per cycle this triggers within ~30s of thrashing.
+RAPID_DISCONNECT_WARNING_THRESHOLD = 3
+
 
 @dataclass
 class Host:
@@ -89,6 +100,7 @@ class Host:
     configured_harnesses: dict[str, HarnessAvailability] | None = None
     skill_sync_harnesses: dict[str, bool] | None = None
     skill_search_roots: list[dict[str, str]] | None = None
+    consecutive_rapid_disconnects: int = 0
 
 
 def host_is_live(host: Host, now: int | None = None) -> bool:
@@ -197,6 +209,7 @@ def _row_to_host(row: SqlHost) -> Host:
         configured_harnesses=_parse_configured_harnesses(row.configured_harnesses),
         skill_sync_harnesses=_parse_skill_sync_harnesses(row.skill_sync_harnesses),
         skill_search_roots=_parse_skill_search_roots(row.skill_search_roots),
+        consecutive_rapid_disconnects=row.consecutive_rapid_disconnects,
     )
 
 
@@ -309,6 +322,7 @@ class HostStore:
                 row.name = name
                 row.status = encode_host_status("online")
                 row.updated_at = now
+                row.last_connect_at = now
                 row.configured_harnesses = harnesses_json
                 return _row_to_host(row)
 
@@ -357,6 +371,7 @@ class HostStore:
                 status=encode_host_status("online"),
                 created_at=now,
                 updated_at=now,
+                last_connect_at=now,
                 configured_harnesses=harnesses_json,
             )
             session.add(row)
@@ -437,6 +452,7 @@ class HostStore:
             status=encode_host_status("online"),
             created_at=created_at,
             updated_at=now,
+            last_connect_at=now,
             token_hash=token_hash,
             token_expires_at=token_expires_at,
             sandbox_provider=sandbox_provider,
@@ -514,6 +530,7 @@ class HostStore:
                 name=name,
                 status=encode_host_status("online"),
                 updated_at=now,
+                last_connect_at=now,
                 configured_harnesses=configured_harnesses_json,
             )
         )
@@ -533,12 +550,20 @@ class HostStore:
         """
         Mark a host as offline when its WebSocket disconnects.
 
+        Also tracks rapid connect/disconnect cycles: if the disconnect
+        happens within :data:`RAPID_DISCONNECT_THRESHOLD_S` of the last
+        connect, ``consecutive_rapid_disconnects`` is incremented;
+        otherwise it is reset. Three or more consecutive rapid disconnects
+        indicate SSH tunnel thrashing (e.g. two server instances
+        competing for the same remote socket).
+
         No-op if the host does not exist (the disconnect callback
         may fire after a failed registration).
 
         :param host_id: Host identifier, e.g.
             ``"host_a1b2c3d4..."``.
         """
+        now = now_epoch()
         with self._session("set_host_offline") as session:
             row = session.execute(
                 select(SqlHost).where(
@@ -547,7 +572,14 @@ class HostStore:
             ).scalar_one_or_none()
             if row is not None:
                 row.status = encode_host_status("offline")
-                row.updated_at = now_epoch()
+                row.updated_at = now
+                if row.last_connect_at is not None:
+                    if now - row.last_connect_at < RAPID_DISCONNECT_THRESHOLD_S:
+                        row.consecutive_rapid_disconnects = (
+                            row.consecutive_rapid_disconnects + 1
+                        )
+                    else:
+                        row.consecutive_rapid_disconnects = 0
 
     def update_harness_readiness(
         self,
@@ -637,6 +669,8 @@ class HostStore:
         # Single UPDATE rather than SELECT-then-mutate: this runs every
         # ping interval for every connected host, so the extra read is
         # pure overhead. A missing host simply matches no rows (a no-op).
+        # Also resets consecutive_rapid_disconnects: a host that has been
+        # connected long enough to heartbeat is stable, not thrashing.
         with self._session("update_host_heartbeat") as session:
             session.execute(
                 update(SqlHost)
@@ -644,7 +678,10 @@ class HostStore:
                     SqlHost.workspace_id == current_workspace_id(),
                     SqlHost.host_id == host_id,
                 )
-                .values(updated_at=now_epoch())
+                .values(
+                    updated_at=now_epoch(),
+                    consecutive_rapid_disconnects=0,
+                )
             )
 
     def is_online(self, host_id: str) -> bool:

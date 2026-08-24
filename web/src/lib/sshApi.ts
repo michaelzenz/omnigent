@@ -14,6 +14,7 @@ interface ApiConnection {
   next_retry_at?: string | null;
   updated_at?: string;
   status?: "online" | "offline";
+  warning?: string | null;
 }
 
 export interface SshConnectionsPayload {
@@ -41,6 +42,7 @@ function fromApiConnection(entry: ApiConnection): SshConnection {
     nextRetryAt: entry.next_retry_at ?? null,
     updatedAt: entry.updated_at ?? entry.created_at,
     status: entry.status ?? "offline",
+    warning: entry.warning ?? null,
   };
 }
 
