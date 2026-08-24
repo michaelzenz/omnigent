@@ -3050,17 +3050,9 @@ export function ConversationScrollPosition({
   const scrollElement = scroller?.el ?? null;
   const scrollState = scroller?.state ?? null;
   const stopScroll = scroller?.stopScroll ?? null;
-  // Tracks the previous conversation to distinguish a live-session switch
-  // (scroll container persists, needs explicit bottom-scroll) from a fresh
-  // mount (StickToBottom already initializes at the bottom).
-  const prevConversationIdRef = useRef<string | null>(null);
-
   useLayoutEffect(() => {
     const el = scrollElement;
     if (!el || !conversationId || !scrollState || !stopScroll) return;
-    const isSwitch = prevConversationIdRef.current !== null &&
-      prevConversationIdRef.current !== conversationId;
-    prevConversationIdRef.current = conversationId;
     const unregister = registerActiveConversationScroller(conversationId, el);
     const saved = getConversationScrollPosition(conversationId);
     let restoring = saved !== undefined;
@@ -3105,13 +3097,8 @@ export function ConversationScrollPosition({
         persist();
       };
       restore();
-    } else if (isSwitch) {
-      // Live session switch with no saved position: the scroll container
-      // persists across the switch (StickToBottom doesn't remount), so the
-      // scrollTop from the previous conversation lingers at the wrong spot
-      // in the taller new transcript. StickToBottom won't fix it either —
-      // bottom-lock is off by default. Jump to the bottom so the newest
-      // turn is visible, matching the fresh-mount behaviour for cold sessions.
+    } else {
+      // No stored position: show the newest turn at the bottom.
       el.scrollTop = el.scrollHeight;
     }
 
