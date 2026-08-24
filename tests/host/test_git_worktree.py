@@ -148,12 +148,12 @@ def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 def test_create_worktree_uses_omnigent_worktree_root(git_repo: Path) -> None:
-    """A new worktree lands under ``~/.omnigent/worktrees``."""
+    """A new worktree lands under ``~/.omnigent/worktrees/<repo-name>/``."""
     created = create_worktree(repo_path=str(git_repo), branch_name="feature/login")
-    expected = Path.home() / ".omnigent" / "worktrees" / "feature-login"
-    # Path proves the managed layout + slash->dash dir sanitization;
-    # a regression in _resolve_worktree_path would change this.
-    assert created.worktree_path == str(expected)
+    expected_parent = Path.home() / ".omnigent" / "worktrees" / "myrepo"
+    # Path proves the grouped layout: <repo-name>/worktree-<timestamp>.
+    assert Path(created.worktree_path).parent == expected_parent
+    assert Path(created.worktree_path).name.startswith("worktree-")
     assert Path(created.worktree_path).is_dir()
     # The branch is actually checked out in the worktree (not just the dir made).
     assert _current_branch(Path(created.worktree_path)) == "feature/login"
@@ -234,25 +234,29 @@ def test_auto_worktree_without_base_uses_linked_worktree_head(git_repo: Path) ->
 
 
 def test_create_worktree_resolves_repo_root_from_subdir(git_repo: Path) -> None:
-    """Picking a subdir still creates under Omnigent's managed root."""
+    """Picking a subdir still creates under Omnigent's managed root, grouped by repo name."""
     sub = git_repo / "src"
     sub.mkdir()
     created = create_worktree(repo_path=str(sub), branch_name="wip")
-    assert created.worktree_path == str(Path.home() / ".omnigent" / "worktrees" / "wip")
+    expected_parent = Path.home() / ".omnigent" / "worktrees" / "myrepo"
+    assert Path(created.worktree_path).parent == expected_parent
+    assert Path(created.worktree_path).name.startswith("worktree-")
 
 
 def test_create_worktree_from_linked_worktree_uses_managed_root(git_repo: Path) -> None:
-    """Creating from a linked worktree still uses the managed root."""
+    """Creating from a linked worktree still uses the managed root, grouped by repo name."""
     # First worktree, created off the main repo.
     first = create_worktree(repo_path=str(git_repo), branch_name="feature/a")
     first_path = Path(first.worktree_path)
-    expected_root = Path.home() / ".omnigent" / "worktrees"
-    assert first_path == expected_root / "feature-a"
+    expected_repo_dir = Path.home() / ".omnigent" / "worktrees" / "myrepo"
+    assert first_path.parent == expected_repo_dir
+    assert first_path.name.startswith("worktree-")
 
     # Second worktree, requested from INSIDE the first (linked) worktree.
     second = create_worktree(repo_path=str(first_path), branch_name="feature/b")
 
-    assert second.worktree_path == str(expected_root / "feature-b")
+    assert Path(second.worktree_path).parent == expected_repo_dir
+    assert Path(second.worktree_path).name.startswith("worktree-")
     assert Path(second.worktree_path).is_dir()
     assert _current_branch(Path(second.worktree_path)) == "feature/b"
 
