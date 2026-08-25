@@ -153,6 +153,7 @@ function QueuedRow({
           Steer
         </button>
       ) : null}
+      ) : null}
       <button
         type="button"
         aria-label="Edit queued message"

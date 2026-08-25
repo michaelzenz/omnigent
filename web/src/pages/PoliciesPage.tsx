@@ -540,6 +540,7 @@ export function PoliciesPage() {
                             })
                           }
                           aria-label={`Toggle ${p.name}`}
+                          componentId="settings.policies.toggle_enabled"
                         />
                         <Button
                           variant="ghost"

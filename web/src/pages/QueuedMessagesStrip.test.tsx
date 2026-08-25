@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { QueuedMessage } from "@/store/chatStore";
 import { QueuedMessagesStrip } from "./QueuedMessagesStrip";
 
@@ -83,12 +84,14 @@ describe("QueuedMessagesStrip", () => {
   it("calls onSteer with the row's queueId when its steer button is clicked", () => {
     const onSteer = vi.fn();
     render(
-      <QueuedMessagesStrip
-        messages={[msg("q_1", "first"), msg("q_2", "second")]}
-        onDelete={vi.fn()}
-        onEdit={vi.fn()}
-        onSteer={onSteer}
-      />,
+      <TooltipProvider>
+        <QueuedMessagesStrip
+          messages={[msg("q_1", "first"), msg("q_2", "second")]}
+          onDelete={vi.fn()}
+          onEdit={vi.fn()}
+          onSteer={onSteer}
+        />
+      </TooltipProvider>,
     );
     const buttons = screen.getAllByRole("button", { name: "Steer queued message into running turn" });
     expect(buttons).toHaveLength(2);

@@ -19,31 +19,37 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AgentInfoButton } from "@/components/AgentInfo";
 import { ConversationBreadcrumb } from "./ConversationBreadcrumb";
+import { HeaderConversationMenu } from "./HeaderConversationMenu";
 import { UNTITLED_CONVERSATION_LABEL } from "./sidebarNav";
 import { PresenceAvatars } from "@/components/PresenceAvatars";
 import type { Agent } from "@/hooks/useAgents";
+import type { Conversation } from "@/hooks/useConversations";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import { useOmnigentAnalytics } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+import { MOBILE_GLASS_PILL, MOBILE_GLASS_SURFACE } from "./mobileGlass";
 import { TAB_BADGE_BASE } from "./railTabs";
 import { ViewModeToggle } from "./ViewModeToggle";
 import { useCallback, useEffect, useRef } from "react";
 
 /**
- * Gating flags + handlers for the mobile-only session-menu FAB (the
- * three-dot → rail-entries dropdown). Folded into one object because the
- * block is a self-contained unit never read by the desktop action row —
- * keeping it grouped halves ChatHeader's top-level prop count.
+ * Gating flags + handlers for the mobile workspace-rail entries (Files ·
+ * Changes · Agents · Shells · Logs), which ride in the header's single kebab.
+ * Folded into one object because the block is a self-contained unit never read
+ * by the desktop action row — keeping it grouped halves ChatHeader's
+ * top-level prop count.
  */
 interface MobileSessionMenuProps {
-  /** True while the desktop file viewer is open (suppresses the FAB). */
+  /** True while the desktop file viewer is open (suppresses the entries). */
   fileViewerOpen: boolean;
   /** True while a terminals/exec-logs push panel owns the right side. */
   panelOpen: boolean;
-  /** Terminal-first session — terminal renders inline, FAB stays available. */
+  /** Terminal-first session — terminal renders inline, entries stay available. */
   terminalFirst: boolean;
   /** True while the execution-logs push panel is open. */
   executionLogsOpen: boolean;
@@ -102,6 +108,8 @@ interface ChatHeaderProps {
   isChildSession: boolean;
   /** Active session id, or undefined on the landing composer. */
   conversationId: string | undefined;
+  /** Owner-managed top-level row backing the title-adjacent action menu. */
+  actionConversation?: Conversation | null;
   /**
    * Breadcrumb title: the active conversation's display name, or its
    * immediate parent's when viewing a sub-agent. ``null`` while unresolved.
@@ -147,8 +155,8 @@ interface ChatHeaderProps {
   showFilesPanel: boolean;
   /**
    * Whether the right workspace rail has at least one available tab
-   * (files, terminals, or sub-agents). Gates the desktop
-   * collapse toggle — with no rail content the panel doesn't mount
+   * (files, terminals, or sub-agents). Gates both the mobile rail entries and
+   * the desktop collapse toggle — with no rail content the panel doesn't mount
    * (see AppShell), so a toggle would flip an invisible card.
    */
   hasRailContent: boolean;
@@ -169,13 +177,15 @@ interface ChatHeaderProps {
  * under the controls (the conversation viewport's ``chat-scroll-fade``
  * mask, index.css; chat reserves clearance via ``pt-20``,
  * terminal-first via ``pt-14``). Left slot: open-sidebar + a conversation
- * breadcrumb (``[folder] / <title> [/ <sub-agent>]``). Right slot: desktop
- * action buttons (Agent info ·
- * Share · right-panel toggle), a mobile three-dot menu mirroring the
- * same actions, and a mobile FAB that opens the rail tabs as
- * full-screen drawers. Stop session lives in the sidebar row's kebab
- * menu; Clone lives on each assistant message's "Fork from here"
- * action (ChatPage), not here.
+ * breadcrumb (``[folder] / <title> [/ <sub-agent>]``, with the session-actions
+ * kebab on desktop). Right slot: desktop action buttons (Agent info ·
+ * Share · right-panel toggle) and, on mobile, a **single** kebab holding both
+ * the session actions (pin/share/rename/project/archive/delete) and the
+ * workspace-rail entries that open Files · Agents · Shells as full-screen
+ * drawers — one trigger rather than two adjacent ones. It falls back to a
+ * smaller Share · Agent info + rail menu when the session isn't
+ * owner-managed. Stop session lives in the sidebar row's kebab menu; Clone
+ * lives on each assistant message's "Fork from here" action (ChatPage).
  *
  * All state lives in AppShell — this is a pure presentational component.
  */
@@ -184,6 +194,7 @@ export function ChatHeader({
   onOpenSidebar,
   isChildSession,
   conversationId,
+  actionConversation = null,
   conversationTitle,
   projectName,
   titleLinkTo,
@@ -207,6 +218,7 @@ export function ChatHeader({
   // hover affordance — on mobile the toggle just opens the full-screen overlay,
   // so a tap's synthetic pointerenter must not trigger it.
   const isMobile = useIsMobileViewport();
+  const { trackClick } = useOmnigentAnalytics();
   const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelPeek = useCallback(() => {
     if (peekTimer.current) {
@@ -222,6 +234,116 @@ export function ChatHeader({
     }, 400);
   }, [isMobile, onOpenSidebar, cancelPeek]);
   useEffect(() => cancelPeek, [cancelPeek]);
+  // Workspace-rail entries (Files · Changes · Agents · Shells · Logs), each
+  // opening the matching rail tab as a full-screen drawer. Mobile only: they
+  // ride in the header's single kebab rather than a second trigger of their
+  // own. Suppressed while a push panel already owns the right side — except in
+  // a terminal-first session, where `panelOpen` means the terminal renders
+  // inline in main and no drawer is mounted.
+  const workspaceItems =
+    conversationId &&
+    !mobileMenu.fileViewerOpen &&
+    (!mobileMenu.panelOpen || mobileMenu.terminalFirst) &&
+    !mobileMenu.executionLogsOpen &&
+    !mobileMenu.filesPanelOpen &&
+    !mobileMenu.subagentsPanelOpen &&
+    !mobileMenu.shellsPanelOpen &&
+    (hasRailContent || mobileMenu.debugMode) ? (
+      <>
+        {showFilesPanel && (
+          <DropdownMenuItem
+            onSelect={mobileMenu.onOpenFiles}
+            className="gap-2.5 px-2.5 py-2 text-ui"
+          >
+            <FileIcon className="size-4" />
+            Files
+          </DropdownMenuItem>
+        )}
+        {showFilesPanel && (
+          <DropdownMenuItem
+            onSelect={mobileMenu.onOpenChanges}
+            className="gap-2.5 px-2.5 py-2 text-ui"
+          >
+            <GitCompareIcon className="size-4" />
+            Changes
+            {mobileMenu.changedCount > 0 && (
+              <span className={cn(TAB_BADGE_BASE, "ml-auto bg-muted text-muted-foreground")}>
+                {mobileMenu.changedCount}
+              </span>
+            )}
+          </DropdownMenuItem>
+        )}
+        {/* Agents — always present (the panel lists at least
+            the main agent); the badge counts the whole tree,
+            main agent included. */}
+        <DropdownMenuItem
+          onSelect={mobileMenu.onOpenSubagents}
+          className="gap-2.5 px-2.5 py-2 text-ui"
+        >
+          <BotIcon className="size-4" />
+          Agents
+          <span
+            className={cn(
+              TAB_BADGE_BASE,
+              "ml-auto",
+              mobileMenu.subagentsWorking > 0
+                ? "bg-success/15 text-success"
+                : "bg-muted text-muted-foreground",
+            )}
+          >
+            {mobileMenu.subagentsWorking > 0
+              ? `${mobileMenu.subagentsWorking}/${mobileMenu.agentCount}`
+              : mobileMenu.agentCount}
+          </span>
+        </DropdownMenuItem>
+        {/* Shells — the mobile entry into the session's shells
+            (desktop has no Shells tab; it opens shells as soft tabs):
+            visible when a real shell exists, or when the agent spec
+            declares shell access so the empty-state "+ New shell"
+            affordance is reachable on mobile too. */}
+        {!mobileMenu.hideTerminalsTab && mobileMenu.showShellsTab && (
+          <DropdownMenuItem
+            onSelect={mobileMenu.onOpenShells}
+            className="gap-2.5 px-2.5 py-2 text-ui"
+          >
+            <TerminalIcon className="size-4" />
+            Shells
+            {mobileMenu.terminalsLength > 0 && (
+              <span className={cn(TAB_BADGE_BASE, "ml-auto bg-muted text-muted-foreground")}>
+                {mobileMenu.terminalsLength}
+              </span>
+            )}
+          </DropdownMenuItem>
+        )}
+        {mobileMenu.debugMode && (
+          <DropdownMenuItem
+            onSelect={mobileMenu.onOpenMainExecutionLog}
+            className="gap-2.5 px-2.5 py-2 text-ui"
+          >
+            <ListIcon className="size-4" />
+            Logs
+          </DropdownMenuItem>
+        )}
+      </>
+    ) : null;
+  // Session actions (pin/share/rename/project/archive/delete). Desktop hangs
+  // them off the breadcrumb title; mobile puts the kebab in the right-hand
+  // control cluster instead — the native iOS/Android shells hide the
+  // breadcrumb entirely (their own chrome names the session), so a
+  // title-adjacent trigger would be unreachable there.
+  const conversationMenu = actionConversation ? (
+    <HeaderConversationMenu
+      conversation={actionConversation}
+      currentProject={projectName}
+      canShare={canShare}
+      shareDisabled={shareDisabled}
+      shareDisabledReason={shareDisabledReason}
+      onShare={onShare}
+      hasAgentInfo={isMobile && hasAgentInfo}
+      onAgentInfo={onAgentInfo}
+      workspaceItems={isMobile ? workspaceItems : null}
+    />
+  ) : null;
   return (
     <header
       className={cn(
@@ -261,6 +383,7 @@ export function ChatHeader({
                 // md:size-6 override replaces the variant's md:size-8.
                 size="icon"
                 aria-label="Open sidebar"
+                componentId="chat.header.open_sidebar"
                 onClick={() => {
                   cancelPeek();
                   onOpenSidebar(false);
@@ -270,7 +393,10 @@ export function ChatHeader({
                 // the same dwell-to-peek) and this would be a second, offset
                 // copy of it. Kept everywhere else, where it is the ONLY way to
                 // reopen a collapsed sidebar.
-                className="chat-header-sidebar-toggle text-muted-foreground hover:text-foreground md:size-6"
+                className={cn(
+                  "chat-header-sidebar-toggle text-muted-foreground hover:text-foreground md:size-6",
+                  MOBILE_GLASS_PILL,
+                )}
                 onPointerEnter={onPeekSidebar}
                 onPointerLeave={cancelPeek}
               >
@@ -297,6 +423,7 @@ export function ChatHeader({
             isChildSession={isChildSession}
             boundAgent={boundAgent}
             wrapperLabel={wrapperLabel}
+            actions={isMobile ? undefined : (conversationMenu ?? undefined)}
             className="pr-1"
           />
         )}
@@ -318,11 +445,10 @@ export function ChatHeader({
         {/* Chat/Terminal switcher for terminal-first sessions — self-gates to
             null otherwise (and in the iOS shell, where it's the native bar). */}
         {conversationId && <ViewModeToggle />}
-        {/* Mobile-only three-dot menu folding the action buttons above
-            (Share · Agent info) so the header stays
-            uncluttered on a phone. The right-panel/rail control is
-            deliberately left out — it has its own affordance below. */}
-        {hasHeaderMenu && (
+        {/* Fallback mobile kebab for sessions with no owner-managed menu:
+            the action buttons above (Share · Agent info) plus the same
+            workspace-rail entries, so a phone still needs only one trigger. */}
+        {(hasHeaderMenu || workspaceItems) && (!actionConversation || !isMobile) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -331,15 +457,22 @@ export function ChatHeader({
                 size="icon"
                 aria-label="Session actions"
                 data-testid="session-actions-menu"
-                className="text-muted-foreground hover:text-foreground md:hidden"
+                className="text-muted-foreground hover:text-foreground md:hidden max-md:rounded-full"
               >
                 <EllipsisVerticalIcon className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-44">
+            <DropdownMenuContent align="end" className={cn("min-w-44", MOBILE_GLASS_SURFACE)}>
               {canShare && (
                 <DropdownMenuItem
-                  onSelect={shareDisabled ? undefined : onShare}
+                  onSelect={
+                    shareDisabled
+                      ? undefined
+                      : () => {
+                          trackClick("chat.header.mobile_share", "button");
+                          onShare();
+                        }
+                  }
                   disabled={shareDisabled}
                   data-testid="mobile-share-session"
                   title={shareDisabledReason}
@@ -351,7 +484,10 @@ export function ChatHeader({
               )}
               {hasAgentInfo && (
                 <DropdownMenuItem
-                  onSelect={onAgentInfo}
+                  onSelect={() => {
+                    trackClick("chat.header.mobile_agent_info", "button");
+                    onAgentInfo();
+                  }}
                   data-testid="mobile-agent-info"
                   className="gap-2.5 px-2.5 py-2 text-ui"
                 >
@@ -359,6 +495,8 @@ export function ChatHeader({
                   Agent info
                 </DropdownMenuItem>
               )}
+              {hasHeaderMenu && workspaceItems && <DropdownMenuSeparator />}
+              {workspaceItems}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -395,6 +533,7 @@ export function ChatHeader({
             type="button"
             aria-label="Share session"
             onClick={onShare}
+            componentId="chat.header.share"
             // share-button-glassy (index.css) paints the pink gradient,
             // shadow, and white text in both light and dark mode.
             className="share-button-glassy hidden h-6 gap-1 rounded-[6px] px-2 text-ui font-normal text-white md:inline-flex"
@@ -414,6 +553,7 @@ export function ChatHeader({
                 size="icon-xs"
                 aria-label={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
                 onClick={onToggleRightPanel}
+                componentId="chat.header.toggle_right_panel"
                 className="hidden md:inline-flex text-muted-foreground hover:text-foreground border-none"
               >
                 {rightPanelOpen ? (

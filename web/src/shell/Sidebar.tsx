@@ -149,6 +149,7 @@ import { sumPendingApprovals } from "@/lib/inbox";
 import { isSessionStoppable } from "@/lib/sessionStop";
 import { getCurrentUserId, resolveIdentity } from "@/lib/identity";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
+import { useHasSessionDraft } from "@/lib/sessionDrafts";
 import { getSessionState, type SessionState } from "@/hooks/useSessionState";
 import { useChatStore } from "@/store/chatStore";
 import { isBrokerSession } from "@/lib/agentTasksApi";
@@ -159,6 +160,7 @@ import {
   useUnseenTick,
 } from "@/hooks/useUnseenConversations";
 import { cn } from "@/lib/utils";
+import { useOmnigentAnalytics } from "@/lib/analytics";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useResizableSidebar } from "@/hooks/useResizableSidebar";
 import { useSessionSwitchHotkey } from "@/hooks/useSessionSwitchHotkey";
@@ -190,11 +192,20 @@ import { DatabricksConnectionRow } from "./DatabricksConnectionRow";
 import { SidebarServerPicker } from "./SidebarServerPicker";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
-// Positioning for a row's trailing session-state badge. On desktop it shares
-// the controls' right-1 edge and fades on hover so the pin + kebab take its
-// place; on mobile it sits left of the always-visible controls.
+// Positioning for a row's trailing session-state badge. Anchored at the
+// controls' right-1 edge and fades on hover so the pin + kebab take its place;
+// on mobile it sits left of the always-visible controls.
 const SESSION_STATE_SLOT_CLASS =
   "-translate-y-1/2 pointer-events-none absolute top-1/2 right-[4.5rem] flex h-5 items-center transition-opacity md:right-1 md:group-hover:opacity-0 md:group-has-[:focus-visible]:opacity-0 md:group-has-[[aria-expanded=true]]:opacity-0";
+
+// Small markers (running/starting/unseen dot, or the draft pencil when there's
+// no session state) get a fixed size-6 centered box so they line up vertically
+// under the kebab. The "awaiting" pill keeps its natural width — a fixed box
+// would clip its "Needs response" label.
+function isDotMarker(state: SessionState | null): boolean {
+  return state === null || state.kind !== "awaiting";
+}
+const SESSION_STATE_DOT_SLOT_CLASS = "md:w-6 md:justify-center";
 
 // Match the Settings sidebar's ghost-button hover treatment across every home
 // sidebar row.
@@ -835,6 +846,7 @@ export function Sidebar({
               to="/"
               onClick={onNavClick}
               data-testid="sidebar-brand"
+              componentId="sidebar.home"
               className="sidebar-brand rounded-none transition-opacity duration-200 ease-[var(--ease-otto)] hover:opacity-70"
             >
               {branding.app_name ? (
@@ -889,6 +901,7 @@ export function Sidebar({
               (the button stays visible on both tabs). */}
               <Link
                 to="/"
+                componentId="sidebar.new_chat"
                 onClick={(e) => {
                   switchTab("mine");
                   onNavClick(e);
@@ -920,7 +933,7 @@ export function Sidebar({
               variant="ghost"
               data-testid="scheduled-tasks-nav"
             >
-              <Link to="/tasks" onClick={onNavClick}>
+              <Link to="/tasks" onClick={onNavClick} componentId="sidebar.tasks">
                 <ClockIcon
                   className={cn(
                     "ui-icon",
@@ -943,7 +956,7 @@ export function Sidebar({
               )}
               data-testid="inbox-button"
             >
-              <Link to="/inbox" onClick={onNavClick}>
+              <Link to="/inbox" onClick={onNavClick} componentId="sidebar.inbox">
                 <InboxIcon
                   className={cn(
                     "ui-icon",
@@ -1054,7 +1067,7 @@ export function Sidebar({
                 )}
                 data-testid="usage-nav"
               >
-                <Link to="/usage" onClick={onNavClick}>
+                <Link to="/usage" onClick={onNavClick} componentId="sidebar.usage">
                   <WalletIcon
                     className={cn(
                       "ui-icon",
@@ -2380,13 +2393,28 @@ function SectionHeader({
         {collapsed && marker && (
           <span
             className={cn(
-              "ml-auto flex shrink-0 items-center transition-opacity",
+              // Match the session rows' badge slot so the marker lines up
+              // vertically with the dots on the rows above. The header button's
+              // right padding differs by kind (icon folders use px-2, plain
+              // headers use pr-0), so offset each to the same right-1 edge:
+              // -mr-1 trims the folder's 8px padding to 4px; mr-1 pushes the
+              // padless header out to 4px.
+              "ml-auto flex shrink-0 items-center justify-center transition-opacity",
+              icon ? "-mr-1" : "mr-1",
+              // Dot/spinner markers get the fixed size-6 centered box (center
+              // lands 16px from the edge, matching the rows). The "awaiting"
+              // pill keeps its natural width so its label isn't clipped.
+              isDotMarker(marker) && "w-6",
               // When the header also carries a hover-revealed kebab, keep the
               // marker clear of it the same way a row's time/marker slot does:
               // reserve space on mobile (kebab always shown) and fade out on
               // desktop hover so the kebab takes its place.
               hasAction &&
-                "mr-14 md:mr-0 md:group-hover/section:opacity-0 md:group-focus-within/section:opacity-0",
+                cn(
+                  "mr-14",
+                  icon ? "md:-mr-1" : "md:mr-1",
+                  "md:group-hover/section:opacity-0 md:group-focus-within/section:opacity-0",
+                ),
             )}
           >
             <SessionStateBadge state={marker} />
@@ -2564,14 +2592,14 @@ function SectionGroup({
           onToggleCollapsed={onToggleCollapsed}
         />
         {headerAction && (
-          // Desktop-only, hover/keyboard-focus-revealed: a group-level bulk
-          // control (e.g. "expand all projects") is a pointer convenience, so it
-          // stays hidden until the header is hovered and never floats on touch
-          // viewports where there's no hover. Reveal on :focus-visible (keyboard)
-          // — NOT :focus-within — so clicking the button with the mouse doesn't
-          // leave it stuck visible: React reuses the same node when it swaps
+          // Always visible on mobile (no hover there, and the "New project"
+          // control lives here — the only way to create a project). On desktop
+          // it's hover/keyboard-focus-revealed: a group-level control is a
+          // pointer convenience there. Reveal on :focus-visible (keyboard) — NOT
+          // :focus-within — so clicking the button with the mouse doesn't leave
+          // it stuck visible: React reuses the same node when it swaps
           // expand↔revert, so the clicked button keeps focus afterward.
-          <div className="-translate-y-1/2 absolute top-1/2 right-1 hidden items-center transition-opacity md:flex md:opacity-0 md:has-[:focus-visible]:opacity-100 md:group-has-[[data-state=open]]/header:opacity-100 md:group-hover/header:opacity-100">
+          <div className="-translate-y-1/2 absolute top-1/2 right-1 flex items-center transition-opacity md:opacity-0 md:has-[:focus-visible]:opacity-100 md:group-has-[[data-state=open]]/header:opacity-100 md:group-hover/header:opacity-100">
             {headerAction}
           </div>
         )}
@@ -2827,6 +2855,7 @@ function ConversationMenuItems({
   // to the side. `view` swaps between the main actions and that sub-view;
   // desktop always renders the native side-flyout submenu regardless.
   const isMobile = useIsMobileViewport();
+  const { trackClick } = useOmnigentAnalytics();
   const [view, setView] = useState<"main" | "projects">("main");
 
   // The project pick / create / remove flow — shared verbatim by the desktop
@@ -2920,7 +2949,13 @@ function ConversationMenuItems({
           </Tooltip>
         ))}
       {isOwner ? (
-        <C.Item data-testid="rename-conversation" onSelect={() => setIsEditing(true)}>
+        <C.Item
+          data-testid="rename-conversation"
+          onSelect={() => {
+            trackClick("sidebar.conversation.rename", "button");
+            setIsEditing(true);
+          }}
+        >
           <PencilIcon className="size-3.5" />
           Rename
         </C.Item>
@@ -3291,6 +3326,7 @@ function ConversationRow({
   }, [conversation.title, pendingTitle, rename.isSuccess, rename.isError]);
 
   const label = pendingTitle ?? conversationDisplayLabel(conversation);
+  const hasDraft = useHasSessionDraft(conversation.id);
   // Recompute unseen state the moment the last-seen map changes (e.g. the
   // user picks "Mark as unread" on this row) rather than waiting for the
   // next conversations poll.
@@ -3329,6 +3365,11 @@ function ConversationRow({
       : hasUnseenMessages
         ? { kind: "unseen" as const }
         : (derivedState ?? (isStartingUp ? { kind: "starting" as const } : null));
+  // Drafts share the row's trailing indicator slot, but the active session's
+  // composer already makes its draft visible. Live session state wins while
+  // present; otherwise only an inactive row needs the draft marker.
+  const showDraftIndicator = hasDraft && !isActive;
+  const hasTrailingIndicator = sessionState !== null || showDraftIndicator;
 
   // Drag-and-drop: a row is grabbable when the viewer owns it (re-filing is
   // owner-only, like the Move-to-project kebab item), outside selection /
@@ -3534,7 +3575,7 @@ function ConversationRow({
         !selectionMode &&
           (sessionState?.kind === "awaiting"
             ? "pr-48 md:pr-29"
-            : sessionState !== null
+            : hasTrailingIndicator
               ? "pr-28 md:pr-8"
               : "pr-28 md:pr-2"),
         // The narrowed reserve must track exactly when the trailing controls
@@ -3581,10 +3622,8 @@ function ConversationRow({
       }}
       title={isMobile ? (conversation.title ?? conversation.id) : undefined}
     >
-      {/* Row 1: the session name. Status markers (working, needs-approval,
-          unseen) render in the trailing session-state slot below, not inline
-          here. Leading icons (agent type, pin, shared) were removed to keep
-          rows text-clean; pinned rows still group under "Pinned". */}
+      {/* Row 1: the session name. Working, needs-approval, unseen, and draft
+          markers render in the shared trailing indicator slot below. */}
       <div className="flex w-full items-center gap-1.5">
         <span className="relative min-w-0 truncate">
           {label}
@@ -3687,9 +3726,28 @@ function ConversationRow({
             <SquareIcon className="size-4 text-muted-foreground" />
           )}
         </span>
-      ) : sessionState !== null ? (
-        <span className={SESSION_STATE_SLOT_CLASS}>
-          <SessionStateBadge state={sessionState} />
+      ) : hasTrailingIndicator ? (
+        <span
+          className={cn(
+            SESSION_STATE_SLOT_CLASS,
+            // The wide "awaiting" pill keeps its natural width; every other
+            // marker (running/starting/unseen dot, or the draft pencil) sits in
+            // the fixed centered box so it lines up under the kebab.
+            isDotMarker(sessionState) && SESSION_STATE_DOT_SLOT_CLASS,
+          )}
+        >
+          {sessionState !== null ? (
+            <SessionStateBadge state={sessionState} />
+          ) : (
+            <span
+              role="img"
+              aria-label="Draft"
+              data-testid="conversation-draft-indicator"
+              className="inline-flex h-5 shrink-0 items-center justify-center text-muted-foreground"
+            >
+              <PencilIcon aria-hidden className="size-3.5" />
+            </span>
+          )}
         </span>
       ) : null}
       {/* Trailing controls (pin + kebab) share one absolutely-positioned flex
@@ -3844,6 +3902,7 @@ function ConversationRow({
               variant="destructive"
               onClick={confirmDelete}
               disabled={del.isPending}
+              componentId="sidebar.conversation.delete"
             >
               Delete
             </Button>
@@ -3879,6 +3938,7 @@ function ConversationRow({
               data-testid="confirm-leave-conversation"
               onClick={confirmLeave}
               disabled={leave.isPending}
+              componentId="sidebar.conversation.leave"
             >
               Leave
             </Button>
@@ -3926,6 +3986,7 @@ function ConversationRow({
                 stopSession.mutate(conversation.id, { onSuccess: () => setStopOpen(false) })
               }
               loading={stopSession.isPending}
+              componentId="sidebar.conversation.stop"
             >
               Stop session
             </Button>
@@ -4355,6 +4416,7 @@ function ProjectFolderMenu({
                 data-testid="rename-project-confirm"
                 loading={renameProject.isPending || updateConfig.isPending}
                 disabled={renameValue.trim() === ""}
+                componentId="sidebar.project.rename"
               >
                 Confirm
               </Button>

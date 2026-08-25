@@ -1863,6 +1863,7 @@ def test_install_crash_logging_is_idempotent() -> None:
 @pytest.mark.asyncio
 async def test_runner_shutdown_closes_terminal_registry(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """The --server local runner shuts down terminal-owned resources.
 
@@ -1872,6 +1873,7 @@ async def test_runner_shutdown_closes_terminal_registry(
     startup/shutdown hooks directly and verifies shutdown includes the
     TerminalRegistry, not just harness subprocesses and MCPs.
     """
+    import omnigent.inner.terminal as terminal_mod
     import omnigent.runner._entry as entry_mod
 
     process_managers: list[_FakeProcessManager] = []
@@ -1923,6 +1925,10 @@ async def test_runner_shutdown_closes_terminal_registry(
 
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://runner.test")
     monkeypatch.setenv("OMNIGENT_SERVER_UNIX_SOCKET", "/tmp/omnigent-server.sock")
+    # create_app() performs its production orphan sweep during construction.
+    # Keep this lifecycle unit test away from terminals owned by other local
+    # runners and test sessions.
+    monkeypatch.setattr(terminal_mod, "_terminals_tmp_root", lambda: tmp_path)
     monkeypatch.setattr(
         "omnigent.runtime.harnesses.process_manager.HarnessProcessManager",
         _FakeProcessManager,

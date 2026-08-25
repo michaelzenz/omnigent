@@ -52,6 +52,7 @@ from omnigent._wrapper_labels import (
     CLAUDE_NATIVE_WRAPPER_VALUE,
     CODEX_NATIVE_WRAPPER_VALUE,
 )
+from omnigent.debug_logging import runner_primary_session_id
 from omnigent.harness_aliases import canonicalize_harness
 from omnigent.model_override import (
     harness_supports_model_override,
@@ -1048,7 +1049,11 @@ async def _execute_local_python_tool(
         )
         return await asyncio.to_thread(manager.call_tool, tool_name, args, ctx)
     except Exception as exc:
-        _logger.exception("runner local Python tool dispatch failed for %s", tool_name)
+        _logger.exception(
+            "runner local Python tool dispatch failed for %s",
+            tool_name,
+            extra={"session_id": conversation_id},
+        )
         return f"Error: {type(exc).__name__}: {exc}"
     finally:
         manager.shutdown()
@@ -1902,6 +1907,7 @@ def _normalize_subagent_model(
             sub_agent_name,
             harness,
             provider.kind,
+            extra={"session_id": runner_primary_session_id()},
         )
     return normalized
 
@@ -2159,6 +2165,7 @@ async def _execute_subagent_tool(
                 "after completion."
             )
     else:
+        _auto_ordinal = False
         if not session_name:
             # No title hint — auto-generate a structured session name
             # (e.g. "researcher-1"). Recover ordinals from existing
@@ -2185,6 +2192,7 @@ async def _execute_subagent_tool(
                 str(sub_agent_name),
             )
             session_name = f"{sub_agent_name}-{ordinal}"
+            _auto_ordinal = True
         child_harness = _subagent_harness(str(sub_agent_name), agent_spec)
         # Apply an allowlisted per-dispatch harness override. The sub-agent
         # spec must explicitly opt in via executor.config.allowed_harnesses,
@@ -2287,7 +2295,28 @@ async def _execute_subagent_tool(
                 agent_spec=agent_spec,
                 harness=child_harness,
             )
-        resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
+
+        # Best-effort retry for auto-ordinal name collisions: a 409 means
+        # another runner (or a restart race) already created a child with
+        # this ordinal. Bump and retry. Not watertight — the server's
+        # (parent, title) check is SELECT-then-INSERT with no DB unique
+        # constraint, so truly concurrent creates can still race past it.
+        _max_ordinal_retries = 5 if _auto_ordinal else 0
+        for _ordinal_attempt in range(_max_ordinal_retries + 1):
+            resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
+            if (
+                resp.status_code == 409
+                and _auto_ordinal
+                and _ordinal_attempt < _max_ordinal_retries
+            ):
+                ordinal = _runner_app.next_subagent_ordinal(
+                    conversation_id,
+                    str(sub_agent_name),
+                )
+                session_name = f"{sub_agent_name}-{ordinal}"
+                create_body["title"] = f"{sub_agent_name}:{session_name}"
+                continue
+            break
         if resp.status_code >= 400:
             return f"Error: failed to create child session: {resp.status_code} {resp.text[:200]}"
         child_data = _string_object_dict(resp.json())
@@ -3546,6 +3575,7 @@ async def _timer_loop(
                     timer_id,
                     conversation_id,
                     exc_info=True,
+                    extra={"session_id": conversation_id},
                 )
             if not repeat:
                 break
@@ -3849,6 +3879,7 @@ _SCHEDULED_TASK_CREATE_FIELDS = (
     "timezone",
     "model_override",
     "reasoning_effort",
+    "permission_mode",
     "workspace",
     "host_id",
 )
@@ -3860,6 +3891,7 @@ _SCHEDULED_TASK_UPDATE_FIELDS = (
     "timezone",
     "model_override",
     "reasoning_effort",
+    "permission_mode",
     "workspace",
     "host_id",
     "state",
@@ -5332,6 +5364,7 @@ async def _collect_sub_agents(
                 "sys_session_list sibling enrichment failed for parent %s",
                 parent_id,
                 exc_info=True,
+                extra={"session_id": conversation_id},
             )
     return result
 
@@ -6247,6 +6280,7 @@ async def dispatch_tool_locally(
             tool_name,
             call_id,
             exc,
+            extra={"session_id": conversation_id},
         )
 
     return output
@@ -6480,7 +6514,11 @@ async def _execute_os_env_tool(
         else:
             return f"Error: {tool_name} not implemented"
     except Exception as exc:
-        _logger.exception("runner OSEnvironment dispatch failed for %s", tool_name)
+        _logger.exception(
+            "runner OSEnvironment dispatch failed for %s",
+            tool_name,
+            extra={"session_id": conversation_id},
+        )
         return json.dumps({"error": str(exc)})
     finally:
         if os_env is not None:
@@ -6922,6 +6960,7 @@ async def _publish_terminal_created_event(
                 conversation_id,
                 terminal_name,
                 session_key,
+                extra={"session_id": conversation_id},
             )
             return
         resource = session_resource_view_to_dict(view)
@@ -7247,6 +7286,7 @@ async def _post_subagent_policy_verdict(
             "Sub-agent inbox TOOL_RESULT policy evaluation failed for parent=%s child=%s",
             conversation_id,
             _subagent_child_id(payload),
+            extra={"session_id": conversation_id},
         )
         return None
     if resp.status_code >= 400:
@@ -7256,6 +7296,7 @@ async def _post_subagent_policy_verdict(
             conversation_id,
             resp.status_code,
             resp.text,
+            extra={"session_id": conversation_id},
         )
         return None
     try:
@@ -7264,6 +7305,7 @@ async def _post_subagent_policy_verdict(
         _logger.warning(
             "Sub-agent inbox TOOL_RESULT policy evaluation returned non-JSON for parent=%s",
             conversation_id,
+            extra={"session_id": conversation_id},
         )
         return None
 
@@ -7294,6 +7336,7 @@ def _apply_subagent_policy_verdict(
             _logger.warning(
                 "Sub-agent inbox TOOL_RESULT policy data must be str; got %s",
                 type(transformed).__name__,
+                extra={"session_id": runner_primary_session_id()},
             )
         return _SubagentInboxEvaluation(
             {
@@ -7304,6 +7347,7 @@ def _apply_subagent_policy_verdict(
     _logger.warning(
         "Sub-agent inbox TOOL_RESULT policy evaluation returned unknown result=%r",
         result,
+        extra={"session_id": runner_primary_session_id()},
     )
     return _SubagentInboxEvaluation(
         _subagent_policy_failure_payload(payload),
@@ -7413,6 +7457,7 @@ async def _drain_inbox(
                     "malformed terminal-idle inbox item ignored: %s",
                     exc,
                     exc_info=True,
+                    extra={"session_id": conversation_id},
                 )
                 items.append(f"[System: malformed terminal_idle inbox item ignored — {exc}]")
             continue
@@ -7481,12 +7526,14 @@ async def _evaluate_async_tool_call_policy(
             "async PHASE_TOOL_CALL policy evaluate returned %d for %s; denying",
             resp.status_code,
             evaluation_id,
+            extra={"session_id": conversation_id},
         )
     except Exception:  # noqa: BLE001
         _logger.warning(
             "async PHASE_TOOL_CALL policy evaluate failed for %s; denying",
             evaluation_id,
             exc_info=True,
+            extra={"session_id": conversation_id},
         )
     return False
 

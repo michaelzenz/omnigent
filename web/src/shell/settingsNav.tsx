@@ -273,6 +273,7 @@ export function SettingsSidebarBody({
                     to={`/settings/${item.id}`}
                     onClick={onNavClick}
                     data-testid={`settings-nav-${item.id}`}
+                    componentId={`settings.nav.${item.id}`}
                     aria-current={selected ? "page" : undefined}
                   >
                     <Icon

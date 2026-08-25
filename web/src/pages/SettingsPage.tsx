@@ -10,7 +10,7 @@
  * Sections:
  *
  * - **Appearance** — theme mode (System / Light / Dark), terminal theme,
- *   Workspace panel default for new chats, and UI/code font controls.
+ *   default transcript view, Workspace panel default, and UI/code font controls.
  * - **Git** — Git behavior, e.g. the default base branch pre-filled when
  *   naming a new worktree branch in the composer.
  * - **Connection** — SSH profiles for remote machines, with automatic
@@ -47,6 +47,7 @@ import {
   KeyRoundIcon,
   LaptopMinimalIcon,
   LogOutIcon,
+  MessagesSquareIcon,
   MinusIcon,
   MonitorIcon,
   MoonIcon,
@@ -54,6 +55,7 @@ import {
   PanelRightIcon,
   PlusIcon,
   SunIcon,
+  TerminalIcon,
   Trash2Icon,
   UserCogIcon,
 } from "lucide-react";
@@ -84,7 +86,7 @@ import { KeyboardShortcutsList } from "@/components/KeyboardShortcutsDialog";
 import { changePassword, logout } from "@/lib/accountsApi";
 import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
-import { useOmnigentPageView } from "@/lib/analytics";
+import { useOmnigentAnalytics, useOmnigentPageView } from "@/lib/analytics";
 import {
   type Conversation,
   useArchiveConversation,
@@ -140,6 +142,12 @@ import {
   writeWorkspacePanelDefault,
   type WorkspacePanelDefault,
 } from "@/lib/workspacePanelPreferences";
+import {
+  readTranscriptViewDefault,
+  TRANSCRIPT_VIEW_DEFAULT,
+  writeTranscriptViewDefault,
+  type TranscriptViewDefault,
+} from "@/lib/transcriptViewPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import {
   readAutoFetchWorktreeBase,
@@ -329,6 +337,15 @@ const terminalThemeCards: { mode: TerminalThemeMode; label: string; icon: typeof
   { mode: "dark", label: "Dark", icon: MoonIcon },
 ];
 
+const transcriptViewCards: {
+  value: TranscriptViewDefault;
+  label: string;
+  icon: typeof MessagesSquareIcon;
+}[] = [
+  { value: "chat", label: "Chat", icon: MessagesSquareIcon },
+  { value: "terminal", label: "Terminal", icon: TerminalIcon },
+];
+
 const workspacePanelCards: {
   value: WorkspacePanelDefault;
   label: string;
@@ -451,6 +468,7 @@ function CardRadioGroup<T extends string>({
   labelledBy,
   value,
   onSelect,
+  componentId,
   items,
   className,
   cardClassName,
@@ -458,10 +476,21 @@ function CardRadioGroup<T extends string>({
   labelledBy: string;
   value: T;
   onSelect: (value: T) => void;
+  // Opt-in analytics id for the whole picker. When set, a selection reports the
+  // chosen value to the host sink (see `lib/analytics.ts`). Card values are a
+  // bounded set, so the value is sent. Covers both the click and arrow-key paths.
+  componentId?: string;
   items: readonly CardRadioOption<T>[];
   className?: string;
   cardClassName?: string;
 }) {
+  const { trackValueChange } = useOmnigentAnalytics();
+  const select = componentId
+    ? (next: T) => {
+        trackValueChange(componentId, "select", next, { valueHasNoPii: true });
+        onSelect(next);
+      }
+    : onSelect;
   // Keep a handle on each card so arrow-key navigation can move focus as it
   // moves selection (selection-follows-focus, per the radiogroup pattern).
   const refs = useRef(new Map<T, HTMLButtonElement | null>());
@@ -482,7 +511,7 @@ function CardRadioGroup<T extends string>({
             tabIndex={selected ? 0 : -1}
             title={item.title}
             data-testid={item.testId}
-            onClick={() => onSelect(item.value)}
+            onClick={() => select(item.value)}
             onKeyDown={(event) => {
               const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
               const backward = event.key === "ArrowLeft" || event.key === "ArrowUp";
@@ -490,7 +519,7 @@ function CardRadioGroup<T extends string>({
               event.preventDefault();
               const nextIndex = (index + (forward ? 1 : -1) + items.length) % items.length;
               const next = items[nextIndex].value;
-              onSelect(next);
+              select(next);
               refs.current.get(next)?.focus();
             }}
             className={themeCardClass(selected, cardClassName)}
@@ -544,6 +573,7 @@ function ModeControl() {
         labelledBy={labelId}
         value={mode}
         onSelect={(next) => setTheme(next)}
+        componentId="settings.appearance.theme_mode"
         className="grid grid-cols-3 gap-3"
         cardClassName="gap-2 p-2"
         items={themeCards.map((card) => ({
@@ -579,11 +609,43 @@ function TerminalThemeControl() {
         labelledBy={labelId}
         value={mode}
         onSelect={choose}
+        componentId="settings.appearance.terminal_theme"
         className="grid grid-cols-3 gap-3"
         cardClassName="items-center gap-2 p-4"
         items={terminalThemeCards.map((card) => ({
           value: card.mode,
           testId: `terminal-theme-${card.mode}`,
+          body: iconCardBody(card.icon, card.label),
+        }))}
+      />
+    </ThemeSubsection>
+  );
+}
+
+/** Default surface for terminal-first transcripts without a per-tab choice. */
+function TranscriptViewDefaultControl() {
+  const [value, setValue] = useState(() => readTranscriptViewDefault());
+  const labelId = useId();
+  const choose = useCallback((next: TranscriptViewDefault) => {
+    setValue(next);
+    writeTranscriptViewDefault(next);
+  }, []);
+  return (
+    <ThemeSubsection
+      labelId={labelId}
+      title="Default transcript view"
+      helper="Choose whether terminal-backed chats open in Chat or Terminal view. A view selected in a chat is remembered for the current tab."
+    >
+      <CardRadioGroup<TranscriptViewDefault>
+        labelledBy={labelId}
+        value={value}
+        onSelect={choose}
+        componentId="settings.appearance.transcript_view"
+        className="grid grid-cols-2 gap-3"
+        cardClassName="items-center gap-2 p-4"
+        items={transcriptViewCards.map((card) => ({
+          value: card.value,
+          testId: `transcript-view-default-${card.value}`,
           body: iconCardBody(card.icon, card.label),
         }))}
       />
@@ -607,12 +669,13 @@ function WorkspacePanelDefaultControl() {
     <ThemeSubsection
       labelId={labelId}
       title="Workspace panel"
-      helper="Whether new chats open with the Files / Agents / Shells panel visible. Existing chats keep their last layout."
+      helper="Whether new chats open with the Files / Agents / Shells panel visible. Collapsing or expanding the panel updates this. Existing chats keep their last layout."
     >
       <CardRadioGroup<WorkspacePanelDefault>
         labelledBy={labelId}
         value={value}
         onSelect={choose}
+        componentId="settings.appearance.workspace_panel"
         className="grid grid-cols-2 gap-3"
         cardClassName="items-center gap-2 p-4"
         items={workspacePanelCards.map((card) => ({
@@ -706,6 +769,8 @@ function ColorThemeControl() {
             onValueChange={(next) => {
               if (isThemeSelection(next)) choose(next);
             }}
+            componentId="settings.appearance.color_theme"
+            valueHasNoPii
           >
             <SelectTrigger
               aria-labelledby={labelId}
@@ -789,6 +854,7 @@ function ColorThemeControl() {
               checked={editableTheme.translucentSidebar}
               onCheckedChange={(translucentSidebar) => updateCustomTheme({ translucentSidebar })}
               data-testid="custom-theme-translucent-sidebar"
+              componentId="settings.appearance.translucent_sidebar"
             />
           </div>
         </div>
@@ -871,6 +937,7 @@ function HideUnconfiguredHarnessesControl() {
         onCheckedChange={toggle}
         data-testid="hide-unconfigured-harnesses-toggle"
         className="mt-0.5 shrink-0"
+        componentId="settings.appearance.hide_unconfigured_harnesses"
       />
     </div>
   );
@@ -1043,6 +1110,8 @@ function AppearanceSection() {
     writeCustomTheme(DEFAULT_CUSTOM_THEME);
     applyCustomTheme(DEFAULT_CUSTOM_THEME);
 
+    writeTranscriptViewDefault(TRANSCRIPT_VIEW_DEFAULT);
+
     writeWorkspacePanelDefault(WORKSPACE_PANEL_DEFAULT);
 
     writeHideUnconfiguredHarnesses(DEFAULT_HIDE_UNCONFIGURED_HARNESSES);
@@ -1071,6 +1140,7 @@ function AppearanceSection() {
           "omnigent:terminal-theme",
           "omnigent:ui-theme-palette",
           "omnigent:custom-theme",
+          "omnigent:default-transcript-view",
           "omnigent:default-workspace-panel",
           "omnigent:hide-unconfigured-harnesses",
           STICKY_USER_MESSAGES_STORAGE_KEY,
@@ -1117,6 +1187,8 @@ function AppearanceSection() {
 
         {!isEmbedded && <ColorThemeControl />}
 
+        <TranscriptViewDefaultControl />
+
         <WorkspacePanelDefaultControl />
 
         <HideUnconfiguredHarnessesControl />
@@ -1145,7 +1217,12 @@ function AppearanceSection() {
       <div className="flex items-center justify-end">
         <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" data-testid="reset-appearance-button">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="reset-appearance-button"
+              componentId="settings.appearance.open_reset_dialog"
+            >
               Reset to defaults
             </Button>
           </DialogTrigger>
@@ -1167,6 +1244,7 @@ function AppearanceSection() {
                 size="sm"
                 onClick={confirmResetAppearance}
                 data-testid="reset-appearance-confirm"
+                componentId="settings.appearance.reset"
               >
                 Reset
               </Button>
@@ -1235,6 +1313,7 @@ function DefaultBaseBranchControl() {
         className="h-9 w-56 shrink-0"
         value={branch}
         onChange={(e) => update(e.target.value)}
+        componentId="settings.git.default_branch"
       />
     </div>
   );
@@ -1343,6 +1422,7 @@ function UiFontSizeControl() {
           testId="ui-font-size-dec"
           disabled={atMin}
           onClick={() => commit(px - UI_FONT_SIZE_STEP)}
+          componentId="settings.appearance.ui_font_decrease"
         >
           <MinusIcon className="ui-icon" />
         </StepperButton>
@@ -1369,6 +1449,7 @@ function UiFontSizeControl() {
           testId="ui-font-size-inc"
           disabled={atMax}
           onClick={() => commit(px + UI_FONT_SIZE_STEP)}
+          componentId="settings.appearance.ui_font_increase"
         >
           <PlusIcon className="ui-icon" />
         </StepperButton>
@@ -1419,6 +1500,7 @@ function UiFontFamilyControl() {
           disabled={isDefault}
           className={cn("h-9", isDefault && "invisible")}
           onClick={() => update(UI_FONT_FAMILY_DEFAULT)}
+          componentId="settings.appearance.ui_font_family_reset"
         >
           Reset
         </Button>
@@ -1507,6 +1589,7 @@ function UiCodeFontSizeControl() {
           testId="code-font-size-dec"
           disabled={atMin}
           onClick={() => commit(px - CODE_FONT_SIZE_STEP)}
+          componentId="settings.appearance.code_font_decrease"
         >
           <MinusIcon className="ui-icon" />
         </StepperButton>
@@ -1533,6 +1616,7 @@ function UiCodeFontSizeControl() {
           testId="code-font-size-inc"
           disabled={atMax}
           onClick={() => commit(px + CODE_FONT_SIZE_STEP)}
+          componentId="settings.appearance.code_font_increase"
         >
           <PlusIcon className="ui-icon" />
         </StepperButton>
@@ -1577,6 +1661,7 @@ function UiCodeFontFamilyControl() {
           disabled={isDefault}
           className={cn("h-9", isDefault && "invisible")}
           onClick={() => update(CODE_FONT_FAMILY_DEFAULT)}
+          componentId="settings.appearance.code_font_family_reset"
         >
           Reset
         </Button>
@@ -1603,21 +1688,27 @@ function StepperButton({
   testId,
   disabled,
   onClick,
+  componentId,
   children,
 }: {
   label: string;
   testId: string;
   disabled: boolean;
   onClick: () => void;
+  componentId?: string;
   children: ReactNode;
 }) {
+  const { trackClick } = useOmnigentAnalytics();
   return (
     <button
       type="button"
       aria-label={label}
       data-testid={testId}
       disabled={disabled}
-      onClick={onClick}
+      onClick={() => {
+        if (componentId) trackClick(componentId, "button");
+        onClick();
+      }}
       className={cn(
         "flex w-9 items-center justify-center text-muted-foreground transition-colors",
         "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50",
@@ -1897,6 +1988,8 @@ function UpdatesSection() {
               value={config.mode}
               onValueChange={(value) => void persistConfig({ mode: value as UpdateMode })}
               disabled={saving}
+              componentId="settings.updates.mode"
+              valueHasNoPii
             >
               <SelectTrigger className="w-full max-w-md" data-testid="update-mode-select">
                 <SelectValue />
@@ -1923,11 +2016,16 @@ function UpdatesSection() {
               onCheckedChange={(checked) => void persistConfig({ autoInstall: checked })}
               disabled={saving}
               aria-label="Install downloaded updates on next quit"
+              componentId="settings.updates.auto_install"
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void onCheck()} loading={checking}>
+            <Button
+              onClick={() => void onCheck()}
+              loading={checking}
+              componentId="settings.updates.check_now"
+            >
               Check for updates now
             </Button>
             {saving && <span className="text-sm text-muted-foreground">Saving…</span>}
@@ -2053,6 +2151,7 @@ function AccountSection() {
                 resetPwForm();
                 setPwOpen(true);
               }}
+              componentId="settings.account.change_password"
             >
               <KeyRoundIcon className="size-4" /> Change password
             </Button>
@@ -2061,6 +2160,7 @@ function AccountSection() {
             variant="ghost"
             className="w-full justify-start gap-2"
             onClick={() => void onSignOut()}
+            componentId="settings.account.sign_out"
           >
             <LogOutIcon className="size-4" /> Sign out
           </Button>
@@ -2133,6 +2233,7 @@ function AccountSection() {
                   disabled={
                     pwBusy || oldPw.length === 0 || newPw.length === 0 || confirmPw.length === 0
                   }
+                  componentId="settings.account.update_password"
                 >
                   {pwBusy ? "Changing…" : "Change password"}
                 </Button>

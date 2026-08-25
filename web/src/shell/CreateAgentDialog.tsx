@@ -17,7 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { BRAIN_HARNESS_LABELS, useBrainHarnessLabels } from "@/lib/agentLabels";
 import type { AgentBundleInput, MCPServerInput } from "@/lib/agentBundle";
+
+/** Default harness for new agents — the first entry in BRAIN_HARNESS_LABELS. */
+const DEFAULT_HARNESS = Object.keys(BRAIN_HARNESS_LABELS)[0];
 
 /** A single MCP server row in the form. */
 interface MCPFormEntry {
@@ -126,9 +130,16 @@ export function CreateAgentDialog({
   initialValue?: AgentBundleInput;
   showMcpServers?: boolean;
 }) {
+  const brainHarnessLabels = useBrainHarnessLabels();
+  const harnessOptions = Object.entries(brainHarnessLabels).map(([value, label]) => ({
+    value,
+    label,
+  }));
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [harness, setHarness] = useState(DEFAULT_HARNESS);
+  const [model, setModel] = useState("");
   const [mcpEntries, setMcpEntries] = useState<MCPFormEntry[]>([]);
   const [nextKey, setNextKey] = useState(0);
 
@@ -137,14 +148,18 @@ export function CreateAgentDialog({
     setName(initialValue?.name ?? "");
     setDescription(initialValue?.description ?? "");
     setInstructions(initialValue?.instructions ?? "");
+    setHarness(initialValue?.harness ?? DEFAULT_HARNESS);
+    setModel(initialValue?.model ?? "");
     setMcpEntries([]);
     setNextKey(0);
-  }, [open, initialValue?.name, initialValue?.description, initialValue?.instructions]);
+  }, [open, initialValue?.name, initialValue?.description, initialValue?.instructions, initialValue?.harness, initialValue?.model]);
 
   function reset() {
     setName(initialValue?.name ?? "");
     setDescription(initialValue?.description ?? "");
     setInstructions(initialValue?.instructions ?? "");
+    setHarness(initialValue?.harness ?? DEFAULT_HARNESS);
+    setModel(initialValue?.model ?? "");
     setMcpEntries([]);
     setNextKey(0);
   }
@@ -175,13 +190,15 @@ export function CreateAgentDialog({
       name: trimmedName,
       description: description.trim() || undefined,
       instructions: instructions.trim() || undefined,
+      harness,
+      model: model.trim(),
       mcpServers: toMCPInputs(mcpEntries),
     });
     reset();
     onOpenChange(false);
   }
 
-  const canSubmit = name.trim().length > 0;
+  const canSubmit = name.trim().length > 0 && model.trim().length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -229,6 +246,47 @@ export function CreateAgentDialog({
                 placeholder="A short summary of what this agent does"
               />
             </div>
+
+            {/* Harness */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-muted-foreground">
+                Harness <span className="text-destructive">*</span>
+              </label>
+              <Select
+                value={harness}
+                onValueChange={setHarness}
+                componentId="create_agent.harness"
+                valueHasNoPii
+              >
+                <SelectTrigger data-testid="create-agent-harness" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {harnessOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Model */}
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="create-agent-model"
+                className="text-sm font-medium text-muted-foreground"
+              >
+                Model <span className="text-destructive">*</span>
+              </label>
+              <Input
+                id="create-agent-model"
+                data-testid="create-agent-model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="claude-sonnet-4-20250514"
+              />
+            </div>
           </div>
 
           {/* Instructions / System Prompt */}
@@ -247,6 +305,7 @@ export function CreateAgentDialog({
               placeholder="You are a helpful assistant that..."
               wrap="soft"
               className="min-h-[16rem] whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+              componentId="create_agent.instructions"
             />
           </div>
 
@@ -318,6 +377,8 @@ function MCPServerRow({
         <Select
           value={entry.transport}
           onValueChange={(v: "http" | "stdio") => onChange({ transport: v })}
+          componentId="create_agent.mcp_transport"
+          valueHasNoPii
         >
           <SelectTrigger data-testid="create-agent-mcp-transport" className="w-24">
             <SelectValue />

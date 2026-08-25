@@ -138,6 +138,7 @@ export function RoutingModelSelect({
   defaultLabel = "Default",
   activeModelId,
   contentClassName,
+  componentId,
   children,
 }: {
   value: string;
@@ -149,10 +150,15 @@ export function RoutingModelSelect({
   defaultLabel?: string;
   activeModelId?: string | null;
   contentClassName?: string;
+  // Opt-in analytics id. Model values are a bounded catalog + the "smart"/
+  // "default" sentinels, so the value is reported (valueHasNoPii) for pattern
+  // analysis of model choice.
+  componentId?: string;
   children?: ReactNode;
 }) {
   return (
-    <Select value={value} onValueChange={onValueChange}>
+    // valueHasNoPii assumes a bounded catalog; drop it if reused for typed values.
+    <Select value={value} onValueChange={onValueChange} componentId={componentId} valueHasNoPii>
       <SelectTrigger className="w-full" data-testid={testId} aria-label={ariaLabel}>
         <SelectValue />
       </SelectTrigger>
@@ -248,6 +254,7 @@ export function DescribedSelect({
   testId,
   ariaLabel,
   disabled,
+  componentId,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -255,6 +262,9 @@ export function DescribedSelect({
   testId: string;
   ariaLabel: string;
   disabled?: boolean;
+  // Opt-in analytics id. Options are a fixed enum (permission / approval modes),
+  // so the selected value is reported (valueHasNoPii).
+  componentId?: string;
 }) {
   const [previewed, setPreviewed] = useState<string | null>(null);
   const detail = options.find((o) => o.value === (previewed ?? value))?.description;
@@ -262,6 +272,9 @@ export function DescribedSelect({
     <Select
       value={value}
       onValueChange={onValueChange}
+      componentId={componentId}
+      // valueHasNoPii assumes fixed option enums; drop it if reused for free text.
+      valueHasNoPii
       disabled={disabled}
       // Reset the preview when the list closes so the next open starts on the
       // selected option's blurb.
