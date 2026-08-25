@@ -3714,8 +3714,15 @@ async function bindStream(
         sessionReasoningEffort: effectiveEffort,
         // Session truth for the `/model` readout — overrides the snapshot
         // value spread via `...bindingPatch` so the claude-native sticky
-        // handoff (fired above, silent) shows immediately.
-        sessionModelOverride: session.modelOverride ?? null,
+        // handoff (fired above, silent) shows immediately. A user pick
+        // that landed while the snapshot was in flight wins: the GET was
+        // dispatched at bind start, so its modelOverride / routing state
+        // predate any /model or routing toggle made since. Without this
+        // guard the stale snapshot overwrites the optimistic write and the
+        // dropdown reverts to the pre-pick model.
+        sessionModelOverride: state.sessionModelOverride ?? session.modelOverride ?? null,
+        costControlModeOverride:
+          state.costControlModeOverride ?? session.costControlModeOverride ?? null,
         tokensUsed: session.lastTotalTokens ?? null,
         contextWindowIsEstimate: session.contextWindowIsEstimate ?? false,
         sessionCostUsd: session.totalCostUsd ?? null,
