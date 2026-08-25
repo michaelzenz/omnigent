@@ -3078,7 +3078,7 @@ export function ConversationScrollPosition({
       stopScroll();
       scrollState.isAtBottom = false;
       scrollState.escapedFromLock = true;
-      const deadline = performance.now() + 2_000;
+      const deadline = performance.now() + 7_000;
       let quietSince = performance.now();
       let lastScrollHeight = el.scrollHeight;
       const restore = () => {
