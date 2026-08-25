@@ -3095,7 +3095,12 @@ export function ConversationScrollPosition({
         }
         restoreConversationScrollPosition(el, saved);
         restoring = false;
-        persist();
+        // Only persist if the restore actually achieved the saved position.
+        // If the target was clamped (content hadn't grown enough), keep the
+        // existing saved position rather than overwriting it with the wrong one.
+        if (isConversationScrollPositionRestored(el, saved)) {
+          persist();
+        }
       };
       restore();
     } else {

@@ -93,7 +93,7 @@ export function getConversationScrollPosition(
 function restorationTarget(
   element: HTMLElement,
   position: ConversationScrollPosition,
-): { target: number; anchorFound: boolean } {
+): { target: number; anchorFound: boolean; targetClamped: boolean } {
   const anchor =
     position.anchorMessageId === undefined
       ? undefined
@@ -105,11 +105,17 @@ function restorationTarget(
       ? naturalTop(anchor) - naturalTop(element) - position.anchorOffset
       : undefined;
   const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  // The saved position is beyond the current scroll range — content hasn't
+  // grown enough yet (code blocks, images, syntax highlighting still
+  // rendering). The restore must keep retrying until the range expands;
+  // otherwise it settles at scrollTop=0 and corrupts the saved position.
+  const desiredTarget = anchorTarget ?? position.scrollTop;
+  const targetClamped = desiredTarget > maxScrollTop + 1;
   const target =
     anchorTarget !== undefined && anchorTarget >= 0 && anchorTarget <= maxScrollTop + 1
       ? anchorTarget
       : Math.min(Math.max(0, position.scrollTop), maxScrollTop);
-  return { target, anchorFound: anchor !== undefined };
+  return { target, anchorFound: anchor !== undefined, targetClamped };
 }
 
 export function restoreConversationScrollPosition(
@@ -125,8 +131,9 @@ export function isConversationScrollPositionRestored(
   element: HTMLElement,
   position: ConversationScrollPosition,
 ): boolean {
-  const { target, anchorFound } = restorationTarget(element, position);
+  const { target, anchorFound, targetClamped } = restorationTarget(element, position);
   if (position.anchorMessageId !== undefined && !anchorFound) return false;
+  if (targetClamped) return false;
   return Math.abs(element.scrollTop - target) <= 1;
 }
 

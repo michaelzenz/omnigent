@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureActiveConversationScroll,
   getConversationScrollPosition,
+  isConversationScrollPositionRestored,
   registerActiveConversationScroller,
   restoreConversationScrollPosition,
   saveConversationScrollPosition,
@@ -77,5 +78,53 @@ describe("conversation scroll positions", () => {
 
     expect(restoreConversationScrollPosition(element, position)).toBe(true);
     expect(element.scrollTop).toBe(1140);
+  });
+
+  it("does not settle when the saved position is beyond the current scroll range", () => {
+    // Content hasn't fully rendered: scrollHeight is small, so maxScrollTop = 0.
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      scrollTop: { configurable: true, value: 0, writable: true },
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 800 },
+    });
+    // Saved position was at the bottom of a fully-rendered transcript.
+    const position = { scrollTop: 5000 };
+
+    // The target is clamped to 0 (maxScrollTop = 0), scrollTop matches, but
+    // the restore must NOT consider itself settled — content will grow.
+    expect(isConversationScrollPositionRestored(element, position)).toBe(false);
+  });
+
+  it("does not settle when an anchored position is beyond the current scroll range", () => {
+    const element = document.createElement("div");
+    const message = document.createElement("div");
+    message.dataset.role = "user";
+    message.dataset.userMessageId = "msg-bottom";
+    Object.defineProperty(message, "offsetTop", { configurable: true, value: 4800 });
+    element.append(message);
+    Object.defineProperties(element, {
+      scrollTop: { configurable: true, value: 0, writable: true },
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 800 },
+    });
+    // Saved at scrollTop=5000 with an anchor near the bottom.
+    const position = { scrollTop: 5000, anchorMessageId: "msg-bottom", anchorOffset: -200 };
+
+    // Anchor is found, but anchorTarget (5000) > maxScrollTop (0).
+    expect(isConversationScrollPositionRestored(element, position)).toBe(false);
+  });
+
+  it("settles once content grows enough to hold the saved position", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      scrollTop: { configurable: true, value: 5000, writable: true },
+      scrollHeight: { configurable: true, value: 5800 },
+      clientHeight: { configurable: true, value: 800 },
+    });
+    const position = { scrollTop: 5000 };
+
+    // maxScrollTop = 5000, saved scrollTop = 5000, scrollTop matches.
+    expect(isConversationScrollPositionRestored(element, position)).toBe(true);
   });
 });
