@@ -552,7 +552,7 @@ export function SkillsTab() {
         ) : (
           <>
             <header className="flex flex-wrap items-center gap-2 border-b border-border p-3">
-              <div className="mr-auto min-w-0">
+              <div className="min-w-0">
                 <h2 className="truncate font-medium">{selected.name}</h2>
                 <p className="truncate text-xs text-muted-foreground">{selected.description}</p>
               </div>
@@ -606,6 +606,7 @@ export function SkillsTab() {
               <Badge
                 aria-live="polite"
                 variant={saveStatus === "Save failed" ? "destructive" : "outline"}
+                className="ml-auto"
               >
                 {saveStatus}
               </Badge>
