@@ -56,6 +56,7 @@ import type { ElicitationBlock } from "@/lib/blocks";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Composer,
+  ComposerSdkModelSelect,
   isSubagentRoutingEligible,
   shouldQueueSend,
   supportsSessionProfileSelection,
@@ -135,6 +136,57 @@ describe("supportsSessionProfileSelection", () => {
         parentSessionId: "conv_parent",
       }),
     ).toBe(false);
+  });
+});
+
+describe("ComposerSdkModelSelect", () => {
+  const originalSetModel = useChatStore.getState().setModel;
+  const originalSetCostControlMode = useChatStore.getState().setCostControlMode;
+
+  afterEach(() => {
+    cleanup();
+    useChatStore.setState({
+      setModel: originalSetModel,
+      setCostControlMode: originalSetCostControlMode,
+      sessionModelOverride: null,
+      costControlModeOverride: null,
+    });
+  });
+
+  it("persists a model before disabling Smart Routing", async () => {
+    let settleModel!: () => void;
+    const setModel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleModel = resolve;
+        }),
+    );
+    const setCostControlMode = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({
+      sessionModelOverride: "databricks-glm-5-2",
+      costControlModeOverride: "on",
+      setModel,
+      setCostControlMode,
+    });
+
+    render(
+      <ComposerSdkModelSelect
+        sdkModelOptions={[
+          { id: "databricks-gpt-5-6-sol", displayName: "GPT 5.6 Sol" },
+          { id: "databricks-glm-5-2", displayName: "GLM 5.2" },
+        ]}
+        costRoutingEligible
+        disabled={false}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("composer-sdk-model-select"));
+    fireEvent.click(screen.getByText("GPT 5.6 Sol"));
+
+    expect(setModel).toHaveBeenCalledWith("databricks-gpt-5-6-sol");
+    expect(setCostControlMode).not.toHaveBeenCalled();
+
+    settleModel();
+    await waitFor(() => expect(setCostControlMode).toHaveBeenCalledWith("off"));
   });
 });
 

@@ -8860,16 +8860,18 @@ export function ComposerSdkModelSelect({
   const label = routingOn ? SMART_ROUTING_LABEL : (modelLabel ?? "Default");
   const activeId = routingOn ? null : pickerSelectedModel;
 
-  const handleSelect = (value: string) => {
+  const handleSelect = async (value: string) => {
     const store = useChatStore.getState();
     if (value === MODEL_SELECT_SMART) {
-      void store.setCostControlMode("on");
+      await store.setCostControlMode("on");
     } else if (value === MODEL_SELECT_DEFAULT) {
-      void store.setModel(null);
-      if (routingOn) void store.setCostControlMode("off");
+      await store.setModel(null);
+      if (routingOn) await store.setCostControlMode("off");
     } else {
-      void store.setModel(value);
-      if (routingOn) void store.setCostControlMode("off");
+      // Both values share one persisted override blob; serialize the PATCHes
+      // so disabling routing cannot overwrite this model with its stale read.
+      await store.setModel(value);
+      if (routingOn) await store.setCostControlMode("off");
     }
   };
 
@@ -8897,7 +8899,7 @@ export function ComposerSdkModelSelect({
             <DropdownMenuItem
               data-testid="composer-sdk-model-smart-routing"
               data-active={routingOn ? "true" : undefined}
-              onSelect={() => handleSelect(MODEL_SELECT_SMART)}
+              onSelect={() => void handleSelect(MODEL_SELECT_SMART)}
               className="data-[active=true]:bg-muted"
             >
               {SMART_ROUTING_LABEL}
@@ -8908,7 +8910,7 @@ export function ComposerSdkModelSelect({
               key={option.id}
               data-testid={`composer-sdk-model-${option.id}`}
               data-active={activeId === option.id ? "true" : undefined}
-              onSelect={() => handleSelect(option.id)}
+              onSelect={() => void handleSelect(option.id)}
               className="data-[active=true]:bg-muted"
             >
               <span className="truncate">{option.displayName}</span>
