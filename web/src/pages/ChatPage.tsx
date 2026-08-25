@@ -309,6 +309,7 @@ import {
   OMNIHARNESS_AGENT_NAME,
   type OmniHarnessModelOption,
 } from "@/lib/omniharnessModels";
+import { writeHarnessOption } from "@/lib/modePreferences";
 
 const EMPTY_AGENT_TEXT_THREADS: AgentTextThread[] = [];
 
@@ -8034,6 +8035,11 @@ function SessionConfigModal({
                 ? { mode: "auto_include" }
                 : { mode: "fixed", profileId: draftProfileSelection },
           );
+          // Persist the pick as the harness-level remembered option so the
+          // New Chat dialog seeds from it on the next session creation.
+          writeHarnessOption(OMNIHARNESS_AGENT_NAME, {
+            promptProfile: draftProfileSelection,
+          });
         }
         // Model/routing for SDK (OmniHarness) sessions lives in the composer
         // quick-select — skip committing the gear's stale drafts to avoid
