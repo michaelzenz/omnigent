@@ -568,22 +568,35 @@ function evalNativePolicy(toolName, args) {{
 }}
 
 module.exports = function(pi) {{
-  pi.on("context", async (event) => {{
-    if (!CONTEXT_FILE) return;
-    let payload;
-    try {{ payload = JSON.parse(fs.readFileSync(CONTEXT_FILE, "utf8")); }}
-    catch (_) {{ return; }}
-    if (!payload || typeof payload.text !== "string" || !payload.text) return;
-    return {{
-      messages: [
-        {{
-          role: "user",
-          content: [{{ type: "text", text: payload.text }}],
-          timestamp: Date.now(),
-        }},
-        ...event.messages,
-      ],
+  // Per-turn metadata hook.  The prompt profile is passed as Pi's real
+  // system prompt (via --system-prompt), so this hook no longer modifies
+  // messages.  It reads turn_id from turn_context.json for request
+  // correlation by the before_provider_request logging hook below.
+  function readTurnContext() {{
+    if (!CONTEXT_FILE) return {{}};
+    try {{ return JSON.parse(fs.readFileSync(CONTEXT_FILE, "utf8")) || {{}}; }} catch (_) {{ return {{}}; }}
+  }}
+
+  // Opt-in provider-request logging.  Set OMNIGENT_PI_PROVIDER_REQUEST_LOG
+  // to a file path to capture the exact payload Pi sends to the model
+  // provider (system prompt, messages, tools, provider-specific fields).
+  // Disabled by default.  The file contains full conversation content —
+  // treat as sensitive.
+  const REQUEST_LOG = process.env.OMNIGENT_PI_PROVIDER_REQUEST_LOG || "";
+  pi.on("before_provider_request", async (event) => {{
+    if (!REQUEST_LOG) return;
+    const ctx = readTurnContext();
+    const entry = {{
+      timestamp: new Date().toISOString(),
+      turn_id: ctx.turn_id || null,
+      payload: event,
     }};
+    try {{
+      fs.appendFileSync(REQUEST_LOG, JSON.stringify(entry) + "\\n", {{ mode: 0o600 }});
+    }} catch (e) {{
+      // Logging failures must never break the model request.
+      try {{ console.error("[onih-pi] provider request log write failed:", e.message); }} catch (_) {{}}
+    }}
   }});
 
   // Gate native (non-bridged) tool calls through Omnigent policy. Pi's
@@ -669,6 +682,7 @@ _PI_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
         "TZ",
         OMNIGENT_SESSION_ENV_VAR,  # "inside Omnigent" marker (CLAUDE_CODE/CODEX analog)
         OMNIGENT_SERVER_UNIX_SOCKET,
+        "OMNIGENT_PI_PROVIDER_REQUEST_LOG",
     }
 )
 _STREAM_READ_CHUNK_SIZE = 65536
@@ -2626,11 +2640,7 @@ class PiExecutor(Executor):
             if isinstance(raw_canonical_items, list)
             else []
         )
-        launch_system_prompt = (
-            "You are Onih. Follow Onih tool, policy, and governance instructions."
-            if self._launch_options.isolated_resources
-            else system_prompt
-        )
+        launch_system_prompt = system_prompt
         try:
             rpc = await self._ensure_rpc(
                 session_key,
@@ -2649,7 +2659,6 @@ class PiExecutor(Executor):
                 json.dumps(
                     {
                         "turn_id": (config.extra if config is not None else {}).get("turn_id"),
-                        "text": system_prompt,
                     }
                 ),
                 encoding="utf-8",

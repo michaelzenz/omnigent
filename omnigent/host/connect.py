@@ -405,6 +405,10 @@ _RUNNER_ENV_ALLOWLIST: frozenset[str] = frozenset(
         # infinite reconnect loop. Safe to propagate: a non-secret interpreter
         # flag. No-op on POSIX where UTF-8 is the default.
         "PYTHONUTF8",
+        # Opt-in Pi provider-request logging (file path). Non-secret;
+        # must reach the runner so PiExecutor can pass it through to
+        # the Pi subprocess via _PI_ENV_ALLOW_EXACT.
+        "OMNIGENT_PI_PROVIDER_REQUEST_LOG",
         # Environment descriptor baked into the sandbox host image
         # (deploy/docker/Dockerfile `host` target), never set on
         # laptops. Claude Code refuses --dangerously-skip-permissions
