@@ -59,6 +59,19 @@ describe("conversation scroll positions", () => {
     expect(element.scrollTop).toBe(1140);
   });
 
+  it("falls back to the current bottom when the saved position is not rendered yet", () => {
+    const element = scroller(0);
+    const position = {
+      scrollTop: 5000,
+      anchorMessageId: "message-delayed",
+      anchorOffset: -80,
+    };
+
+    restoreConversationScrollPosition(element, position);
+
+    expect(element.scrollTop).toBe(1600);
+  });
+
   it("reports that restoration must retry until its anchor renders", () => {
     const element = scroller(1600);
     const position = {

@@ -105,10 +105,12 @@ function restorationTarget(
       ? naturalTop(anchor) - naturalTop(element) - position.anchorOffset
       : undefined;
   const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  const savedTarget = Math.max(0, position.scrollTop);
+  const fallbackTarget = savedTarget > maxScrollTop ? maxScrollTop : savedTarget;
   const target =
     anchorTarget !== undefined && anchorTarget >= 0 && anchorTarget <= maxScrollTop + 1
       ? anchorTarget
-      : Math.min(Math.max(0, position.scrollTop), maxScrollTop);
+      : fallbackTarget;
   return { target, anchorFound: anchor !== undefined };
 }
 
