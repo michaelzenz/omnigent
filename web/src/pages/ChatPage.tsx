@@ -49,11 +49,21 @@ import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
   captureActiveConversationScroll,
   getConversationScrollPosition,
+  getConversationScrollRestoreTarget,
   isConversationScrollPositionRestored,
   registerActiveConversationScroller,
   restoreConversationScrollPosition,
   saveConversationScrollPosition,
 } from "@/lib/conversationScrollPositions";
+import {
+  beginConversationScrollRestore,
+  conversationScrollMode,
+  followConversationBottom,
+  isConversationFollowingBottom,
+  isCurrentConversationScrollRestore,
+  markConversationScrollRestoring,
+  takeConversationScrollControl,
+} from "@/lib/conversationScrollState";
 import {
   DEFAULT_STICKY_USER_MESSAGES,
   readStickyUserMessagesEnabled,
@@ -2475,12 +2485,34 @@ export function MainAgentSurface({
     };
   }, [scroller]);
   const [sendScrollNonce, setSendScrollNonce] = useState(0);
+  const prepareSendScroll = useCallback(() => {
+    const current = scroller;
+    if (!current) return;
+    const { el, state, stopScroll } = current;
+    if (!bottomLockEnabled) {
+      takeConversationScrollControl(el);
+      stopScroll();
+      state.isAtBottom = false;
+      state.escapedFromLock = true;
+      return;
+    }
+    const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
+    if (atBottom) {
+      setSendScrollNonce((n) => n + 1);
+      return;
+    }
+    // Sending does not imply "follow" while the reader is looking at history.
+    takeConversationScrollControl(el);
+    stopScroll();
+    state.isAtBottom = false;
+    state.escapedFromLock = true;
+  }, [bottomLockEnabled, scroller]);
   const handleSend = useCallback(
     (text: string, files?: File[]) => {
-      setSendScrollNonce((n) => n + 1);
+      prepareSendScroll();
       onSend(text, files);
     },
-    [onSend],
+    [onSend, prepareSendScroll],
   );
   // Wrap the slash-command sender the same way (scroll to bottom on send).
   // Gated off for native-wrapper sessions (claude-native / codex-native):
@@ -2496,11 +2528,11 @@ export function MainAgentSurface({
     () =>
       onSendSlashCommand && !isNativeWrapper
         ? (name: string, args: string) => {
-            setSendScrollNonce((n) => n + 1);
+            prepareSendScroll();
             onSendSlashCommand(name, args);
           }
         : undefined,
-    [onSendSlashCommand, isNativeWrapper],
+    [onSendSlashCommand, isNativeWrapper, prepareSendScroll],
   );
 
   // "Working…" stays lit for the whole busy turn — through streaming text,
@@ -2756,7 +2788,11 @@ export function MainAgentSurface({
               scroller={scroller}
               topInset={hasTasks || worktreeStatus !== null ? 12 : undefined}
             />
-            <ConversationScrollPosition conversationId={conversationId} scroller={scroller} />
+            <ConversationScrollPosition
+              conversationId={conversationId}
+              scroller={scroller}
+              followBottomOnFallback={bottomLockEnabled}
+            />
             {/* Hover the top edge to reveal a pill that loads all older history and
             scrolls to the first message. Rendered here (a wrapper sibling of
             Conversation) rather than inside it so it escapes the chat-scroll-fade
@@ -3023,13 +3059,22 @@ export function BottomLockController({ enabled }: { enabled: boolean }) {
 
 /** Optionally jumps to and follows the response after a local send. */
 function ScrollToBottomOnSend({ nonce, enabled }: { nonce: number; enabled: boolean }) {
-  const { scrollToBottom } = useStickToBottomContext();
+  const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
+    scrollRef?: React.RefObject<HTMLElement>;
+  };
+  const scrollRef = ctx.scrollRef;
+  const scrollToBottom = ctx.scrollToBottom;
 
   useLayoutEffect(() => {
     if (!enabled || nonce === 0) return;
+    const el = scrollRef?.current;
+    if (el) followConversationBottom(el);
     scrollToBottom("instant");
-    requestAnimationFrame(() => scrollToBottom("instant"));
-  }, [enabled, nonce, scrollToBottom]);
+    const frame = requestAnimationFrame(() => {
+      if (!el || isConversationFollowingBottom(el)) scrollToBottom("instant");
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [enabled, nonce, scrollRef, scrollToBottom]);
 
   return null;
 }
@@ -3044,77 +3089,147 @@ function ScrollToBottomOnSend({ nonce, enabled }: { nonce: number; enabled: bool
 export function ConversationScrollPosition({
   conversationId,
   scroller,
+  followBottomOnFallback,
 }: {
   conversationId: string | null;
   scroller: ConversationScroller | null;
+  followBottomOnFallback: boolean;
 }) {
   const scrollElement = scroller?.el ?? null;
   const scrollState = scroller?.state ?? null;
   const stopScroll = scroller?.stopScroll ?? null;
+  const followBottomOnFallbackRef = useRef(followBottomOnFallback);
+  useLayoutEffect(() => {
+    followBottomOnFallbackRef.current = followBottomOnFallback;
+  }, [followBottomOnFallback]);
   useLayoutEffect(() => {
     const el = scrollElement;
     if (!el || !conversationId || !scrollState || !stopScroll) return;
     const unregister = registerActiveConversationScroller(conversationId, el);
     const saved = getConversationScrollPosition(conversationId);
-    let restoring = saved !== undefined;
+    const generation = saved === undefined ? 0 : beginConversationScrollRestore(el);
     let frame = 0;
+    let restoring = saved !== undefined;
+    let userIntentSeen = false;
 
-    const persist = () => saveConversationScrollPosition(conversationId, el);
-    const onScroll = () => {
-      if (!restoring) persist();
-    };
-    const settleForUser = () => {
-      restoring = false;
-      cancelAnimationFrame(frame);
-      persist();
-    };
-
-    el.addEventListener("scroll", onScroll, { passive: true });
-    for (const event of ["wheel", "touchstart", "pointerdown"] as const) {
-      el.addEventListener(event, settleForUser, { passive: true });
-    }
-
-    if (saved) {
+    const releaseBottomLock = () => {
       stopScroll();
       scrollState.isAtBottom = false;
       scrollState.escapedFromLock = true;
+    };
+    const persist = () => saveConversationScrollPosition(conversationId, el);
+    const onScroll = () => {
+      if (userIntentSeen && !restoring && conversationScrollMode(el) === "user-controlled")
+        persist();
+    };
+    const takeUserControl = () => {
+      userIntentSeen = true;
+      takeConversationScrollControl(el);
+      restoring = false;
+      cancelAnimationFrame(frame);
+      releaseBottomLock();
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        target?.matches('input, textarea, select, button, a, [role="button"]')
+      )
+        return;
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+        takeUserControl();
+      }
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      // A pointerdown on the scroll root itself is a native scrollbar drag.
+      if (event.target === el) takeUserControl();
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    for (const event of ["wheel", "touchmove"] as const) {
+      el.addEventListener(event, takeUserControl, { passive: true });
+    }
+    el.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("keydown", onKeyDown, true);
+
+    if (saved) {
+      releaseBottomLock();
       const deadline = performance.now() + 7_000;
       let quietSince = performance.now();
       let lastScrollHeight = el.scrollHeight;
-      const restore = () => {
-        const now = performance.now();
-        const wasRestored = isConversationScrollPositionRestored(el, saved);
-        restoreConversationScrollPosition(el, saved);
-        if (!wasRestored || el.scrollHeight !== lastScrollHeight) quietSince = now;
-        lastScrollHeight = el.scrollHeight;
-        const settled = isConversationScrollPositionRestored(el, saved) && now - quietSince >= 150;
-        const done = settled || now >= deadline;
-        if (!done) {
-          frame = requestAnimationFrame(restore);
-          return;
-        }
-        restoreConversationScrollPosition(el, saved);
+      let largestScrollHeight = lastScrollHeight;
+
+      const finishAtBottom = () => {
+        if (!isCurrentConversationScrollRestore(el, generation)) return;
+        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
         restoring = false;
-        // Only persist if the restore actually achieved the saved position.
-        // If the target was clamped (content hadn't grown enough), keep the
-        // existing saved position rather than overwriting it with the wrong one.
-        if (isConversationScrollPositionRestored(el, saved)) {
-          persist();
+        if (followBottomOnFallbackRef.current) {
+          followConversationBottom(el);
+          scrollState.isAtBottom = true;
+          scrollState.escapedFromLock = false;
+        } else {
+          takeConversationScrollControl(el);
+          releaseBottomLock();
         }
       };
-      restore();
+
+      const restore = () => {
+        if (!isCurrentConversationScrollRestore(el, generation)) return;
+        const now = performance.now();
+        const scrollHeight = el.scrollHeight;
+        if (scrollHeight !== lastScrollHeight) quietSince = now;
+        largestScrollHeight = Math.max(largestScrollHeight, scrollHeight);
+        const target = getConversationScrollRestoreTarget(el, saved);
+
+        if (target.kind === "restore") {
+          if (!markConversationScrollRestoring(el, generation)) return;
+          restoreConversationScrollPosition(el, saved);
+          const settled =
+            isConversationScrollPositionRestored(el, saved) && now - quietSince >= 150;
+          if (settled) {
+            restoring = false;
+            takeConversationScrollControl(el);
+            releaseBottomLock();
+            persist();
+            return;
+          }
+        } else {
+          // A shrinking document can make the old location permanently invalid.
+          // Once that shrink settles, bottom is the only valid fallback.
+          const shrank = scrollHeight < largestScrollHeight;
+          if (shrank && now - quietSince >= 150) {
+            finishAtBottom();
+            return;
+          }
+        }
+
+        lastScrollHeight = scrollHeight;
+        if (now >= deadline) {
+          finishAtBottom();
+          return;
+        }
+        frame = requestAnimationFrame(restore);
+      };
+      if (saved.wasAtBottom && followBottomOnFallbackRef.current) finishAtBottom();
+      else restore();
     } else {
-      // No stored position: show the newest turn at the bottom.
-      el.scrollTop = el.scrollHeight;
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      if (followBottomOnFallbackRef.current) followConversationBottom(el);
+      else {
+        takeConversationScrollControl(el);
+        releaseBottomLock();
+      }
     }
 
     return () => {
       cancelAnimationFrame(frame);
       unregister();
       el.removeEventListener("scroll", onScroll);
-      for (const event of ["wheel", "touchstart", "pointerdown"] as const) {
-        el.removeEventListener(event, settleForUser);
+      for (const event of ["wheel", "touchmove"] as const) {
+        el.removeEventListener(event, takeUserControl);
       }
+      el.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
   }, [conversationId, scrollElement, scrollState, stopScroll]);
 
@@ -3135,21 +3250,25 @@ export function ReleaseBottomLockOnResponseEnd({
     stopScroll: () => void;
   };
   const previousStatusRef = useRef(status);
+  const scrollRef = ctx.scrollRef;
+  const state = ctx.state;
+  const stopScroll = ctx.stopScroll;
 
   useLayoutEffect(() => {
     const previousStatus = previousStatusRef.current;
     previousStatusRef.current = status;
     if (enabled || previousStatus !== "streaming" || status !== "idle") return;
-    const scrollElement = ctx.scrollRef?.current;
-    if (!scrollElement) return;
+    const scrollElement = scrollRef?.current;
+    if (!scrollElement || !isConversationFollowingBottom(scrollElement)) return;
     const scrollTop = scrollElement.scrollTop;
     const physicallyAtBottom =
       scrollElement.scrollHeight - scrollElement.clientHeight - scrollTop <= 1;
     if (physicallyAtBottom) return;
     const preserve = () => {
-      ctx.stopScroll();
-      ctx.state.isAtBottom = false;
-      ctx.state.escapedFromLock = true;
+      if (!isConversationFollowingBottom(scrollElement)) return;
+      stopScroll();
+      state.isAtBottom = false;
+      state.escapedFromLock = true;
       scrollElement.scrollTop = scrollTop;
     };
     preserve();
@@ -3162,7 +3281,7 @@ export function ReleaseBottomLockOnResponseEnd({
       cancelAnimationFrame(firstFrame);
       if (secondFrame) cancelAnimationFrame(secondFrame);
     };
-  }, [ctx.scrollRef, ctx.state, ctx.stopScroll, enabled, status]);
+  }, [enabled, scrollRef, state, status, stopScroll]);
 
   return null;
 }
@@ -3180,22 +3299,30 @@ export function KeepBottomOnViewportResize() {
     const el = scrollRef?.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const isPhysicallyAtBottom = () => el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
-    let wasBottomLocked = state.isAtBottom && !state.escapedFromLock && isPhysicallyAtBottom();
+    let wasBottomLocked =
+      isConversationFollowingBottom(el) &&
+      state.isAtBottom &&
+      !state.escapedFromLock &&
+      isPhysicallyAtBottom();
     let clientHeight = el.clientHeight;
     let frame: number | null = null;
     const onScroll = () => {
-      wasBottomLocked = isPhysicallyAtBottom();
+      wasBottomLocked =
+        isConversationFollowingBottom(el) &&
+        state.isAtBottom &&
+        !state.escapedFromLock &&
+        isPhysicallyAtBottom();
     };
     const observer = new ResizeObserver(() => {
       const nextHeight = el.clientHeight;
       if (nextHeight === clientHeight) return;
       clientHeight = nextHeight;
-      if (!wasBottomLocked) return;
+      if (!wasBottomLocked || !isConversationFollowingBottom(el)) return;
       scrollToBottom("instant");
       if (frame !== null) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         frame = null;
-        scrollToBottom("instant");
+        if (isConversationFollowingBottom(el)) scrollToBottom("instant");
       });
     });
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -3663,6 +3790,7 @@ export function JumpToTopButton({
       });
     setJumping(true);
     try {
+      takeConversationScrollControl(el);
       // Release StickToBottom's bottom-lock. Without this, every history prepend
       // resizes the content and the library's ResizeObserver yanks the view back
       // to the bottom (scrollToBottom with preserveScrollPosition, which sticks
@@ -3749,6 +3877,7 @@ export function JumpToTopButton({
 
     setJumping(true);
     try {
+      takeConversationScrollControl(el);
       stopScroll();
       state.isAtBottom = false;
       state.escapedFromLock = true;

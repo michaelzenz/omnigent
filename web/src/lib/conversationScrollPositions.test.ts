@@ -27,6 +27,7 @@ describe("conversation scroll positions", () => {
 
     expect(getConversationScrollPosition("conv-outgoing")).toEqual({
       scrollTop: 640,
+      wasAtBottom: false,
     });
     unregister();
   });
@@ -60,7 +61,7 @@ describe("conversation scroll positions", () => {
     expect(element.scrollTop).toBe(1140);
   });
 
-  it("falls back to the current bottom when the saved position is not rendered yet", () => {
+  it("does not write a temporary fallback while the saved anchor is missing", () => {
     const element = scroller(0);
     const position = {
       scrollTop: 5000,
@@ -68,9 +69,9 @@ describe("conversation scroll positions", () => {
       anchorOffset: -80,
     };
 
-    restoreConversationScrollPosition(element, position);
+    expect(restoreConversationScrollPosition(element, position)).toBe(false);
 
-    expect(element.scrollTop).toBe(1600);
+    expect(element.scrollTop).toBe(0);
   });
 
   it("reports that restoration must retry until its anchor renders", () => {

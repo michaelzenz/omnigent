@@ -21,6 +21,7 @@ from pathlib import Path
 _INSTANCE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OMNIGENT_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python"
+_WEB_INSTALL_ARGS = ["install", "--frozen-lockfile", "--shamefully-hoist"]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,6 +53,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-build-web", action="store_true",
         help="Skip building the web UI; use whatever is in omnigent/server/static/web-ui/",
+    )
+    parser.add_argument(
+        "--npm-registry",
+        help="Registry to use if web dependencies need to be installed",
     )
     parser.add_argument(
         "--no-open", action="store_true", help="Do not open an Electron window (fork mode)"
@@ -344,7 +349,7 @@ def _check_single_alembic_head() -> str:
 def _check_web_dependencies() -> Path:
     vite_bin = _REPO_ROOT / "web" / "node_modules" / ".bin" / "vite"
     node_bin = shutil.which("node")
-    install_hint = "pnpm install --frozen-lockfile --shamefully-hoist"
+    install_hint = f"pnpm {' '.join(_WEB_INSTALL_ARGS)}"
     if not vite_bin.is_file() or not node_bin:
         raise RuntimeError(f"Web dependencies are missing; run `{install_hint}`")
 
@@ -352,7 +357,8 @@ def _check_web_dependencies() -> Path:
         [
             node_bin,
             "-e",
-            "Promise.all([import('radix-ui/slot'), import('react-dom/client')])",
+            "Promise.all([import('@radix-ui/react-dialog'), "
+            "import('@radix-ui/react-slot'), import('react-dom/client')])",
         ],
         cwd=_REPO_ROOT / "web",
         capture_output=True,
@@ -365,6 +371,41 @@ def _check_web_dependencies() -> Path:
             f"Web dependencies are incomplete; run `{install_hint}`\n{detail}"
         )
     return vite_bin
+
+
+def _install_web_dependencies(registry: str | None = None) -> None:
+    pnpm_bin = shutil.which("pnpm")
+    if not pnpm_bin:
+        raise RuntimeError("pnpm is unavailable; install the repository development prerequisites")
+    env = {**os.environ, "CI": "true"}
+    if registry:
+        env["COREPACK_NPM_REGISTRY"] = registry
+        env["npm_config_registry"] = registry
+    result = subprocess.run(
+        [pnpm_bin, *_WEB_INSTALL_ARGS],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Web dependency installation failed:\n"
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def _prepare_web_dependencies(registry: str | None = None) -> Path:
+    try:
+        return _check_web_dependencies()
+    except RuntimeError as initial_error:
+        print(f"  {initial_error}")
+        if registry:
+            print(f"Installing web dependencies through {registry}...")
+        else:
+            print("Installing web dependencies through the configured package registry...")
+        _install_web_dependencies(registry)
+        return _check_web_dependencies()
 
 
 def _upgrade_db_to_head(db_path: Path) -> None:
@@ -440,7 +481,7 @@ def _fork_instance(args: argparse.Namespace) -> None:
 
         if not args.no_build_web:
             print("Checking web dependencies...")
-            vite_bin = _check_web_dependencies()
+            vite_bin = _prepare_web_dependencies(args.npm_registry)
             print("Building web UI...")
             build_result = subprocess.run(
                 [str(vite_bin), "build"],
