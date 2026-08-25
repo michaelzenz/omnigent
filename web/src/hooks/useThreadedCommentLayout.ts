@@ -69,13 +69,16 @@ export function useThreadedCommentLayout(
   useEffect(() => {
     if (isMobile) return;
     const handleLayout = (event: Event) => {
+      if (suppressAutoSync) return;
       const next = (event as CustomEvent<LayoutEventDetail>).detail;
       setDetail(next);
     };
     window.addEventListener(AGENT_TEXT_THREAD_LAYOUT_EVENT, handleLayout);
-    window.dispatchEvent(new Event(AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT));
+    if (!suppressAutoSync) {
+      window.dispatchEvent(new Event(AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT));
+    }
     return () => window.removeEventListener(AGENT_TEXT_THREAD_LAYOUT_EVENT, handleLayout);
-  }, [isMobile]);
+  }, [isMobile, suppressAutoSync]);
 
   useEffect(() => {
     if (isMobile) return;

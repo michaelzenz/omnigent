@@ -114,6 +114,44 @@ async def test_profile_only_auto_select_runs_again_for_each_turn(
     )
 
 
+async def test_auto_select_accepts_dashed_profile_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile(id="0123456789abcdef0123456789abcdef")
+
+    class LLM:
+        async def create(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                output=[
+                    SimpleNamespace(
+                        content=[
+                            SimpleNamespace(
+                                text=json.dumps(
+                                    {"profile_id": "01234567-89ab-cdef-0123-456789abcdef"}
+                                )
+                            )
+                        ]
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        "omnigent.omniharness_turn_selection.get_caps",
+        lambda: SimpleNamespace(llm=object()),
+    )
+    monkeypatch.setattr(
+        "omnigent.omniharness_turn_selection.build_server_llm_client",
+        lambda _config: LLM(),
+    )
+
+    selection = await select_omniharness_turn(
+        ["hello"],
+        _Store([profile]),  # type: ignore[arg-type]
+    )
+
+    assert selection.profile == profile
+
+
 async def test_auto_include_selects_multiple_suitable_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
