@@ -1673,8 +1673,12 @@ function HarnessConfigModal({
     isOmniHarness || (!isNativeCodingAgent(agent) && !isAcpHarnessAgent(agent));
   const routingPreferenceHarness = entryHarness ?? (isOmniHarness ? OMNIHARNESS_AGENT_NAME : null);
   const profileHarness = agent.harness;
+  // Onih targets (onih-pi, onih-openai-agents) are fixed execution targets —
+  // their underlying harness is not user-overridable, so suppress the row.
   const brainDefault =
-    profileHarness != null && profileHarness in brainHarnessLabels ? profileHarness : null;
+    !isOmniHarness && profileHarness != null && profileHarness in brainHarnessLabels
+      ? profileHarness
+      : null;
 
   // Local draft — seeded from the live state each time the modal opens so
   // Cancel can discard and re-opening always reflects the committed state.
@@ -3301,7 +3305,7 @@ export function NewChatLandingScreen() {
           label: "Model",
           value: modelValue,
         },
-        ...(activeHarness && activeHarness in brainHarnessLabelsAll
+        ...(!omniharnessSelected && activeHarness && activeHarness in brainHarnessLabelsAll
           ? [
               {
                 label: "Agent Harness",
@@ -3312,7 +3316,7 @@ export function NewChatLandingScreen() {
         ...routingRow,
       ];
     }
-    if (selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll) {
+    if (!omniharnessSelected && selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll) {
       const active = pickedHarness ?? selectedAgent.harness;
       return [
         {
