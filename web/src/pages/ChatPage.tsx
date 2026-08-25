@@ -3056,14 +3056,7 @@ export function ConversationScrollPosition({
     if (!el || !conversationId || !scrollState || !stopScroll) return;
     const unregister = registerActiveConversationScroller(conversationId, el);
     const saved = getConversationScrollPosition(conversationId);
-    // A running session grew while the user was away — the saved position
-    // predates the new content, so restoring it lands at an invalid offset
-    // (past the new transcript end or in the middle of new content). Go to
-    // the bottom instead so the user sees the latest turn and can scroll up
-    // freely; StickToBottom's bottom lock keeps them there as content
-    // streams in, and releases when they scroll up.
-    const skipRestore = useChatStore.getState().status === "streaming";
-    let restoring = saved !== undefined && !skipRestore;
+    let restoring = saved !== undefined;
     let frame = 0;
 
     const persist = () => saveConversationScrollPosition(conversationId, el);
@@ -3081,7 +3074,7 @@ export function ConversationScrollPosition({
       el.addEventListener(event, settleForUser, { passive: true });
     }
 
-    if (saved && !skipRestore) {
+    if (saved) {
       stopScroll();
       scrollState.isAtBottom = false;
       scrollState.escapedFromLock = true;
@@ -3111,9 +3104,7 @@ export function ConversationScrollPosition({
       };
       restore();
     } else {
-      // No stored position or running session: show the newest turn at the
-      // bottom. For a running session, StickToBottom's bottom lock keeps the
-      // user there as content streams in and releases on scroll-up.
+      // No stored position: show the newest turn at the bottom.
       el.scrollTop = el.scrollHeight;
     }
 
