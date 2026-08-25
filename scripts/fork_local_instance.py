@@ -9,9 +9,11 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
+import time
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -101,36 +103,158 @@ def _find_electron_binary() -> str | None:
     return None
 
 
-def _open_isolated_electron(server_url: str, instance_name: str) -> None:
-    """Launch a separate Electron window with its own user-data-dir and settings."""
+def _free_loopback_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _log_tail(path: Path, lines: int = 80) -> str:
+    try:
+        return "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
+    except OSError:
+        return "(Electron log is unavailable)"
+
+
+def _electron_user_data_dir(instance_name: str) -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / f"Omnigent-{instance_name}"
+    if sys.platform.startswith("linux"):
+        return Path.home() / ".config" / f"Omnigent-{instance_name}"
+    return Path.home() / "AppData" / "Roaming" / f"Omnigent-{instance_name}"
+
+
+def _terminate_process(process: subprocess.Popen[bytes]) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _open_isolated_electron(
+    server_url: str, instance_name: str, instance_dir: Path
+) -> tuple[subprocess.Popen[bytes], Path]:
+    """Launch Electron and fail if its SPA does not render successfully."""
     electron_bin = _find_electron_binary()
     electron_app_dir = _REPO_ROOT / "web" / "electron"
+    node_bin = shutil.which("node")
+    smoke_script = _REPO_ROOT / "scripts" / "check_electron_renderer.mjs"
 
     if not electron_bin:
-        raise SystemExit("Electron binary not found in node_modules; run `pnpm install` first")
+        raise RuntimeError("Electron binary not found; run `pnpm install --shamefully-hoist`")
+    if not node_bin:
+        raise RuntimeError("Node.js not found; install the repository development prerequisites")
     if not electron_app_dir.is_dir():
-        raise SystemExit(f"Electron app directory not found: {electron_app_dir}")
+        raise RuntimeError(f"Electron app directory not found: {electron_app_dir}")
+    if not smoke_script.is_file():
+        raise RuntimeError(f"Electron renderer smoke check not found: {smoke_script}")
 
-    # Use a per-instance user-data-dir so the experiment gets its own settings,
-    # window state, and session storage — completely isolated from the main app.
-    if sys.platform == "darwin":
-        user_data_dir = Path.home() / "Library" / "Application Support" / f"Omnigent-{instance_name}"
-    elif sys.platform.startswith("linux"):
-        user_data_dir = Path.home() / ".config" / f"Omnigent-{instance_name}"
-    else:
-        user_data_dir = Path.home() / "AppData" / "Roaming" / f"Omnigent-{instance_name}"
+    # Keep settings, window state, and session storage isolated from the main app.
+    user_data_dir = _electron_user_data_dir(instance_name)
 
     user_data_dir.mkdir(parents=True, exist_ok=True)
     settings_path = user_data_dir / "settings.json"
     settings_path.write_text(json.dumps({"server_url": server_url}, indent=2) + "\n")
 
+    log_dir = instance_dir / "logs" / "electron"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
+    log_path = log_dir / f"electron-{stamp}.log"
+    debug_port = _free_loopback_port()
+
     # Chromium switches with values must use --name=value here; otherwise Electron
     # treats the value as the app path.
-    subprocess.Popen(
-        [electron_bin, f"--user-data-dir={user_data_dir}", str(electron_app_dir)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            [
+                electron_bin,
+                "--enable-logging=stderr",
+                "--remote-debugging-address=127.0.0.1",
+                f"--remote-debugging-port={debug_port}",
+                f"--user-data-dir={user_data_dir}",
+                str(electron_app_dir),
+            ],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+
+    try:
+        try:
+            result = subprocess.run(
+                [node_bin, str(smoke_script), server_url, str(debug_port)],
+                cwd=_REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Electron renderer smoke check timed out. Log: {log_path}\n{_log_tail(log_path)}"
+            ) from exc
+
+        if result.returncode != 0:
+            detail = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "renderer did not become ready"
+            )
+            raise RuntimeError(
+                f"Electron renderer failed: {detail}\nLog: {log_path}\n{_log_tail(log_path)}"
+            )
+    finally:
+        # Never leave the temporary CDP endpoint alive, including on Ctrl-C.
+        if process.poll() is None:
+            _terminate_process(process)
+
+    # Relaunch the verified build without remote debugging.
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            [
+                electron_bin,
+                "--enable-logging=stderr",
+                f"--user-data-dir={user_data_dir}",
+                str(electron_app_dir),
+            ],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        time.sleep(0.5)
+        if process.poll() is not None:
+            raise RuntimeError(
+                "Electron exited after renderer verification. "
+                f"Log: {log_path}\n{_log_tail(log_path)}"
+            )
+    except BaseException:
+        if process.poll() is None:
+            _terminate_process(process)
+        raise
+
+    return process, log_path
+
+
+def _close_isolated_electron(instance_name: str, pid: int | None = None) -> None:
+    if sys.platform.startswith("win"):
+        if pid is not None:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+            )
+        return
+    if sys.platform != "darwin" and not sys.platform.startswith("linux"):
+        return
+
+    user_data_arg = f"--user-data-dir={_electron_user_data_dir(instance_name)}"
+    pattern = re.escape(user_data_arg) + "([[:space:]]|$)"
+    subprocess.run(["pkill", "-TERM", "-f", pattern], capture_output=True)
+    for _ in range(50):
+        found = subprocess.run(["pgrep", "-f", pattern], capture_output=True)
+        if found.returncode != 0:
+            return
+        time.sleep(0.1)
+    subprocess.run(["pkill", "-KILL", "-f", pattern], capture_output=True)
 
 
 def _parse_instance_env(instance_dir: Path) -> dict[str, str]:
@@ -159,6 +283,12 @@ def _stop_instance(args: argparse.Namespace) -> None:
     server_url = metadata.get("OMNIGENT_SERVER_URL")
     data_dir = metadata.get("OMNIGENT_DATA_DIR", str(instance_dir))
     config_home = metadata.get("OMNIGENT_CONFIG_HOME", str(args.config_home.expanduser()))
+    electron_pid_text = metadata.get("OMNIGENT_ELECTRON_PID")
+    electron_pid = (
+        int(electron_pid_text)
+        if electron_pid_text and electron_pid_text.isdigit()
+        else None
+    )
 
     if not server_url:
         raise SystemExit("OMNIGENT_SERVER_URL missing from instance.env")
@@ -174,20 +304,9 @@ def _stop_instance(args: argparse.Namespace) -> None:
     print("  Server + daemon stopped.")
 
     if not args.no_close_window:
-        # Close the isolated Electron window by user-data-dir match.
         # The deep-link /close path only works for the main Electron instance.
-        label = f"Omnigent-{args.name}"
-        if sys.platform == "darwin":
-            subprocess.run(
-                ["pkill", "-f", label],
-                capture_output=True,
-            )
-        elif sys.platform.startswith("linux"):
-            subprocess.run(
-                ["pkill", "-f", label],
-                capture_output=True,
-            )
-        print(f"  Electron window closed.")
+        _close_isolated_electron(args.name, electron_pid)
+        print("  Electron window closed.")
 
     print(f"\nInstance {args.name!r} is stopped. Files kept at:")
     print(f"  {instance_dir}")
@@ -210,16 +329,42 @@ def _check_single_alembic_head() -> str:
         text=True,
     )
     if result.returncode != 0:
-        raise SystemExit(
+        raise RuntimeError(
             "Could not inspect Alembic heads:\n"
             f"{result.stderr.strip() or result.stdout.strip()}"
         )
     heads = [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
     if len(heads) != 1:
-        raise SystemExit(
+        raise RuntimeError(
             f"Alembic has {len(heads)} heads — merge them before forking: {' '.join(heads)}"
         )
     return heads[0]
+
+
+def _check_web_dependencies() -> Path:
+    vite_bin = _REPO_ROOT / "web" / "node_modules" / ".bin" / "vite"
+    node_bin = shutil.which("node")
+    install_hint = "pnpm install --frozen-lockfile --shamefully-hoist"
+    if not vite_bin.is_file() or not node_bin:
+        raise RuntimeError(f"Web dependencies are missing; run `{install_hint}`")
+
+    probe = subprocess.run(
+        [
+            node_bin,
+            "-e",
+            "Promise.all([import('radix-ui/slot'), import('react-dom/client')])",
+        ],
+        cwd=_REPO_ROOT / "web",
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if probe.returncode != 0:
+        detail = probe.stderr.strip() or probe.stdout.strip()
+        raise RuntimeError(
+            f"Web dependencies are incomplete; run `{install_hint}`\n{detail}"
+        )
+    return vite_bin
 
 
 def _upgrade_db_to_head(db_path: Path) -> None:
@@ -254,7 +399,7 @@ def _upgrade_db_to_head(db_path: Path) -> None:
         text=True,
     )
     if result.returncode != 0:
-        raise SystemExit(
+        raise RuntimeError(
             "Database migration failed:\n"
             f"{result.stderr.strip() or result.stdout.strip()}"
         )
@@ -294,10 +439,9 @@ def _fork_instance(args: argparse.Namespace) -> None:
         _upgrade_db_to_head(dest_db)
 
         if not args.no_build_web:
+            print("Checking web dependencies...")
+            vite_bin = _check_web_dependencies()
             print("Building web UI...")
-            vite_bin = _REPO_ROOT / "web" / "node_modules" / ".bin" / "vite"
-            if not vite_bin.is_file():
-                raise SystemExit("vite not found; run `pnpm install` first")
             build_result = subprocess.run(
                 [str(vite_bin), "build"],
                 cwd=str(_REPO_ROOT / "web"),
@@ -305,7 +449,7 @@ def _fork_instance(args: argparse.Namespace) -> None:
                 text=True,
             )
             if build_result.returncode != 0:
-                raise SystemExit(
+                raise RuntimeError(
                     "Web UI build failed:\n"
                     f"{build_result.stderr.strip() or build_result.stdout.strip()}"
                 )
@@ -351,24 +495,34 @@ def _fork_instance(args: argparse.Namespace) -> None:
             "OMNIGENT_SOURCE_DATA_DIR": str(source_dir),
             "OMNIGENT_FORKED_AT": datetime.now(UTC).isoformat(),
         }
+
+        if not args.no_open:
+            print("Opening and verifying an isolated Electron window...")
+            electron_process, electron_log = _open_isolated_electron(
+                server_url, args.name, instance_dir
+            )
+            metadata["OMNIGENT_ELECTRON_PID"] = str(electron_process.pid)
+            metadata["OMNIGENT_ELECTRON_LOG"] = str(electron_log)
+            print("  Electron renderer is ready.")
+
         (instance_dir / "instance.env").write_text(
             "".join(f"{key}={shlex.quote(value)}\n" for key, value in metadata.items())
         )
-
-        if not args.no_open:
-            print("Opening an isolated Electron window...")
-            _open_isolated_electron(server_url, args.name)
 
         print(f"Instance {args.name!r} is running at {server_url}")
         print("Stop it with:")
         print(f"  {Path(__file__).name} --stop {args.name}")
     except Exception:
+        if not args.no_open:
+            _close_isolated_electron(args.name)
         if server_started:
             with suppress(subprocess.CalledProcessError):
                 _run_cli(["server", "stop"], env=env)
         print(f"Instance files were kept for inspection at {instance_dir}", file=sys.stderr)
         raise
     except KeyboardInterrupt:
+        if not args.no_open:
+            _close_isolated_electron(args.name)
         if server_started:
             with suppress(subprocess.CalledProcessError):
                 _run_cli(["server", "stop"], env=env)
