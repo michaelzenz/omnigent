@@ -105,7 +105,11 @@ def ensure_default_worker_provider(
     """Seed the protected internal provider once per workspace."""
     if store.get(_DEFAULT_PROVIDER_ID) is not None:
         return
-    omni_harness = agent_store.get_by_name("omniharness") if agent_store is not None else None
+    from omnigent.execution_targets import ONIH_OPENAI_AGENTS_TARGET
+
+    omni_harness = (
+        agent_store.get_by_name(ONIH_OPENAI_AGENTS_TARGET) if agent_store is not None else None
+    )
     configuration = {"agent_id": omni_harness.id} if omni_harness is not None else {}
     store.create(
         _DEFAULT_PROVIDER_ID,
@@ -132,9 +136,7 @@ def create_worker_providers_router(
         ensure_default_worker_provider(store, agent_store)
         return {
             "object": "list",
-            "data": [
-                _provider_response(provider, agent_store) for provider in store.list()
-            ],
+            "data": [_provider_response(provider, agent_store) for provider in store.list()],
         }
 
     @router.get("/worker-providers/{provider_id}")

@@ -27,7 +27,7 @@ import {
   useWorkerProviders,
 } from "@/hooks/useWorkerProviders";
 import type { InternalWorkerProviderConfiguration, WorkerProvider } from "@/lib/workerProvidersApi";
-import { OMNIHARNESS_AGENT_NAME } from "@/lib/omniharnessModels";
+import { isOnihTargetName } from "@/lib/omniharnessModels";
 import { AgentHarnessPicker, groupNewSessionAgents } from "@/shell/NewChatDialog";
 
 const DEFAULT_MODEL = "__default__";
@@ -65,7 +65,7 @@ function ProviderLaunchControls({
     configuration.agent_id === null
       ? (agentList[0] ?? null)
       : (agentList.find((agent) => agent.id === configuration.agent_id) ?? null);
-  const omniHarnessSelected = selectedAgent?.name === OMNIHARNESS_AGENT_NAME;
+  const omniHarnessSelected = isOnihTargetName(selectedAgent?.name);
 
   useEffect(() => {
     if (configuration.agent_id === null && selectedAgent !== null) {

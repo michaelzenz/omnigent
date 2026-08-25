@@ -69,6 +69,7 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
     model: str | None = None
     is_multi_agent = False
     subagent_count = 0
+    history_switch = None
     # Prefer the stored entity's description; fall back to the spec's
     # top-level description when the stored value is unset (single-file
     # YAML agents don't persist it at registration today). Lets the
@@ -111,6 +112,9 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         model = loaded.spec.executor.model
         is_multi_agent = bool(loaded.spec.sub_agents or loaded.spec.tools.agents)
         subagent_count = len(loaded.spec.sub_agents)
+        from omnigent.execution_targets import is_onih_spec
+
+        history_switch = "canonical-rebuild" if is_onih_spec(loaded.spec) else None
     except Exception:  # noqa: BLE001 — spec load failure must not break the list
         _logger.debug(
             "Failed to load spec for agent %s; mcp_servers/skills will be empty",
@@ -142,6 +146,7 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         subagent_count=subagent_count,
         default_harness=harness,
         default_model=model,
+        history_switch=history_switch,
     )
 
 

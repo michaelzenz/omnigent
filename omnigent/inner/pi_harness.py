@@ -77,7 +77,7 @@ from fastapi import FastAPI
 from omnigent.harness_startup_config import resolve_harness_path
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.executor import Executor
-from omnigent.inner.pi_executor import PiExecutor
+from omnigent.inner.pi_executor import PiExecutor, PiLaunchOptions
 from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
 
 _logger = logging.getLogger(__name__)
@@ -103,6 +103,13 @@ _ENV_GATEWAY_BASE_URLS = "HARNESS_PI_GATEWAY_BASE_URLS"
 _ENV_GATEWAY_OPENAI_WIRE_API = "HARNESS_PI_GATEWAY_OPENAI_WIRE_API"
 _ENV_GATEWAY_AUTH_COMMAND = "HARNESS_PI_GATEWAY_AUTH_COMMAND"
 _ENV_GATEWAY_AUTH_REFRESH_INTERVAL_MS = "HARNESS_PI_GATEWAY_AUTH_REFRESH_INTERVAL_MS"
+_ENV_PERSISTENT_SESSION = "HARNESS_PI_PERSISTENT_SESSION"
+_ENV_CANONICAL_REBUILD = "HARNESS_PI_CANONICAL_REBUILD"
+_ENV_SESSION_DIR = "HARNESS_PI_SESSION_DIR"
+_ENV_SYSTEM_PROMPT_MODE = "HARNESS_PI_SYSTEM_PROMPT_MODE"
+_ENV_ISOLATED_RESOURCES = "HARNESS_PI_ISOLATED_RESOURCES"
+_ENV_NATIVE_TOOLS = "HARNESS_PI_NATIVE_TOOLS"
+_ENV_NATIVE_SKILLS = "HARNESS_PI_NATIVE_SKILLS"
 
 # Truthy strings the wrap accepts for boolean env vars. Must
 # match the claude-sdk and codex wraps' parsers for consistency
@@ -219,6 +226,27 @@ def _build_pi_executor() -> Executor:
     bundle_dir = Path(bundle_dir_raw) if bundle_dir_raw else None
     agent_name_raw = os.environ.get(_ENV_AGENT_NAME, "").strip()
     agent_name = agent_name_raw or None
+    persistent_session = _parse_truthy(_ENV_PERSISTENT_SESSION, default=False)
+    canonical_rebuild = _parse_truthy(_ENV_CANONICAL_REBUILD, default=False)
+    session_dir_raw = os.environ.get(_ENV_SESSION_DIR, "").strip()
+    if persistent_session and not session_dir_raw:
+        from omnigent.process_logging import data_dir
+
+        namespace = "onih" if canonical_rebuild else "persistent"
+        session_dir_raw = str(data_dir() / "pi" / namespace / "sessions")
+    prompt_mode = os.environ.get(_ENV_SYSTEM_PROMPT_MODE, "append").strip()
+    if prompt_mode not in ("append", "replace"):
+        _logger.warning("Ignoring invalid %s=%r", _ENV_SYSTEM_PROMPT_MODE, prompt_mode)
+        prompt_mode = "append"
+    launch_options = PiLaunchOptions(
+        persistent_session=persistent_session,
+        canonical_rebuild=canonical_rebuild,
+        session_dir=Path(session_dir_raw) if session_dir_raw else None,
+        system_prompt_mode=prompt_mode,  # type: ignore[arg-type]
+        isolated_resources=_parse_truthy(_ENV_ISOLATED_RESOURCES, default=False),
+        native_tools=_parse_truthy(_ENV_NATIVE_TOOLS, default=True),
+        native_skills=_parse_truthy(_ENV_NATIVE_SKILLS, default=True),
+    )
     return PiExecutor(
         cwd=os.environ.get(_ENV_CWD) or os.environ.get("OMNIGENT_RUNNER_WORKSPACE"),
         os_env=_resolve_os_env(),
@@ -234,6 +262,7 @@ def _build_pi_executor() -> Executor:
         bundle_dir=bundle_dir,
         agent_name=agent_name,
         skills_filter=_resolve_skills_filter(),
+        launch_options=launch_options,
     )
 
 

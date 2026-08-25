@@ -20,6 +20,7 @@ import { switchSessionAgent } from "@/lib/sessionsApi";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { agentRootName, harnessFamily, switchTargetCarriesHistory } from "@/lib/forkHarness";
+import { isOnihTargetName } from "@/lib/omniharnessModels";
 
 // "" means no target chosen yet. It must be empty (not a sentinel like
 // "__none__"): Radix only renders the trigger placeholder when the controlled
@@ -97,14 +98,16 @@ export function SwitchAgentDialog({
       a.id !== currentAgent?.id &&
       a.name !== currentAgentName &&
       a.name !== currentAgentRootName &&
-      switchTargetCarriesHistory(a.harness),
+      switchTargetCarriesHistory(a.harness, a.name, a.history_switch),
   );
 
   const chosen = switchableAgents.find((a) => a.id === agentChoice) ?? null;
   // A cross-family switch can't carry the provider-bound model id, so the
   // server resets model_override / reasoning_effort to the target's defaults.
   const resetsModelSettings =
-    chosen !== null && harnessFamily(currentAgent?.harness) !== harnessFamily(chosen.harness);
+    chosen !== null &&
+    !(isOnihTargetName(currentAgentRootName) && isOnihTargetName(chosen.name)) &&
+    harnessFamily(currentAgent?.harness) !== harnessFamily(chosen.harness);
 
   function handleOpenChange(next: boolean): void {
     if (!next) {

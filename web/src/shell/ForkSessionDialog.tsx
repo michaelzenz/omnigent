@@ -311,7 +311,7 @@ export function ForkSessionForm({
       a.id !== sourceAgent?.id &&
       a.name !== sourceAgentName &&
       a.name !== sourceAgentBaseName &&
-      forkTargetCarriesHistory(a.harness),
+      forkTargetCarriesHistory(a.harness, a.name, a.history_switch),
   );
   // Group the switch targets like the new-session picker: built-ins first,
   // then a divider, then custom agents — each sorted into display order.

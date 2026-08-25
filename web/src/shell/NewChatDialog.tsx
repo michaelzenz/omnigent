@@ -155,6 +155,10 @@ import {
 } from "@/lib/agentGrouping";
 import {
   EMPTY_OMNIHARNESS_MODEL_OPTIONS,
+  isOnihTargetName,
+  LEGACY_OMNIHARNESS_TARGET,
+  ONIH_OPENAI_AGENTS_TARGET,
+  ONIH_PI_TARGET,
   OMNIHARNESS_AGENT_NAME,
   OPENAI_AGENTS_ADAPTER,
   type OmniHarnessModelOption,
@@ -236,22 +240,24 @@ import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
 // --harness kimi` use) — the picker offers only the native TUI (`kimi-native-ui`).
-const NEW_SESSION_HIDDEN_AGENTS = new Set(["nessie", "kimi", "kimi-code"]);
+const NEW_SESSION_HIDDEN_AGENTS = new Set([
+  "nessie",
+  "kimi",
+  "kimi-code",
+  LEGACY_OMNIHARNESS_TARGET,
+]);
 
 // Short picker-row blurbs — the spec descriptions are long paragraphs that
 // truncate badly in the dropdown; other dialogs keep the server values.
 const AGENT_PICKER_DESCRIPTIONS: Record<string, string> = {
-  omniharness: "Profile-driven assistant",
+  "onih-openai-agents": "Onih with OpenAI Agents",
+  "onih-pi": "Onih with Pi",
   polly: "Multi-agent coding",
   debby: "Multi-agent debate",
 };
 
 export function isNewSessionHarnessAgent(agent: AvailableAgent): boolean {
-  return (
-    isNativeCodingAgent(agent) ||
-    isAcpHarnessAgent(agent) ||
-    agent.name === OMNIHARNESS_AGENT_NAME
-  );
+  return isNativeCodingAgent(agent) || isAcpHarnessAgent(agent) || isOnihTargetName(agent.name);
 }
 
 export function groupNewSessionAgents(agents: readonly AvailableAgent[]): {
@@ -267,8 +273,9 @@ export function groupNewSessionAgents(agents: readonly AvailableAgent[]): {
     agentList: visible,
     agentEntries: visible.filter((agent) => !isNewSessionHarnessAgent(agent)),
     harnessEntries: [
-      ...harnesses.filter((agent) => agent.name === OMNIHARNESS_AGENT_NAME),
-      ...harnesses.filter((agent) => agent.name !== OMNIHARNESS_AGENT_NAME),
+      ...harnesses.filter((agent) => agent.name === ONIH_OPENAI_AGENTS_TARGET),
+      ...harnesses.filter((agent) => agent.name === ONIH_PI_TARGET),
+      ...harnesses.filter((agent) => !isOnihTargetName(agent.name)),
     ],
   };
 }
@@ -1196,7 +1203,7 @@ export function AgentHarnessPicker({
       if (hideUnconfigured && harnessUnconfiguredOnHost(a.harness, host)) continue;
       if (
         selected ||
-        a.name === OMNIHARNESS_AGENT_NAME ||
+        isOnihTargetName(a.name) ||
         isFullySupportedNativeCodingAgent(a) ||
         isRecentHarness(a, recentHarnesses)
       ) {
@@ -1661,7 +1668,7 @@ function HarnessConfigModal({
   const hasAgySkip = nativeAgentHasCapability(agent, "skipPermissions");
   const hasModelPicker = nativeAgentHasCapability(agent, "modelPicker");
   const isCodex = entryHarness === "codex-native";
-  const isOmniHarness = agent.name === OMNIHARNESS_AGENT_NAME;
+  const isOmniHarness = isOnihTargetName(agent.name);
   const hasSdkModelControl =
     isOmniHarness || (!isNativeCodingAgent(agent) && !isAcpHarnessAgent(agent));
   const routingPreferenceHarness = entryHarness ?? (isOmniHarness ? OMNIHARNESS_AGENT_NAME : null);
@@ -1836,8 +1843,7 @@ function HarnessConfigModal({
         promptProfile: draftProfileSelection,
       };
       if (smartRoutingEligible) {
-        const committedSubagentRouting =
-          draftSubagentRouting ?? (smartRoutingOn ? "on" : "off");
+        const committedSubagentRouting = draftSubagentRouting ?? (smartRoutingOn ? "on" : "off");
         setSubagentRoutingMode(committedSubagentRouting);
         rememberedOptions.subagentRouting = committedSubagentRouting;
       }
@@ -1884,10 +1890,7 @@ function HarnessConfigModal({
           dropdown for OmniHarness; the gear keeps it only for non-native
           bundle agents (hasSdkModelControl && !isOmniHarness). */}
           {!autoRouting && hasSdkModelControl && !isOmniHarness && (
-            <ConfigRow
-              label="Model"
-              description="Underlying LLM"
-            >
+            <ConfigRow label="Model" description="Underlying LLM">
               <RoutingModelSelect
                 value={modelValue}
                 onValueChange={onModelChange}
@@ -2107,10 +2110,7 @@ function HarnessConfigModal({
           that selected it, so hiding it would strand the choice with no way to
           read it back or switch away without cancelling. */}
           {!hasPermission && !hasApproval && !hasCursor && !hasAgySkip && brainDefault && (
-            <ConfigRow
-              label="Agent Harness"
-              description="Underlying coding harness"
-            >
+            <ConfigRow label="Agent Harness" description="Underlying coding harness">
               <Select value={draftHarness ?? brainDefault} onValueChange={setDraftHarness}>
                 <SelectTrigger
                   className="w-full cursor-pointer"
@@ -2266,7 +2266,7 @@ function LandingSdkModelSelect({
   const label = routingOn
     ? SMART_ROUTING_LABEL
     : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ?? "Default (GLM 5.2)");
-  const activeId = routingOn ? null : (pickedModel || null);
+  const activeId = routingOn ? null : pickedModel || null;
 
   return (
     <div
@@ -2347,9 +2347,7 @@ export function NewChatLandingScreen() {
   // integrations, and the profile-driven OmniHarness target) and
   // "Agents" (SDK / bundle agents like Polly & Debby plus any custom
   // user-registered agents). OmniHarness leads the harness group.
-  const omniharnessBaseAgent = harnessEntries.find(
-    (agent) => agent.name === OMNIHARNESS_AGENT_NAME,
-  );
+  const omniharnessBaseAgent = harnessEntries.find((agent) => isOnihTargetName(agent.name));
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [pendingAgent, setPendingAgent] = useState<AgentBundleInput | null>(null);
   const PENDING_AGENT_ID = "__pending_custom_agent__";
@@ -2484,8 +2482,8 @@ export function NewChatLandingScreen() {
   // effectiveAgentId below (a stale id falls back to the default). A
   // project-driven visit defers to the project-prefill effect instead
   // (which falls back to the same last pick).
-  const [pickedAgentId, setPickedAgentId] = useState<string | null>(
-    () => (projectParam !== "" ? null : landingDraft?.pickedAgentId ?? readLastAgentId()),
+  const [pickedAgentId, setPickedAgentId] = useState<string | null>(() =>
+    projectParam !== "" ? null : (landingDraft?.pickedAgentId ?? readLastAgentId()),
   );
   const [profileSelection, setProfileSelection] = useState<ProfileSelection>(
     () =>
@@ -2493,8 +2491,8 @@ export function NewChatLandingScreen() {
       readHarnessOptions(OMNIHARNESS_AGENT_NAME).promptProfile ??
       "auto",
   );
-  const [selectedHostId, setSelectedHostId] = useState<string | null>(
-    () => (projectParam !== "" ? null : landingDraft?.selectedHostId ?? null),
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(() =>
+    projectParam !== "" ? null : (landingDraft?.selectedHostId ?? null),
   );
   // Sessions on the selected host — fetched only when a host is selected,
   // to avoid registering hundreds of sessions into the health poll at idle.
@@ -2502,8 +2500,8 @@ export function NewChatLandingScreen() {
   // True when the user picked the sandbox option instead of a connected
   // host — the server provisions a sandbox host at create time
   // (host_type: "managed"), so no host_id or workspace is sent.
-  const [sandboxSelected, setSandboxSelected] = useState(
-    () => (projectParam !== "" ? false : landingDraft?.sandboxSelected ?? false),
+  const [sandboxSelected, setSandboxSelected] = useState(() =>
+    projectParam !== "" ? false : (landingDraft?.sandboxSelected ?? false),
   );
   // Provider the sandbox pick launches on. Seeded to the sticky last pick (or
   // the first offered row) once the picker rows load; null both before that
@@ -2578,11 +2576,11 @@ export function NewChatLandingScreen() {
   const [sandboxRepoBranch, setSandboxRepoBranch] = useState<string>(
     () => landingDraft?.sandboxRepoBranch ?? "",
   );
-  const [workspace, setWorkspace] = useState<string>(
-    () => (projectParam !== "" ? "" : landingDraft?.workspace ?? ""),
+  const [workspace, setWorkspace] = useState<string>(() =>
+    projectParam !== "" ? "" : (landingDraft?.workspace ?? ""),
   );
-  const [branchName, setBranchName] = useState<string>(
-    () => (projectParam !== "" ? "" : landingDraft?.branchName ?? ""),
+  const [branchName, setBranchName] = useState<string>(() =>
+    projectParam !== "" ? "" : (landingDraft?.branchName ?? ""),
   );
   // The base branch auto-fills from the configured default (Settings › Git)
   // when the user names a worktree branch, and is left alone once the user
@@ -2602,11 +2600,11 @@ export function NewChatLandingScreen() {
   const [prefilledBranch, setPrefilledBranch] = useState<string>(
     () => landingDraft?.prefilledBranch ?? "",
   );
-  const [autoCreateWorktree, setAutoCreateWorktree] = useState<boolean>(
-    () => (projectParam !== "" ? false : landingDraft?.autoCreateWorktree ?? false),
+  const [autoCreateWorktree, setAutoCreateWorktree] = useState<boolean>(() =>
+    projectParam !== "" ? false : (landingDraft?.autoCreateWorktree ?? false),
   );
-  const [autoBaseBranch, setAutoBaseBranch] = useState<string>(
-    () => (projectParam !== "" ? "" : landingDraft?.autoBaseBranch ?? ""),
+  const [autoBaseBranch, setAutoBaseBranch] = useState<string>(() =>
+    projectParam !== "" ? "" : (landingDraft?.autoBaseBranch ?? ""),
   );
   const [autoBaseBranchEdited, setAutoBaseBranchEdited] = useState(false);
   // Project to file the new session under. Empty = unfiled. Stamped as the
@@ -2672,15 +2670,13 @@ export function NewChatLandingScreen() {
   const [costControlMode, _setCostControlMode] = useState<CostControlMode>(
     () => landingDraft?.costControlMode ?? null,
   );
-  const [subagentRoutingMode, setSubagentRoutingMode] = useState<"on" | "off" | null>(
-    () => {
+  const [subagentRoutingMode, setSubagentRoutingMode] = useState<"on" | "off" | null>(() => {
       if (landingDraft?.subagentRoutingMode !== undefined) {
         return landingDraft.subagentRoutingMode;
       }
       const stored = readHarnessOptions(OMNIHARNESS_AGENT_NAME).subagentRouting;
       return stored === "on" || stored === "off" ? stored : null;
-    },
-  );
+  });
   // Model selection and smart routing are mutually exclusive: enabling
   // routing clears the explicit model pick, and picking a model turns
   // routing off.
@@ -3116,7 +3112,7 @@ export function NewChatLandingScreen() {
   const effectiveAgentId =
     pickedAgentId === PENDING_AGENT_ID && pendingAgentAllowedOnTarget
       ? PENDING_AGENT_ID
-      : (pickedAgentExists ? pickedAgentId : firstVisibleAgent?.id) ?? null;
+      : ((pickedAgentExists ? pickedAgentId : firstVisibleAgent?.id) ?? null);
   const selectedAgent = useMemo(
     () =>
       effectiveAgentId === PENDING_AGENT_ID && pendingAgent
@@ -3132,7 +3128,7 @@ export function NewChatLandingScreen() {
     [agentList, effectiveAgentId, pendingAgent],
   );
   const selectedNativeHarness = nativeCodingAgentForAvailableAgent(selectedAgent)?.harness ?? null;
-  const omniharnessSelected = selectedAgent?.id === omniharnessBaseAgent?.id;
+  const omniharnessSelected = isOnihTargetName(selectedAgent?.name);
   const promptProfilesEnabled = omniharnessSelected;
   const harnessPickerAgentId = effectiveAgentId;
   useEffect(() => {
@@ -3152,7 +3148,7 @@ export function NewChatLandingScreen() {
   const supportsCursorMode = nativeAgentHasCapability(selectedAgent, "cursorMode");
   const supportsAgySkipPermissions = nativeAgentHasCapability(selectedAgent, "skipPermissions");
   const supportsModelPicker = nativeAgentHasCapability(selectedAgent, "modelPicker");
-  const selectedAgentUsesOmniHarness = selectedAgent?.name === OMNIHARNESS_AGENT_NAME;
+  const selectedAgentUsesOmniHarness = isOnihTargetName(selectedAgent?.name);
   // The selected native harness, used to persist/seed its option knobs (mode /
   // model / effort), which are harness-specific. null for non-native agents,
   // which have no knobs to remember.
@@ -3733,12 +3729,7 @@ export function NewChatLandingScreen() {
       return;
     }
     if (!autoBaseBranchEdited) setAutoBaseBranch(currentWorkspaceBranch);
-  }, [
-    isGitWorkspace,
-    autoWorktreesSupported,
-    currentWorkspaceBranch,
-    autoBaseBranchEdited,
-  ]);
+  }, [isGitWorkspace, autoWorktreesSupported, currentWorkspaceBranch, autoBaseBranchEdited]);
   // When the workspace lands on an existing worktree, prefill the branch
   // field with its branch and remember it as the prefill. Leaving the
   // worktree clears the prefill (but not a name the user typed themselves).
@@ -4124,9 +4115,9 @@ export function NewChatLandingScreen() {
   // persist via localStorage.
   const handleSelectAgent = (agent: AvailableAgent) => {
     setSmartRoutingDropped(null);
-    if (agent.id === omniharnessBaseAgent?.id) {
-      setPickedAgentId(omniharnessBaseAgent.id);
-      writeLastAgentId(omniharnessBaseAgent.id);
+    if (isOnihTargetName(agent.name)) {
+      setPickedAgentId(agent.id);
+      writeLastAgentId(agent.id);
       return;
     }
     if (agent.id !== effectiveAgentId) {
@@ -4275,7 +4266,7 @@ export function NewChatLandingScreen() {
       const agentSupportsModelOverride =
         agentSupportsModelPicker ||
         nativeAgent?.harness === "codex-native" ||
-        agent.name === OMNIHARNESS_AGENT_NAME;
+        isOnihTargetName(agent.name);
       // Smart Routing — server-side. The fully-auto harness always routes
       // (harness + model), so send "on" to keep the persisted state consistent
       // with the lit routing icon. Otherwise only send it when routing is
@@ -4605,11 +4596,9 @@ export function NewChatLandingScreen() {
         // the worktree-ready SSE event (or the snapshot's worktreeStatus
         // == null path) can fire maybeAutoSendInitialPrompt and start
         // the agent without the user needing to switch back.
-        void useChatStore.getState().bindBackgroundSession(
-          data.id,
-          sessionAgentId,
-          sessionAgent?.display_name ?? null,
-        );
+        void useChatStore
+          .getState()
+          .bindBackgroundSession(data.id, sessionAgentId, sessionAgent?.display_name ?? null);
       }
     } catch {
       returnDraftToUser();
@@ -5572,8 +5561,8 @@ export function NewChatLandingScreen() {
                         existing worktree stays below the input (contextual to the
                         selection). */}
                       <p className="text-sm text-muted-foreground">
-                        New branch name, or pick an existing worktree. Leave blank to start directly
-                        in the working directory.
+                            New branch name, or pick an existing worktree. Leave blank to start
+                            directly in the working directory.
                       </p>
                       {/* The branch field is a combobox: focusing it reveals the
                         repo's existing worktrees, and typing filters them.

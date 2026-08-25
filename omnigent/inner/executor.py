@@ -259,6 +259,11 @@ class CompactionComplete(ExecutorEvent):
     token_count: int
     model: str | None = None
     compacted_messages: CompactedMessages | None = None
+    reason: str | None = None
+    first_kept_entry_id: str | None = None
+    tokens_before: int | None = None
+    will_retry: bool = False
+    execution_generation: int | None = None
 
 
 @dataclass

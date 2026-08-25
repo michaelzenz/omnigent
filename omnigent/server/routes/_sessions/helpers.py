@@ -6987,6 +6987,29 @@ async def _run_compact_locked(
             agent.id, agent.bundle_location, expand_env=agent.session_id is None
         )
         spec = loaded.spec
+        from omnigent.execution_targets import ONIH_PI_TARGET
+
+        if spec.name == ONIH_PI_TARGET:
+            runner_client = await _get_runner_client_for_resource_access(session_id)
+            if runner_client is None:
+                raise OmnigentError(
+                    "Native Pi compaction requires a live runner",
+                    code=ErrorCode.CONFLICT,
+                )
+            response = await runner_client.post(
+                f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/compact-harness",
+                timeout=250.0,
+            )
+            if response.status_code >= 400:
+                raise OmnigentError(
+                    f"Pi compaction failed: {response.text}",
+                    code=(
+                        ErrorCode.CONFLICT
+                        if response.status_code == 409
+                        else ErrorCode.INTERNAL_ERROR
+                    ),
+                )
+            return
         if spec.llm is not None:
             llm_config = spec.llm
         elif spec.executor.model is not None:
@@ -7073,6 +7096,10 @@ def _same_provider_family_impl(a: Agent, b: Agent) -> bool:
     :param b: Second agent (e.g. the switch target).
     :returns: ``True`` when both resolve to the same non-``None`` family.
     """
+    from omnigent.execution_targets import is_onih_agent
+
+    if is_onih_agent(a) and is_onih_agent(b):
+        return True
     family_a = _agent_provider_family(a)
     return family_a is not None and family_a == _agent_provider_family(b)
 
@@ -7143,6 +7170,10 @@ def _agent_carries_native_fork_history_impl(agent: Agent) -> bool:
         )
     except Exception:  # noqa: BLE001
         return False
+    from omnigent.execution_targets import ONIH_PI_TARGET
+
+    if spec.name == ONIH_PI_TARGET:
+        return True
     return canonicalize_harness(spec.executor.harness_kind) in _FORK_HISTORY_NATIVE_HARNESSES
 
 
@@ -8631,7 +8662,11 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     if not labels:
         return
     auto_worktree_key = next(
-        (key for key in labels if key == "omnigent.auto_worktree" or key.startswith("omnigent.auto_worktree.")),
+        (
+            key
+            for key in labels
+            if key == "omnigent.auto_worktree" or key.startswith("omnigent.auto_worktree.")
+        ),
         None,
     )
     if auto_worktree_key is not None:

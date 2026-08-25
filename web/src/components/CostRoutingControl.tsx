@@ -1,5 +1,5 @@
 import { isNativeTerminalSession } from "@/lib/nativeCodingAgents";
-import { OMNIHARNESS_AGENT_NAME } from "@/lib/omniharnessModels";
+import { isOnihTargetName } from "@/lib/omniharnessModels";
 import type { Session } from "@/lib/types";
 
 /** Per-session cost-control switch value; `null` = unset (presents as off). */
@@ -15,7 +15,7 @@ export type CostControlMode = "on" | "off" | null;
 export function isCostRoutingSession(
   session: Pick<Session, "agentName" | "parentSessionId"> | null | undefined,
 ): boolean {
-  return session?.agentName === OMNIHARNESS_AGENT_NAME && session.parentSessionId == null;
+  return isOnihTargetName(session?.agentName) && session?.parentSessionId == null;
 }
 
 function isTopLevelAgentSession(

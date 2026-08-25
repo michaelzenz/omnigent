@@ -18,6 +18,7 @@ import logging
 import mimetypes
 import os
 import re
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -6859,6 +6860,7 @@ class _SessionSnapshot:
     sub_agent_name: str | None = None
     parent_session_id: str | None = None
     agent_name: str | None = None
+    execution_generation: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -8668,6 +8670,7 @@ def create_runner_app(
             sub_agent_name: str | None = None
             parent_session_id: str | None = None
             agent_name: str | None = None
+            execution_generation = 0
             try:
                 resp = await server_client.get(f"/v1/sessions/{session_id}")
                 status_code = resp.status_code
@@ -8689,6 +8692,9 @@ def create_runner_app(
                     raw_agent_name = body.get("agent_name")
                     if isinstance(raw_agent_name, str) and raw_agent_name:
                         agent_name = raw_agent_name
+                    raw_generation = body.get("execution_generation")
+                    if isinstance(raw_generation, int):
+                        execution_generation = raw_generation
             except Exception:  # noqa: BLE001 — best-effort; created_at falls back to wall time
                 pass
             snapshot = _SessionSnapshot(
@@ -8700,6 +8706,7 @@ def create_runner_app(
                 sub_agent_name=sub_agent_name,
                 parent_session_id=parent_session_id,
                 agent_name=agent_name,
+                execution_generation=execution_generation,
             )
             if snapshot.ok and snapshot.agent_id is not None:
                 _session_snapshot_cache[session_id] = snapshot
@@ -9996,12 +10003,23 @@ def create_runner_app(
         }
         if compacted_messages:
             compaction_event["compacted_messages"] = compacted_messages
+        pi_metadata = {
+            "pi_first_kept_entry_id": event.get("first_kept_entry_id"),
+            "pi_reason": event.get("reason"),
+            "pi_generation": event.get("execution_generation"),
+            "pi_tokens_before": event.get("tokens_before"),
+            "pi_tokens_after": token_count,
+        }
+        for key, value in pi_metadata.items():
+            if value is not None:
+                compaction_event[key] = value
         try:
             response = await server_client.post(
                 f"/v1/sessions/{conv}/events",
                 json={
                     "type": "compaction",
                     "data": compaction_event,
+                    "execution_generation": (await _session_snapshot(conv)).execution_generation,
                 },
                 timeout=10.0,
             )
@@ -12279,7 +12297,9 @@ def create_runner_app(
             _fresh_spec = resolve_session_mcp_servers(cached_spec, expand_env=_mcp_expand_env)
             if _fresh_spec.mcp_servers != cached_spec.mcp_servers:
                 cached_spec = _spec_with_workdir_paths(_fresh_spec, cached_spec_workdir)
-                cached_spec_entry = _rewrap_like(cached_spec_entry, cached_spec, cached_spec_workdir)
+                cached_spec_entry = _rewrap_like(
+                    cached_spec_entry, cached_spec, cached_spec_workdir
+                )
                 _session_spec_cache[conv] = cached_spec_entry
 
         harness_name: str | None = None
@@ -12344,10 +12364,13 @@ def create_runner_app(
             agent_version=_dispatched_agent_version,
         )
 
+        dispatch_snapshot = await _session_snapshot(conv)
         harness_body: _JsonObject = {
             "type": "message",
             "role": "user",
             "model": msg_body.get("model", ""),
+            "conversation": {"id": conv},
+            "execution_generation": dispatch_snapshot.execution_generation,
         }
         # The routed model rides in-band on the forwarded message. This body is
         # built field by field (not copied), so it must be threaded explicitly:
@@ -12990,13 +13013,23 @@ def create_runner_app(
                                                 {
                                                     "type": "function_call_output",
                                                     "call_id": _item["call_id"],
+                                                    "name": _item.get("name"),
                                                     "output": _item["output"],
+                                                    "tool_status": _item.get(
+                                                        "tool_status", "success"
+                                                    ),
+                                                    "error": _item.get("error"),
                                                 }
                                             )
                                 elif _evt_type == "response.compaction.completed" and event.get(
                                     "summary"
                                 ):
-                                    await _handle_harness_compaction(conv_id, event)
+                                    try:
+                                        await _handle_harness_compaction(conv_id, event)
+                                    except Exception:
+                                        if process_manager is not None:
+                                            await process_manager.release(conv_id)
+                                        raise
 
                                 if is_action_required(event):
                                     tool_name = get_tool_name(event)
@@ -15465,6 +15498,33 @@ def create_runner_app(
         if agent_id:
             _spec_cache.pop(agent_id, None)
 
+    @app.post("/v1/sessions/{session_id}/compact-harness")
+    async def compact_live_harness(session_id: str) -> JSONResponse:
+        if process_manager is None:
+            return JSONResponse(status_code=501, content={"error": "runner_not_configured"})
+        if session_id in _active_turns or process_manager.has_active_turn(session_id):
+            return JSONResponse(status_code=409, content={"error": "session_busy"})
+        try:
+            client = await process_manager.get_client(session_id, "any")
+            response = await client.post(
+                f"/v1/sessions/{session_id}/events",
+                json={"type": "compact"},
+                timeout=240.0,
+            )
+            response.raise_for_status()
+            event = response.json()
+            await _handle_harness_compaction(session_id, event)
+            return JSONResponse(status_code=200, content=event)
+        except NoLiveHarnessError:
+            return JSONResponse(status_code=409, content={"error": "no_live_harness"})
+        except Exception as exc:  # noqa: BLE001
+            await process_manager.release(session_id)
+            _logger.warning("Native harness compaction failed for %s", session_id, exc_info=True)
+            return JSONResponse(
+                status_code=502,
+                content={"error": "harness_compaction_failed", "detail": str(exc)},
+            )
+
     @app.delete("/v1/sessions/{session_id}/resources")
     async def cleanup_session_resources(
         session_id: str,
@@ -15481,6 +15541,9 @@ def create_runner_app(
         _hermes_terminal_ensure_locks.pop(session_id, None)
         _repl_terminal_ensure_locks.pop(session_id, None)
         await resource_registry.cleanup_session(session_id)
+        from omnigent.onih_pi_session_store import delete_onih_pi_session
+
+        await asyncio.to_thread(delete_onih_pi_session, session_id)
         await _delete_native_bridge_dirs(
             server_client=server_client,
             session_id=session_id,

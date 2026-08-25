@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { agentRootName } from "@/lib/forkHarness";
 import { capitalizeAgentName, useAcpHarnessIds, useHarnessLabels } from "@/lib/agentLabels";
+import { LEGACY_OMNIHARNESS_TARGET } from "@/lib/omniharnessModels";
 import {
   nativeCodingAgentForAvailableAgent,
   nativeCodingAgentForAgentName,
@@ -39,6 +40,7 @@ export interface AvailableAgent {
   // that don't report capabilities, where grouping falls back to the id
   // heuristic in ``agentGrouping``.
   acpHarness?: boolean;
+  history_switch?: "canonical-rebuild" | null;
   // Creation epoch of a catalog agent — recency signal for same-name
   // supersession. Deliberately NOT updated_at: `--agent` re-registration
   // rewrites a template's bundle on every server restart (non-reproducible
@@ -59,6 +61,8 @@ const DISPLAY_NAMES: Record<string, string> = {
   polly: "Polly",
   debby: "Debby",
   omniharness: "OmniHarness",
+  "onih-openai-agents": "Onih · OpenAI Agents",
+  "onih-pi": "Onih · Pi",
 };
 
 function displayNameForAgent(name: string, harness?: string | null): string {
@@ -104,6 +108,7 @@ interface BuiltinAgentWire {
   // older servers, where every catalog row degrades to a protected entry.
   builtin?: boolean;
   created_at?: number | null;
+  history_switch?: "canonical-rebuild" | null;
 }
 
 interface BuiltinAgentsListWire {
@@ -142,19 +147,22 @@ async function fetchBuiltinAgents(): Promise<AvailableAgent[]> {
   } while (after != null);
   /* oxlint-enable no-await-in-loop */
 
-  return rows.map((a) => ({
-    id: a.id,
-    name: a.name,
-    display_name: displayNameForAgent(a.name, a.harness),
-    description: a.description ?? null,
-    harness: a.harness ?? null,
-    skills: a.skills ?? [],
-    // Omit rather than set to undefined so toEqual comparisons aren't
-    // sensitive to absent-vs-undefined. Logic that reads builtin treats
-    // undefined as "protected" (same as true), so omission is safe.
-    ...(a.builtin !== undefined ? { builtin: a.builtin } : {}),
-    ...(a.created_at !== undefined ? { created_at: a.created_at } : {}),
-  }));
+  return rows
+    .filter((a) => a.name !== LEGACY_OMNIHARNESS_TARGET)
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      display_name: displayNameForAgent(a.name, a.harness),
+      description: a.description ?? null,
+      harness: a.harness ?? null,
+      skills: a.skills ?? [],
+      // Omit rather than set to undefined so toEqual comparisons aren't
+      // sensitive to absent-vs-undefined. Logic that reads builtin treats
+      // undefined as "protected" (same as true), so omission is safe.
+      ...(a.builtin !== undefined ? { builtin: a.builtin } : {}),
+      ...(a.created_at !== undefined ? { created_at: a.created_at } : {}),
+      ...(a.history_switch !== undefined ? { history_switch: a.history_switch } : {}),
+    }));
 }
 
 /**
@@ -208,6 +216,7 @@ interface AgentObjectWire {
   description?: string | null;
   harness?: string | null;
   skills?: { name: string; description: string }[];
+  history_switch?: "canonical-rebuild" | null;
 }
 
 /**
@@ -257,6 +266,7 @@ export async function prefetchAvailableAgentDetails(
               description: json.description ?? null,
               harness: json.harness ?? null,
               skills: json.skills ?? [],
+              history_switch: json.history_switch ?? null,
             },
       );
       // If enrichment reveals this agent is a native coding agent (e.g. a
@@ -359,7 +369,7 @@ async function fetchAvailableAgents(): Promise<AvailableAgent[]> {
     // `"<name> (fork ag_a) (fork ag_b)"`, and a single-layer strip would
     // leave a non-matching name that slips the seeded-shadow check.
     const base = agentRootName(agent.agentName);
-    if (base !== agent.agentName) continue;
+    if (base === LEGACY_OMNIHARNESS_TARGET || base !== agent.agentName) continue;
     // Bound a catalog agent directly (seeded built-in OR user template):
     // already represented (verbatim, or as a candidate above).
     if (catalogIds.has(agent.agentId)) continue;

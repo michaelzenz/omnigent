@@ -737,6 +737,14 @@ def register_events_routes(
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise _session_not_found()
+        if (
+            body.execution_generation is not None
+            and body.execution_generation != conv.execution_generation
+        ):
+            raise OmnigentError(
+                "Rejected stale runner event after execution ownership changed.",
+                code=ErrorCode.CONFLICT,
+            )
         worktree_status = _session_worktree_status_cache.get(session_id)
         retrying_auto_restore = (
             worktree_status is not None

@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from fastapi import Response
+from fastapi.responses import JSONResponse
 
 from omnigent.errors import ElicitationDeclinedError
 from omnigent.inner.executor import (
@@ -142,6 +143,19 @@ class ExecutorAdapter(HarnessApp):
         # must be suppressed in _translate_event to avoid duplicates.
         self._dispatched_call_ids: set[str] = set()
 
+    async def _handle_compact_event(self) -> Response:
+        if self._active_turn_ctx is not None:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "conflict", "detail": "cannot compact during an active turn"},
+            )
+        executor = self._ensure_executor()
+        compact = getattr(executor, "compact_session", None)
+        if compact is None:
+            return await super()._handle_compact_event()
+        payload = await compact(self._session_key)
+        return JSONResponse(status_code=200, content=payload)
+
     async def run_turn(self, request: CreateResponseRequest, ctx: TurnContext) -> None:
         """Drive the inner executor for one turn, translating its events to Omnigent SSE.
 
@@ -149,12 +163,26 @@ class ExecutorAdapter(HarnessApp):
         instance. Installs stable tool/elicitation/policy bridges once on first use.
         """
         executor = self._ensure_executor()
+        from omnigent.runtime.telemetry import current_session_id, session_scope
+
+        turn_session_id = (
+            request.conversation.id
+            if request.conversation is not None
+            else current_session_id() or self._session_key
+        )
+        # A harness process is conversation-scoped. Bind its executor key to the
+        # canonical conversation ID so persistent state survives process restarts.
+        self._session_key = turn_session_id
         messages = _translate_input_to_messages(request.input)
         # Stamp session_key on every message so the inner executor keys its client consistently,
         # matching the key used by enqueue_session_message (steering delivery depends on this).
         for message in messages:
             message["session_id"] = self._session_key
-        extra: dict[str, Any] = {}
+        extra: dict[str, Any] = {
+            "canonical_input": request.input,
+            "turn_id": ctx.response_id,
+            "execution_generation": request.execution_generation,
+        }
         if request.reasoning is not None:
             effort = request.reasoning.get("effort")
             if effort:
@@ -194,9 +222,6 @@ class ExecutorAdapter(HarnessApp):
         self._dispatched_call_ids.clear()
 
         tracing = is_tracing_enabled()
-        from omnigent.runtime.telemetry import current_session_id, session_scope
-
-        turn_session_id = current_session_id() or self._session_key
         if tracing and self._tracing_ctx is None:
             self._tracing_ctx = TracingContext(session_id=turn_session_id)
         tctx = self._tracing_ctx if tracing else None
@@ -743,6 +768,9 @@ class ExecutorAdapter(HarnessApp):
                 "id": f"fco_{uuid.uuid4().hex[:12]}",
                 "type": "function_call_output",
                 "call_id": call_id,
+                "name": event.name,
+                "tool_status": event.status.value,
+                "error": event.error,
                 # Cap the mirror; the inner SDK already consumed the full result.
                 "output": cap_tool_output(_serialize_tool_result(event)),
             }
@@ -774,6 +802,11 @@ class ExecutorAdapter(HarnessApp):
                     summary=event.summary,
                     summary_model=event.model,
                     compacted_messages=event.compacted_messages,
+                    reason=event.reason,
+                    first_kept_entry_id=event.first_kept_entry_id,
+                    tokens_before=event.tokens_before,
+                    will_retry=event.will_retry,
+                    execution_generation=event.execution_generation,
                 )
             )
         # ExecutorError handled by the caller (re-raises so the

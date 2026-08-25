@@ -1,0 +1,11 @@
+spec_version: 1
+name: onih-openai-agents
+description: Onih using the OpenAI Agents SDK.
+
+executor:
+  type: omnigent
+  config:
+    harness: openai-agents
+    model: databricks-glm-5-2
+
+prompt: ""

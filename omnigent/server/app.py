@@ -29,7 +29,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from omnigent._platform import resolve_repo_symlink
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.execution_targets import OMNIHARNESS_AGENT_NAME
+from omnigent.execution_targets import (
+    ONIH_OPENAI_AGENTS_TARGET,
+    ONIH_PI_TARGET,
+)
 from omnigent.harness_plugins import (
     NativeHarnessProvider,
     native_provider_for_key,
@@ -119,7 +122,6 @@ from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.model_settings_store import ModelSettingsStore
-from omnigent.stores.tool_preferences_store import ToolPreferencesStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
@@ -131,6 +133,7 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.stores.tool_preferences_store import ToolPreferencesStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
 from omnigent.stores.worker_store import WorkerStore
@@ -252,9 +255,14 @@ _SESSION_PATH_RE = re.compile(r"/v1/sessions/([^/]+)")
 # resolve_repo_symlink dereferences the packaged symlink on a no-symlink
 # Windows checkout (where Git leaves it as a stub text file); a no-op elsewhere.
 _DEBBY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "debby")
-_OMNIHARNESS_BUNDLE_SOURCE = resolve_repo_symlink(
-    Path(_examples_resources.__file__).parent / "omniharness"
-)
+_ONIH_BUNDLE_SOURCES = {
+    ONIH_OPENAI_AGENTS_TARGET: resolve_repo_symlink(
+        Path(_examples_resources.__file__).parent / ONIH_OPENAI_AGENTS_TARGET
+    ),
+    ONIH_PI_TARGET: resolve_repo_symlink(
+        Path(_examples_resources.__file__).parent / ONIH_PI_TARGET
+    ),
+}
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")
 
 
@@ -567,7 +575,7 @@ def _ensure_default_agents(
     """
     _ensure_default_native_agents(agent_store, artifact_store, agent_cache)
     _ensure_default_acp_agents(agent_store, artifact_store, agent_cache)
-    _ensure_default_omniharness_agent(agent_store, artifact_store, agent_cache)
+    _ensure_default_onih_agents(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
@@ -833,34 +841,30 @@ def _ensure_default_acp_agents(
         )
 
 
-def _ensure_default_omniharness_agent(
+def _ensure_default_onih_agents(
     agent_store: AgentStore,
     artifact_store: ArtifactStore,
     agent_cache: Any,
 ) -> None:
-    """Register or refresh the profile-driven OmniHarness target."""
+    """Register or refresh both profile-driven Onih execution targets."""
     import tempfile
 
     from omnigent.spec import materialize_bundle
 
-    if not (_OMNIHARNESS_BUNDLE_SOURCE / "config.yaml").is_file():
-        _logger.debug(
-            "omniharness bundle not found at %s; skipping seed",
-            _OMNIHARNESS_BUNDLE_SOURCE,
+    for name, source in _ONIH_BUNDLE_SOURCES.items():
+        if not (source / "config.yaml").is_file():
+            _logger.debug("%s bundle not found at %s; skipping seed", name, source)
+            continue
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = materialize_bundle(source, Path(tmpdir) / "bundle")
+            bundle_bytes = _tar_gz_dir(bundle_dir)
+        _ensure_builtin_agent(
+            agent_store,
+            artifact_store,
+            agent_cache,
+            name=name,
+            bundle_bytes=bundle_bytes,
         )
-        return
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        bundle_dir = materialize_bundle(_OMNIHARNESS_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
-        bundle_bytes = _tar_gz_dir(bundle_dir)
-
-    _ensure_builtin_agent(
-        agent_store,
-        artifact_store,
-        agent_cache,
-        name=OMNIHARNESS_AGENT_NAME,
-        bundle_bytes=bundle_bytes,
-    )
 
 
 def _build_debby_bundle() -> bytes:
