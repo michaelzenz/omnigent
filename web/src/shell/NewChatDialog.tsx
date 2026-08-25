@@ -273,8 +273,8 @@ export function groupNewSessionAgents(agents: readonly AvailableAgent[]): {
     agentList: visible,
     agentEntries: visible.filter((agent) => !isNewSessionHarnessAgent(agent)),
     harnessEntries: [
-      ...harnesses.filter((agent) => agent.name === ONIH_OPENAI_AGENTS_TARGET),
       ...harnesses.filter((agent) => agent.name === ONIH_PI_TARGET),
+      ...harnesses.filter((agent) => agent.name === ONIH_OPENAI_AGENTS_TARGET),
       ...harnesses.filter((agent) => !isOnihTargetName(agent.name)),
     ],
   };
@@ -2250,7 +2250,6 @@ function LandingSdkModelSelect({
   smartRoutingEligible,
   disabled,
   onPickModel,
-  onPickDefault,
   onPickRouting,
 }: {
   sdkModelOptions: readonly OmniHarnessModelOption[];
@@ -2259,13 +2258,12 @@ function LandingSdkModelSelect({
   smartRoutingEligible: boolean;
   disabled: boolean;
   onPickModel: (model: string) => void;
-  onPickDefault: () => void;
   onPickRouting: () => void;
 }) {
   const routingOn = smartRoutingEligible && costControlMode === "on";
   const label = routingOn
     ? SMART_ROUTING_LABEL
-    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ?? "Default (GLM 5.2)");
+    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ?? "Default");
   const activeId = routingOn ? null : pickedModel || null;
 
   return (
@@ -2298,14 +2296,6 @@ function LandingSdkModelSelect({
               {SMART_ROUTING_LABEL}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            data-testid="new-chat-landing-model-default"
-            data-active={!routingOn && !activeId ? "true" : undefined}
-            onSelect={onPickDefault}
-            className="data-[active=true]:bg-muted"
-          >
-            Default (GLM 5.2)
-          </DropdownMenuItem>
           {sdkModelOptions.map((option) => (
             <DropdownMenuItem
               key={option.id}
@@ -4970,14 +4960,6 @@ export function NewChatLandingScreen() {
                       setPickedModel(model);
                       writeHarnessOption(OMNIHARNESS_AGENT_NAME, {
                         model,
-                        routing: "off",
-                      });
-                    }}
-                    onPickDefault={() => {
-                      setPickedModel("");
-                      setCostControlMode(null);
-                      writeHarnessOption(OMNIHARNESS_AGENT_NAME, {
-                        model: "",
                         routing: "off",
                       });
                     }}
