@@ -5043,8 +5043,15 @@ async def _forward_event_to_runner(
         _parent_routing_on = _parent_conv is not None and subagent_routing_enabled(
             _parent_conv.subagent_routing_override
         )
+    # Per-event override wins over the persisted column so a client that
+    # just toggled routing off (PATCH in flight) is respected this turn.
+    _effective_cost_control = (
+        body.cost_control_mode_override
+        if body.cost_control_mode_override is not None
+        else conv.cost_control_mode_override
+    )
     _routing_enabled = (
-        conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
+        _effective_cost_control == "on" and conv.parent_conversation_id is None
     ) or _parent_routing_on
     _harness = _resolve_harness(conv)
     _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None

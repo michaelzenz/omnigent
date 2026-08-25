@@ -174,6 +174,7 @@ export type SessionEventInput =
       interrupt_first?: boolean;
       comment_thread_id?: string;
       model_override?: string;
+      cost_control_mode_override?: "on" | "off";
     }
   | { type: "function_call_output"; data: Record<string, unknown> }
   | { type: "approval"; data: Record<string, unknown> }

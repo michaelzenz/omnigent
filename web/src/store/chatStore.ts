@@ -1794,10 +1794,12 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           ...(head.text.trim() ? [{ type: "input_text" as const, text: head.text }] : []),
         ];
         const modelOverride = setterForState(conversationId)?.sessionModelOverride ?? null;
+        const costControlMode = setterForState(conversationId)?.costControlModeOverride ?? null;
         await postEvent(conversationId, {
           type: "message",
           data: { role: "user", content },
           ...(modelOverride !== null ? { model_override: modelOverride } : {}),
+          ...(costControlMode !== null ? { cost_control_mode_override: costControlMode } : {}),
         });
       })()
         .catch(() => {
@@ -1846,6 +1848,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // message POST use separate connections, so the POST can otherwise reach
     // the server first and run one turn on the previous model.
     const submitModelOverride = submitState?.sessionModelOverride ?? null;
+    const submitCostControlMode = submitState?.costControlModeOverride ?? null;
     const targetSetter = opts?.pinnedConversationId
       ? setterFor(opts.pinnedConversationId)
       : setActive;
@@ -1963,6 +1966,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         },
         ...(opts?.interruptFirst ? { interrupt_first: true } : {}),
         ...(submitModelOverride !== null ? { model_override: submitModelOverride } : {}),
+        ...(submitCostControlMode !== null ? { cost_control_mode_override: submitCostControlMode } : {}),
       });
       // Policy denied the input — the server returned immediately
       // without starting a turn or persisting the user message, so
