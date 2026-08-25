@@ -515,6 +515,53 @@ def test_heartbeat_resets_rapid_disconnect_counter(
     assert fetched.consecutive_rapid_disconnects == 0
 
 
+def test_fresh_reconnect_resets_rapid_disconnect_counter(
+    host_store: HostStore,
+    db_uri: str,
+) -> None:
+    """Reconnecting after being offline >15s resets the counter immediately."""
+    host_store.upsert_on_connect("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", "desktop", "dave@example.com")
+    # Build up the counter with three rapid disconnects.
+    for _ in range(3):
+        host_store.upsert_on_connect("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", "desktop", "dave@example.com")
+        _set_last_connect_at(db_uri, "9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", now_epoch() - 5)
+        host_store.set_offline("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f")
+
+    assert host_store.get_host("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f").consecutive_rapid_disconnects == 3
+
+    # Simulate the host being offline for 20s (longer than RAPID_DISCONNECT_THRESHOLD_S=15),
+    # then reconnecting. updated_at was last set by set_offline.
+    _set_updated_at(db_uri, "9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", now_epoch() - 20)
+    host_store.upsert_on_connect("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", "desktop", "dave@example.com")
+
+    fetched = host_store.get_host("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f")
+    assert fetched is not None
+    assert fetched.consecutive_rapid_disconnects == 0
+
+
+def test_rapid_reconnect_preserves_rapid_disconnect_counter(
+    host_store: HostStore,
+    db_uri: str,
+) -> None:
+    """Reconnecting within 15s does NOT reset the counter (thrashing continues)."""
+    host_store.upsert_on_connect("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "server", "eve@example.com")
+    # Build up the counter with two rapid disconnects.
+    for _ in range(2):
+        host_store.upsert_on_connect("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "server", "eve@example.com")
+        _set_last_connect_at(db_uri, "0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", now_epoch() - 5)
+        host_store.set_offline("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")
+
+    assert host_store.get_host("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b").consecutive_rapid_disconnects == 2
+
+    # Reconnect within 15s (updated_at was set by set_offline just 5s ago).
+    _set_updated_at(db_uri, "0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", now_epoch() - 5)
+    host_store.upsert_on_connect("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "server", "eve@example.com")
+
+    fetched = host_store.get_host("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")
+    assert fetched is not None
+    assert fetched.consecutive_rapid_disconnects == 2
+
+
 def test_heartbeat_advances_updated_at_without_changing_status(
     host_store: HostStore,
     db_uri: str,

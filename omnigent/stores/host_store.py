@@ -318,6 +318,12 @@ class HostStore:
                     )
                 # Known host_id (same user_id, or reown opted in): update
                 # user_id/name in case they changed, then refresh status and timestamp.
+                # If the host was offline long enough that this is a fresh
+                # connection (not part of a rapid connect/disconnect cycle),
+                # reset the flaky-connection counter so the warning clears
+                # immediately on reconnect instead of waiting for heartbeat.
+                if (now - row.updated_at) >= RAPID_DISCONNECT_THRESHOLD_S:
+                    row.consecutive_rapid_disconnects = 0
                 row.user_id = user_id
                 row.name = name
                 row.status = encode_host_status("online")
@@ -532,6 +538,7 @@ class HostStore:
                 updated_at=now,
                 last_connect_at=now,
                 configured_harnesses=configured_harnesses_json,
+                consecutive_rapid_disconnects=0,
             )
         )
         return Host(
