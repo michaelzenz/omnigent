@@ -1317,6 +1317,7 @@ class SessionEventInput(BaseModel):
     # stop_session); item-typed events still fail loud per-type.
     data: dict[str, Any] = Field(default_factory=dict)
     model_override: str | None = None
+    cost_control_mode_override: str | None = None
     tools: list[dict[str, Any]] | None = None
     created_by: str | None = None
     interrupt_first: bool = False
