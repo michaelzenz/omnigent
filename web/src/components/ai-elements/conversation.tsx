@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { followConversationBottom } from "@/lib/conversationScrollState";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
@@ -98,11 +99,17 @@ export const ConversationScrollButton = ({
   className,
   ...props
 }: ConversationScrollButtonProps) => {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  const ctx = useStickToBottomContext() as ReturnType<typeof useStickToBottomContext> & {
+    scrollRef?: React.RefObject<HTMLElement>;
+  };
+  const isAtBottom = ctx.isAtBottom;
+  const scrollToBottom = ctx.scrollToBottom;
 
   const handleScrollToBottom = useCallback(() => {
+    const el = ctx.scrollRef?.current;
+    if (el) followConversationBottom(el);
     scrollToBottom("instant");
-  }, [scrollToBottom]);
+  }, [ctx.scrollRef, scrollToBottom]);
 
   return (
     !isAtBottom && (

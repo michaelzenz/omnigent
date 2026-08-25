@@ -125,19 +125,31 @@ describe("ConversationScrollPosition", () => {
     const scroller = { el: scrollRoot, state: stickContext.state, stopScroll };
 
     const view = render(
-      <ConversationScrollPosition conversationId="conv-scroll-restore" scroller={scroller} />,
+      <ConversationScrollPosition
+        conversationId="conv-scroll-restore"
+        scroller={scroller}
+        followBottomOnFallback
+      />,
     );
     fireEvent.scroll(scrollRoot);
     metrics.scrollTop = 1600;
     view.rerender(
-      <ConversationScrollPosition conversationId="conv-other-session" scroller={scroller} />,
+      <ConversationScrollPosition
+        conversationId="conv-other-session"
+        scroller={scroller}
+        followBottomOnFallback
+      />,
     );
     metrics.scrollTop = 300;
     stickContext.state.isAtBottom = true;
     stickContext.state.escapedFromLock = false;
 
     view.rerender(
-      <ConversationScrollPosition conversationId="conv-scroll-restore" scroller={scroller} />,
+      <ConversationScrollPosition
+        conversationId="conv-scroll-restore"
+        scroller={scroller}
+        followBottomOnFallback
+      />,
     );
 
     expect(metrics.scrollTop).toBe(640);
@@ -194,9 +206,7 @@ describe("ReleaseBottomLockOnResponseEnd", () => {
     const stopScroll = vi.fn();
     stickContext.stopScroll = stopScroll;
 
-    const { rerender } = render(
-      <ReleaseBottomLockOnResponseEnd status="streaming" enabled />,
-    );
+    const { rerender } = render(<ReleaseBottomLockOnResponseEnd status="streaming" enabled />);
     rerender(<ReleaseBottomLockOnResponseEnd status="idle" enabled />);
 
     expect(stopScroll).not.toHaveBeenCalled();

@@ -2,6 +2,7 @@ export interface ConversationScrollPosition {
   scrollTop: number;
   anchorMessageId?: string;
   anchorOffset?: number;
+  wasAtBottom?: boolean;
 }
 
 interface ActiveConversationScroller {
@@ -50,6 +51,7 @@ function naturalTop(element: HTMLElement): number {
 }
 
 function readElementPosition(element: HTMLElement): ConversationScrollPosition {
+  const wasAtBottom = element.scrollHeight - element.clientHeight - element.scrollTop <= 1;
   const messages = Array.from(
     element.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
   );
@@ -74,8 +76,9 @@ function readElementPosition(element: HTMLElement): ConversationScrollPosition {
         scrollTop: element.scrollTop,
         anchorMessageId: anchor.dataset.userMessageId,
         anchorOffset: anchorTop - viewportTop,
+        wasAtBottom,
       }
-    : { scrollTop: element.scrollTop };
+    : { scrollTop: element.scrollTop, wasAtBottom };
 }
 
 export function saveConversationScrollPosition(conversationId: string, element: HTMLElement): void {
@@ -90,53 +93,55 @@ export function getConversationScrollPosition(
   return positions.get(conversationId);
 }
 
-function restorationTarget(
+export type ConversationScrollRestoreTarget =
+  | { kind: "waiting"; reason: "anchor-missing" | "target-unreachable" }
+  | { kind: "restore"; top: number };
+
+/**
+ * Returns a target only when the saved location exists in the current layout.
+ * An incomplete transcript must not be replaced with a clamped pixel fallback:
+ * that fallback is a temporary location and visibly jumps when layout catches up.
+ */
+export function getConversationScrollRestoreTarget(
   element: HTMLElement,
   position: ConversationScrollPosition,
-): { target: number; anchorFound: boolean; targetClamped: boolean } {
-  const anchor =
-    position.anchorMessageId === undefined
-      ? undefined
-      : Array.from(
-          element.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
-        ).find((message) => message.dataset.userMessageId === position.anchorMessageId);
-  const anchorTarget =
-    anchor && position.anchorOffset !== undefined
-      ? naturalTop(anchor) - naturalTop(element) - position.anchorOffset
-      : undefined;
+): ConversationScrollRestoreTarget {
   const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-  // The saved position is beyond the current scroll range — content hasn't
-  // grown enough yet (code blocks, images, syntax highlighting still
-  // rendering). The restore must keep retrying until the range expands;
-  // otherwise it settles at scrollTop=0 and corrupts the saved position.
-  const desiredTarget = anchorTarget ?? position.scrollTop;
-  const targetClamped = desiredTarget > maxScrollTop + 1;
-  const savedTarget = Math.max(0, position.scrollTop);
-  const fallbackTarget = savedTarget > maxScrollTop ? maxScrollTop : savedTarget;
-  const target =
-    anchorTarget !== undefined && anchorTarget >= 0 && anchorTarget <= maxScrollTop + 1
-      ? anchorTarget
-      : fallbackTarget;
-  return { target, anchorFound: anchor !== undefined, targetClamped };
+  if (position.anchorMessageId !== undefined) {
+    const anchor = Array.from(
+      element.querySelectorAll<HTMLElement>('[data-role="user"][data-user-message-id]'),
+    ).find((message) => message.dataset.userMessageId === position.anchorMessageId);
+    if (!anchor || position.anchorOffset === undefined) {
+      return { kind: "waiting", reason: "anchor-missing" };
+    }
+    const top = naturalTop(anchor) - naturalTop(element) - position.anchorOffset;
+    return top >= 0 && top <= maxScrollTop + 1
+      ? { kind: "restore", top }
+      : { kind: "waiting", reason: "target-unreachable" };
+  }
+
+  const top = Math.max(0, position.scrollTop);
+  return top <= maxScrollTop + 1
+    ? { kind: "restore", top }
+    : { kind: "waiting", reason: "target-unreachable" };
 }
 
 export function restoreConversationScrollPosition(
   element: HTMLElement,
   position: ConversationScrollPosition,
 ): boolean {
-  const { target, anchorFound } = restorationTarget(element, position);
-  element.scrollTop = target;
-  return position.anchorMessageId === undefined || anchorFound;
+  const target = getConversationScrollRestoreTarget(element, position);
+  if (target.kind === "waiting") return false;
+  element.scrollTop = target.top;
+  return true;
 }
 
 export function isConversationScrollPositionRestored(
   element: HTMLElement,
   position: ConversationScrollPosition,
 ): boolean {
-  const { target, anchorFound, targetClamped } = restorationTarget(element, position);
-  if (position.anchorMessageId !== undefined && !anchorFound) return false;
-  if (targetClamped) return false;
-  return Math.abs(element.scrollTop - target) <= 1;
+  const target = getConversationScrollRestoreTarget(element, position);
+  return target.kind === "restore" && Math.abs(element.scrollTop - target.top) <= 1;
 }
 
 export function registerActiveConversationScroller(
@@ -158,9 +163,7 @@ export function registerActiveConversationScroller(
  * The expected id prevents a URL/store render race from saving the shared DOM
  * element under a session whose messages have not rendered yet.
  */
-export function captureActiveConversationScroll(
-  expectedConversationId: string | null,
-): void {
+export function captureActiveConversationScroll(expectedConversationId: string | null): void {
   if (!activeScroller || activeScroller.conversationId !== expectedConversationId) {
     return;
   }

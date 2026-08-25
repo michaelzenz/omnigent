@@ -41,11 +41,55 @@ def test_check_web_dependencies_probes_runtime_imports(tmp_path: Path, monkeypat
             [
                 "/usr/bin/node",
                 "-e",
-                "Promise.all([import('radix-ui/slot'), import('react-dom/client')])",
+                "Promise.all([import('@radix-ui/react-dialog'), "
+                "import('@radix-ui/react-slot'), import('react-dom/client')])",
             ],
             tmp_path / "web",
         )
     ]
+
+
+def test_install_web_dependencies_uses_given_registry_and_hoisting(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(fork, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(fork.shutil, "which", lambda name: "/usr/bin/pnpm")
+    monkeypatch.setattr(fork.subprocess, "run", run)
+
+    fork._install_web_dependencies("https://registry.example.test/")
+
+    assert calls[0][0] == [
+        "/usr/bin/pnpm",
+        "install",
+        "--frozen-lockfile",
+        "--shamefully-hoist",
+    ]
+    assert calls[0][1]["cwd"] == tmp_path
+    assert calls[0][1]["env"]["CI"] == "true"
+    assert calls[0][1]["env"]["npm_config_registry"] == "https://registry.example.test/"
+    assert calls[0][1]["env"]["COREPACK_NPM_REGISTRY"] == "https://registry.example.test/"
+
+
+def test_prepare_web_dependencies_installs_after_failed_probe(monkeypatch) -> None:
+    vite = Path("/repo/web/node_modules/.bin/vite")
+    checks = iter([RuntimeError("missing Radix"), vite])
+    installs = []
+
+    def check():
+        result = next(checks)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(fork, "_check_web_dependencies", check)
+    monkeypatch.setattr(fork, "_install_web_dependencies", lambda registry=None: installs.append(registry))
+
+    assert fork._prepare_web_dependencies() == vite
+    assert installs == [None]
 
 
 def test_check_web_dependencies_reports_repair_command(tmp_path: Path, monkeypatch) -> None:
