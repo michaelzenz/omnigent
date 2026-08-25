@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from omnigent.db.db_models import normalize_uuid
 from omnigent.entities import PromptProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime import get_caps
@@ -259,13 +260,15 @@ async def select_omniharness_turn(
                 code=ErrorCode.CONFLICT,
             )
         by_id = {profile.id: profile for profile in profiles}
-        if any(profile_id not in by_id for profile_id in profile_ids):
+        normalized_profile_ids = [normalize_uuid(profile_id) for profile_id in profile_ids]
+        if any(profile_id not in by_id for profile_id in normalized_profile_ids):
             raise OmnigentError(
                 "Auto Select returned an invalid or unknown profile ID.",
                 code=ErrorCode.CONFLICT,
             )
         selected_profiles = tuple(
-            by_id[profile_id] for profile_id in list(dict.fromkeys(profile_ids))[:max_profiles]
+            by_id[profile_id]
+            for profile_id in list(dict.fromkeys(normalized_profile_ids))[:max_profiles]
         )
 
     model: str | None = verdict.get("model") if select_model else None
