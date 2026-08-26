@@ -2081,6 +2081,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     pausedQueueConversationIds.add(sessionId);
 
     await rewindSession(sessionId, itemId);
+    await queryClient?.invalidateQueries({
+      queryKey: childSessionsQueryKey(sessionId),
+    });
     const page = await fetchSessionItemsPage(sessionId, { limit: INITIAL_WINDOW_ITEMS });
     if (get().conversationId !== sessionId) {
       throw new Error("The active session changed while rewinding");

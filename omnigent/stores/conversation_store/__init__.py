@@ -1892,6 +1892,21 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def list_children_spawned_in_rewind_range(
+        self,
+        conversation_id: str,
+        *,
+        from_message_id: str,
+    ) -> list[str]:
+        """Return direct children created by history that rewind will remove.
+
+        Matches durable child spawn-provenance labels against response and
+        function-call identifiers in the target message and later items.
+        Legacy children without provenance are deliberately excluded.
+        """
+        ...
+
+    @abstractmethod
     def rewind_conversation(
         self,
         conversation_id: str,
@@ -1901,8 +1916,8 @@ class ConversationStore(ABC):
         """Delete a persisted user message and every item after it.
 
         The operation is atomic and resets the conversation's position allocator
-        to the removed message's position. Earlier items and child sessions are
-        preserved.
+        to the removed message's position. Earlier items are preserved; the
+        route separately removes child subtrees identified by spawn provenance.
 
         :raises LookupError: If the conversation or target item does not exist.
         :raises ValueError: If the target is not a user-authored message.

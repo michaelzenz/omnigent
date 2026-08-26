@@ -277,6 +277,7 @@ from omnigent.server.schemas import (
     WorktreeStatus,
 )
 from omnigent.session_lifecycle import (
+    SPAWN_PARENT_RESPONSE_ID_LABEL_KEY,
     labels_with_closed_status,
     title_without_closed_marker,
 )
@@ -8677,6 +8678,12 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     """
     if not labels:
         return
+    if SPAWN_PARENT_RESPONSE_ID_LABEL_KEY in labels:
+        raise OmnigentError(
+            f"label {SPAWN_PARENT_RESPONSE_ID_LABEL_KEY!r} is server-internal "
+            "and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
     auto_worktree_key = next(
         (key for key in labels if key == "omnigent.auto_worktree" or key.startswith("omnigent.auto_worktree.")),
         None,

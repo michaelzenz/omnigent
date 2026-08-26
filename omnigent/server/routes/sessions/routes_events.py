@@ -2464,6 +2464,43 @@ def register_events_routes(
                 await asyncio.sleep(0.05)
 
             try:
+                child_roots = await asyncio.to_thread(
+                    conversation_store.list_children_spawned_in_rewind_range,
+                    session_id,
+                    from_message_id=body.from_message_id,
+                )
+                for child_id in child_roots:
+                    await _best_effort_stop(child_id, conversation_store, runner_router)
+                    try:
+                        child_runner = await _get_runner_client_for_resource_access(child_id)
+                    except OmnigentError:
+                        child_runner = None
+                    if child_runner is not None:
+                        try:
+                            cleanup_response = await child_runner.delete(
+                                f"/v1/sessions/{child_id}",
+                                timeout=10.0,
+                            )
+                            if cleanup_response.status_code >= 400:
+                                _logger.warning(
+                                    "Runner cleanup returned %s for rewound child %s",
+                                    cleanup_response.status_code,
+                                    child_id,
+                                )
+                        except (httpx.HTTPError, ConnectionError):
+                            _logger.warning(
+                                "Runner cleanup failed for rewound child %s",
+                                child_id,
+                            )
+                    if file_store is not None and artifact_store is not None:
+                        deleted_file_ids = await asyncio.to_thread(
+                            file_store.delete_all_for_session,
+                            child_id,
+                        )
+                        for file_id in deleted_file_ids:
+                            await asyncio.to_thread(artifact_store.delete, file_id)
+                    await conversation_store.delete_conversation(child_id)
+
                 await asyncio.to_thread(
                     conversation_store.rewind_conversation,
                     session_id,

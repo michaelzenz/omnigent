@@ -107,6 +107,7 @@ from omnigent.server.routes._sessions.common import (
     _CODEX_NATIVE_WRAPPER_LABEL_VALUE,
     _logger,
     _managed_launch_tasks,
+    _session_active_response_cache,
     get_server_runner_router,
     set_server_runner_router,
 )
@@ -186,6 +187,7 @@ from omnigent.server.schemas import (
     WorktreeStatus,
 )
 from omnigent.session_lifecycle import (
+    SPAWN_PARENT_RESPONSE_ID_LABEL_KEY,
     labels_with_closed_status,
 )
 from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
@@ -677,6 +679,15 @@ def register_core_routes(
         parsed_metadata = _parse_session_create_metadata(metadata)
         _reject_reserved_cost_control_label_seed(parsed_metadata.labels)
         _reject_server_reserved_label_seed(parsed_metadata.labels)
+        if parsed_metadata.parent_session_id is not None:
+            parent_response_id = _session_active_response_cache.get(
+                parsed_metadata.parent_session_id
+            )
+            if parent_response_id:
+                parsed_metadata.labels = {
+                    **parsed_metadata.labels,
+                    SPAWN_PARENT_RESPONSE_ID_LABEL_KEY: parent_response_id,
+                }
 
         inherited_runner_id: str | None = None
         if parsed_metadata.parent_session_id is not None:

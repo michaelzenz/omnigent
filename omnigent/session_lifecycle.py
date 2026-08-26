@@ -8,6 +8,10 @@ CLOSED_LABEL_KEY = "omnigent.closed"
 CLOSED_LABEL_VALUE = "true"
 CLOSED_TITLE_INFIX = ":closed:"
 
+# Correlates a child session with the parent response that created it. Rewind
+# uses this durable edge to remove only children spawned by truncated history.
+SPAWN_PARENT_RESPONSE_ID_LABEL_KEY = "omnigent.spawn.parent_response_id"
+
 
 def title_without_closed_marker(title: str | None) -> str | None:
     """

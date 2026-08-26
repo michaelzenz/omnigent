@@ -20,6 +20,7 @@ from omnigent.session_import import (
     IMPORT_EXTERNAL_SESSION_ID_LABEL_KEY,
     IMPORT_SOURCE_LABEL_KEY,
 )
+from omnigent.session_lifecycle import SPAWN_PARENT_RESPONSE_ID_LABEL_KEY
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
@@ -567,6 +568,74 @@ def test_rewind_from_user_message_removes_target_and_later_items(
         items[1].id,
         replacement.id,
     ]
+
+
+def test_rewind_range_finds_only_children_spawned_by_removed_history(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    parent = conversation_store.create_conversation()
+    items = conversation_store.append(
+        parent.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_keep",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "keep"}]),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="resp_remove",
+                data=MessageData(role="user", content=[{"type": "input_text", "text": "remove"}]),
+            ),
+            NewConversationItem(
+                type="function_call",
+                response_id="resp_remove",
+                data=FunctionCallData(
+                    agent="test-agent",
+                    name="sys_session_send",
+                    arguments="{}",
+                    call_id="call_remove",
+                ),
+            ),
+        ],
+    )
+    kept = conversation_store.create_conversation(
+        title="worker:kept",
+        parent_conversation_id=parent.id,
+    )
+    removed_by_response = conversation_store.create_conversation(
+        title="worker:response",
+        parent_conversation_id=parent.id,
+    )
+    removed_by_call = conversation_store.create_conversation(
+        title="worker:native",
+        parent_conversation_id=parent.id,
+    )
+    legacy = conversation_store.create_conversation(
+        title="worker:legacy",
+        parent_conversation_id=parent.id,
+    )
+    conversation_store.set_labels(
+        kept.id,
+        {SPAWN_PARENT_RESPONSE_ID_LABEL_KEY: "resp_keep"},
+    )
+    conversation_store.set_labels(
+        removed_by_response.id,
+        {SPAWN_PARENT_RESPONSE_ID_LABEL_KEY: "resp_remove"},
+    )
+    conversation_store.set_labels(
+        removed_by_call.id,
+        {"omnigent.native.tool_call_id": "call_remove"},
+    )
+
+    found = conversation_store.list_children_spawned_in_rewind_range(
+        parent.id,
+        from_message_id=items[1].id,
+    )
+
+    assert set(found) == {removed_by_response.id, removed_by_call.id}
+    assert kept.id not in found
+    assert legacy.id not in found
 
 
 def test_rewind_rejects_assistant_message(
