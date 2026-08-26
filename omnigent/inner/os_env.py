@@ -6,10 +6,9 @@ import atexit
 import base64
 import codecs
 import contextlib
-import fnmatch
+import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +17,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, TypedDict, cast
 from urllib.parse import urlparse, urlunparse
@@ -56,6 +56,9 @@ if TYPE_CHECKING:
 
     from .egress import EgressProxyHandle
     from .egress.proxy import EgressProxy
+from .pi_file_ops import find as _find_impl
+from .pi_file_ops import grep as _grep_impl
+from .pi_file_ops import list_dir as _list_dir_impl
 from .sandbox import (
     run_launcher as _run_launcher,
 )
@@ -334,6 +337,7 @@ class OSEnvironment(ABC):
         old_text: str | None = None,
         new_text: str | None = None,
         edits: Sequence[EditEntry] | None = None,
+        original_coordinates: bool = False,
     ) -> OpResult:
         raise NotImplementedError
 
@@ -346,7 +350,6 @@ class OSEnvironment(ABC):
     ) -> OpResult:
         raise NotImplementedError
 
-    @abstractmethod
     async def grep(
         self,
         pattern: str,
@@ -360,7 +363,6 @@ class OSEnvironment(ABC):
     ) -> OpResult:
         raise NotImplementedError
 
-    @abstractmethod
     async def find(
         self,
         pattern: str,
@@ -370,12 +372,21 @@ class OSEnvironment(ABC):
     ) -> OpResult:
         raise NotImplementedError
 
-    @abstractmethod
     async def list_dir(
         self,
         path: str = ".",
         *,
         limit: int = 500,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    async def discover_memory_files(
+        self,
+        paths: Sequence[tuple[str, bool]],
+        filename: str,
+        *,
+        max_bytes: int = 50 * 1024,
+        offsets: Mapping[str, tuple[str, int]] | None = None,
     ) -> OpResult:
         raise NotImplementedError
 
@@ -430,9 +441,7 @@ class _HelperProcessClient:
         if sandbox.active:
             self._tmpdir = create_private_tmpdir()
             system_tmp = Path(tempfile.gettempdir())
-            sandbox = with_additional_write_roots(
-                sandbox, [self._tmpdir, system_tmp]
-            )
+            sandbox = with_additional_write_roots(sandbox, [self._tmpdir, system_tmp])
             self.sandbox = sandbox
         self._proc: subprocess.Popen[str] | None = None
         # Parent-held containment handle from the sandbox backend's
@@ -940,6 +949,7 @@ class CallerProcessOSEnvironment(OSEnvironment):
         old_text: str | None = None,
         new_text: str | None = None,
         edits: Sequence[EditEntry] | None = None,
+        original_coordinates: bool = False,
     ) -> OpResult:
         result = await run_sync_on_thread(
             self._helper.request,
@@ -949,6 +959,7 @@ class CallerProcessOSEnvironment(OSEnvironment):
                 "oldText": old_text,
                 "newText": new_text,
                 "edits": list(edits) if edits is not None else None,
+                "original_coordinates": original_coordinates,
             },
         )
         return cast(OpResult, result)
@@ -1030,6 +1041,31 @@ class CallerProcessOSEnvironment(OSEnvironment):
                 "op": "ls",
                 "path": path,
                 "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
+    async def discover_memory_files(
+        self,
+        paths: Sequence[tuple[str, bool]],
+        filename: str,
+        *,
+        max_bytes: int = 50 * 1024,
+        offsets: Mapping[str, tuple[str, int]] | None = None,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "discover_memory_files",
+                "paths": [
+                    {"path": path, "is_directory": is_directory} for path, is_directory in paths
+                ],
+                "filename": filename,
+                "max_bytes": max_bytes,
+                "offsets": {
+                    path: {"sha256": sha256, "offset": offset}
+                    for path, (sha256, offset) in (offsets or {}).items()
+                },
             },
         )
         return cast(OpResult, result)
@@ -1164,6 +1200,7 @@ def _handle_helper_request(
             request.get("oldText"),
             request.get("newText"),
             request.get("edits"),
+            original_coordinates=request.get("original_coordinates") is True,
         )
 
     if op == "shell":
@@ -1244,6 +1281,59 @@ def _handle_helper_request(
         except PermissionError as exc:
             return {"error": str(exc)}
         return _list_dir_impl(path=path, limit=request.get("limit", 500))
+
+    if op == "discover_memory_files":
+        filename = request.get("filename")
+        if filename not in {"CLAUDE.md", "AGENTS.md"}:
+            return {"error": "filename must be CLAUDE.md or AGENTS.md"}
+        raw_targets = request.get("paths")
+        if not isinstance(raw_targets, list):
+            return {"error": "paths must be an array"}
+        targets: list[tuple[Path, bool]] = []
+        for item in raw_targets:
+            if not isinstance(item, dict):
+                return {"error": "each path must be an object"}
+            raw_path = item.get("path")
+            is_directory = item.get("is_directory")
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                return {"error": "path must be a non-empty string"}
+            if not isinstance(is_directory, bool):
+                return {"error": "is_directory must be a boolean"}
+            path = _resolve_path(cwd, raw_path)
+            try:
+                _assert_within_reach(cwd, sandbox, path, need_write=False)
+                _assert_read_allowed(sandbox, path)
+            except PermissionError as exc:
+                return {"error": str(exc)}
+            targets.append((path, is_directory))
+        max_bytes = request.get("max_bytes", 50 * 1024)
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+            return {"error": "max_bytes must be a positive integer"}
+        raw_offsets = request.get("offsets", {})
+        if not isinstance(raw_offsets, dict):
+            return {"error": "offsets must be an object"}
+        offsets: dict[str, tuple[str, int]] = {}
+        for offset_path, state in raw_offsets.items():
+            if not isinstance(offset_path, str) or not isinstance(state, dict):
+                return {"error": "offsets contains an invalid path state"}
+            sha256 = state.get("sha256")
+            offset = state.get("offset")
+            if (
+                not isinstance(sha256, str)
+                or isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or offset < 0
+            ):
+                return {"error": "offsets contains an invalid hash or offset"}
+            offsets[offset_path] = (sha256, offset)
+        return _discover_memory_files_impl(
+            cwd=cwd,
+            sandbox=sandbox,
+            targets=targets,
+            filename=filename,
+            max_bytes=min(max_bytes, 2 * 1024 * 1024),
+            offsets=offsets,
+        )
 
     return {"error": f"Unsupported os_env helper operation: {op!r}"}
 
@@ -1370,6 +1460,116 @@ def _assert_write_allowed(policy: SandboxPolicy, path: Path) -> None:
     if any(_is_within(path, root) for root in policy.write_roots):
         return
     raise PermissionError(f"Write access to '{path}' is blocked by sandbox.")
+
+
+def _memory_project_root(directory: Path, cwd: Path) -> Path:
+    for candidate in (directory, *directory.parents):
+        if (candidate / ".git").exists():
+            return candidate
+        if candidate == cwd:
+            return cwd
+    return directory
+
+
+def _memory_candidate_directories(
+    target: Path,
+    cwd: Path,
+    *,
+    is_directory: bool,
+) -> list[Path]:
+    directory = target if is_directory and target.is_dir() else target.parent
+    root = _memory_project_root(directory, cwd)
+    try:
+        relative = directory.relative_to(root)
+    except ValueError:
+        return [directory]
+    result = [root]
+    cursor = root
+    for part in relative.parts:
+        cursor /= part
+        result.append(cursor)
+    return result
+
+
+def _discover_memory_files_impl(
+    *,
+    cwd: Path,
+    sandbox: SandboxPolicy,
+    targets: Sequence[tuple[Path, bool]],
+    filename: str,
+    max_bytes: int,
+    offsets: Mapping[str, tuple[str, int]],
+) -> OpResult:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for target, is_directory in targets:
+        for directory in _memory_candidate_directories(target, cwd, is_directory=is_directory):
+            candidate = (directory / filename).resolve(strict=False)
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+
+    selected: list[dict[str, Any]] = []
+    remaining = max_bytes
+    aggregate_truncated = False
+    for candidate in reversed(candidates):
+        try:
+            _assert_within_reach(cwd, sandbox, candidate, need_write=False)
+            _assert_read_allowed(sandbox, candidate)
+            if not candidate.is_file():
+                continue
+            file_size = candidate.stat().st_size
+            if file_size > 2 * 1024 * 1024:
+                return {"error": f"Applicable memory file exceeds the 2 MiB limit: {candidate}"}
+            raw = candidate.read_bytes()
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                return {"error": f"Applicable memory file is not UTF-8 text: {candidate}: {exc}"}
+            canonical = str(candidate)
+            digest = hashlib.sha256(raw).hexdigest()
+            prior = offsets.get(canonical)
+            prior_offset = prior[1] if prior is not None and prior[0] == digest else 0
+            start_byte = min(prior_offset, len(raw))
+            end_byte = min(len(raw), start_byte + remaining)
+            while end_byte > start_byte:
+                try:
+                    content = raw[start_byte:end_byte].decode("utf-8")
+                    break
+                except UnicodeDecodeError:
+                    end_byte -= 1
+            else:
+                content = ""
+            retained = end_byte - start_byte
+            truncated = end_byte < len(raw)
+            selected.append(
+                {
+                    "path": canonical,
+                    "sha256": digest,
+                    "content": content,
+                    "start_byte": start_byte,
+                    "end_byte": end_byte,
+                    "truncated": truncated,
+                }
+            )
+            remaining -= retained
+            if remaining == 0:
+                aggregate_truncated = (
+                    any(earlier.is_file() for earlier in candidates[: candidates.index(candidate)])
+                    or truncated
+                )
+                break
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        except OSError as exc:
+            return {"error": f"Failed to read applicable {filename}: {exc}"}
+    selected.reverse()
+    return {
+        "files": selected,
+        "targets": [str(path) for path, _ in targets],
+        "max_bytes": max_bytes,
+        "truncated": aggregate_truncated or any(item["truncated"] for item in selected),
+    }
 
 
 # Bytes sampled to classify a file as text vs binary. A NUL byte or an invalid
@@ -1535,6 +1735,8 @@ def _edit_impl(
     old_text: JsonValue,
     new_text: JsonValue,
     edits: JsonValue,
+    *,
+    original_coordinates: bool = False,
 ) -> OpResult:
     original = path.read_text(encoding="utf-8", errors="replace")
     try:
@@ -1546,12 +1748,38 @@ def _edit_impl(
     except ValueError as exc:
         return {"error": str(exc)}
 
-    updated = original
-    applied = 0
+    if not original_coordinates:
+        updated = original
+        for edit in replacements:
+            before = edit["oldText"]
+            after = edit["newText"]
+            if not before:
+                return {"error": "oldText must not be empty"}
+            count = updated.count(before)
+            if count == 0:
+                return {"error": f"Could not find oldText in '{path}': {before[:80]!r}"}
+            if count > 1:
+                return {
+                    "error": (
+                        f"oldText matched {count} locations in '{path}'; "
+                        "provide a more specific edit."
+                    )
+                }
+            updated = updated.replace(before, after, 1)
+        path.write_text(updated, encoding="utf-8")
+        return {
+            "path": str(path),
+            "replacements": len(replacements),
+            "bytes_written": len(updated.encode("utf-8")),
+        }
+
+    spans: list[tuple[int, int, str]] = []
     for edit in replacements:
         before = edit["oldText"]
         after = edit["newText"]
-        count = updated.count(before)
+        if not before:
+            return {"error": "oldText must not be empty"}
+        count = original.count(before)
         if count == 0:
             return {"error": f"Could not find oldText in '{path}': {before[:80]!r}"}
         if count > 1:
@@ -1560,13 +1788,25 @@ def _edit_impl(
                     f"oldText matched {count} locations in '{path}'; provide a more specific edit."
                 )
             }
-        updated = updated.replace(before, after, 1)
-        applied += 1
+        start = original.index(before)
+        spans.append((start, start + len(before), after))
 
+    spans.sort(key=lambda item: item[0])
+    for previous, current in pairwise(spans):
+        if current[0] < previous[1]:
+            return {"error": "edits must not overlap in the original file"}
+
+    parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in spans:
+        parts.extend((original[cursor:start], replacement))
+        cursor = end
+    parts.append(original[cursor:])
+    updated = "".join(parts)
     path.write_text(updated, encoding="utf-8")
     return {
         "path": str(path),
-        "replacements": applied,
+        "replacements": len(spans),
         "bytes_written": len(updated.encode("utf-8")),
     }
 
@@ -1668,262 +1908,6 @@ def _shell_impl(
     return result
 
 
-# ── grep / find / ls implementations ───────────────────────────
-
-# Directories skipped during recursive traversal to avoid noise and
-# expensive symlink loops. Mirrors ripgrep's default ignore set.
-_SKIP_DIRS: frozenset[str] = frozenset({
-    ".git", ".hg", ".svn", ".bzr", "node_modules", "__pycache__",
-    ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache",
-    ".ruff_cache", "dist", "build", ".eggs", "eggs",
-})
-
-# Max bytes for a single matched-line + context output to avoid a single
-# very long line (e.g. minified JS) from saturating the context window.
-_MAX_LINE_DISPLAY = 2_000
-
-# Max total output bytes for grep before truncation.
-_MAX_GREP_OUTPUT = 200_000
-
-# Max total output bytes for find before truncation.
-_MAX_FIND_OUTPUT = 100_000
-
-
-def _load_gitignore_roots(path: Path) -> set[Path]:
-    """Collect directories whose .gitignore files should be consulted."""
-    roots: set[Path] = set()
-    # Walk up from the search root to find .gitignore files
-    current = path.resolve()
-    while current != current.parent:
-        if (current / ".gitignore").exists():
-            roots.add(current)
-        if (current / ".git").exists():
-            roots.add(current)
-            break
-        current = current.parent
-    return roots
-
-
-def _is_ignored(path: Path, roots: set[Path]) -> bool:
-    """Check if path matches any .gitignore pattern in the given root dirs."""
-    for root in roots:
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            continue
-        gitignore = root / ".gitignore"
-        if not gitignore.exists():
-            continue
-        try:
-            patterns = gitignore.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for line in patterns:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            negated = line.startswith("!")
-            if negated:
-                line = line[1:]
-            # fnmatch doesn't handle **, so normalize
-            pattern = line.rstrip("/")
-            if fnmatch.fnmatch(str(rel), pattern) or fnmatch.fnmatch(rel.name, pattern):
-                if not negated:
-                    return True
-    return False
-
-
-def _grep_impl(
-    *,
-    pattern: str,
-    path: Path,
-    glob: str | None,
-    ignore_case: bool,
-    literal: bool,
-    context: int,
-    limit: int,
-) -> OpResult:
-    """Search file contents for a pattern, returning matching lines with context.
-
-    Uses Python-native regex matching (not shell ``rg``/``grep``) so behavior
-    is identical across local, remote, and sandboxed environments. Respects
-    ``.gitignore`` and skips binary files and known vendored directories.
-    """
-    if not isinstance(context, int) or context < 0:
-        return {"error": "context must be >= 0"}
-    if not isinstance(limit, int) or limit < 1:
-        return {"error": "limit must be >= 1"}
-
-    if literal:
-        search_pattern = re.escape(pattern)
-    else:
-        search_pattern = pattern
-    flags = re.IGNORECASE if ignore_case else 0
-    try:
-        regex = re.compile(search_pattern, flags)
-    except re.error as exc:
-        return {"error": f"Invalid regex pattern: {exc}"}
-
-    # Determine if path is a file or directory
-    if path.is_file():
-        files_to_search: list[Path] = [path]
-        search_root = path.parent
-    else:
-        search_root = path
-        gitignore_roots = _load_gitignore_roots(path)
-        files_to_search = []
-        for dirpath, dirnames, filenames in os.walk(path):
-            # Skip vendored/build directories in-place
-            dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
-            for fname in sorted(filenames):
-                fpath = Path(dirpath) / fname
-                if _is_ignored(fpath, gitignore_roots):
-                    continue
-                if glob and not fnmatch.fnmatch(fname, glob):
-                    continue
-                files_to_search.append(fpath)
-
-    matches: list[dict[str, Any]] = []
-    total_output = 0
-    truncated = False
-
-    for fpath in files_to_search:
-        if truncated:
-            break
-        if _is_binary_file(fpath):
-            continue
-        try:
-            lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for i, line in enumerate(lines):
-            if regex.search(line):
-                start = max(0, i - context)
-                end = min(len(lines), i + context + 1)
-                context_lines = []
-                for j in range(start, end):
-                    display = lines[j]
-                    if len(display) > _MAX_LINE_DISPLAY:
-                        display = display[:_MAX_LINE_DISPLAY] + " [truncated]"
-                    context_lines.append({
-                        "line": j + 1,
-                        "content": display,
-                        "match": j == i,
-                    })
-                rel_path = str(fpath.relative_to(search_root)) if fpath != path else str(fpath)
-                match_entry = {
-                    "path": rel_path,
-                    "line": i + 1,
-                    "context": context_lines,
-                }
-                entry_size = len(json.dumps(match_entry))
-                if total_output + entry_size > _MAX_GREP_OUTPUT:
-                    truncated = True
-                    break
-                matches.append(match_entry)
-                total_output += entry_size
-                if len(matches) >= limit:
-                    truncated = True
-                    break
-
-    return {
-        "pattern": pattern,
-        "path": str(path),
-        "matches": matches[:limit],
-        "count": len(matches[:limit]),
-        "truncated": truncated,
-    }
-
-
-def _find_impl(
-    *,
-    pattern: str,
-    path: Path,
-    limit: int,
-) -> OpResult:
-    """Find files matching a glob pattern, respecting .gitignore.
-
-    Returns paths relative to the search root. Uses Python-native glob
-    matching (not shell ``find``) for portability across environments.
-    """
-    if not isinstance(limit, int) or limit < 1:
-        return {"error": "limit must be >= 1"}
-
-    gitignore_roots = _load_gitignore_roots(path)
-    results: list[str] = []
-    total_output = 0
-    truncated = False
-
-    for dirpath, dirnames, filenames in os.walk(path):
-        if truncated:
-            break
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
-        all_entries = sorted(dirnames + filenames)
-        for entry in all_entries:
-            fpath = Path(dirpath) / entry
-            if _is_ignored(fpath, gitignore_roots):
-                continue
-            if fnmatch.fnmatch(entry, pattern) or fnmatch.fnmatch(str(fpath.relative_to(path)), pattern):
-                rel = str(fpath.relative_to(path))
-                if fpath.is_dir():
-                    rel += "/"
-                entry_size = len(rel) + 1
-                if total_output + entry_size > _MAX_FIND_OUTPUT:
-                    truncated = True
-                    break
-                results.append(rel)
-                total_output += entry_size
-                if len(results) >= limit:
-                    truncated = True
-                    break
-
-    return {
-        "pattern": pattern,
-        "path": str(path),
-        "results": results[:limit],
-        "count": len(results[:limit]),
-        "truncated": truncated,
-    }
-
-
-def _list_dir_impl(
-    *,
-    path: Path,
-    limit: int,
-) -> OpResult:
-    """List directory entries (non-recursive), including dotfiles.
-
-    Directories get a trailing ``/`` suffix. Sorted alphabetically.
-    """
-    if not isinstance(limit, int) or limit < 1:
-        return {"error": "limit must be >= 1"}
-    if not path.is_dir():
-        return {"error": f"Not a directory: {path}"}
-
-    entries: list[str] = []
-    try:
-        all_entries = sorted(os.listdir(path))
-    except OSError as exc:
-        return {"error": f"Failed to list directory: {exc}"}
-
-    truncated = False
-    for entry in all_entries[:limit]:
-        full = path / entry
-        if full.is_dir():
-            entries.append(entry + "/")
-        else:
-            entries.append(entry)
-    if len(all_entries) > limit:
-        truncated = True
-
-    return {
-        "path": str(path),
-        "entries": entries,
-        "count": len(entries),
-        "total": len(all_entries),
-        "truncated": truncated,
-    }
-
 def _normalize_edits(
     old_text: str | None,
     new_text: str | None,
@@ -1934,6 +1918,8 @@ def _normalize_edits(
     if edits is not None:
         if not isinstance(edits, list):
             raise ValueError("edits must be an array of {oldText, newText} objects")
+        if not edits:
+            raise ValueError("edits must not be empty")
         normalized: list[EditEntry] = []
         for edit in edits:
             if not isinstance(edit, dict):

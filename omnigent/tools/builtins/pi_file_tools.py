@@ -1,215 +1,88 @@
-"""Pi-compatible file-interaction tools backed by OSEnvironment.
+"""Pi-style coding tools backed by OmniHarness's governed OS environment.
 
-These seven tools (``read``, ``write``, ``edit``, ``bash``, ``grep``,
-``find``, ``ls``) mirror the native coding tools Pi exposes, but run
-through OmniHarness's governed :class:`OSEnvironment` abstraction so
-they are sandboxed, policy-gated, and portable across local, remote,
-and sandboxed environments.
-
-The legacy ``sys_os_*`` tools remain available alongside these; they
-can be disabled later without affecting the new tools.
+The public names and broad contracts follow Pi 0.80.10's MIT-licensed native coding
+tools. OmniHarness keeps execution inside :class:`OSEnvironment` so the same
+tools work through every programmatic harness with the existing sandbox,
+policy, and remote-host rules. ``read`` intentionally uses inclusive
+``start``/``end`` fields instead of Pi's ``offset``/``limit`` fields.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
 
-from omnigent.inner.os_env import OSEnvironment
+from omnigent.inner.os_env import _DEFAULT_READ_LIMIT, OSEnvironment
+from omnigent.inner.pi_file_ops import ripgrep_available
 from omnigent.tools.base import Tool, ToolContext
 
 _logger = logging.getLogger(__name__)
 
 
-# ── JSON Schemas (modeled after Pi's native tool interfaces) ────
+def _schema(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {"name": name, "description": description, "parameters": parameters},
+    }
 
 
-_READ_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "path": {
-            "type": "string",
-            "description": (
-                "Path to the file to read. ALWAYS prioritize this tool to read file."
-            ),
-        },
-        "start": {
-            "type": "integer",
-            "description": "1-indexed starting line (inclusive). Defaults to 1.",
-        },
-        "end": {
-            "type": "integer",
-            "description": (
-                "1-indexed ending line (inclusive). If omitted, reads up to "
-                "2000 lines from start."
-            ),
-        },
-    },
-    "required": ["path"],
-}
+def _positive_int(value: Any, name: str, *, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
-_WRITE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "path": {
-            "type": "string",
-            "description": "Path to the file to write.",
-        },
-        "content": {
-            "type": "string",
-            "description": "Full file contents to write.",
-        },
-    },
-    "required": ["path", "content"],
-}
 
-_EDIT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "path": {
-            "type": "string",
-            "description": "Path to the file to edit.",
-        },
-        "oldText": {
-            "type": "string",
-            "description": "Exact text to replace.",
-        },
-        "newText": {
-            "type": "string",
-            "description": "Replacement text.",
-        },
-        "edits": {
-            "type": "array",
-            "description": "Optional batch of exact edits.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "oldText": {"type": "string"},
-                    "newText": {"type": "string"},
-                },
-                "required": ["oldText", "newText"],
-            },
-        },
-    },
-    "required": ["path"],
-}
+def _non_negative_int(value: Any, name: str, *, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
 
-_BASH_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "command": {
-            "type": "string",
-            "description": "Shell command to execute.",
-        },
-        "timeout": {
-            "type": "integer",
-            "description": "Timeout in seconds. Defaults to 120.",
-        },
-    },
-    "required": ["command"],
-}
 
-_GREP_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "pattern": {
-            "type": "string",
-            "description": "Regular expression (or literal if literal=true) to search for.",
-        },
-        "path": {
-            "type": "string",
-            "description": "File or directory to search in. Defaults to current directory.",
-        },
-        "glob": {
-            "type": "string",
-            "description": "Glob pattern to filter files, e.g. '*.py'.",
-        },
-        "ignoreCase": {
-            "type": "boolean",
-            "description": "Case-insensitive matching. Defaults to false.",
-        },
-        "literal": {
-            "type": "boolean",
-            "description": "Treat pattern as a literal string, not regex. Defaults to false.",
-        },
-        "context": {
-            "type": "integer",
-            "description": "Lines of context before and after each match. Defaults to 0.",
-        },
-        "limit": {
-            "type": "integer",
-            "description": "Maximum number of matches to return. Defaults to 100.",
-        },
-    },
-    "required": ["pattern"],
-}
+def _optional_bool(value: Any, name: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
 
-_FIND_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "pattern": {
-            "type": "string",
-            "description": "Glob pattern to match, e.g. '**/*.test.ts'.",
-        },
-        "path": {
-            "type": "string",
-            "description": "Directory to search in. Defaults to current directory.",
-        },
-        "limit": {
-            "type": "integer",
-            "description": "Maximum number of results. Defaults to 1000.",
-        },
-    },
-    "required": ["pattern"],
-}
 
-_LS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "path": {
-            "type": "string",
-            "description": "Directory to list. Defaults to current directory.",
-        },
-        "limit": {
-            "type": "integer",
-            "description": "Maximum number of entries. Defaults to 500.",
-        },
-    },
-    "required": [],
-}
+def _required_string(arguments: dict[str, Any], name: str) -> str:
+    value = arguments.get(name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    return value
 
 
 class _PiFileTool(Tool):
-    """Base class shared by the Pi-compatible file-interaction tools."""
-
     def __init__(self, os_env: OSEnvironment) -> None:
         self._os_env = os_env
 
     def invoke(self, arguments: str, ctx: ToolContext) -> str:
         del ctx
         try:
-            kwargs = json.loads(arguments) if arguments else {}
-        except json.JSONDecodeError as exc:
-            return json.dumps({"error": f"malformed arguments JSON: {exc}"})
-        if not isinstance(kwargs, dict):
-            return json.dumps({"error": "arguments must be a JSON object"})
-        import asyncio
-
-        try:
-            result = asyncio.run(self._invoke_async(kwargs))
+            values = json.loads(arguments) if arguments else {}
+            if not isinstance(values, dict):
+                raise ValueError("arguments must be a JSON object")
+            result = asyncio.run(self._invoke_async(values))
+            result.pop("_matched_paths", None)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            return json.dumps({"error": str(exc)})
         except Exception as exc:
             _logger.exception("%s failed", self.name())
             return json.dumps({"error": str(exc)})
         return json.dumps(result)
 
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
 
 class ReadTool(_PiFileTool):
-    """``read`` — read a text file with inclusive start/end line range."""
-
     @classmethod
     def name(cls) -> str:
         return "read"
@@ -217,85 +90,90 @@ class ReadTool(_PiFileTool):
     @classmethod
     def description(cls) -> str:
         return (
-            "Read a text file from the filesystem. Use start and end to read "
-            "specific line ranges (1-indexed, inclusive). Returns line-numbered "
-            "content. If the file is truncated, a note indicates how to read more."
+            "Read a UTF-8 text file or selected inclusive line range. Content is "
+            "line-numbered. Use start and end to avoid loading large files."
         )
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _READ_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path."},
+                    "start": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "First line to return (1-indexed, inclusive).",
+                    },
+                    "end": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Last line to return (1-indexed, inclusive).",
+                    },
+                },
+                "required": ["path"],
+                "additionalProperties": False,
             },
-        }
-
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        from omnigent.inner.os_env import _DEFAULT_READ_LIMIT
-
-        start = kwargs.get("start", 1)
-        end = kwargs.get("end")
-        # Convert start/end to offset/limit for the OSEnvironment backend
-        offset = start if isinstance(start, int) and start >= 1 else 1
-        if end is not None and isinstance(end, int) and end >= offset:
-            limit = end - offset + 1
-        else:
-            limit = _DEFAULT_READ_LIMIT
-        result = dict(
-            await self._os_env.read(
-                path=kwargs["path"],
-                offset=offset,
-                limit=limit,
-            )
         )
-        # Add line-numbered content for better model usability
-        if "content" in result and "encoding" not in result:
+
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        path = _required_string(arguments, "path")
+        start = _positive_int(arguments.get("start"), "start", default=1)
+        raw_end = arguments.get("end")
+        if raw_end is None:
+            limit = _DEFAULT_READ_LIMIT
+        else:
+            end = _positive_int(raw_end, "end", default=start)
+            if end < start:
+                raise ValueError("end must be greater than or equal to start")
+            limit = end - start + 1
+        result = dict(await self._os_env.read(path=path, offset=start, limit=limit))
+        if result.get("encoding") == "utf-8" and isinstance(result.get("content"), str):
             lines = result["content"].splitlines()
-            numbered = "\n".join(
-                f"{result['offset'] + i:>6}\t{line}" for i, line in enumerate(lines)
+            result["content"] = "\n".join(
+                f"{start + index:>6}\t{line}" for index, line in enumerate(lines)
             )
-            result["content"] = numbered
+            if result.get("returned_lines", 0) < max(0, result.get("total_lines", 0) - start + 1):
+                next_line = start + int(result.get("returned_lines", 0))
+                result["continuation"] = f"Read again with start={next_line} to continue."
         return result
 
 
 class WriteTool(_PiFileTool):
-    """``write`` — write a full file, creating parent directories."""
-
     @classmethod
     def name(cls) -> str:
         return "write"
 
     @classmethod
     def description(cls) -> str:
-        return (
-            "Write the full contents of a text file. Parent directories are "
-            "created automatically. Existing files are overwritten."
-        )
+        return "Write a complete UTF-8 text file, creating parent directories as needed."
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _WRITE_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path."},
+                    "content": {"type": "string", "description": "Complete replacement content."},
+                },
+                "required": ["path", "content"],
+                "additionalProperties": False,
             },
-        }
-
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        return dict(
-            await self._os_env.write(
-                path=kwargs["path"],
-                content=kwargs["content"],
-            )
         )
+
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        path = _required_string(arguments, "path")
+        content = arguments.get("content")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string")
+        return dict(await self._os_env.write(path=path, content=content))
 
 
 class EditTool(_PiFileTool):
-    """``edit`` — exact text replacement, with batch edit support."""
-
     @classmethod
     def name(cls) -> str:
         return "edit"
@@ -303,35 +181,52 @@ class EditTool(_PiFileTool):
     @classmethod
     def description(cls) -> str:
         return (
-            "Perform exact text replacements in a file. Supports a single "
-            "oldText/newText pair or a batch of edits. Each edit must match "
-            "exactly once in the file."
+            "Apply one or more exact, non-overlapping text replacements atomically. "
+            "Every oldText must match exactly once in the original file."
         )
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _EDIT_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative or absolute file path."},
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "oldText": {"type": "string"},
+                                "newText": {"type": "string"},
+                            },
+                            "required": ["oldText", "newText"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["path", "edits"],
+                "additionalProperties": False,
             },
-        }
+        )
 
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        path = _required_string(arguments, "path")
+        edits = arguments.get("edits")
+        if not isinstance(edits, list) or not edits:
+            raise ValueError("edits must be a non-empty array")
         return dict(
             await self._os_env.edit(
-                path=kwargs["path"],
-                old_text=kwargs.get("oldText"),
-                new_text=kwargs.get("newText"),
-                edits=kwargs.get("edits"),
+                path=path,
+                edits=edits,
+                original_coordinates=True,
             )
         )
 
 
 class BashTool(_PiFileTool):
-    """``bash`` — run a shell command."""
-
     @classmethod
     def name(cls) -> str:
         return "bash"
@@ -339,33 +234,37 @@ class BashTool(_PiFileTool):
     @classmethod
     def description(cls) -> str:
         return (
-            "Run a shell command and return stdout, stderr, and exit_code. "
-            "Use this for commands that require pipelines, environment variables, "
-            "or multi-step operations."
+            "Run a shell command in the OS environment and return stdout, stderr, and exit code."
         )
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _BASH_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Shell command to execute."},
+                    "timeout": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Timeout in seconds (default: 120).",
+                    },
+                },
+                "required": ["command"],
+                "additionalProperties": False,
             },
-        }
+        )
 
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        command = _required_string(arguments, "command")
+        timeout = _positive_int(arguments.get("timeout"), "timeout", default=120)
         return dict(
-            await self._os_env.shell(
-                command=kwargs["command"],
-                timeout=kwargs.get("timeout"),
-            )
+            await self._os_env.shell(command=command, timeout=timeout, max_output=50 * 1024)
         )
 
 
 class GrepTool(_PiFileTool):
-    """``grep`` — search file contents with regex, context, and glob filtering."""
-
     @classmethod
     def name(cls) -> str:
         return "grep"
@@ -373,39 +272,69 @@ class GrepTool(_PiFileTool):
     @classmethod
     def description(cls) -> str:
         return (
-            "Search file contents for a pattern. Supports regex or literal "
-            "matching, case-insensitive mode, glob file filtering, and context "
-            "lines around matches. Respects .gitignore. Use this instead of "
-            "shell grep/rg for better structured results."
+            "Search file contents and return matching paths and line numbers. Respects "
+            ".gitignore and supports regex, literal matching, glob filters, and context."
         )
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _GREP_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex or literal search pattern.",
+                    },
+                    "path": {"type": "string", "description": "File or directory (default: cwd)."},
+                    "glob": {
+                        "type": "string",
+                        "description": "Optional file glob, such as **/*.py.",
+                    },
+                    "ignoreCase": {"type": "boolean", "description": "Case-insensitive search."},
+                    "literal": {
+                        "type": "boolean",
+                        "description": "Treat pattern as literal text.",
+                    },
+                    "context": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Context lines before and after.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum matches (default: 100).",
+                    },
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
             },
-        }
+        )
 
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        pattern = _required_string(arguments, "pattern")
+        path = arguments.get("path", ".")
+        if not isinstance(path, str) or not path:
+            raise ValueError("path must be a non-empty string")
+        glob = arguments.get("glob")
+        if glob is not None and not isinstance(glob, str):
+            raise ValueError("glob must be a string")
         return dict(
             await self._os_env.grep(
-                pattern=kwargs["pattern"],
-                path=kwargs.get("path", "."),
-                glob=kwargs.get("glob"),
-                ignore_case=kwargs.get("ignoreCase", False),
-                literal=kwargs.get("literal", False),
-                context=kwargs.get("context", 0),
-                limit=kwargs.get("limit", 100),
+                pattern,
+                path,
+                glob=glob,
+                ignore_case=_optional_bool(arguments.get("ignoreCase"), "ignoreCase"),
+                literal=_optional_bool(arguments.get("literal"), "literal"),
+                context=_non_negative_int(arguments.get("context"), "context", default=0),
+                limit=_positive_int(arguments.get("limit"), "limit", default=100),
             )
         )
 
 
 class FindTool(_PiFileTool):
-    """``find`` — discover files matching a glob pattern."""
-
     @classmethod
     def name(cls) -> str:
         return "find"
@@ -413,72 +342,108 @@ class FindTool(_PiFileTool):
     @classmethod
     def description(cls) -> str:
         return (
-            "Find files and directories matching a glob pattern. Respects "
-            ".gitignore and skips vendored directories. Returns paths relative "
-            "to the search root. Use this instead of shell find for structured results."
+            "Find files by glob pattern. Respects .gitignore and returns paths "
+            "relative to the search root."
         )
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _FIND_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob such as **/*.spec.ts."},
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search (default: cwd).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum results (default: 1000).",
+                    },
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
             },
-        }
+        )
 
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        pattern = _required_string(arguments, "pattern")
+        path = arguments.get("path", ".")
+        if not isinstance(path, str) or not path:
+            raise ValueError("path must be a non-empty string")
         return dict(
             await self._os_env.find(
-                pattern=kwargs["pattern"],
-                path=kwargs.get("path", "."),
-                limit=kwargs.get("limit", 1000),
+                pattern,
+                path,
+                limit=_positive_int(arguments.get("limit"), "limit", default=1000),
             )
         )
 
 
 class LsTool(_PiFileTool):
-    """``ls`` — list directory entries (non-recursive)."""
-
     @classmethod
     def name(cls) -> str:
         return "ls"
 
     @classmethod
     def description(cls) -> str:
-        return (
-            "List directory entries (non-recursive). Includes dotfiles. "
-            "Directories are suffixed with '/'. Sorted alphabetically."
-        )
+        return "List one directory, including dotfiles. Directory names end with '/'."
 
     def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": _LS_SCHEMA,
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory to list (default: cwd)."},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum entries (default: 500).",
+                    },
+                },
+                "additionalProperties": False,
             },
-        }
+        )
 
-    async def _invoke_async(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    async def _invoke_async(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        path = arguments.get("path", ".")
+        if not isinstance(path, str) or not path:
+            raise ValueError("path must be a non-empty string")
         return dict(
             await self._os_env.list_dir(
-                path=kwargs.get("path", "."),
-                limit=kwargs.get("limit", 500),
+                path,
+                limit=_positive_int(arguments.get("limit"), "limit", default=500),
             )
         )
 
 
+async def execute_pi_file_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    os_env: OSEnvironment,
+) -> dict[str, Any]:
+    """Execute one Pi-style tool with the same validation used by ToolManager."""
+    for tool in build_pi_file_tools(os_env):
+        if tool.name() == tool_name:
+            assert isinstance(tool, _PiFileTool)
+            return await tool._invoke_async(arguments)
+    raise ValueError(f"Unknown Pi file tool: {tool_name}")
+
+
 def build_pi_file_tools(os_env: OSEnvironment) -> list[Tool]:
-    """Construct all seven Pi-compatible file tools against *os_env*."""
-    return [
+    """Build the seven Pi-style coding tools for one OS environment."""
+    tools: list[Tool] = [
         ReadTool(os_env),
         WriteTool(os_env),
         EditTool(os_env),
         BashTool(os_env),
-        GrepTool(os_env),
-        FindTool(os_env),
-        LsTool(os_env),
     ]
+    if ripgrep_available():
+        tools.extend((GrepTool(os_env), FindTool(os_env)))
+    tools.append(LsTool(os_env))
+    return tools

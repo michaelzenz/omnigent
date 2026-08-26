@@ -9700,6 +9700,9 @@ def create_runner_app(
 
         forget_spawn_family(session_id)
         forget_skill_provenance(session_id)
+        from omnigent.runner.dynamic_file_memory import clear as clear_file_memory
+
+        clear_file_memory(session_id)
 
         _session_spec_cache.pop(session_id, None)
         _session_harness_overrides.pop(session_id, None)
@@ -12318,6 +12321,13 @@ def create_runner_app(
             _session_histories[conv] = (
                 [] if is_native_harness(harness_name) else await _load_history_as_input(conv)
             )
+        from omnigent.runner.dynamic_file_memory import configure as configure_file_memory
+
+        configure_file_memory(
+            conv,
+            msg_body.get("memory_file_context"),
+            _session_histories[conv],
+        )
         if cached_spec is not None:
             spawn_env = _build_spawn_env_from_spec(
                 cached_spec,

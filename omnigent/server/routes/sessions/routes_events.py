@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import secrets
 import weakref
 from collections.abc import Callable
@@ -421,25 +422,33 @@ async def _compose_turn_memory(
     host_registry: HostRegistry | None = None,
     host_id: str | None = None,
     workspace: str | None = None,
+    file_context: dict[str, Any] | None = None,
 ) -> str | None:
     """Fetch and render memory only for OmniHarness user turns."""
-    if memory_store is None or event_type != "message" or role != "user" or not uses_omniharness:
+    if memory_store is None or not uses_omniharness:
         return None
     provider: MemoryProvider = await asyncio.to_thread(
         memory_store.get_provider,
         user_id=user_id,
         default=DEFAULT_MEMORY_PROVIDER,
     )
+    if event_type != "message" or role != "user":
+        if file_context is not None:
+            file_context.update({"provider": provider, "files": []})
+        return None
     effective_max_tokens = await asyncio.to_thread(
         memory_store.get_max_tokens,
         user_id=user_id,
         default=max_tokens,
     )
     if provider == "omniharness":
+        if file_context is not None:
+            file_context.update({"provider": "omniharness", "files": []})
         categories = await asyncio.to_thread(memory_store.list, user_id=user_id)
         return compose_memory(categories, effective_max_tokens, model=model)
 
     documents: list[tuple[str, str]] = []
+    context_documents: list[tuple[str, str]] = []
     if host_registry is not None and host_id is not None:
         connection = host_registry.get(host_id)
         if connection is not None and connection.owner == user_id:
@@ -454,9 +463,12 @@ async def _compose_turn_memory(
                 )
                 global_file = payload.get("global_file")
                 if isinstance(global_file, dict) and isinstance(global_file.get("content"), str):
-                    documents.append(
+                    display_path = f"~/{global_file.get('rel_home_path', '')}"
+                    documents.append((display_path, global_file["content"]))
+                    absolute_path = global_file.get("path")
+                    context_documents.append(
                         (
-                            f"~/{global_file.get('rel_home_path', '')}",
+                            absolute_path if isinstance(absolute_path, str) else display_path,
                             global_file["content"],
                         )
                     )
@@ -467,13 +479,15 @@ async def _compose_turn_memory(
                     )
                 project_files = payload.get("project_files")
                 if isinstance(project_files, list):
-                    documents.extend(
+                    project_documents = [
                         (item["path"], item["content"])
                         for item in project_files
                         if isinstance(item, dict)
                         and isinstance(item.get("path"), str)
                         and isinstance(item.get("content"), str)
-                    )
+                    ]
+                    documents.extend(project_documents)
+                    context_documents.extend(project_documents)
             except (HostFsError, HostFsUnavailableError):
                 _logger.warning(
                     "Failed to read %s memory files for session host %s",
@@ -487,6 +501,19 @@ async def _compose_turn_memory(
                 provider,
                 host_id,
             )
+    if file_context is not None:
+        file_context.update(
+            {
+                "provider": provider,
+                "files": [
+                    {
+                        "path": path,
+                        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    }
+                    for path, content in context_documents
+                ],
+            }
+        )
     return compose_file_memory(provider, documents, effective_max_tokens, model=model)
 
 
@@ -2000,6 +2027,7 @@ def register_events_routes(
         _has_mcp_servers = False
         _profile_instructions: str | None = None
         _memory_instructions: str | None = None
+        _memory_file_context: dict[str, Any] = {}
         _loaded_spec: Any | None = None
         if _agent is not None and agent_cache is not None and _agent.bundle_location:
             try:
@@ -2070,6 +2098,7 @@ def register_events_routes(
             host_registry=host_registry,
             host_id=conv.host_id,
             workspace=conv.workspace,
+            file_context=_memory_file_context,
         )
         _selected_profile_name = _agent.name if _agent is not None else None
         if (
@@ -2185,6 +2214,7 @@ def register_events_routes(
                 native_terminal_ready=native_terminal_ready,
                 profile_instructions=_profile_instructions,
                 memory_instructions=_memory_instructions,
+                memory_file_context=_memory_file_context or None,
                 # Read only for the gateway-backing check that decides which router
                 # serves this turn; absent, routing keeps its default posture.
                 host_store=getattr(request.app.state, "host_store", None),

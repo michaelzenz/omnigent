@@ -60,6 +60,15 @@ from omnigent.model_override import (
     validate_model_override,
 )
 from omnigent.native_coding_agents import public_agent_name
+from omnigent.runner.dynamic_file_memory import (
+    acknowledge as acknowledge_file_memory,
+)
+from omnigent.runner.dynamic_file_memory import (
+    attach as attach_file_memory,
+)
+from omnigent.runner.dynamic_file_memory import (
+    discover as discover_file_memory,
+)
 from omnigent.runtime import pending_elicitations
 from omnigent.session_lifecycle import (
     CLOSED_LABEL_KEY,
@@ -84,7 +93,10 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
-from omnigent.tools.builtins.pi_file_tools import build_pi_file_tools
+from omnigent.tools.builtins.pi_file_tools import (
+    build_pi_file_tools,
+    execute_pi_file_tool,
+)
 from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool, is_task_api_path
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
 from omnigent.tools.builtins.spawn import (
@@ -641,7 +653,7 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
 
 
 def build_os_env_tool_schemas() -> list[_JsonObject]:
-    """Build flat ``sys_os_*`` tool schemas unconditionally.
+    """Build legacy and Pi-style OS tool schemas unconditionally.
 
     Creates a minimal :class:`OSEnvironment` purely for schema extraction —
     the actual execution is handled by the runner-side
@@ -655,8 +667,8 @@ def build_os_env_tool_schemas() -> list[_JsonObject]:
     ``sys_os_*`` (it only registers them when ``spec.os_env`` is set), and
     the inner executor raises ``Tool sys_os_read not found in agent Omnigent``.
 
-    :returns: Flat ``{"name", "description", "parameters"}`` dicts for the four
-        ``sys_os_*`` tools. Empty list on failure (best-effort).
+    :returns: Flat ``{"name", "description", "parameters"}`` dicts for the
+        legacy ``sys_os_*`` and Pi-style tools. Empty list on failure.
     """
     from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
     from omnigent.inner.os_env import create_os_environment
@@ -3978,19 +3990,11 @@ async def _execute_puppygarden_api_tool(
     method = args.get("method")
     path = args.get("path")
     if not isinstance(method, str) or method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
-        return json.dumps(
-            {"error": f"{tool_name} requires 'method' (GET/POST/PUT/PATCH/DELETE)"}
-        )
+        return json.dumps({"error": f"{tool_name} requires 'method' (GET/POST/PUT/PATCH/DELETE)"})
     if not isinstance(path, str) or not path:
         return json.dumps({"error": f"{tool_name} requires 'path' (e.g. /v1/agent-tasks/<id>)"})
     if not is_task_api_path(path):
-        return json.dumps(
-            {
-                "error": (
-                    f"{tool_name} only proxies PuppyGarden API paths"
-                )
-            }
-        )
+        return json.dumps({"error": (f"{tool_name} only proxies PuppyGarden API paths")})
 
     body = args.get("body")
     query = args.get("query")
@@ -5163,7 +5167,10 @@ async def _create_project_via_rest(
         return json.dumps({"error": f"sys_project_create failed: {exc}"})
     if response.status_code >= 400:
         return json.dumps(
-            {"error": f"sys_project_create returned {response.status_code}", "detail": response.text[:200]}
+            {
+                "error": f"sys_project_create returned {response.status_code}",
+                "detail": response.text[:200],
+            }
         )
     try:
         payload = response.json()
@@ -5186,7 +5193,10 @@ async def _list_projects_via_rest(
         return json.dumps({"error": f"sys_project_list failed: {exc}"})
     if response.status_code >= 400:
         return json.dumps(
-            {"error": f"sys_project_list returned {response.status_code}", "detail": response.text[:200]}
+            {
+                "error": f"sys_project_list returned {response.status_code}",
+                "detail": response.text[:200],
+            }
         )
     try:
         payload = response.json()
@@ -5229,7 +5239,10 @@ async def _set_current_session_project_via_rest(
         return json.dumps({"error": f"sys_session_set_project failed: {exc}"})
     if response.status_code >= 400:
         return json.dumps(
-            {"error": f"sys_session_set_project returned {response.status_code}", "detail": response.text[:200]}
+            {
+                "error": f"sys_session_set_project returned {response.status_code}",
+                "detail": response.text[:200],
+            }
         )
     try:
         payload = response.json()
@@ -5270,7 +5283,10 @@ async def _set_current_session_workspace_via_rest(
         return json.dumps({"error": f"sys_session_set_workspace failed: {exc}"})
     if response.status_code >= 400:
         return json.dumps(
-            {"error": f"sys_session_set_workspace returned {response.status_code}", "detail": response.text[:200]}
+            {
+                "error": f"sys_session_set_workspace returned {response.status_code}",
+                "detail": response.text[:200],
+            }
         )
     try:
         payload = response.json()
@@ -6251,6 +6267,7 @@ async def dispatch_tool_locally(
             timeout=30.0,
         )
         resp.raise_for_status()
+        await acknowledge_file_memory(conversation_id, output)
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
             "Runner local dispatch tool_result event failed for %s (call_id=%s): %s",
@@ -6404,6 +6421,49 @@ async def _seed_os_env_snapshot(
         pass  # file does not exist yet or unreadable — no baseline to capture
 
 
+def _file_memory_paths(
+    tool_name: str,
+    args: _JsonObject,
+    result: dict[str, Any] | None = None,
+) -> list[tuple[str, bool]]:
+    """Return explicit paths whose directory instructions apply to a tool call."""
+    raw_path = args.get("path", ".")
+    if not isinstance(raw_path, str) or not raw_path:
+        return []
+    if tool_name in {
+        "read",
+        "write",
+        "edit",
+        "sys_os_read",
+        "sys_os_write",
+        "sys_os_edit",
+    }:
+        paths: list[tuple[str, bool]] = [(raw_path, False)]
+    else:
+        paths = [(raw_path, True)]
+    if result is None:
+        return paths
+    matched_paths = result.get("_matched_paths")
+    if isinstance(matched_paths, list):
+        paths.extend((path, False) for path in matched_paths if isinstance(path, str) and path)
+    return paths
+
+
+def _merge_file_memory(
+    first: dict[str, Any] | None,
+    second: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if first is None:
+        return second
+    if second is None:
+        return first
+    merged = dict(first)
+    first_files = first.get("files") if isinstance(first.get("files"), list) else []
+    second_files = second.get("files") if isinstance(second.get("files"), list) else []
+    merged["files"] = [*first_files, *second_files]
+    return merged
+
+
 async def _execute_os_env_tool(
     tool_name: str,
     args: _JsonObject,
@@ -6442,6 +6502,35 @@ async def _execute_os_env_tool(
         if os_env is None:
             return "Error: unable to create OSEnvironment"
 
+        mutation_memory_tools = {"write", "edit", "sys_os_write", "sys_os_edit"}
+        memory_tools = {
+            "read",
+            "grep",
+            "find",
+            "ls",
+            "sys_os_read",
+            *mutation_memory_tools,
+        }
+        pre_memory = None
+        if tool_name in memory_tools:
+            pre_memory = await discover_file_memory(
+                os_env,
+                conversation_id,
+                _file_memory_paths(tool_name, args),
+                record=tool_name not in mutation_memory_tools,
+            )
+            if pre_memory is not None and tool_name in mutation_memory_tools:
+                return json.dumps(
+                    attach_file_memory(
+                        {
+                            "error": (
+                                "New directory instructions were discovered. "
+                                "Review them, then retry the mutation."
+                            )
+                        },
+                        pre_memory,
+                    )
+                )
         if tool_name == SysOsReadTool.name():
             result = await os_env.read(
                 path=cast("str", args.get("path", "")),
@@ -6482,71 +6571,40 @@ async def _execute_os_env_tool(
             )
             if filesystem_registry is not None and conversation_id is not None:
                 filesystem_registry.record_change(_path, "modified", conversation_id)
-        elif tool_name == SysOsShellTool.name() or tool_name == "bash":
+        elif tool_name == SysOsShellTool.name():
             result = await os_env.shell(
                 command=cast("str", args.get("command", "")),
                 timeout=cast("int | None", args.get("timeout")),
             )
-        elif tool_name == "read":
-            _start = args.get("start", 1)
-            _end = args.get("end")
-            _offset = _start if isinstance(_start, int) and _start >= 1 else 1
-            if _end is not None and isinstance(_end, int) and _end >= _offset:
-                _limit = _end - _offset + 1
-            else:
-                _limit = _DEFAULT_READ_LIMIT
-            result = await os_env.read(
-                path=cast("str", args.get("path", "")),
-                offset=_offset,
-                limit=_limit,
-            )
-        elif tool_name == "write":
-            _path = cast("str", args.get("path", ""))
-            if filesystem_registry is not None and conversation_id is not None:
-                await _seed_os_env_snapshot(os_env, _path, filesystem_registry, conversation_id)
-            result = await os_env.write(
-                path=_path,
-                content=cast("str", args.get("content", "")),
-            )
-            if filesystem_registry is not None and conversation_id is not None:
-                was_created = isinstance(result, dict) and result.get("created") is True
-                status = "created" if was_created else "modified"
+        elif tool_name in {"read", "write", "edit", "bash", "grep", "find", "ls"}:
+            if tool_name in {"write", "edit"}:
+                _path = cast("str", args.get("path", ""))
+                if filesystem_registry is not None and conversation_id is not None:
+                    await _seed_os_env_snapshot(
+                        os_env, _path, filesystem_registry, conversation_id
+                    )
+            result = await execute_pi_file_tool(tool_name, args, os_env)
+            if (
+                tool_name in {"write", "edit"}
+                and filesystem_registry is not None
+                and conversation_id is not None
+            ):
+                if tool_name == "write" and result.get("created") is True:
+                    status = "created"
+                else:
+                    status = "modified"
                 filesystem_registry.record_change(_path, status, conversation_id)
-        elif tool_name == "edit":
-            _path = cast("str", args.get("path", ""))
-            if filesystem_registry is not None and conversation_id is not None:
-                await _seed_os_env_snapshot(os_env, _path, filesystem_registry, conversation_id)
-            result = await os_env.edit(
-                path=_path,
-                old_text=cast("str | None", args.get("oldText")),
-                new_text=cast("str | None", args.get("newText")),
-                edits=cast("list[dict[str, str]] | None", args.get("edits")),
-            )
-            if filesystem_registry is not None and conversation_id is not None:
-                filesystem_registry.record_change(_path, "modified", conversation_id)
-        elif tool_name == "grep":
-            result = await os_env.grep(
-                pattern=cast("str", args.get("pattern", "")),
-                path=cast("str", args.get("path", ".")),
-                glob=cast("str | None", args.get("glob")),
-                ignore_case=bool(args.get("ignoreCase", False)),
-                literal=bool(args.get("literal", False)),
-                context=cast("int", args.get("context", 0)),
-                limit=cast("int", args.get("limit", 100)),
-            )
-        elif tool_name == "find":
-            result = await os_env.find(
-                pattern=cast("str", args.get("pattern", "")),
-                path=cast("str", args.get("path", ".")),
-                limit=cast("int", args.get("limit", 1000)),
-            )
-        elif tool_name == "ls":
-            result = await os_env.list_dir(
-                path=cast("str", args.get("path", ".")),
-                limit=cast("int", args.get("limit", 500)),
-            )
         else:
             return f"Error: {tool_name} not implemented"
+
+        if tool_name in memory_tools:
+            post_memory = await discover_file_memory(
+                os_env,
+                conversation_id,
+                _file_memory_paths(tool_name, args, result),
+            )
+            result.pop("_matched_paths", None)
+            result = attach_file_memory(result, _merge_file_memory(pre_memory, post_memory))
     except Exception as exc:
         _logger.exception("runner OSEnvironment dispatch failed for %s", tool_name)
         return json.dumps({"error": str(exc)})

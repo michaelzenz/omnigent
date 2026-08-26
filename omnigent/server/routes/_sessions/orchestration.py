@@ -4744,6 +4744,7 @@ async def _forward_event_to_runner(
     uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
+    memory_file_context: dict[str, Any] | None = None,
     usage_purpose: str = "user_interaction",
 ) -> str:
     """
@@ -4865,6 +4866,8 @@ async def _forward_event_to_runner(
             )
     if memory_instructions is not None:
         runner_body["memory_instructions"] = memory_instructions
+    if memory_file_context is not None:
+        runner_body["memory_file_context"] = memory_file_context
     # Persist the turn-initiating actor so /policies/evaluate and MCP
     # tools/call can read it back on any server replica.  Skip system-driven
     # forwards (sub-agent results, parent-wake carry created_by=None) — they
@@ -5794,6 +5797,7 @@ async def _dispatch_session_event_to_runner_impl(
     uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
+    memory_file_context: dict[str, Any] | None = None,
     usage_purpose: str = "user_interaction",
 ) -> _SessionEventDispatchResult:
     """
@@ -6099,6 +6103,7 @@ async def _dispatch_session_event_to_runner_impl(
         uses_omniharness=uses_omniharness,
         profile_instructions=profile_instructions,
         memory_instructions=memory_instructions,
+        memory_file_context=memory_file_context,
         usage_purpose=usage_purpose,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)

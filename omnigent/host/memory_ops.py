@@ -63,8 +63,10 @@ def global_memory_file_wire(
 ) -> dict[str, object]:
     """Return one provider's global file content and content hash."""
     resolved_home = (home or Path.home()).resolve()
-    content = _read_text(_global_path(provider, resolved_home))
+    path = _global_path(provider, resolved_home)
+    content = _read_text(path)
     return {
+        "path": str(path),
         "provider": provider,
         "rel_home_path": MEMORY_PROVIDER_GLOBAL_PATHS[provider],
         "exists": content is not None,

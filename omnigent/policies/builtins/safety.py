@@ -44,7 +44,7 @@ _CURSOR_NATIVE_OS_TOOLS = frozenset({"Shell"})
 # Claude/Codex-cased ``_NATIVE_OS_TOOLS``. Pi uses the same argument keys
 # as the Omnigent ``sys_os_*`` tools (``path`` / ``command``), so the
 # previews below resolve without a Pi-specific arg branch.
-_PI_NATIVE_OS_TOOLS = frozenset({"read", "bash", "write", "edit"})
+_PI_NATIVE_OS_TOOLS = frozenset({"read", "bash", "write", "edit", "grep", "find", "ls"})
 
 # Hermes Agent tool names surfaced via the ``pre_tool_call`` shell hook
 # (see ``omnigent.inner.hermes_policy_hook``). Hermes uses its own naming
@@ -229,7 +229,8 @@ def ask_on_os_tools(event: PolicyEvent) -> PolicyResponse:
     - **Cursor SDK native tools** (``Shell``) — surfaced via the
       ``preToolUse`` hook (see ``cursor_policy_hook.py``). Cursor
       uses ``Shell`` instead of ``Bash`` for its terminal tool.
-    - **Pi native tools** (``read``, ``bash``, ``write``, ``edit``)
+    - **Pi-style tools** (``read``, ``bash``, ``write``, ``edit``,
+      ``grep``, ``find``, ``ls``)
       — surfaced via the pi ``tool_call`` extension hook. Lowercase
       and distinct from the Claude/Codex casing.
     - **Hermes Agent tools** (``terminal``, ``execute_code``,
