@@ -237,11 +237,10 @@ import { createBundledSession, launchRunner } from "@/lib/sessionsApi";
 import { PromptProfileConfigControl, type ProfileSelection } from "./ProfileControls";
 import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles";
 
-// Fallback label for the OmniHarness model quick-select and gear tooltip when
-// no model is pinned. Hardcoded because the server's model catalog has no
-// isDefault marker for OmniHarness models — kept consistent across all three
-// surfaces (quick-select, configSummary, gear modal).
-const OMNIHARNESS_DEFAULT_MODEL_LABEL = "Default (GLM 5.2)";
+// Fallback label for the SDK model select's "Default" row, used by non-OmniHarness
+// bundle agents. OmniHarness itself no longer has a "Default" — it defaults to
+// Smart Routing when no model is pinned.
+const OMNIHARNESS_DEFAULT_MODEL_LABEL = "Default";
 
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
@@ -2271,11 +2270,12 @@ function LandingSdkModelSelect({
   onPickRouting: () => void;
 }) {
   const routingOn = smartRoutingEligible && costControlMode === "on";
-  const label = routingOn
+  // No "Default" sentinel — when no model is pinned, the session uses Smart Routing.
+  const autoRoute = routingOn || (!pickedModel && smartRoutingEligible);
+  const label = autoRoute
     ? SMART_ROUTING_LABEL
-    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ??
-      OMNIHARNESS_DEFAULT_MODEL_LABEL);
-  const activeId = routingOn ? null : pickedModel || null;
+    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ?? SMART_ROUTING_LABEL);
+  const activeId = autoRoute ? null : pickedModel || null;
 
   return (
     <div
@@ -2300,7 +2300,7 @@ function LandingSdkModelSelect({
           {smartRoutingEligible && (
             <DropdownMenuItem
               data-testid="new-chat-landing-model-smart-routing"
-              data-active={routingOn ? "true" : undefined}
+              data-active={autoRoute ? "true" : undefined}
               onSelect={onPickRouting}
               className="data-[active=true]:bg-muted"
             >
@@ -3288,9 +3288,9 @@ export function NewChatLandingScreen() {
       return [{ label: "Permissions", value: skipValue }, ...routingRow];
     }
     if (selectedAgentUsesOmniHarness) {
-      const modelValue =
-        sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ??
-        OMNIHARNESS_DEFAULT_MODEL_LABEL;
+      const modelValue = (routingOn || !pickedModel) && smartRoutingEligible
+        ? SMART_ROUTING_LABEL
+        : (sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ?? SMART_ROUTING_LABEL);
       const profileHarness = selectedAgent?.harness;
       const activeHarness = pickedHarness ?? profileHarness;
       return [
@@ -3320,7 +3320,6 @@ export function NewChatLandingScreen() {
               },
             ]
           : []),
-        ...routingRow,
       ];
     }
     if (!omniharnessSelected && selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll) {
@@ -3503,13 +3502,21 @@ export function NewChatLandingScreen() {
   useEffect(() => {
     if (!smartRoutingPreferenceKey || autoRoutingSelected) return;
     const storedRouting = readHarnessOptions(smartRoutingPreferenceKey).routing;
-    if (storedRouting === undefined) return;
+    if (storedRouting === undefined) {
+      // No stored preference: default OmniHarness to Smart Routing when eligible.
+      if (selectedAgentUsesOmniHarness && smartRoutingEligible) {
+        setCostControlMode("on");
+        writeHarnessOption(OMNIHARNESS_AGENT_NAME, { routing: "on", model: "", effort: "" });
+      }
+      return;
+    }
     setCostControlMode(smartRoutingEligible && storedRouting === "on" ? "on" : null);
   }, [
     smartRoutingPreferenceKey,
     smartRoutingEligible,
     effectiveAgentId,
     autoRoutingSelected,
+    selectedAgentUsesOmniHarness,
     setCostControlMode,
   ]);
   // Top-level Smart Routing pins permissions to Default (no override sent), so
