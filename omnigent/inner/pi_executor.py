@@ -1831,6 +1831,11 @@ def _pi_messages_to_canonical(messages: JsonValue) -> list[_JsonObject]:
                         items.append(
                             {"type": "message", "role": "assistant", "content": [canonical_block]}
                         )
+                elif block_type == "thinking":
+                    # Thinking blocks are the model's internal reasoning,
+                    # not conversation content — skip them, matching how
+                    # the streaming path keeps thinking out of response_text.
+                    continue
                 elif role == "assistant" and block_type == "toolCall":
                     call_id = block.get("id")
                     name = block.get("name")
