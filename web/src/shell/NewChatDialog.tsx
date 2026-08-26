@@ -237,6 +237,12 @@ import { createBundledSession, launchRunner } from "@/lib/sessionsApi";
 import { PromptProfileConfigControl, type ProfileSelection } from "./ProfileControls";
 import { type PromptProfile, usePromptProfiles } from "@/hooks/usePromptProfiles";
 
+// Fallback label for the OmniHarness model quick-select and gear tooltip when
+// no model is pinned. Hardcoded because the server's model catalog has no
+// isDefault marker for OmniHarness models — kept consistent across all three
+// surfaces (quick-select, configSummary, gear modal).
+const OMNIHARNESS_DEFAULT_MODEL_LABEL = "Default (GLM 5.2)";
+
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
 // --harness kimi` use) — the picker offers only the native TUI (`kimi-native-ui`).
@@ -1901,7 +1907,7 @@ function HarnessConfigModal({
                 offerSmartRouting={smartRoutingEligible}
                 testId="new-chat-landing-config-model"
                 models={sdkModelSelectOptions}
-                defaultLabel="Default (GLM 5.2)"
+                defaultLabel={OMNIHARNESS_DEFAULT_MODEL_LABEL}
                 contentClassName="[&_[data-slot=select-item]]:pl-2.5"
               />
             </ConfigRow>
@@ -2267,7 +2273,8 @@ function LandingSdkModelSelect({
   const routingOn = smartRoutingEligible && costControlMode === "on";
   const label = routingOn
     ? SMART_ROUTING_LABEL
-    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ?? "Default");
+    : (sdkModelOptions.find((m) => m.id === pickedModel)?.displayName ??
+      OMNIHARNESS_DEFAULT_MODEL_LABEL);
   const activeId = routingOn ? null : pickedModel || null;
 
   return (
@@ -3283,7 +3290,7 @@ export function NewChatLandingScreen() {
     if (selectedAgentUsesOmniHarness) {
       const modelValue =
         sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ??
-        "Default (GLM 5.2)";
+        OMNIHARNESS_DEFAULT_MODEL_LABEL;
       const profileHarness = selectedAgent?.harness;
       const activeHarness = pickedHarness ?? profileHarness;
       return [
