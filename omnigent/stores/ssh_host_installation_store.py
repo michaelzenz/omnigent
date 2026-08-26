@@ -105,6 +105,7 @@ class SshHostInstallationStore:
                 session.add(row)
             return SshSettings(
                 package_index_url=row.package_index_url,
+                npm_registry_url=row.npm_registry_url,
                 remote_namespace=row.remote_namespace,
             )
 
@@ -112,6 +113,7 @@ class SshHostInstallationStore:
         self,
         *,
         package_index_url: str | None,
+        npm_registry_url: str | None,
         updated_by: str | None = None,
     ) -> SshSettings:
         """Persist workspace SSH settings without changing their namespace."""
@@ -130,10 +132,12 @@ class SshHostInstallationStore:
                 )
                 session.add(row)
             row.package_index_url = package_index_url
+            row.npm_registry_url = npm_registry_url
             row.updated_at = now_epoch()
             row.updated_by = updated_by
             return SshSettings(
                 package_index_url=row.package_index_url,
+                npm_registry_url=row.npm_registry_url,
                 remote_namespace=row.remote_namespace,
             )
 

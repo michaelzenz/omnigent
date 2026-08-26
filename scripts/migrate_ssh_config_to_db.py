@@ -80,6 +80,7 @@ def main() -> None:
     package_index_url = settings.get("package_index_url")
     store.update_settings(
         package_index_url=str(package_index_url) if package_index_url else None,
+        npm_registry_url=None,
         updated_by="manual-config-migration",
     )
 

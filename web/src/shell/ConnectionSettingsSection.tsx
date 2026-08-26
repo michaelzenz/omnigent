@@ -53,6 +53,7 @@ function needsFrequentPolling(connection: SshConnection): boolean {
 export function ConnectionSettingsBody() {
   const [connections, setConnections] = useState<SshConnection[]>([]);
   const [packageIndexUrl, setPackageIndexUrl] = useState("");
+  const [npmRegistryUrl, setNpmRegistryUrl] = useState("");
   const [label, setLabel] = useState("");
   const [alias, setAlias] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -69,22 +70,25 @@ export function ConnectionSettingsBody() {
     if (generation !== requestGeneration.current) return loaded;
     setConnections(loaded.connections);
     setPackageIndexUrl(loaded.packageIndexUrl ?? "");
+    setNpmRegistryUrl(loaded.npmRegistryUrl ?? "");
     setLoadError(null);
     return loaded;
   }, []);
 
-  const persist = useCallback(async (next: SshConnection[], nextPackageIndexUrl: string | null) => {
+  const persist = useCallback(async (next: SshConnection[], nextPackageIndexUrl: string | null, nextNpmRegistryUrl: string | null) => {
     const generation = ++requestGeneration.current;
-    const saved = await saveSshConnections(next, nextPackageIndexUrl);
+    const saved = await saveSshConnections(next, nextPackageIndexUrl, nextNpmRegistryUrl);
     if (generation === requestGeneration.current) {
       setConnections(saved.connections);
       setPackageIndexUrl(saved.packageIndexUrl ?? "");
+      setNpmRegistryUrl(saved.npmRegistryUrl ?? "");
     }
     try {
       const refreshed = await fetchSshConnections();
       if (generation !== requestGeneration.current) return refreshed;
       setConnections(refreshed.connections);
       setPackageIndexUrl(refreshed.packageIndexUrl ?? "");
+      setNpmRegistryUrl(refreshed.npmRegistryUrl ?? "");
       setLoadError(null);
       return refreshed;
     } catch (error) {
@@ -156,7 +160,7 @@ export function ConnectionSettingsBody() {
     setSaving(true);
     try {
       const next = [...connections, connection];
-      await persist(next, packageIndexUrl.trim() || null);
+      await persist(next, packageIndexUrl.trim() || null, npmRegistryUrl.trim() || null);
       setLabel("");
       setAlias("");
     } catch (error) {
@@ -164,20 +168,20 @@ export function ConnectionSettingsBody() {
     } finally {
       setSaving(false);
     }
-  }, [alias, connections, label, packageIndexUrl, persist]);
+  }, [alias, connections, label, npmRegistryUrl, packageIndexUrl, persist]);
 
-  const handleSavePackageIndex = useCallback(async () => {
+  const handleSaveRegistries = useCallback(async () => {
     if (saving || retryingIds.size > 0) return;
     setFormError(null);
     setSaving(true);
     try {
-      await persist(connections, packageIndexUrl.trim() || null);
+      await persist(connections, packageIndexUrl.trim() || null, npmRegistryUrl.trim() || null);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Failed to save package index URL");
+      setFormError(error instanceof Error ? error.message : "Failed to save registry URLs");
     } finally {
       setSaving(false);
     }
-  }, [connections, packageIndexUrl, persist, retryingIds.size, saving]);
+  }, [connections, npmRegistryUrl, packageIndexUrl, persist, retryingIds.size, saving]);
 
   const handleRetry = useCallback(
     async (id: string) => {
@@ -217,14 +221,14 @@ export function ConnectionSettingsBody() {
       const next = connections.filter((c) => c.id !== id);
       setSaving(true);
       try {
-        await persist(next, packageIndexUrl.trim() || null);
+        await persist(next, packageIndexUrl.trim() || null, npmRegistryUrl.trim() || null);
       } catch (error) {
         setFormError(error instanceof Error ? error.message : "Failed to remove connection");
       } finally {
         setSaving(false);
       }
     },
-    [connections, packageIndexUrl, persist, retryingIds.size, saving],
+    [connections, npmRegistryUrl, packageIndexUrl, persist, retryingIds.size, saving],
   );
 
   if (loading) {
@@ -244,19 +248,31 @@ export function ConnectionSettingsBody() {
         data-testid="ssh-package-index-form"
       >
         <div>
-          <h3 className="text-sm font-medium">Remote package index</h3>
+          <h3 className="text-sm font-medium">Remote package registries</h3>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Optional HTTPS PyPI simple index used when installing Omnigent on remote SSH hosts.
-            Leave blank to use the public PyPI default.
+            Optional HTTPS registries used when installing Omnigent and harness CLIs on
+            remote SSH hosts. Leave blank to use public defaults.
           </p>
         </div>
         <label className="flex flex-col gap-1.5 text-sm">
-          <span className="font-medium">Package index URL</span>
+          <span className="font-medium">PyPI package index URL</span>
           <Input
             value={packageIndexUrl}
             onChange={(e) => setPackageIndexUrl(e.target.value)}
             placeholder="https://pypi.example.com/simple"
             data-testid="ssh-package-index-url"
+            disabled={saving || retryingIds.size > 0}
+            spellCheck={false}
+            autoCapitalize="off"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 text-sm">
+          <span className="font-medium">npm registry URL</span>
+          <Input
+            value={npmRegistryUrl}
+            onChange={(e) => setNpmRegistryUrl(e.target.value)}
+            placeholder="https://registry.example.com"
+            data-testid="ssh-npm-registry-url"
             disabled={saving || retryingIds.size > 0}
             spellCheck={false}
             autoCapitalize="off"
@@ -268,10 +284,10 @@ export function ConnectionSettingsBody() {
             size="sm"
             data-testid="ssh-package-index-save"
             disabled={saving || retryingIds.size > 0}
-            onClick={() => void handleSavePackageIndex()}
+            onClick={() => void handleSaveRegistries()}
           >
             {saving ? <Loader2Icon className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            Save package index
+            Save registries
           </Button>
         </div>
       </div>

@@ -14,6 +14,7 @@ from omnigent.entities.ssh_connection import (
     new_ssh_connection_id,
     profile_to_api_dict,
     validate_package_index_url,
+    validate_npm_registry_url,
     validate_ssh_alias,
     validate_ssh_connection_id,
 )
@@ -42,6 +43,7 @@ class SshConnectionsPutRequest(BaseModel):
 
     connections: list[SshConnectionBody]
     package_index_url: str | None = None
+    npm_registry_url: str | None = None
 
 
 def _normalize_package_index_url(raw: str | None) -> str | None:
@@ -51,6 +53,18 @@ def _normalize_package_index_url(raw: str | None) -> str | None:
     if not trimmed:
         return None
     error = validate_package_index_url(trimmed)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
+    return trimmed
+
+
+def _normalize_npm_registry_url(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    trimmed = raw.strip()
+    if not trimmed:
+        return None
+    error = validate_npm_registry_url(trimmed)
     if error is not None:
         raise HTTPException(status_code=400, detail=error)
     return trimmed
@@ -123,6 +137,7 @@ def _connections_response(
     return {
         "connections": result,
         "package_index_url": settings.package_index_url,
+        "npm_registry_url": settings.npm_registry_url,
     }
 
 
@@ -265,7 +280,9 @@ def create_ssh_connections_router(
             owner=user_id or "local",
         )
         prior_index_url = (await asyncio.to_thread(store.get_settings)).package_index_url
+        prior_npm_url = (await asyncio.to_thread(store.get_settings)).npm_registry_url
         package_index_url = _normalize_package_index_url(body.package_index_url)
+        npm_registry_url = _normalize_npm_registry_url(body.npm_registry_url)
         await asyncio.to_thread(
             store.sync_connections,
             {profile.id: profile for profile in profiles},
@@ -275,12 +292,13 @@ def create_ssh_connections_router(
         await asyncio.to_thread(
             store.update_settings,
             package_index_url=package_index_url,
+            npm_registry_url=npm_registry_url,
             updated_by=user_id,
         )
         manager = getattr(request.app.state, "ssh_host_manager", None)
         if manager is not None:
             await asyncio.to_thread(manager.refresh_profiles)
-            if package_index_url != prior_index_url:
+            if package_index_url != prior_index_url or npm_registry_url != prior_npm_url:
                 await asyncio.to_thread(manager.requeue_connected_installations)
         return await _build_connections_payload(profiles, request, store)
 

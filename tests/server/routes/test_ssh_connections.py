@@ -108,7 +108,7 @@ async def test_get_includes_lifecycle_and_host_status(
     )
     ssh_store = app.state.ssh_host_installation_store
     ssh_store.sync_connections({profile.id: profile}, bundle_version="test", owner="local")
-    ssh_store.update_settings(package_index_url="https://pypi.example.com/simple")
+    ssh_store.update_settings(package_index_url="https://pypi.example.com/simple", npm_registry_url=None)
     with patch.object(ssh_store, "snapshots", return_value={"profile-1": state}):
         response = await client.get("/v1/ssh/connections")
     assert response.status_code == 200
@@ -119,6 +119,7 @@ async def test_get_includes_lifecycle_and_host_status(
     assert connection["status"] == "online"
     assert connection["attempt"] == 2
     assert body["package_index_url"] == "https://pypi.example.com/simple"
+    assert body["npm_registry_url"] is None
 
 
 async def test_get_includes_flaky_warning_for_rapid_disconnects(

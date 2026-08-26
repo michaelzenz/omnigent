@@ -20,6 +20,7 @@ interface ApiConnection {
 export interface SshConnectionsPayload {
   connections: SshConnection[];
   packageIndexUrl: string | null;
+  npmRegistryUrl: string | null;
 }
 
 export interface SshTestResult {
@@ -58,10 +59,12 @@ function toApiConnection(connection: SshConnection): ApiConnection {
 function fromApiPayload(body: {
   connections?: ApiConnection[];
   package_index_url?: string | null;
+  npm_registry_url?: string | null;
 }): SshConnectionsPayload {
   return {
     connections: (body.connections ?? []).map(fromApiConnection),
     packageIndexUrl: typeof body.package_index_url === "string" ? body.package_index_url : null,
+    npmRegistryUrl: typeof body.npm_registry_url === "string" ? body.npm_registry_url : null,
   };
 }
 
@@ -71,6 +74,7 @@ export async function fetchSshConnections(): Promise<SshConnectionsPayload> {
   const body = (await res.json()) as {
     connections?: ApiConnection[];
     package_index_url?: string | null;
+    npm_registry_url?: string | null;
   };
   return fromApiPayload(body);
 }
@@ -78,6 +82,7 @@ export async function fetchSshConnections(): Promise<SshConnectionsPayload> {
 export async function saveSshConnections(
   connections: SshConnection[],
   packageIndexUrl: string | null,
+  npmRegistryUrl: string | null,
 ): Promise<SshConnectionsPayload> {
   const res = await authenticatedFetch("/v1/ssh/connections", {
     method: "PUT",
@@ -85,6 +90,7 @@ export async function saveSshConnections(
     body: JSON.stringify({
       connections: connections.map(toApiConnection),
       package_index_url: packageIndexUrl,
+      npm_registry_url: npmRegistryUrl,
     }),
   });
   if (!res.ok) {
@@ -96,6 +102,7 @@ export async function saveSshConnections(
   const saved = (await res.json()) as {
     connections?: ApiConnection[];
     package_index_url?: string | null;
+    npm_registry_url?: string | null;
   };
   return fromApiPayload(saved);
 }

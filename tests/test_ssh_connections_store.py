@@ -40,6 +40,7 @@ def test_write_and_read_ssh_settings(tmp_path: Path) -> None:
     initial = store.get_settings()
     store.update_settings(
         package_index_url="https://pypi.example.com/simple",
+        npm_registry_url=None,
         updated_by="admin@example.com",
     )
     updated = store.get_settings()

@@ -1733,6 +1733,7 @@ class SqlSshSettings(OmnigentBase):
         default=current_workspace_id,
     )
     package_index_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    npm_registry_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     remote_namespace: Mapped[str] = mapped_column(String(16), nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_by: Mapped[str | None] = mapped_column(String(256), nullable=True)

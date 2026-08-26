@@ -16,6 +16,7 @@ class SshSettings:
     """Workspace SSH provisioning settings."""
 
     package_index_url: str | None = None
+    npm_registry_url: str | None = None
     remote_namespace: str = ""
 
 
@@ -49,6 +50,18 @@ def validate_package_index_url(url: str) -> str | None:
         return "Package index URL is too long"
     if not _PACKAGE_INDEX_URL_RE.fullmatch(trimmed):
         return "Package index URL must be an HTTPS URL"
+    return None
+
+
+def validate_npm_registry_url(url: str) -> str | None:
+    """Return an error when *url* is not a safe HTTPS npm registry."""
+    trimmed = url.strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > 512:
+        return "npm registry URL is too long"
+    if not _PACKAGE_INDEX_URL_RE.fullmatch(trimmed):
+        return "npm registry URL must be an HTTPS URL"
     return None
 
 

@@ -398,6 +398,18 @@ def test_install_command_pins_python_and_installs_pi_in_remote_home() -> None:
     assert 'pi_root="$root/harnesses/pi"' in command
     assert 'npm install --prefix "$pi_root" "$pi_spec"' in command
     assert "@earendil-works/pi-coding-agent" in command
+    # No --registry flag when npm_registry_url is not set
+    assert "--registry" not in command
+
+
+def test_install_command_uses_custom_npm_registry() -> None:
+    command = build_install_command(
+        "1.2.3",
+        npm_registry_url="https://npm.example.com",
+        remote_namespace="server-a",
+    )
+    assert "--registry https://npm.example.com" in command
+    assert 'npm install --prefix "$pi_root" --registry https://npm.example.com "$pi_spec"' in command
 
 
 async def test_remote_host_starts_with_managed_pi_on_path(

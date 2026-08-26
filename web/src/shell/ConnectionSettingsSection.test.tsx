@@ -6,6 +6,7 @@ import type { SshConnection } from "@/lib/sshConnectionPreferences";
 const mocks = vi.hoisted(() => ({
   connections: [] as SshConnection[],
   packageIndexUrl: null as string | null,
+  npmRegistryUrl: null as string | null,
   fetchSshConnections: vi.fn(),
   saveSshConnections: vi.fn(),
   retrySshConnection: vi.fn(),
@@ -14,8 +15,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/sshApi", () => ({
   fetchSshConnections: () => mocks.fetchSshConnections(),
-  saveSshConnections: (connections: SshConnection[], packageIndexUrl: string | null) =>
-    mocks.saveSshConnections(connections, packageIndexUrl),
+  saveSshConnections: (
+    connections: SshConnection[],
+    packageIndexUrl: string | null,
+    npmRegistryUrl: string | null,
+  ) => mocks.saveSshConnections(connections, packageIndexUrl, npmRegistryUrl),
   retrySshConnection: (...args: unknown[]) => mocks.retrySshConnection(...args),
   fetchSshConnectionLogs: (...args: unknown[]) => mocks.fetchSshConnectionLogs(...args),
 }));
@@ -42,15 +46,22 @@ function connection(overrides: Partial<SshConnection> = {}): SshConnection {
 beforeEach(() => {
   mocks.connections = [];
   mocks.packageIndexUrl = null;
+  mocks.npmRegistryUrl = null;
   mocks.fetchSshConnections.mockImplementation(async () => ({
     connections: mocks.connections,
     packageIndexUrl: mocks.packageIndexUrl,
+    npmRegistryUrl: mocks.npmRegistryUrl,
   }));
   mocks.saveSshConnections.mockImplementation(
-    async (next: SshConnection[], packageIndexUrl: string | null) => {
+    async (
+      next: SshConnection[],
+      packageIndexUrl: string | null,
+      npmRegistryUrl: string | null,
+    ) => {
       mocks.connections = next;
       mocks.packageIndexUrl = packageIndexUrl;
-      return { connections: next, packageIndexUrl };
+      mocks.npmRegistryUrl = npmRegistryUrl;
+      return { connections: next, packageIndexUrl, npmRegistryUrl };
     },
   );
   mocks.retrySshConnection.mockResolvedValue(undefined);
@@ -166,7 +177,28 @@ describe("ConnectionSettingsBody", () => {
     fireEvent.click(screen.getByTestId("ssh-package-index-save"));
 
     await waitFor(() => {
-      expect(mocks.saveSshConnections).toHaveBeenCalledWith([], "https://pypi.example.com/simple");
+      expect(mocks.saveSshConnections).toHaveBeenCalledWith(
+        [],
+        "https://pypi.example.com/simple",
+        null,
+      );
+    });
+  });
+
+  it("saves a custom npm registry URL", async () => {
+    render(<ConnectionSettingsBody />);
+    await screen.findByTestId("ssh-package-index-form");
+    fireEvent.change(screen.getByTestId("ssh-npm-registry-url"), {
+      target: { value: "https://npm.example.com" },
+    });
+    fireEvent.click(screen.getByTestId("ssh-package-index-save"));
+
+    await waitFor(() => {
+      expect(mocks.saveSshConnections).toHaveBeenCalledWith(
+        [],
+        null,
+        "https://npm.example.com",
+      );
     });
   });
 });

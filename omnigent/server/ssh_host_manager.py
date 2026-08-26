@@ -35,7 +35,7 @@ _MAX_BACKOFF_SECONDS = 15 * 60
 
 CommandRunner = Callable[[list[str], float], Awaitable[tuple[int, bytes, bytes]]]
 InstallCommandBuilder = Callable[
-    [str, str | None, str | None, str | None, str | None, str],
+    [str, str | None, str | None, str | None, str | None, str | None, str],
     str,
 ]
 
@@ -106,6 +106,7 @@ def build_install_command(
     bundle_sha256: str | None = None,
     index_url: str | None = None,
     find_links: str | None = None,
+    npm_registry_url: str | None = None,
     remote_namespace: str = "",
 ) -> str:
     """Build the idempotent remote installation command."""
@@ -113,6 +114,7 @@ def build_install_command(
     quoted_package_spec = shlex.quote(package_spec or f"omnigent=={version}")
     index_env = f"UV_INDEX_URL={shlex.quote(index_url)} " if index_url else ""
     find_links_arg = f"--find-links {shlex.quote(find_links)} " if find_links else ""
+    npm_registry_arg = f" --registry {shlex.quote(npm_registry_url)}" if npm_registry_url else ""
     checksum_guard = '[ ! -f "$target/.complete" ]'
     checksum_write = ""
     if bundle_sha256 is not None:
@@ -151,7 +153,7 @@ def build_install_command(
         '[ "$(cat "$pi_root/.package-spec" 2>/dev/null || true)" != "$pi_spec" ]; then '
         "command -v npm >/dev/null 2>&1 || "
         '{ echo "npm is required to install Pi on the SSH host" >&2; exit 1; }; '
-        'mkdir -p "$pi_root"; npm install --prefix "$pi_root" "$pi_spec"; '
+        f'mkdir -p "$pi_root"; npm install --prefix "$pi_root"{npm_registry_arg} "$pi_spec"; '
         'printf %s "$pi_spec" > "$pi_root/.package-spec"; fi'
     )
 
@@ -182,6 +184,9 @@ class SshHostOperations:
 
     def _python_index_url(self) -> str | None:
         return self._settings_reader().package_index_url
+
+    def _npm_registry_url(self) -> str | None:
+        return self._settings_reader().npm_registry_url
 
     async def remote_home(self, profile: SshConnectionProfile) -> str:
         """Resolve the remote account's absolute home directory."""
@@ -245,6 +250,7 @@ class SshHostOperations:
             bundle_sha256,
             self._python_index_url(),
             find_links,
+            self._npm_registry_url(),
             self._remote_namespace,
         )
         code, stdout, stderr = await ssh_run(profile, command, timeout_s=600)
