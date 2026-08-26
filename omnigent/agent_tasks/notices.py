@@ -67,8 +67,8 @@ def _format_external_update_notice(event) -> str:
     if delta:
         parts.append(f"  Transcript delta:\n{delta}")
     parts.append(
-    "  Review the delta. Update item states if the work is done. "
-    "If follow-up is needed, suggest a new taskItem (Copy button)."
+        "  Review the delta. Update item states if the work is done. "
+        "If follow-up is needed, suggest a new taskItem (Copy button)."
     )
     return "\n".join(parts)
 

@@ -407,7 +407,11 @@ export function PuppyGardenChatSidebar() {
   // Auto-close the reset dialog once the mutation settles successfully.
   const prevResetPending = useRef(false);
   useEffect(() => {
-    if (prevResetPending.current && !activeRoleBootstrap.resetPending && !activeRoleBootstrap.resetError) {
+    if (
+      prevResetPending.current &&
+      !activeRoleBootstrap.resetPending &&
+      !activeRoleBootstrap.resetError
+    ) {
       setResetOpen(false);
     }
     prevResetPending.current = activeRoleBootstrap.resetPending;

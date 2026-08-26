@@ -29,11 +29,7 @@ class _Store:
         return next((profile for profile in self.profiles if profile.id == profile_id), None)
 
     def list(self, *, enabled_only: bool = False) -> list[PromptProfile]:
-        return [
-            profile
-            for profile in self.profiles
-            if not enabled_only or profile.enabled
-        ]
+        return [profile for profile in self.profiles if not enabled_only or profile.enabled]
 
 
 def test_fixed_new_selection_requires_enabled_profile() -> None:

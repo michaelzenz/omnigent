@@ -49,7 +49,9 @@ def test_check_web_dependencies_probes_runtime_imports(tmp_path: Path, monkeypat
     ]
 
 
-def test_install_web_dependencies_uses_given_registry_and_hoisting(tmp_path: Path, monkeypatch) -> None:
+def test_install_web_dependencies_uses_given_registry_and_hoisting(
+    tmp_path: Path, monkeypatch
+) -> None:
     calls = []
 
     def run(command, **kwargs):
@@ -86,7 +88,9 @@ def test_prepare_web_dependencies_installs_after_failed_probe(monkeypatch) -> No
         return result
 
     monkeypatch.setattr(fork, "_check_web_dependencies", check)
-    monkeypatch.setattr(fork, "_install_web_dependencies", lambda registry=None: installs.append(registry))
+    monkeypatch.setattr(
+        fork, "_install_web_dependencies", lambda registry=None: installs.append(registry)
+    )
 
     assert fork._prepare_web_dependencies() == vite
     assert installs == [None]

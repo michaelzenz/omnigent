@@ -21,9 +21,7 @@ def test_memory_categories_migration_round_trip(tmp_path: Path) -> None:
     _migrate(uri, engine, "k0a1b2c3d4e5")
     _migrate(uri, engine, "m1b2c3d4e5f6")
 
-    columns = {
-        column["name"] for column in sa.inspect(engine).get_columns("memory_categories")
-    }
+    columns = {column["name"] for column in sa.inspect(engine).get_columns("memory_categories")}
     assert {
         "workspace_id",
         "id",

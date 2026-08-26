@@ -13,8 +13,8 @@ from omnigent.entities import SshConnectionProfile, SshSettings
 from omnigent.entities.ssh_connection import (
     new_ssh_connection_id,
     profile_to_api_dict,
-    validate_package_index_url,
     validate_npm_registry_url,
+    validate_package_index_url,
     validate_ssh_alias,
     validate_ssh_connection_id,
 )

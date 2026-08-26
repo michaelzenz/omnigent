@@ -195,9 +195,7 @@ interface ElectronDesktopApi extends NativeShellApi {
     opts?: { force?: boolean; agent?: boolean },
   ) => Promise<{ ok: boolean; created?: boolean; error?: string }>;
   /** Attach one conversation's browser view, or detach every view with null. */
-  browserSetActive?: (
-    conversationId: string | null,
-  ) => Promise<{ ok: boolean; error?: string }>;
+  browserSetActive?: (conversationId: string | null) => Promise<{ ok: boolean; error?: string }>;
   /**
    * Hide/show the active embedded browser view while a DOM overlay is open.
    * The native view paints above the renderer, so this is how overlays

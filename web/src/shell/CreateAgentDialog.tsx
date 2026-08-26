@@ -152,7 +152,14 @@ export function CreateAgentDialog({
     setModel(initialValue?.model ?? "");
     setMcpEntries([]);
     setNextKey(0);
-  }, [open, initialValue?.name, initialValue?.description, initialValue?.instructions, initialValue?.harness, initialValue?.model]);
+  }, [
+    open,
+    initialValue?.name,
+    initialValue?.description,
+    initialValue?.instructions,
+    initialValue?.harness,
+    initialValue?.model,
+  ]);
 
   function reset() {
     setName(initialValue?.name ?? "");

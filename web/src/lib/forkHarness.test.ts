@@ -127,12 +127,9 @@ describe("forkTargetCarriesHistory", () => {
     ["goose-native"],
     ["antigravity-native"],
     ["native-antigravity"],
-  ])(
-    "native target %s without a carry path does NOT carry on fork",
-    (target) => {
-      expect(forkTargetCarriesHistory(target)).toBe(false);
-    },
-  );
+  ])("native target %s without a carry path does NOT carry on fork", (target) => {
+    expect(forkTargetCarriesHistory(target)).toBe(false);
+  });
 
   it("does NOT offer a target whose harness is unknown (conservative; see TODO)", () => {
     // We can't classify an unrecognised harness (the catalog may report
@@ -187,12 +184,9 @@ describe("switchTargetCarriesHistory", () => {
     ["goose-native"],
     ["antigravity-native"],
     ["native-antigravity"],
-  ])(
-    "native target %s without a carry path does NOT carry on switch",
-    (target) => {
-      expect(switchTargetCarriesHistory(target)).toBe(false);
-    },
-  );
+  ])("native target %s without a carry path does NOT carry on switch", (target) => {
+    expect(switchTargetCarriesHistory(target)).toBe(false);
+  });
 
   it("does NOT offer an unknown/absent harness", () => {
     expect(switchTargetCarriesHistory("mystery")).toBe(false);

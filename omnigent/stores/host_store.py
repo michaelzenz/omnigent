@@ -582,9 +582,7 @@ class HostStore:
                 row.updated_at = now
                 if row.last_connect_at is not None:
                     if now - row.last_connect_at < RAPID_DISCONNECT_THRESHOLD_S:
-                        row.consecutive_rapid_disconnects = (
-                            row.consecutive_rapid_disconnects + 1
-                        )
+                        row.consecutive_rapid_disconnects = row.consecutive_rapid_disconnects + 1
                     else:
                         row.consecutive_rapid_disconnects = 0
 
@@ -624,8 +622,7 @@ class HostStore:
                 "rel_home_path": str(root["rel_home_path"]),
             }
             for root in search_roots
-            if isinstance(root.get("harness"), str)
-            and isinstance(root.get("rel_home_path"), str)
+            if isinstance(root.get("harness"), str) and isinstance(root.get("rel_home_path"), str)
         ]
         if len(normalized_roots) != len(search_roots):
             raise ValueError("invalid skill search roots")

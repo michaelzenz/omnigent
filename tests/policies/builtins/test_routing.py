@@ -525,8 +525,7 @@ def test_registry_entry_well_formed() -> None:
     dangerous_entry = next(
         e
         for e in POLICY_REGISTRY
-        if e["handler"]
-        == "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier"
+        if e["handler"] == "omnigent.policies.builtins.routing.dangerous_actions_intent_classifier"
     )
     dangerous_prompt = dangerous_entry["params_schema"]["properties"]["classification_prompt"]
     assert dangerous_prompt["x-ui-widget"] == "textarea"

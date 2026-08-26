@@ -13,14 +13,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 from fastapi import Request
 
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runner.routing import RunnerRouter
+from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import LEVEL_OWNER
 from omnigent.server.routes._auth_helpers import get_permission_level as _get_permission_level
 from omnigent.server.routes._sessions.common import (

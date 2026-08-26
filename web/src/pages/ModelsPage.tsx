@@ -28,9 +28,7 @@ function SmartRoutingSettings({
   update: ReturnType<typeof useUpdateAdminModelSettings>;
 }) {
   const [prompt, setPrompt] = useState(data.smartRoutingPrompt ?? "");
-  const [messageCount, setMessageCount] = useState(
-    String(data.turnSelectionUserMessageCount),
-  );
+  const [messageCount, setMessageCount] = useState(String(data.turnSelectionUserMessageCount));
 
   useEffect(() => {
     setPrompt(data.smartRoutingPrompt ?? "");
@@ -136,9 +134,7 @@ function SmartRoutingSettings({
             <Button
               size="sm"
               disabled={!messageCountChanged || update.isPending}
-              onClick={() =>
-                update.mutate({ turnSelectionUserMessageCount: parsedMessageCount })
-              }
+              onClick={() => update.mutate({ turnSelectionUserMessageCount: parsedMessageCount })}
             >
               Save count
             </Button>

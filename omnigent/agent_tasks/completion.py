@@ -154,10 +154,7 @@ async def notify_worker_execution_status(
     )
     if completed is None:
         return True
-    if (
-        _context.agent_queue_store is not None
-        and execution.agent_queue_item_id is not None
-    ):
+    if _context.agent_queue_store is not None and execution.agent_queue_item_id is not None:
         queue_item = _context.agent_queue_store.get_item(
             execution.agent_queue_item_id,
         )

@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  AlertTriangleIcon,
-  Loader2Icon,
-  ExternalLinkIcon,
-  CheckCircle2Icon,
-} from "lucide-react";
+import { AlertTriangleIcon, Loader2Icon, ExternalLinkIcon, CheckCircle2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -83,11 +78,7 @@ interface DatabricksLoginDialogProps {
   knownHost: string | null;
 }
 
-function DatabricksLoginDialog({
-  open,
-  onOpenChange,
-  knownHost,
-}: DatabricksLoginDialogProps) {
+function DatabricksLoginDialog({ open, onOpenChange, knownHost }: DatabricksLoginDialogProps) {
   // When host is known, skip the URL input and start at auth-link.
   const [step, setStep] = useState<DialogStep>("input");
   const [host, setHost] = useState("");
@@ -204,8 +195,8 @@ function DatabricksLoginDialog({
             Login to Databricks
           </DialogTitle>
           <DialogDescription>
-            Login to Databricks to unlock full features — policy-guarded tool
-            calls and model routing require a valid Databricks session.
+            Login to Databricks to unlock full features — policy-guarded tool calls and model
+            routing require a valid Databricks session.
           </DialogDescription>
         </DialogHeader>
 
@@ -241,9 +232,8 @@ function DatabricksLoginDialog({
         {(step === "auth-link" || step === "polling") && (
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              Click the button below to open the Databricks login page in your
-              browser. After you complete login, this dialog will close
-              automatically.
+              Click the button below to open the Databricks login page in your browser. After you
+              complete login, this dialog will close automatically.
             </p>
             <Button
               onClick={handleOpenAuthUrl}

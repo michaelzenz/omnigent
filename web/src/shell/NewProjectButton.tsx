@@ -118,8 +118,7 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
 
   // Online hosts + sandbox (when available).
   const onlineHosts = (hosts.data ?? []).filter((h) => h.status === "online");
-  const browsableHostId =
-    hostId !== NONE && hostId !== SANDBOX_HOST_CHOICE ? hostId : null;
+  const browsableHostId = hostId !== NONE && hostId !== SANDBOX_HOST_CHOICE ? hostId : null;
 
   return (
     <>
@@ -162,8 +161,8 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
             <DialogDescription>
-              Create an empty project, then file sessions into it from a session's menu.
-              Host and working directory are optional defaults for new sessions.
+              Create an empty project, then file sessions into it from a session's menu. Host and
+              working directory are optional defaults for new sessions.
             </DialogDescription>
           </DialogHeader>
           {/* Name + icon row */}
@@ -226,14 +225,12 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
           <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <label className="flex flex-col pt-1.5">
               <span className="text-ui font-medium">Host</span>
-              <span className="text-sm text-muted-foreground">Where new sessions run by default</span>
+              <span className="text-sm text-muted-foreground">
+                Where new sessions run by default
+              </span>
             </label>
             <div className="sm:w-64">
-              <Select
-                value={hostId}
-                onValueChange={setHostId}
-                onOpenChange={onDropdownOpenChange}
-              >
+              <Select value={hostId} onValueChange={setHostId} onOpenChange={onDropdownOpenChange}>
                 <SelectTrigger className="w-full" data-testid="new-project-host">
                   <SelectValue placeholder="No default" />
                 </SelectTrigger>

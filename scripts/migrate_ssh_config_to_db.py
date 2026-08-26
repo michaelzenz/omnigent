@@ -96,10 +96,7 @@ def main() -> None:
             if not ssh:
                 host.pop("ssh", None)
     args.config.write_text(yaml.safe_dump(raw, sort_keys=False))
-    print(
-        f"Migrated {len(profiles)} SSH profile(s); "
-        f"backups: {database_backup}, {backup}"
-    )
+    print(f"Migrated {len(profiles)} SSH profile(s); backups: {database_backup}, {backup}")
 
 
 if __name__ == "__main__":

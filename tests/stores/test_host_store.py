@@ -12,7 +12,6 @@ from omnigent.stores.host_store import (
     HOST_LIVENESS_TTL_S,
     Host,
     HostStore,
-    RAPID_DISCONNECT_THRESHOLD_S,
     host_is_live,
 )
 
@@ -480,7 +479,9 @@ def test_slow_disconnect_resets_counter(
     # Simulate a rapid disconnect to build up the counter.
     _set_last_connect_at(db_uri, "7b463227e479b3a677307588a5d9e44f", now_epoch() - 5)
     host_store.set_offline("7b463227e479b3a677307588a5d9e44f")
-    assert host_store.get_host("7b463227e479b3a677307588a5d9e44f").consecutive_rapid_disconnects == 1
+    assert (
+        host_store.get_host("7b463227e479b3a677307588a5d9e44f").consecutive_rapid_disconnects == 1
+    )
 
     # Reconnect, then disconnect after a long time — counter should reset.
     host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
@@ -500,11 +501,15 @@ def test_heartbeat_resets_rapid_disconnect_counter(
     host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
     # Build up the counter with two rapid disconnects.
     for _ in range(2):
-        host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
+        host_store.upsert_on_connect(
+            "7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com"
+        )
         _set_last_connect_at(db_uri, "7b463227e479b3a677307588a5d9e44f", now_epoch() - 5)
         host_store.set_offline("7b463227e479b3a677307588a5d9e44f")
 
-    assert host_store.get_host("7b463227e479b3a677307588a5d9e44f").consecutive_rapid_disconnects == 2
+    assert (
+        host_store.get_host("7b463227e479b3a677307588a5d9e44f").consecutive_rapid_disconnects == 2
+    )
 
     # Host reconnects and heartbeats — counter should reset.
     host_store.upsert_on_connect("7b463227e479b3a677307588a5d9e44f", "laptop", "carol@example.com")
@@ -523,11 +528,15 @@ def test_fresh_reconnect_resets_rapid_disconnect_counter(
     host_store.upsert_on_connect("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", "desktop", "dave@example.com")
     # Build up the counter with three rapid disconnects.
     for _ in range(3):
-        host_store.upsert_on_connect("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", "desktop", "dave@example.com")
+        host_store.upsert_on_connect(
+            "9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", "desktop", "dave@example.com"
+        )
         _set_last_connect_at(db_uri, "9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f", now_epoch() - 5)
         host_store.set_offline("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f")
 
-    assert host_store.get_host("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f").consecutive_rapid_disconnects == 3
+    assert (
+        host_store.get_host("9c5d4e6f7a8b9c0d1e2f3a4b5c6d7e8f").consecutive_rapid_disconnects == 3
+    )
 
     # Simulate the host being offline for 20s (longer than RAPID_DISCONNECT_THRESHOLD_S=15),
     # then reconnecting. updated_at was last set by set_offline.
@@ -547,11 +556,15 @@ def test_rapid_reconnect_preserves_rapid_disconnect_counter(
     host_store.upsert_on_connect("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "server", "eve@example.com")
     # Build up the counter with two rapid disconnects.
     for _ in range(2):
-        host_store.upsert_on_connect("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "server", "eve@example.com")
+        host_store.upsert_on_connect(
+            "0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "server", "eve@example.com"
+        )
         _set_last_connect_at(db_uri, "0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", now_epoch() - 5)
         host_store.set_offline("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")
 
-    assert host_store.get_host("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b").consecutive_rapid_disconnects == 2
+    assert (
+        host_store.get_host("0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b").consecutive_rapid_disconnects == 2
+    )
 
     # Reconnect within 15s (updated_at was set by set_offline just 5s ago).
     _set_updated_at(db_uri, "0e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", now_epoch() - 5)

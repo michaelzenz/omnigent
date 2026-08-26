@@ -411,9 +411,7 @@ describe("UserBubble execution summary", () => {
     );
 
     const summary = screen.getByTestId("message-execution-summary");
-    expect(summary).toHaveTextContent(
-      "Profile: Multiple · omniharness / databricks-gpt-5-6-luna",
-    );
+    expect(summary).toHaveTextContent("Profile: Multiple · omniharness / databricks-gpt-5-6-luna");
     expect(summary.title).toContain("Managed Table Migration Specialist");
     expect(summary.title).toContain("Predictive Optimization Reviewer");
   });

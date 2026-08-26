@@ -329,6 +329,7 @@ class HostConnection:
 
 def _fail_pending_worktree_operations(conn: HostConnection) -> None:
     """Release worktree requests that can no longer receive a tunnel reply."""
+
     def _fail(future: asyncio.Future[dict[str, Any]]) -> None:
         if not future.done():
             future.set_exception(

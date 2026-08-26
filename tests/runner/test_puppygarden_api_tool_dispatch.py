@@ -92,7 +92,11 @@ async def test_get_passes_query() -> None:
     await _execute_puppygarden_api_tool(
         _TOOL_NAME,
         json.dumps(
-            {"method": "GET", "path": "/v1/agent-tasks/roles/profiles", "query": {"kind": "worker"}}
+            {
+                "method": "GET",
+                "path": "/v1/agent-tasks/roles/profiles",
+                "query": {"kind": "worker"},
+            }
         ),
         server_client=client,
     )
@@ -106,9 +110,7 @@ async def test_patch_passes_body() -> None:
     client = _RecordingClient(_Resp(body={"id": "t1", "state": "idle"}))
     await _execute_puppygarden_api_tool(
         _TOOL_NAME,
-        json.dumps(
-            {"method": "PATCH", "path": "/v1/agent-tasks/t1", "body": {"state": "idle"}}
-        ),
+        json.dumps({"method": "PATCH", "path": "/v1/agent-tasks/t1", "body": {"state": "idle"}}),
         server_client=client,
     )
     method, url, kwargs = client.calls[0]
@@ -257,7 +259,7 @@ def test_tool_registered_without_spec_optin() -> None:
 
 
 def test_tool_in_dispatch_and_relay_sets() -> None:
-    assert _PUPPYGARDEN_API_TOOLS == {_TOOL_NAME}
+    assert {_TOOL_NAME} == _PUPPYGARDEN_API_TOOLS
     assert _TOOL_NAME in _ALL_LOCAL_TOOLS
     assert _TOOL_NAME in _NATIVE_RELAY_BUILTIN_TOOLS
 

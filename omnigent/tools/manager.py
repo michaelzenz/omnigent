@@ -30,9 +30,9 @@ from omnigent.tools.builtins import (
     SysCallAsyncTool,
     SysCancelAsyncTool,
     SysListModelsTool,
-    SysReadInboxTool,
     SysProjectCreateTool,
     SysProjectListTool,
+    SysReadInboxTool,
     SysScheduledTaskCreateTool,
     SysScheduledTaskDeleteTool,
     SysScheduledTaskListTool,
@@ -531,9 +531,7 @@ class ToolManager:
         from omnigent.execution_targets import is_omniharness_spec
 
         if is_omniharness_spec(self._spec):
-            self._tools[SysSessionSetWorkspaceTool.name()] = (
-                SysSessionSetWorkspaceTool()
-            )
+            self._tools[SysSessionSetWorkspaceTool.name()] = SysSessionSetWorkspaceTool()
 
     def _register_agent_mgmt_tools(self) -> None:
         """

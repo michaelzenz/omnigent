@@ -49,9 +49,7 @@ class SqlAlchemyToolPreferencesStore(ToolPreferencesStore):
 
         with self._session("update") as session:
             row = session.execute(
-                select(SqlToolPreferences)
-                .where(SqlToolPreferences.id == 1)
-                .with_for_update()
+                select(SqlToolPreferences).where(SqlToolPreferences.id == 1).with_for_update()
             ).scalar_one_or_none()
             if row is None:
                 row = SqlToolPreferences(

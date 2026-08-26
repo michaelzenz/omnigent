@@ -362,9 +362,7 @@ def create_session_policies_router(
                         f"must add custom handlers via the 'policy_modules' config.",
                         code=ErrorCode.INVALID_INPUT,
                     )
-            validation_error = validate_factory_params(
-                effective_handler, effective_factory_params
-            )
+            validation_error = validate_factory_params(effective_handler, effective_factory_params)
             if validation_error:
                 raise OmnigentError(validation_error, code=ErrorCode.INVALID_INPUT)
         try:

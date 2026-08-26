@@ -59,9 +59,7 @@ def test_skill_inventory_frame_round_trip() -> None:
     frame = HostSkillInventoryFrame(
         skills=skills,
         skill_sync_harnesses={"claude": True, "codex": True, "cursor": False},
-        skill_search_roots=[
-            {"harness": "claude", "rel_home_path": ".claude/skills"}
-        ],
+        skill_search_roots=[{"harness": "claude", "rel_home_path": ".claude/skills"}],
     )
     assert decode_host_frame(encode_host_frame(frame)) == frame
 

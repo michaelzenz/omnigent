@@ -56,6 +56,8 @@ def upgrade() -> None:
             "ck_conversations_prompt_profile_mode",
             "prompt_profile_mode IS NULL OR prompt_profile_mode IN ('auto', 'fixed')",
         )
+
+
 def downgrade() -> None:
     with op.batch_alter_table("conversations") as batch_op:
         batch_op.drop_constraint("ck_conversations_prompt_profile_mode", type_="check")

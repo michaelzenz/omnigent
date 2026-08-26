@@ -19,15 +19,8 @@ export function useScriptPluginHealth(kind: ScriptPluginKind) {
 export function useUpdateScriptPollPlugin() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      hostId,
-      name,
-      enabled,
-    }: {
-      hostId: string;
-      name: string;
-      enabled: boolean;
-    }) => updateScriptPollPlugin(hostId, name, enabled),
+    mutationFn: ({ hostId, name, enabled }: { hostId: string; name: string; enabled: boolean }) =>
+      updateScriptPollPlugin(hostId, name, enabled),
     onMutate: async ({ hostId, name, enabled }) => {
       const key = ["script-plugin-health", "poll"] as const;
       await queryClient.cancelQueries({ queryKey: key });

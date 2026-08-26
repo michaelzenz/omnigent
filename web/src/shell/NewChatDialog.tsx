@@ -2129,10 +2129,7 @@ function HarnessConfigModal({
           that selected it, so hiding it would strand the choice with no way to
           read it back or switch away without cancelling. */}
           {!hasPermission && !hasApproval && !hasCursor && !hasAgySkip && brainDefault && (
-            <ConfigRow
-              label="Agent Harness"
-              description="Underlying coding harness"
-            >
+            <ConfigRow label="Agent Harness" description="Underlying coding harness">
               <Select
                 value={draftHarness ?? brainDefault}
                 onValueChange={setDraftHarness}
@@ -2696,11 +2693,11 @@ export function NewChatLandingScreen() {
     () => landingDraft?.costControlMode ?? null,
   );
   const [subagentRoutingMode, setSubagentRoutingMode] = useState<"on" | "off" | null>(() => {
-      if (landingDraft?.subagentRoutingMode !== undefined) {
-        return landingDraft.subagentRoutingMode;
-      }
-      const stored = readHarnessOptions(OMNIHARNESS_AGENT_NAME).subagentRouting;
-      return stored === "on" || stored === "off" ? stored : null;
+    if (landingDraft?.subagentRoutingMode !== undefined) {
+      return landingDraft.subagentRoutingMode;
+    }
+    const stored = readHarnessOptions(OMNIHARNESS_AGENT_NAME).subagentRouting;
+    return stored === "on" || stored === "off" ? stored : null;
   });
   // Model selection and smart routing are mutually exclusive: enabling
   // routing clears the explicit model pick, and picking a model turns
@@ -3310,9 +3307,11 @@ export function NewChatLandingScreen() {
       return [{ label: "Permissions", value: skipValue }, ...routingRow];
     }
     if (selectedAgentUsesOmniHarness) {
-      const modelValue = (routingOn || !pickedModel) && smartRoutingEligible
-        ? SMART_ROUTING_LABEL
-        : (sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ?? SMART_ROUTING_LABEL);
+      const modelValue =
+        (routingOn || !pickedModel) && smartRoutingEligible
+          ? SMART_ROUTING_LABEL
+          : (sdkModelOptions.find((model) => model.id === pickedModel)?.displayName ??
+            SMART_ROUTING_LABEL);
       const profileHarness = selectedAgent?.harness;
       const activeHarness = pickedHarness ?? profileHarness;
       return [
@@ -3325,8 +3324,8 @@ export function NewChatLandingScreen() {
                     ? "Auto Select"
                     : profileSelection === "auto_include"
                       ? "Auto Include"
-                    : (profiles.find((profile) => profile.id === profileSelection)?.name ??
-                      "Auto Select"),
+                      : (profiles.find((profile) => profile.id === profileSelection)?.name ??
+                        "Auto Select"),
               },
             ]
           : []),
@@ -3344,7 +3343,11 @@ export function NewChatLandingScreen() {
           : []),
       ];
     }
-    if (!omniharnessSelected && selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabelsAll) {
+    if (
+      !omniharnessSelected &&
+      selectedAgent?.harness != null &&
+      selectedAgent.harness in brainHarnessLabelsAll
+    ) {
       const active = pickedHarness ?? selectedAgent.harness;
       return [
         {
@@ -4277,8 +4280,8 @@ export function NewChatLandingScreen() {
         ? profileSelection === "auto_include"
           ? { mode: "auto_include" as const }
           : promptProfile
-          ? { mode: "fixed" as const, profile_id: promptProfile.id }
-          : { mode: "auto" as const }
+            ? { mode: "fixed" as const, profile_id: promptProfile.id }
+            : { mode: "auto" as const }
         : null;
       const trimmedBranch = branchName.trim();
       // `shouldCreateWorktree` (component scope): true only when a branch is
@@ -4433,14 +4436,14 @@ export function NewChatLandingScreen() {
                         auto_fetch_base: readAutoFetchWorktreeBase(),
                       }
                     : shouldCreateManualWorktree
-                    ? {
-                        branch_name: trimmedBranch,
-                        base_branch: baseBranch.trim() || undefined,
-                        auto_fetch_base: readAutoFetchWorktreeBase(),
-                      }
-                    : startInExistingWorktree
-                      ? { branch_name: trimmedBranch, existing_worktree: true }
-                      : undefined,
+                      ? {
+                          branch_name: trimmedBranch,
+                          base_branch: baseBranch.trim() || undefined,
+                          auto_fetch_base: readAutoFetchWorktreeBase(),
+                        }
+                      : startInExistingWorktree
+                        ? { branch_name: trimmedBranch, existing_worktree: true }
+                        : undefined,
                 }),
             // Native-wrapper labels + codex bypass + the born-filed project
             // label (see `createLabels` above).
@@ -4848,33 +4851,33 @@ export function NewChatLandingScreen() {
                     addFiles(pasted);
                   }
                 }}
-              // Suppress the native placeholder when the overlay supplies its
-              // own prompt text; aria-label preserves the accessible name.
-              placeholder={pillSkills.length > 0 ? "" : placeholderText}
-              aria-label={placeholderText}
-              rows={1}
-              autoFocus
-              data-testid="new-chat-landing-input"
-              // Compose-pill text spec: SF Pro Text system stack at
-              // 14px/20px. (Note: sub-16px inputs make mobile Safari
-              // auto-zoom on focus — accepted tradeoff per the design.)
-              // Heights are border-box (12px top + 8px bottom padding lives
-              // inside them): max 200px = the spec's 180px of content.
-              // A 60px floor holds two 20px lines plus that padding;
-              // useAutoGrowTextarea expands from there to the unchanged cap.
-              className="block min-h-[60px] max-h-[200px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-2 font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-ui leading-5 text-foreground outline-none [scrollbar-width:none] placeholder:text-muted-foreground md:select-text [&::-webkit-scrollbar]:hidden"
-            />
-            {/* Gated on an empty draft so it reads as the placeholder.
+                // Suppress the native placeholder when the overlay supplies its
+                // own prompt text; aria-label preserves the accessible name.
+                placeholder={pillSkills.length > 0 ? "" : placeholderText}
+                aria-label={placeholderText}
+                rows={1}
+                autoFocus
+                data-testid="new-chat-landing-input"
+                // Compose-pill text spec: SF Pro Text system stack at
+                // 14px/20px. (Note: sub-16px inputs make mobile Safari
+                // auto-zoom on focus — accepted tradeoff per the design.)
+                // Heights are border-box (12px top + 8px bottom padding lives
+                // inside them): max 200px = the spec's 180px of content.
+                // A 60px floor holds two 20px lines plus that padding;
+                // useAutoGrowTextarea expands from there to the unchanged cap.
+                className="block min-h-[60px] max-h-[200px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-2 font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-ui leading-5 text-foreground outline-none [scrollbar-width:none] placeholder:text-muted-foreground md:select-text [&::-webkit-scrollbar]:hidden"
+              />
+              {/* Gated on an empty draft so it reads as the placeholder.
                 pointer-events-none lets clicks fall through to focus the
                 textarea; the pills themselves opt back in. */}
-            {pillSkills.length > 0 && message.length === 0 && (
-              <div className="pointer-events-none absolute inset-x-4 top-3 flex flex-wrap items-center gap-2">
-                <span className="font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-ui leading-5 text-muted-foreground">
-                  Describe a task, or try a skill
-                </span>
-                <SkillPills skills={pillSkills} onPick={applySkillPill} />
-              </div>
-            )}
+              {pillSkills.length > 0 && message.length === 0 && (
+                <div className="pointer-events-none absolute inset-x-4 top-3 flex flex-wrap items-center gap-2">
+                  <span className="font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-ui leading-5 text-muted-foreground">
+                    Describe a task, or try a skill
+                  </span>
+                  <SkillPills skills={pillSkills} onPick={applySkillPill} />
+                </div>
+              )}
             </div>
             {/* Hidden file input for the attach button. */}
             <input
@@ -5579,144 +5582,144 @@ export function NewChatLandingScreen() {
                         </>
                       ) : (
                         <>
-                      <label
-                        htmlFor="landing-branch-name"
-                        className="text-sm font-medium text-foreground"
-                      >
-                        Git worktree branch (optional)
-                      </label>
-                      {/* Help text sits above the field. The warning for a picked
+                          <label
+                            htmlFor="landing-branch-name"
+                            className="text-sm font-medium text-foreground"
+                          >
+                            Git worktree branch (optional)
+                          </label>
+                          {/* Help text sits above the field. The warning for a picked
                         existing worktree stays below the input (contextual to the
                         selection). */}
-                      <p className="text-sm text-muted-foreground">
+                          <p className="text-sm text-muted-foreground">
                             New branch name, or pick an existing worktree. Leave blank to start
                             directly in the working directory.
-                      </p>
-                      {/* The branch field is a combobox: focusing it reveals the
+                          </p>
+                          {/* The branch field is a combobox: focusing it reveals the
                         repo's existing worktrees, and typing filters them.
                         Picking one starts in that worktree; a name matching none
                         creates a new worktree. */}
-                      <div className="relative flex flex-col">
-                        <input
-                          id="landing-branch-name"
-                          type="text"
-                          value={branchName}
-                          onChange={(e) => setBranchName(e.target.value)}
-                          onFocus={() => setBranchInputFocused(true)}
-                          // Delay so a click on a dropdown option registers
-                          // before the list unmounts on blur.
-                          onBlur={() => setTimeout(() => setBranchInputFocused(false), 120)}
-                          placeholder="feature/my-branch"
-                          role="combobox"
-                          aria-expanded={branchInputFocused && filteredWorktrees.length > 0}
-                          aria-autocomplete="list"
-                          // Suppress the browser's native autofill dropdown so it
-                          // doesn't overlay our worktree combobox. `off` alone is
-                          // ignored by some browsers, so also disable spellcheck /
-                          // autocorrect and give it an unrecognized name.
-                          autoComplete="off"
-                          autoCorrect="off"
-                          autoCapitalize="off"
-                          spellCheck={false}
-                          name="omnigent-worktree-branch"
-                          // pr-9 leaves room for the generate button overlaid at
-                          // the right edge.
-                          className="rounded-md border border-input bg-background py-2 pr-9 pl-3 text-sm outline-none transition-colors focus-visible:border-ring"
-                          data-testid="new-chat-landing-branch-input"
-                        />
-                        {/* Fill a unique branch name for a throwaway worktree.
+                          <div className="relative flex flex-col">
+                            <input
+                              id="landing-branch-name"
+                              type="text"
+                              value={branchName}
+                              onChange={(e) => setBranchName(e.target.value)}
+                              onFocus={() => setBranchInputFocused(true)}
+                              // Delay so a click on a dropdown option registers
+                              // before the list unmounts on blur.
+                              onBlur={() => setTimeout(() => setBranchInputFocused(false), 120)}
+                              placeholder="feature/my-branch"
+                              role="combobox"
+                              aria-expanded={branchInputFocused && filteredWorktrees.length > 0}
+                              aria-autocomplete="list"
+                              // Suppress the browser's native autofill dropdown so it
+                              // doesn't overlay our worktree combobox. `off` alone is
+                              // ignored by some browsers, so also disable spellcheck /
+                              // autocorrect and give it an unrecognized name.
+                              autoComplete="off"
+                              autoCorrect="off"
+                              autoCapitalize="off"
+                              spellCheck={false}
+                              name="omnigent-worktree-branch"
+                              // pr-9 leaves room for the generate button overlaid at
+                              // the right edge.
+                              className="rounded-md border border-input bg-background py-2 pr-9 pl-3 text-sm outline-none transition-colors focus-visible:border-ring"
+                              data-testid="new-chat-landing-branch-input"
+                            />
+                            {/* Fill a unique branch name for a throwaway worktree.
                           onMouseDown so it fires before the input's blur closes
                           the combobox and preventDefault keeps focus on the
                           input. */}
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            generateBranchName();
-                          }}
-                          title="Generate a unique branch name"
-                          aria-label="Generate a unique branch name"
-                          className="absolute top-0 right-0 flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-                          data-testid="new-chat-landing-branch-generate"
-                        >
-                          <ShuffleIcon className="size-4" />
-                        </button>
-                        {branchInputFocused && filteredWorktrees.length > 0 && (
-                          <div
-                            // Floats over the popover as a combobox popup, so it
-                            // doesn't stretch the box. Bounded height + internal
-                            // scroll keep it from running off the viewport.
-                            className="absolute top-full right-0 left-0 z-20 mt-1 flex max-h-40 flex-col overflow-y-auto rounded-[12px] border border-border bg-popover p-2 shadow-menu"
-                            data-testid="new-chat-landing-worktree-dropdown"
-                          >
-                            <span className="px-1.5 py-1 text-sm font-medium text-muted-foreground">
-                              Existing worktrees
-                            </span>
-                            <ul className="flex flex-col gap-0.5">
-                              {filteredWorktrees.map((w) => {
-                                const selected =
-                                  normalizeWorkspacePath(w.path) ===
-                                  normalizeWorkspacePath(workspaceTrimmed);
-                                return (
-                                  <li key={w.path}>
-                                    <button
-                                      type="button"
-                                      // onMouseDown (not onClick): fires before the
-                                      // input's blur, so the selection lands even
-                                      // though blur is about to hide the list.
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        setWorkspace(w.path);
-                                        setBranchInputFocused(false);
-                                        setWorktreePopoverOpen(false);
-                                      }}
-                                      className={`flex w-full flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted dark:hover:bg-muted/50 ${
-                                        selected ? "bg-muted dark:bg-muted/50" : ""
-                                      }`}
-                                      data-testid="new-chat-landing-worktree-option"
-                                    >
-                                      <span className="font-medium text-foreground">
-                                        {w.branch ?? "(detached)"}
-                                      </span>
-                                      {/* Tail-truncated so the disambiguating
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                generateBranchName();
+                              }}
+                              title="Generate a unique branch name"
+                              aria-label="Generate a unique branch name"
+                              className="absolute top-0 right-0 flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                              data-testid="new-chat-landing-branch-generate"
+                            >
+                              <ShuffleIcon className="size-4" />
+                            </button>
+                            {branchInputFocused && filteredWorktrees.length > 0 && (
+                              <div
+                                // Floats over the popover as a combobox popup, so it
+                                // doesn't stretch the box. Bounded height + internal
+                                // scroll keep it from running off the viewport.
+                                className="absolute top-full right-0 left-0 z-20 mt-1 flex max-h-40 flex-col overflow-y-auto rounded-[12px] border border-border bg-popover p-2 shadow-menu"
+                                data-testid="new-chat-landing-worktree-dropdown"
+                              >
+                                <span className="px-1.5 py-1 text-sm font-medium text-muted-foreground">
+                                  Existing worktrees
+                                </span>
+                                <ul className="flex flex-col gap-0.5">
+                                  {filteredWorktrees.map((w) => {
+                                    const selected =
+                                      normalizeWorkspacePath(w.path) ===
+                                      normalizeWorkspacePath(workspaceTrimmed);
+                                    return (
+                                      <li key={w.path}>
+                                        <button
+                                          type="button"
+                                          // onMouseDown (not onClick): fires before the
+                                          // input's blur, so the selection lands even
+                                          // though blur is about to hide the list.
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            setWorkspace(w.path);
+                                            setBranchInputFocused(false);
+                                            setWorktreePopoverOpen(false);
+                                          }}
+                                          className={`flex w-full flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-muted dark:hover:bg-muted/50 ${
+                                            selected ? "bg-muted dark:bg-muted/50" : ""
+                                          }`}
+                                          data-testid="new-chat-landing-worktree-option"
+                                        >
+                                          <span className="font-medium text-foreground">
+                                            {w.branch ?? "(detached)"}
+                                          </span>
+                                          {/* Tail-truncated so the disambiguating
                                       folder shows, not a shared prefix; full
                                       path on hover. */}
-                                      <span
-                                        className="w-full truncate text-muted-foreground"
-                                        title={w.path}
-                                      >
-                                        {worktreePathTail(w.path)}
-                                      </span>
-                                    </button>
-                                  </li>
-                                );
-                              })}
-                            </ul>
+                                          <span
+                                            className="w-full truncate text-muted-foreground"
+                                            title={w.path}
+                                          >
+                                            {worktreePathTail(w.path)}
+                                          </span>
+                                        </button>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      {/* Base branch only matters when creating a NEW worktree
+                          {/* Base branch only matters when creating a NEW worktree
                         — hidden once the workspace points at an existing one
                         (no worktree is created, so there's nothing to base). */}
-                      {branchName.trim() !== "" && !startInExistingWorktree && (
-                        <input
-                          type="text"
-                          value={baseBranch}
-                          onChange={(e) => setBaseBranch(e.target.value)}
-                          placeholder="Base branch (defaults to current)"
-                          aria-label="Base branch"
-                          className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-colors focus-visible:border-ring"
-                          data-testid="new-chat-landing-base-branch-input"
-                        />
-                      )}
-                      {startInExistingWorktree && (
-                        <p
-                          className="text-sm text-amber-600 dark:text-amber-500"
-                          data-testid="new-chat-landing-existing-worktree-warning"
-                        >
-                          Starts in existing worktree, edit the name to create a new one.
-                        </p>
-                      )}
+                          {branchName.trim() !== "" && !startInExistingWorktree && (
+                            <input
+                              type="text"
+                              value={baseBranch}
+                              onChange={(e) => setBaseBranch(e.target.value)}
+                              placeholder="Base branch (defaults to current)"
+                              aria-label="Base branch"
+                              className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-colors focus-visible:border-ring"
+                              data-testid="new-chat-landing-base-branch-input"
+                            />
+                          )}
+                          {startInExistingWorktree && (
+                            <p
+                              className="text-sm text-amber-600 dark:text-amber-500"
+                              data-testid="new-chat-landing-existing-worktree-warning"
+                            >
+                              Starts in existing worktree, edit the name to create a new one.
+                            </p>
+                          )}
                         </>
                       )}
                     </div>

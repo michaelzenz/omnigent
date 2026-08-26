@@ -153,9 +153,7 @@ def test_list_defaults_uses_scope_filter(db_engine: Engine) -> None:
 
     defaults = policy_store.list_defaults()
     created = next(
-        policy
-        for policy in defaults
-        if policy.id == "58bf9f55f214321754995cb4beebed38"
+        policy for policy in defaults if policy.id == "58bf9f55f214321754995cb4beebed38"
     )
     assert created.scope == "default"
     assert all(policy.name != "sess_x" for policy in defaults)

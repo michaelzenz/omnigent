@@ -1909,7 +1909,9 @@ describe("NewChatLandingScreen create flow", () => {
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     pickSelectOption("new-chat-landing-config-profile", "Research");
     pickSelectOption("new-chat-landing-config-profile", "Auto Select");
-    expect(screen.getByTestId("new-chat-landing-config-profile").textContent).toContain("Auto Select");
+    expect(screen.getByTestId("new-chat-landing-config-profile").textContent).toContain(
+      "Auto Select",
+    );
     saveConfig();
     typeMessage("research this change");
     fireEvent.click(screen.getByTestId("new-chat-landing-submit"));

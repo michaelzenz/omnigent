@@ -102,6 +102,6 @@ async def run_execution_reconciler(
             )
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
             _logger.exception("worker execution reconciliation failed")
         await asyncio.sleep(interval_s)

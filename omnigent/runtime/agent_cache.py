@@ -8,9 +8,8 @@ import tempfile
 from pathlib import Path
 
 from omnigent.entities import LoadedAgent
-from omnigent.spec import AgentSpec
+from omnigent.spec import AgentSpec, resolve_session_mcp_servers
 from omnigent.spec import load as load_spec
-from omnigent.spec import resolve_session_mcp_servers
 from omnigent.stores.artifact_store import ArtifactStore
 
 

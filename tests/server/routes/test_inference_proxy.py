@@ -59,9 +59,7 @@ async def test_proxy_binds_runner_and_injects_server_databricks_token(
 ) -> None:
     binding_token = "runner-binding-secret"
     runner_id = token_bound_runner_id(binding_token)
-    store = _ConversationStore(
-        SimpleNamespace(runner_id=runner_id, host_id="host_1")
-    )
+    store = _ConversationStore(SimpleNamespace(runner_id=runner_id, host_id="host_1"))
     monkeypatch.setattr(
         inference_proxy,
         "default_provider_for_harness",
@@ -88,19 +86,14 @@ async def test_proxy_binds_runner_and_injects_server_databricks_token(
         "https://dbc-test.cloud.databricks.com/ai-gateway/openai/v1/responses"
     ).mock(return_value=httpx.Response(200, json={"ok": True}))
     app = FastAPI()
-    app.include_router(
-        create_inference_proxy_router(store, enabled=True), prefix="/v1"
-    )  # type: ignore[arg-type]
+    app.include_router(create_inference_proxy_router(store, enabled=True), prefix="/v1")  # type: ignore[arg-type]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://server",
     ) as client:
         response = await client.post(
-            (
-                f"/v1/runners/{runner_id}/sessions/conv_1/"
-                "inference/responses/responses"
-            ),
+            (f"/v1/runners/{runner_id}/sessions/conv_1/inference/responses/responses"),
             headers={
                 RUNNER_TUNNEL_TOKEN_HEADER: binding_token,
                 "authorization": "Bearer must-not-forward",
@@ -110,9 +103,7 @@ async def test_proxy_binds_runner_and_injects_server_databricks_token(
 
     assert response.status_code == 200
     assert upstream.called
-    assert upstream.calls.last.request.headers["authorization"] == (
-        "Bearer databricks-secret"
-    )
+    assert upstream.calls.last.request.headers["authorization"] == ("Bearer databricks-secret")
 
 
 @pytest.mark.asyncio
@@ -149,19 +140,14 @@ async def test_proxy_routes_databricks_glm_alias_to_chat_completions(
         "https://dbc-test.cloud.databricks.com/serving-endpoints/chat/completions"
     ).mock(return_value=httpx.Response(200, json={"ok": True}))
     app = FastAPI()
-    app.include_router(
-        create_inference_proxy_router(store, enabled=True), prefix="/v1"
-    )  # type: ignore[arg-type]
+    app.include_router(create_inference_proxy_router(store, enabled=True), prefix="/v1")  # type: ignore[arg-type]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://server",
     ) as client:
         response = await client.post(
-            (
-                f"/v1/runners/{runner_id}/sessions/conv_1/"
-                "inference/completions/chat/completions"
-            ),
+            (f"/v1/runners/{runner_id}/sessions/conv_1/inference/completions/chat/completions"),
             headers={RUNNER_TUNNEL_TOKEN_HEADER: binding_token},
             json={"model": "databricks-glm-5-2"},
         )
@@ -186,9 +172,7 @@ async def test_proxy_rejects_near_match_path_and_unsupported_surface(
     runner_id = token_bound_runner_id(binding_token)
     store = _ConversationStore(SimpleNamespace(runner_id=runner_id, host_id="host_1"))
     app = FastAPI()
-    app.include_router(
-        create_inference_proxy_router(store, enabled=True), prefix="/v1"
-    )  # type: ignore[arg-type]
+    app.include_router(create_inference_proxy_router(store, enabled=True), prefix="/v1")  # type: ignore[arg-type]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -207,13 +191,9 @@ async def test_proxy_rejects_near_match_path_and_unsupported_surface(
 async def test_proxy_rejects_runner_not_bound_to_session() -> None:
     binding_token = "runner-binding-secret"
     runner_id = token_bound_runner_id(binding_token)
-    store = _ConversationStore(
-        SimpleNamespace(runner_id="runner_other", host_id="host_1")
-    )
+    store = _ConversationStore(SimpleNamespace(runner_id="runner_other", host_id="host_1"))
     app = FastAPI()
-    app.include_router(
-        create_inference_proxy_router(store, enabled=True), prefix="/v1"
-    )  # type: ignore[arg-type]
+    app.include_router(create_inference_proxy_router(store, enabled=True), prefix="/v1")  # type: ignore[arg-type]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),

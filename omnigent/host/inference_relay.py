@@ -235,6 +235,7 @@ class HostInferenceRelay:
             and key.lower() not in response_connection_headers
             and key.lower() not in {"content-length", "set-cookie"}
         }
+
         async def response_body() -> AsyncIterator[bytes]:
             try:
                 async for chunk in response.aiter_raw():

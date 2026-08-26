@@ -126,9 +126,7 @@ async def test_host_runner_relaunch_preserves_content_updated_at(
 
     class _HostConnection:
         def __init__(self) -> None:
-            self.pending_launches: dict[
-                str, asyncio.Future[dict[str, str | None]]
-            ] = {}
+            self.pending_launches: dict[str, asyncio.Future[dict[str, str | None]]] = {}
 
     await sessions_module._launch_runner_on_host(
         conv,

@@ -1751,20 +1751,13 @@ describe("chatStore — switchTo", () => {
 
     // Bind the background session's stream (as NewChatDialog does when
     // onScreenRef is false).
-    await useChatStore.getState().bindBackgroundSession(
-      "conv_bg",
-      "agent_xyz",
-      "Test Agent",
-    );
+    await useChatStore.getState().bindBackgroundSession("conv_bg", "agent_xyz", "Test Agent");
 
     // The snapshot path (worktreeStatus == null, not the active conversation)
     // should have fired maybeAutoSendInitialPrompt, which calls send with
     // pinnedConversationId routing to the background entry.
     expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual([
-      "hello from background",
-      "agent_xyz",
-    ]);
+    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual(["hello from background", "agent_xyz"]);
 
     // The prompt was consumed (deleted from the pending map).
     expect(peekPendingInitialPrompt("conv_bg")).toBeNull();
@@ -1784,11 +1777,9 @@ describe("chatStore — switchTo", () => {
     useChatStore.setState({ send: sendSpy });
 
     // The session is already active — bindBackgroundSession should be a no-op.
-    await useChatStore.getState().bindBackgroundSession(
-      "conv_active_bg",
-      "agent_xyz",
-      "Test Agent",
-    );
+    await useChatStore
+      .getState()
+      .bindBackgroundSession("conv_active_bg", "agent_xyz", "Test Agent");
 
     // send was NOT called — switchTo already bound the stream and ChatPage's
     // auto-send effect owns the foreground dispatch.

@@ -103,15 +103,12 @@ class PuppyGardenApiTool(Tool):
                         },
                         "body": {
                             "type": "object",
-                            "description": (
-                                "Optional JSON body for POST/PUT/PATCH requests."
-                            ),
+                            "description": ("Optional JSON body for POST/PUT/PATCH requests."),
                         },
                         "query": {
                             "type": "object",
                             "description": (
-                                "Optional query params for GET requests, e.g. "
-                                '{"kind": "worker"}.'
+                                'Optional query params for GET requests, e.g. {"kind": "worker"}.'
                             ),
                         },
                     },

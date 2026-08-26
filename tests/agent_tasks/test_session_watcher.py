@@ -4,7 +4,6 @@ ingress auto-routing, purge with event_type filter, and the update endpoint.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import uuid
@@ -16,13 +15,10 @@ from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     is_session_internal_event,
 )
-from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
-from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
@@ -205,9 +201,9 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
     """An external.session.updated event with a known hint auto-routes to the task."""
     from types import SimpleNamespace
 
-    from omnigent.agent_tasks.ingress import ingress_event
     from sqlalchemy import update as sa_update
 
+    from omnigent.agent_tasks.ingress import ingress_event
     from omnigent.db.db_models import SqlWorker, current_workspace_id
     from omnigent.db.utils import get_or_create_engine, make_managed_session_maker
 
@@ -360,7 +356,9 @@ def test_propose_external_session_adoption_uses_existing_task(db_uri: str) -> No
         title="Mgr", agent_id=agent_id, host_id=_uid("hm3"), workspace="/tmp"
     )
     task_id = _uid("task_existing")
-    task_store.create(task_id, "Existing task", "existing goal", manager_conversation_id=mgr_conv.id)
+    task_store.create(
+        task_id, "Existing task", "existing goal", manager_conversation_id=mgr_conv.id
+    )
 
     hint = "codex-propose-existing"
     task, proposal = propose_external_session_adoption(
@@ -491,7 +489,6 @@ async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> N
 def test_reject_external_session_adoption_dismisses_proposal(db_uri: str) -> None:
     """Rejecting an external session adoption dismisses the proposal."""
     from omnigent.agent_tasks.adoption import (
-        find_open_external_adoption_proposal,
         propose_external_session_adoption,
         reject_external_session_adoption,
     )
@@ -523,15 +520,21 @@ def test_format_manager_notice_includes_external_update_delta() -> None:
     """The manager notice renders external.session.updated with the delta."""
     from omnigent.agent_tasks.notices import _format_manager_notice
 
-    event = type("E", (), {
-        "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
-        "title": "External session update",
-        "payload": json.dumps({
-            "session_hint": "codex-delta",
-            "history_hash": "h5",
-            "transcript_delta": "user: can you fix the bug?\nassistant: I'll look at it",
-        }),
-    })()
+    event = type(
+        "E",
+        (),
+        {
+            "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+            "title": "External session update",
+            "payload": json.dumps(
+                {
+                    "session_hint": "codex-delta",
+                    "history_hash": "h5",
+                    "transcript_delta": "user: can you fix the bug?\nassistant: I'll look at it",
+                }
+            ),
+        },
+    )()
     notice = _format_manager_notice([event])
     assert "external.session.updated" in notice
     assert "codex-delta" in notice
@@ -544,16 +547,22 @@ def test_format_manager_notice_includes_rewind() -> None:
     """The manager notice indicates rewind for rewind events."""
     from omnigent.agent_tasks.notices import _format_manager_notice
 
-    event = type("E", (), {
-        "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
-        "title": "External session rewind",
-        "payload": json.dumps({
-            "session_hint": "codex-rewind",
-            "rewind_at": "h3",
-            "history_hash": "h7",
-            "transcript_delta": "rewritten messages",
-        }),
-    })()
+    event = type(
+        "E",
+        (),
+        {
+            "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+            "title": "External session rewind",
+            "payload": json.dumps(
+                {
+                    "session_hint": "codex-rewind",
+                    "rewind_at": "h3",
+                    "history_hash": "h7",
+                    "transcript_delta": "rewritten messages",
+                }
+            ),
+        },
+    )()
     notice = _format_manager_notice([event])
     assert "rewound" in notice
     assert "h3" in notice

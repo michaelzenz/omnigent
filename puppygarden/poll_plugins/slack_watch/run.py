@@ -84,9 +84,7 @@ class SlackMcp:
             "slack_read_api_call",
             {"endpoint": endpoint, "params": params or {}, "raw": True},
         )
-        text = "".join(
-            getattr(c, "text", "") or "" for c in (result.content or [])
-        )
+        text = "".join(getattr(c, "text", "") or "" for c in (result.content or []))
         if not text:
             raise RuntimeError(f"slack {endpoint}: empty MCP response")
         try:
@@ -261,8 +259,7 @@ async def _amain() -> int:
     mcfg = cfg.get("mcp")
     if not isinstance(mcfg, dict) or not mcfg.get("command"):
         raise RuntimeError(
-            "slack_watch: no `mcp:` launch config in config.yaml "
-            "(set mcp.command / mcp.args)"
+            "slack_watch: no `mcp:` launch config in config.yaml (set mcp.command / mcp.args)"
         )
     params = StdioServerParameters(
         command=mcfg["command"],

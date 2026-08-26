@@ -3122,8 +3122,8 @@ describe("shouldQueueSend", () => {
   });
 
   it("ignores drafts when deciding whether an idle send must queue", () => {
-    expect(
-      shouldQueueSend("conv_a", "idle", "idle", [{ ...q("conv_a"), kind: "draft" }]),
-    ).toBe(false);
+    expect(shouldQueueSend("conv_a", "idle", "idle", [{ ...q("conv_a"), kind: "draft" }])).toBe(
+      false,
+    );
   });
 });

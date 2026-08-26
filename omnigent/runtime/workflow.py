@@ -1436,9 +1436,7 @@ def _build_pi_spawn_env(
         )
         env["HARNESS_PI_GATEWAY_OPENAI_WIRE_API"] = RESPONSES_WIRE_API
         env[PI_INFERENCE_PROXY_TOKEN_ENV] = proxy_token
-        env["HARNESS_PI_GATEWAY_AUTH_COMMAND"] = (
-            f'printf %s "${PI_INFERENCE_PROXY_TOKEN_ENV}"'
-        )
+        env["HARNESS_PI_GATEWAY_AUTH_COMMAND"] = f'printf %s "${PI_INFERENCE_PROXY_TOKEN_ENV}"'
     else:
         # Generic-provider branch (slotted ahead of the legacy-profile /
         # databricks-prefix path): a ProviderAuth on the spec, or — when the spec

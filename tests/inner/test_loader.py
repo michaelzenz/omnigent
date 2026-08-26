@@ -701,9 +701,7 @@ class TestInstructionsField(unittest.TestCase):
             bundle.mkdir()
             yaml_path = bundle / "agent.yaml"
             yaml_path.write_text(
-                "name: included\n"
-                "prompt: Base role prompt\n"
-                "instructions_include: ../secret.md\n"
+                "name: included\nprompt: Base role prompt\ninstructions_include: ../secret.md\n"
             )
 
             agent = load_agent_def(str(yaml_path))

@@ -1698,9 +1698,9 @@ describe("NewChatLandingScreen", () => {
     openSelect("new-chat-landing-config-subagent-routing");
     fireEvent.click(screen.getByRole("option", { name: "Smart Routing" }));
     saveConfig();
-    expect(
-      JSON.parse(localStorage.getItem(HARNESS_OPTIONS_KEY) ?? "{}").omniharness,
-    ).toMatchObject({ subagentRouting: "on" });
+    expect(JSON.parse(localStorage.getItem(HARNESS_OPTIONS_KEY) ?? "{}").omniharness).toMatchObject(
+      { subagentRouting: "on" },
+    );
 
     remountLanding({
       smart_routing_enabled: true,

@@ -816,9 +816,7 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       ...(typeof createdBy === "string" ? { createdBy } : {}),
       data: payload,
       clearedPendingId: typeof clearedPendingId === "string" ? clearedPendingId : null,
-      ...(typeof p.comment_thread_id === "string"
-        ? { commentThreadId: p.comment_thread_id }
-        : {}),
+      ...(typeof p.comment_thread_id === "string" ? { commentThreadId: p.comment_thread_id } : {}),
     } satisfies SessionInputConsumedEvent;
   }
   if (eventType === "session.interrupted") {

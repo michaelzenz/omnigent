@@ -49,9 +49,7 @@ export function AgentTextCommentsSurface({
           </label>
         </div>
         {ui.threadedModeError && (
-          <p className="mt-1.5 text-[11px] leading-4 text-destructive">
-            {ui.threadedModeError}
-          </p>
+          <p className="mt-1.5 text-[11px] leading-4 text-destructive">{ui.threadedModeError}</p>
         )}
       </header>
       {ui.mode === "batch" ? (

@@ -92,9 +92,7 @@ async def _invalidate_stale_runner_bindings(
     :param live_runner_ids: Runner tokens the host reports as alive now.
     """
     try:
-        bindings = await asyncio.to_thread(
-            conversation_store.runner_bindings_for_host, host_id
-        )
+        bindings = await asyncio.to_thread(conversation_store.runner_bindings_for_host, host_id)
     except Exception:
         _logger.exception("runner_bindings_for_host(%s) failed", host_id)
         return
@@ -315,10 +313,7 @@ def create_host_tunnel_router(
                 await _send_connection_error(ws, stage="protocol", error=error)
                 await ws.close(code=4002, reason=error)
                 return
-            if (
-                frame.skill_sync_harnesses is None
-                or frame.skill_search_roots is None
-            ):
+            if frame.skill_sync_harnesses is None or frame.skill_search_roots is None:
                 await ws.close(code=4001, reason="host skill configuration is required")
                 return
 

@@ -209,9 +209,10 @@ async def test_rewind_session_removes_target_user_message_and_later_history(
         agent_id=agent["id"],
     )
     store.set_labels(kept_child.id, {"omnigent.spawn.parent_response_id": "resp_1"})
-    assert store.get_conversation(removed_child_id).labels[
-        "omnigent.spawn.parent_response_id"
-    ] == "resp_2"
+    assert (
+        store.get_conversation(removed_child_id).labels["omnigent.spawn.parent_response_id"]
+        == "resp_2"
+    )
 
     response = await client.post(
         f"/v1/sessions/{session['id']}/rewind",

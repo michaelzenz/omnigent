@@ -287,9 +287,7 @@ describe("SkillsTab", () => {
     render(<SkillsTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
-    expect(
-      screen.getByText(/Saves the new skill to every detected harness/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Saves the new skill to every detected harness/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByTestId("create-skill-name"), {
       target: { value: "my-new-skill" },

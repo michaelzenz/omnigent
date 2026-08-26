@@ -20,10 +20,7 @@ import {
   saveSshConnections,
   type SshConnectionLogEntry,
 } from "@/lib/sshApi";
-import {
-  createSshConnectionId,
-  type SshConnection,
-} from "@/lib/sshConnectionPreferences";
+import { createSshConnectionId, type SshConnection } from "@/lib/sshConnectionPreferences";
 
 const ACTIVE_POLL_MS = 2_000;
 const STABLE_POLL_MS = 20_000;
@@ -75,27 +72,34 @@ export function ConnectionSettingsBody() {
     return loaded;
   }, []);
 
-  const persist = useCallback(async (next: SshConnection[], nextPackageIndexUrl: string | null, nextNpmRegistryUrl: string | null) => {
-    const generation = ++requestGeneration.current;
-    const saved = await saveSshConnections(next, nextPackageIndexUrl, nextNpmRegistryUrl);
-    if (generation === requestGeneration.current) {
-      setConnections(saved.connections);
-      setPackageIndexUrl(saved.packageIndexUrl ?? "");
-      setNpmRegistryUrl(saved.npmRegistryUrl ?? "");
-    }
-    try {
-      const refreshed = await fetchSshConnections();
-      if (generation !== requestGeneration.current) return refreshed;
-      setConnections(refreshed.connections);
-      setPackageIndexUrl(refreshed.packageIndexUrl ?? "");
-      setNpmRegistryUrl(refreshed.npmRegistryUrl ?? "");
-      setLoadError(null);
-      return refreshed;
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Failed to refresh connections");
-    }
-    return saved;
-  }, []);
+  const persist = useCallback(
+    async (
+      next: SshConnection[],
+      nextPackageIndexUrl: string | null,
+      nextNpmRegistryUrl: string | null,
+    ) => {
+      const generation = ++requestGeneration.current;
+      const saved = await saveSshConnections(next, nextPackageIndexUrl, nextNpmRegistryUrl);
+      if (generation === requestGeneration.current) {
+        setConnections(saved.connections);
+        setPackageIndexUrl(saved.packageIndexUrl ?? "");
+        setNpmRegistryUrl(saved.npmRegistryUrl ?? "");
+      }
+      try {
+        const refreshed = await fetchSshConnections();
+        if (generation !== requestGeneration.current) return refreshed;
+        setConnections(refreshed.connections);
+        setPackageIndexUrl(refreshed.packageIndexUrl ?? "");
+        setNpmRegistryUrl(refreshed.npmRegistryUrl ?? "");
+        setLoadError(null);
+        return refreshed;
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : "Failed to refresh connections");
+      }
+      return saved;
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -250,8 +254,8 @@ export function ConnectionSettingsBody() {
         <div>
           <h3 className="text-sm font-medium">Remote package registries</h3>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Optional HTTPS registries used when installing Omnigent and harness CLIs on
-            remote SSH hosts. Leave blank to use public defaults.
+            Optional HTTPS registries used when installing Omnigent and harness CLIs on remote SSH
+            hosts. Leave blank to use public defaults.
           </p>
         </div>
         <label className="flex flex-col gap-1.5 text-sm">

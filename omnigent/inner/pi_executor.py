@@ -51,8 +51,8 @@ from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
 from urllib.parse import urlparse as _urlparse
 
 from omnigent import model_catalog
-from omnigent.inner.agent_env import clean_agent_env
 from omnigent.inference_proxy import inference_surface_for_model
+from omnigent.inner.agent_env import clean_agent_env
 from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue

@@ -1354,10 +1354,10 @@ class OpenAIAgentsSDKExecutor(Executor):
                         ]
                         persisted_tail: list[ReplayItem] = []
                         for item in current_turn_items:
-                            if (
-                                item.get("role") == "assistant"
-                                or item.get("type") in {"function_call", "reasoning"}
-                            ):
+                            if item.get("role") == "assistant" or item.get("type") in {
+                                "function_call",
+                                "reasoning",
+                            }:
                                 break
                             persisted_tail.append(item)
                         persisted_messages: list[ReplayItem] = [
@@ -1840,7 +1840,11 @@ class OpenAIAgentsSDKExecutor(Executor):
                 set_summary_boundary = getattr(state.sdk_session, "set_summary_boundary", None)
                 if callable(set_summary_boundary):
                     summary_boundary = current_item_count
-                    if initial_sdk_run and current_item_count == 0 and isinstance(input_value, list):
+                    if (
+                        initial_sdk_run
+                        and current_item_count == 0
+                        and isinstance(input_value, list)
+                    ):
                         summary_boundary = len(input_value)
                         for index in range(len(input_value) - 1, -1, -1):
                             item = input_value[index]

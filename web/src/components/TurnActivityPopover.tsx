@@ -18,10 +18,7 @@ import {
 } from "@/lib/turnActivity";
 import type { RenderItem } from "@/lib/renderItems";
 
-const CATEGORY_META: Record<
-  TurnActivityCategory,
-  { label: string; icon: typeof WrenchIcon }
-> = {
+const CATEGORY_META: Record<TurnActivityCategory, { label: string; icon: typeof WrenchIcon }> = {
   tool: { label: "Tools", icon: WrenchIcon },
   skill: { label: "Skills", icon: SparklesIcon },
   mcp: { label: "MCPs", icon: PlugIcon },
