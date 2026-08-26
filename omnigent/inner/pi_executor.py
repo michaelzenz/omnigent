@@ -57,6 +57,7 @@ from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
+from omnigent.llms.context_window import lookup_model_context_window
 from omnigent.model_metadata import ModelWireAPI
 from omnigent.onboarding.provider_config import CHAT_WIRE_API, RESPONSES_WIRE_API
 from omnigent.pi_model_compatibility import (
@@ -1010,6 +1011,12 @@ def _build_models_json(
             # over silent loss), since most current gateway models are
             # multimodal and text-only turns are unaffected.
             entry: _JsonObject = {"id": model, "input": ["text", "image"]}
+            # Carry catalog context window / max output tokens so Pi doesn't
+            # default to 128K and compact far too early on 1M-context models.
+            # See pi_model_json_entry() for the catalog-path equivalent.
+            ctx_window, _src = lookup_model_context_window(model)
+            if ctx_window is not None:
+                entry["contextWindow"] = ctx_window
             if pi_model_is_reasoning(model):
                 entry["reasoning"] = True
             provider["models"] = [*provider["models"], entry]
@@ -1830,6 +1837,12 @@ def _pi_messages_to_canonical(messages: JsonValue) -> list[_JsonObject]:
                     raise ValueError(f"unsupported Pi compacted content block: {block_type!r}")
             if role == "user" and text_blocks:
                 items.append({"type": "message", "role": role, "content": text_blocks})
+        elif role == "compactionSummary":
+            # Pi inserts its own compaction summary as the first message in
+            # the post-compaction context.  The summary text is already
+            # captured from the compaction_end event result, so skip it
+            # here rather than emitting a spurious replay item.
+            continue
         elif role == "toolResult":
             call_id = message.get("toolCallId")
             if not isinstance(call_id, str):

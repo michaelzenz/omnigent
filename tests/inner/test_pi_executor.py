@@ -512,6 +512,17 @@ class TestBuildModelsJson(unittest.TestCase):
         entry = next(e for e in provider["models"] if e["id"] == model)
         self.assertNotIn("reasoning", entry)
 
+    def test_dynamic_model_carries_catalog_context_window(self):
+        # A dynamically-registered model (not in catalog_models) must still
+        # carry its contextWindow so Pi doesn't default to 128K and compact
+        # far too early on 1M-context gateway models.
+        model = "databricks-gpt-5-6-sol"
+        result = _build_models_json("https://host.example.com", "tok", model=model)
+        provider = result["providers"][_pi_provider_for_model(model)]
+        entry = next(e for e in provider["models"] if e["id"] == model)
+        self.assertIn("contextWindow", entry)
+        self.assertGreater(entry["contextWindow"], 128_000)
+
     def test_catalog_model_declared_image_capable(self):
         # A pre-registered catalog model must advertise image input. The
         # selected-model append is skipped when the id is already listed.
@@ -4457,3 +4468,37 @@ def test_pi_turn_without_usage_leaves_usage_none() -> None:
         assert turn_complete[0].response == "Hi there"
 
     _run(_test())
+
+
+# ---------------------------------------------------------------------------
+# Tests: _pi_messages_to_canonical (post-compaction message conversion)
+# ---------------------------------------------------------------------------
+
+
+def test_pi_messages_to_canonical_skips_compaction_summary_role() -> None:
+    """Pi's compactionSummary role is skipped, not crashed on.
+
+    Pi inserts a ``compactionSummary`` message as the first entry in its
+    post-compaction ``get_messages`` response.  The summary text is already
+    captured from the ``compaction_end`` event result, so the message is
+    redundant here and must not raise.
+    """
+    from omnigent.inner.pi_executor import _pi_messages_to_canonical
+
+    messages = [
+        {
+            "role": "compactionSummary",
+            "content": [{"type": "text", "text": "prior context summary"}],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "hi there"}]},
+    ]
+
+    items = _pi_messages_to_canonical(messages)
+
+    # The compactionSummary message is dropped; only user + assistant remain.
+    assert len(items) == 2
+    assert items[0]["type"] == "message"
+    assert items[0]["role"] == "user"
+    assert items[1]["type"] == "message"
+    assert items[1]["role"] == "assistant"
