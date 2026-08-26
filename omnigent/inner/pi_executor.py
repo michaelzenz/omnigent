@@ -2117,6 +2117,7 @@ class PiExecutor(Executor):
                 {
                     "type": "steer",
                     "message": text,
+                    "streamingBehavior": "steer",
                 }
             )
             return True
@@ -2855,6 +2856,17 @@ class PiExecutor(Executor):
             # Skip the command-ack response.
             if event_type == "response":
                 if not event.get("success", True):
+                    # A failed steer response is non-fatal — the steering
+                    # message is best-effort, and the active turn must
+                    # continue running.  Pi returns ``command: "steer"``
+                    # (or ``"send_message"``) on steer failures.
+                    resp_cmd = event.get("command")
+                    if resp_cmd in {"steer", "send_message"}:
+                        logger.warning(
+                            "PiExecutor: steer command rejected by Pi: %s",
+                            event.get("error", "unknown"),
+                        )
+                        continue
                     yield ExecutorError(message=event.get("error", "Pi command failed"))
                     return
                 continue
