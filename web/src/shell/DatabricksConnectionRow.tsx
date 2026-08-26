@@ -32,14 +32,15 @@ type DialogStep = "input" | "auth-link" | "polling" | "done";
  *   workspace URL input first.
  *
  * Hidden when Databricks is connected (or while the status probe is still
- * loading for the first time).
+ * loading for the first time).  A failed probe (500, network error) is
+ * treated as "not connected" so the notice still shows.
  */
 export function DatabricksConnectionRow() {
-  const { data: status, isLoading } = useDatabricksStatus();
+  const { data: status, isLoading, isError } = useDatabricksStatus();
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Don't render until the first probe resolves, and hide when connected.
-  if (isLoading || !status || status.connected) return null;
+  if (isLoading) return null;
+  if (!isError && status?.connected) return null;
 
   return (
     <>
@@ -65,7 +66,7 @@ export function DatabricksConnectionRow() {
       <DatabricksLoginDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        knownHost={status.host}
+        knownHost={status?.host ?? null}
       />
     </>
   );
