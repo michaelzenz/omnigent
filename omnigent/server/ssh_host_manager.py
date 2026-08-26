@@ -14,6 +14,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from typing import Protocol
 
 from omnigent.db.utils import now_epoch
 from omnigent.entities import SshConnectionProfile, SshSettings
@@ -38,7 +39,20 @@ InstallCommandBuilder = Callable[
     [str, str | None, str | None, str | None, str | None, str | None, str],
     str,
 ]
-LogSink = Callable[[str, str, str, str], None]
+
+
+class LogSink(Protocol):
+    """Receives one structured SSH installation log entry."""
+
+    def __call__(
+        self,
+        connection_id: str,
+        *,
+        phase: str,
+        level: str,
+        message: str,
+    ) -> None: ...
+
 
 _MAX_LOG_ENTRIES = 200
 
@@ -148,14 +162,17 @@ def build_install_command(
         'link="$root/.current-$$"; rm -f "$link"; ln -s "$target" "$link"; '
         'rm -f "$root/current"; mv "$link" "$root/current"; '
         f"pi_spec={shlex.quote(_pi_npm_package())}; "
+        f"pi_registry={shlex.quote(npm_registry_url or '')}; "
         'pi_root="$root/harnesses/pi"; '
         'pi_bin="$pi_root/node_modules/.bin/pi"; '
         'if [ ! -x "$pi_bin" ] || '
-        '[ "$(cat "$pi_root/.package-spec" 2>/dev/null || true)" != "$pi_spec" ]; then '
+        '[ "$(cat "$pi_root/.package-spec" 2>/dev/null || true)" != "$pi_spec" ] || '
+        '[ "$(cat "$pi_root/.registry-url" 2>/dev/null || true)" != "$pi_registry" ]; then '
         "command -v npm >/dev/null 2>&1 || "
         '{ echo "npm is required to install Pi on the SSH host" >&2; exit 1; }; '
         f'mkdir -p "$pi_root"; npm install --prefix "$pi_root"{npm_registry_arg} "$pi_spec"; '
-        'printf %s "$pi_spec" > "$pi_root/.package-spec"; fi'
+        'printf %s "$pi_spec" > "$pi_root/.package-spec"; '
+        'printf %s "$pi_registry" > "$pi_root/.registry-url"; fi'
     )
 
 
@@ -187,7 +204,7 @@ class SshHostOperations:
 
     def _log(self, connection_id: str, phase: str, level: str, message: str) -> None:
         if self._log_sink is not None:
-            self._log_sink(connection_id, phase, level, message)
+            self._log_sink(connection_id, phase=phase, level=level, message=message)
 
     def _python_index_url(self) -> str | None:
         return self._settings_reader().package_index_url

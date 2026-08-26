@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -240,6 +242,25 @@ async def test_stage_failure_persists_and_retry_is_idempotent(
     assert operations.calls == []
 
 
+def test_default_operations_log_sink_accepts_structured_events(
+    lifecycle_store: SshHostInstallationStore,
+) -> None:
+    manager = SshHostInstallationManager(
+        store=lifecycle_store,
+        host_store=_FakeHostStore(),  # type: ignore[arg-type]
+        local_host="127.0.0.1",
+        local_port=8123,
+    )
+    assert isinstance(manager.operations, SshHostOperations)
+
+    manager.operations._log("connection-1", "installing", "info", "Installing Pi")
+
+    [entry] = manager.logs("connection-1")
+    assert entry.phase == "installing"
+    assert entry.level == "info"
+    assert entry.message == "Installing Pi"
+
+
 async def test_reconciliation_captures_phase_and_error_logs(
     lifecycle_store: SshHostInstallationStore,
 ) -> None:
@@ -415,7 +436,45 @@ def test_install_command_uses_custom_npm_registry() -> None:
         remote_namespace="server-a",
     )
     assert "--registry https://npm.example.com" in command
-    assert 'npm install --prefix "$pi_root" --registry https://npm.example.com "$pi_spec"' in command
+    assert (
+        'npm install --prefix "$pi_root" --registry https://npm.example.com "$pi_spec"' in command
+    )
+    assert "pi_registry=https://npm.example.com" in command
+    assert '"$pi_root/.registry-url"' in command
+
+
+def test_registry_change_reinstalls_existing_pi(tmp_path: Path) -> None:
+    root = tmp_path / ".omnigent" / "host" / "server-a"
+    target = root / "versions" / "1.2.3"
+    target.mkdir(parents=True)
+    (target / ".complete").touch()
+    pi_root = root / "harnesses" / "pi"
+    pi_bin = pi_root / "node_modules" / ".bin" / "pi"
+    pi_bin.parent.mkdir(parents=True)
+    pi_bin.touch(mode=0o755)
+    (pi_root / ".package-spec").write_text("@earendil-works/pi-coding-agent")
+    (pi_root / ".registry-url").write_text("https://old.example.com")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    npm = fake_bin / "npm"
+    npm.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/npm-args"\n')
+    npm.chmod(0o755)
+    command = build_install_command(
+        "1.2.3",
+        npm_registry_url="https://npm.example.com",
+        remote_namespace="server-a",
+    )
+
+    subprocess.run(
+        ["/bin/sh", "-c", command],
+        check=True,
+        env={**os.environ, "HOME": str(tmp_path), "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+
+    npm_args = (tmp_path / "npm-args").read_text()
+    assert "https://npm.example.com" in npm_args
+    assert (pi_root / ".registry-url").read_text() == "https://npm.example.com"
 
 
 async def test_remote_host_starts_with_managed_pi_on_path(
