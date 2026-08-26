@@ -115,6 +115,52 @@ the caller's intent rather than repeat SQL syntax; use a nested
 subqueries. Because the named session covers implicit flush and commit, don't
 add an explicit `flush()` only to make a query name observable.
 
+## Supporting models in server-brokered Pi
+
+Server-brokered Pi supports three Databricks inference surfaces. Route models by
+the API the selected **model ID** accepts, not just by vendor family:
+
+| Model ID | Surface |
+| --- | --- |
+| Claude | Anthropic Messages |
+| GPT | OpenAI Responses |
+| `system.ai.kimi-*`, `system.ai.glm-*`, Inkling, Qwen 3 | OpenAI Responses |
+| `databricks-kimi-*`, `databricks-glm-*`, and other serving-endpoint aliases | OpenAI Chat Completions |
+| Other `system.ai.*` models | MLflow (not supported by the broker) |
+
+The spelling matters: equivalent `system.ai.*` and `databricks-*` aliases can
+support different APIs. Prefer the live Unity Catalog model-services metadata
+when available; `omnigent/pi_model_compatibility.py` is the fallback classifier
+when metadata is absent.
+
+When adding model support:
+
+1. Confirm the exact model ID and supported API types from the live catalog or a
+   direct workspace probe. Do not infer the surface solely from the model name.
+2. Update `databricks_pi_surface_for_model()` only if the metadata-free fallback
+   needs a new family rule. Keep unsupported models fail-loud.
+3. Ensure `omnigent/pi_native_credentials.py` registers the model under the Pi
+   provider whose wire API matches that surface.
+4. If adding a new surface, update the exact-path allowlists in both
+   `omnigent/host/inference_relay.py` and
+   `omnigent/server/routes/inference_proxy.py`; never add a catch-all proxy.
+5. Keep `omnigent/inference_proxy.py` model-to-surface validation consistent
+   with provider registration.
+6. Add tests for both `system.ai.*` and `databricks-*` spellings, exact accepted
+   paths, near-match rejection, and an end-to-end streamed response. A model is
+   not considered supported from classifier coverage alone.
+
+The current exact upstream routes are:
+
+```text
+anthropic   -> /ai-gateway/anthropic/v1/messages
+responses   -> /ai-gateway/openai/v1/responses
+completions -> /serving-endpoints/chat/completions
+```
+
+This broker applies to the headless `pi` harness only. Native and other SDK/CLI
+harnesses retain their own provider and authentication behavior.
+
 ## Framework-owned instructions
 
 Keep runtime lifecycle and metadata instructions separate from portable agent

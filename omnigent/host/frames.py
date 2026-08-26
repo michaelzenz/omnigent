@@ -127,6 +127,7 @@ class HostHelloFrame:
     skill_search_roots: list[_JsonObject] | None = None
     memory_files: list[_JsonObject] | None = None
     managed_worktree_leases: bool = False
+    inference_proxy: bool = False
 
 
 @dataclass
@@ -198,6 +199,7 @@ class HostLaunchRunnerFrame:
     workspace: str
     session_id: str | None = None
     harness: str | None = None
+    inference_proxy: bool = False
 
 
 @dataclass
@@ -1030,6 +1032,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                     if frame.managed_worktree_leases
                     else {}
                 ),
+                **({"inference_proxy": True} if frame.inference_proxy else {}),
             }
         )
     if isinstance(frame, HostConnectionErrorFrame):
@@ -1067,6 +1070,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "workspace": frame.workspace,
                 "session_id": frame.session_id,
                 "harness": frame.harness,
+                "inference_proxy": frame.inference_proxy,
             }
         )
     if isinstance(frame, HostLaunchRunnerResultFrame):
@@ -1532,6 +1536,9 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
     managed_worktree_leases = msg.get("managed_worktree_leases", False)
     if not isinstance(managed_worktree_leases, bool):
         raise ValueError("frame field must be a bool: 'managed_worktree_leases'")
+    inference_proxy = msg.get("inference_proxy", False)
+    if not isinstance(inference_proxy, bool):
+        raise ValueError("frame field must be a bool: 'inference_proxy'")
     return HostHelloFrame(
         version=_required_str(msg, "version"),
         frame_protocol_version=_required_int(msg, "frame_protocol_version"),
@@ -1547,6 +1554,7 @@ def _decode_host_hello(msg: _JsonObject) -> HostHelloFrame:
         skill_search_roots=_optional_object_list(msg, "skill_search_roots"),
         memory_files=_optional_object_list(msg, "memory_files"),
         managed_worktree_leases=managed_worktree_leases,
+        inference_proxy=inference_proxy,
     )
 
 
@@ -1586,12 +1594,16 @@ def _decode_launch_runner(msg: _JsonObject) -> HostLaunchRunnerFrame:
     :param msg: Decoded frame object.
     :returns: Typed launch-runner frame.
     """
+    inference_proxy = msg.get("inference_proxy", False)
+    if not isinstance(inference_proxy, bool):
+        raise ValueError("frame field must be a bool: 'inference_proxy'")
     return HostLaunchRunnerFrame(
         request_id=_required_str(msg, "request_id"),
         binding_token=_required_str(msg, "binding_token"),
         workspace=_required_str(msg, "workspace"),
         session_id=_optional_nullable_str(msg, "session_id"),
         harness=_optional_nullable_str(msg, "harness"),
+        inference_proxy=inference_proxy,
     )
 
 

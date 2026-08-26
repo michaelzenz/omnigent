@@ -550,7 +550,10 @@ def register_core_routes(
                     encode_host_frame,
                 )
                 from omnigent.runner.identity import token_bound_runner_id
-                from omnigent.server.routes._host_launch import resolve_host_launch
+                from omnigent.server.routes._host_launch import (
+                    resolve_host_launch,
+                    use_server_inference_proxy,
+                )
 
                 target = await asyncio.to_thread(
                     resolve_host_launch,
@@ -602,6 +605,7 @@ def register_core_routes(
                         # spawning. None (agent not resolvable) skips the
                         # host-side check.
                         harness=resp.harness,
+                        inference_proxy=use_server_inference_proxy(conn, resp.harness),
                     )
                 )
                 host_registry.send_text(conn, launch_frame)

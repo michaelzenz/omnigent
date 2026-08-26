@@ -28,6 +28,7 @@ from omnigent.db.utils import now_epoch
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_aliases import canonicalize_harness
+from omnigent.harness_availability import HARNESS_NEEDS_AUTH
 from omnigent.host.frames import (
     HARNESS_NOT_CONFIGURED_ERROR_CODE,
     HostCreateDirFrame,
@@ -50,7 +51,7 @@ from omnigent.server.auth import AuthProvider
 from omnigent.server.feature_flags import Feature, FeatureFlags, resolve_feature_flags
 from omnigent.server.host_registry import HostConnection, HostRegistry
 from omnigent.server.routes._auth_helpers import require_user
-from omnigent.server.routes._host_launch import resolve_host_launch
+from omnigent.server.routes._host_launch import resolve_host_launch, use_server_inference_proxy
 from omnigent.server.schemas import SessionGitOptions
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.host_store import Host, HostStore, host_is_live
@@ -577,6 +578,20 @@ def create_hosts_router(
     flags = feature_flags or resolve_feature_flags()
     router = APIRouter()
 
+    def effective_harnesses(host: Host) -> dict[str, object] | None:
+        raw = host.configured_harnesses
+        if not isinstance(raw, dict):
+            return raw
+        result: dict[str, object] = dict(raw)
+        conn = host_registry.get(host.host_id)
+        if (
+            result.get("pi") == HARNESS_NEEDS_AUTH
+            and conn is not None
+            and use_server_inference_proxy(conn, "pi")
+        ):
+            result["pi"] = True
+        return result
+
     @router.get("/hosts")
     async def list_hosts(request: Request) -> dict[str, list[dict[str, Any]]]:
         """List all hosts owned by the authenticated user.
@@ -625,7 +640,7 @@ def create_hosts_router(
                     # targets the server creates on demand, not
                     # user-connectable machines.
                     "sandbox_provider": host.sandbox_provider,
-                    "configured_harnesses": host.configured_harnesses,
+                    "configured_harnesses": effective_harnesses(host),
                     # Held in memory from the host's connect handshake, not the
                     # hosts row. ``None`` means this replica has no report yet —
                     # emitted as-is so a client can tell "unknown" from "not
@@ -669,7 +684,7 @@ def create_hosts_router(
             # Same semantics as list_hosts: non-None marks a
             # server-managed sandbox host (e.g. "modal").
             "sandbox_provider": host.sandbox_provider,
-            "configured_harnesses": host.configured_harnesses,
+            "configured_harnesses": effective_harnesses(host),
             # Same semantics as list_hosts: reported on connect and held in
             # memory, so ``None`` is "no report on this replica yet".
             "gateway_inference": host_registry.gateway_inference(host.host_id),
@@ -967,6 +982,7 @@ def create_hosts_router(
                 workspace=workspace,
                 session_id=body.session_id,
                 harness=harness,
+                inference_proxy=use_server_inference_proxy(conn, harness),
             )
         )
         try:

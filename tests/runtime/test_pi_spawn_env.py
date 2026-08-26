@@ -15,7 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from omnigent.inference_proxy import (
+    HARNESS_PI_SERVER_PROXY_ENV,
+    HOST_INFERENCE_PROXY_TOKEN_ENV,
+    HOST_INFERENCE_PROXY_URL_ENV,
+    PI_INFERENCE_PROXY_TOKEN_ENV,
+)
 from omnigent.runtime.workflow import _build_pi_spawn_env
+from omnigent.spec import load
 from omnigent.spec.types import AgentSpec, ExecutorSpec, LLMConfig
 
 
@@ -59,6 +66,28 @@ def _make_spec(*, model: str | None = None, profile: str | None = None) -> Agent
         executor=ExecutorSpec(type="omnigent", config=config, model=model),
         llm=LLMConfig(model=model) if model is not None else None,
     )
+
+
+def test_builtin_onih_pi_does_not_pin_a_default_model() -> None:
+    spec = load(Path("omnigent/resources/examples/onih-pi"))
+
+    assert spec.executor.model is None
+
+
+def test_server_proxy_configures_pi_without_remote_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(HOST_INFERENCE_PROXY_URL_ENV, "http://127.0.0.1:43127/v1/inference")
+    monkeypatch.setenv(HOST_INFERENCE_PROXY_TOKEN_ENV, "proxy-secret")
+
+    env = _build_pi_spawn_env(_make_spec(), workdir=None)
+
+    assert env[HARNESS_PI_SERVER_PROXY_ENV] == "true"
+    assert env["HARNESS_PI_GATEWAY"] == "true"
+    assert env["HARNESS_PI_GATEWAY_HOST"] == "http://127.0.0.1:43127/v1/inference"
+    assert env[PI_INFERENCE_PROXY_TOKEN_ENV] == "proxy-secret"
+    assert PI_INFERENCE_PROXY_TOKEN_ENV in env["HARNESS_PI_GATEWAY_AUTH_COMMAND"]
+    assert "HARNESS_PI_DATABRICKS_PROFILE" not in env
 
 
 def test_pi_spawn_env_threads_cwd_separately_from_bundle_dir(tmp_path: Path) -> None:

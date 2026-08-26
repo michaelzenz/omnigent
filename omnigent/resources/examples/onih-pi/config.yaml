@@ -6,7 +6,6 @@ executor:
   type: omnigent
   config:
     harness: pi
-    model: databricks-glm-5-2
     persistent_session: true
     canonical_rebuild: true
     system_prompt_mode: replace

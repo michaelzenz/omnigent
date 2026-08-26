@@ -33,6 +33,12 @@ from omnigent.entities import (
 )
 from omnigent.env_credentials import expand_envvars_with_omnigent_prefix
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.inference_proxy import (
+    HARNESS_PI_SERVER_PROXY_ENV,
+    HOST_INFERENCE_PROXY_TOKEN_ENV,
+    HOST_INFERENCE_PROXY_URL_ENV,
+    PI_INFERENCE_PROXY_TOKEN_ENV,
+)
 from omnigent.llms import Client as LLMClient
 from omnigent.model_catalog import resolve_catalog_model
 from omnigent.model_resolver import ModelResolutionError
@@ -1415,14 +1421,32 @@ def _build_pi_spawn_env(
     if model is not None:
         env["HARNESS_PI_MODEL"] = model
 
-    # Generic-provider branch (slotted ahead of the legacy-profile /
-    # databricks-prefix path): a ProviderAuth on the spec, or — when the spec
-    # declares no auth — the per-family global default. pi consumes both
-    # families (see :func:`_apply_provider_to_pi`). Otherwise the existing
-    # path is unchanged.
-    provider = _resolve_provider_for_build(spec, harness_type="pi", for_launch=True)
-    if provider is not None:
-        configure_agent_harness_with_provider(env, provider, harness_type="pi")
+    proxy_url = os.environ.get(HOST_INFERENCE_PROXY_URL_ENV, "").rstrip("/")
+    proxy_token = os.environ.get(HOST_INFERENCE_PROXY_TOKEN_ENV, "")
+    if proxy_url and proxy_token:
+        env[_HARNESS_GATEWAY_FLAG["pi"]] = "true"
+        env[HARNESS_PI_SERVER_PROXY_ENV] = "true"
+        env["HARNESS_PI_GATEWAY_HOST"] = proxy_url
+        env["HARNESS_PI_GATEWAY_BASE_URLS"] = json.dumps(
+            {
+                "claude": f"{proxy_url}/ai-gateway/anthropic",
+                "openai": f"{proxy_url}/ai-gateway/codex/v1",
+            },
+            sort_keys=True,
+        )
+        env["HARNESS_PI_GATEWAY_OPENAI_WIRE_API"] = RESPONSES_WIRE_API
+        env[PI_INFERENCE_PROXY_TOKEN_ENV] = proxy_token
+        env["HARNESS_PI_GATEWAY_AUTH_COMMAND"] = (
+            f'printf %s "${PI_INFERENCE_PROXY_TOKEN_ENV}"'
+        )
+    else:
+        # Generic-provider branch (slotted ahead of the legacy-profile /
+        # databricks-prefix path): a ProviderAuth on the spec, or — when the spec
+        # declares no auth — the per-family global default. pi consumes both
+        # families (see :func:`_apply_provider_to_pi`).
+        provider = _resolve_provider_for_build(spec, harness_type="pi", for_launch=True)
+        if provider is not None:
+            configure_agent_harness_with_provider(env, provider, harness_type="pi")
     pi_config = spec.executor.config
     bool_options = {
         "persistent_session": "HARNESS_PI_PERSISTENT_SESSION",

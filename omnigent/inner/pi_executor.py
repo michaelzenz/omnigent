@@ -52,6 +52,7 @@ from urllib.parse import urlparse as _urlparse
 
 from omnigent import model_catalog
 from omnigent.inner.agent_env import clean_agent_env
+from omnigent.inference_proxy import inference_surface_for_model
 from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue
@@ -729,6 +730,16 @@ def _redact_argv_for_log(args: Sequence[str]) -> list[str]:
     return redacted
 
 
+def _server_proxy_wire_api_for_model(model: str) -> ModelWireAPI:
+    """Return the Pi wire API matching the server broker's model route."""
+    surface = inference_surface_for_model(model)
+    if surface == "anthropic":
+        return ModelWireAPI.ANTHROPIC_MESSAGES
+    if surface == "responses":
+        return ModelWireAPI.OPENAI_RESPONSES
+    return ModelWireAPI.OPENAI_CHAT
+
+
 def _onih_pi_provider_for_model(
     model: str,
     wire_apis: frozenset[ModelWireAPI],
@@ -1047,6 +1058,8 @@ def _pi_provider_for_model(
         if generic_openai_wire_api == RESPONSES_WIRE_API:
             return "databricks-openai"
         return "databricks-completions"
+    if wire_apis is not None and ModelWireAPI.OPENAI_RESPONSES in wire_apis:
+        return "databricks-openai"
     if lower.startswith("system.ai."):
         return (
             "databricks-openai"
@@ -1859,6 +1872,7 @@ class PiExecutor(Executor):
         base_urls_override: dict[str, str] | None = None,
         openai_wire_api: str | None = None,
         gateway_auth_command: str | None = None,
+        server_inference_proxy: bool = False,
         retry_policy: RetryPolicy | None = None,
         bundle_dir: pathlib.Path | None = None,
         agent_name: str | None = None,
@@ -1943,6 +1957,7 @@ class PiExecutor(Executor):
         self._gateway_model_entries: tuple[model_catalog.ModelEntry, ...] | None = None
         self._gateway_model_wire_apis: dict[str, frozenset[ModelWireAPI]] | None = None
         self._gateway_auth_command = gateway_auth_command
+        self._server_inference_proxy = server_inference_proxy
         # Retry policy → Pi's .pi/settings.json before subprocess spawn.
         # See ``RetryPolicy.pi.settings()`` for the schema. Pi natively
         # does exponential backoff + Retry-After honoring; we just set
@@ -2206,6 +2221,8 @@ class PiExecutor(Executor):
         """
         cfg = config or ExecutorConfig()
         model = cfg.model or self._model_override
+        if model is None and self._server_inference_proxy:
+            raise ValueError("server-proxied Pi requires Smart Routing or an explicit model")
         if model is None and self._gateway_uses_databricks_profile:
             # DATABRICKS-PATCH(pi-live-model-discovery): resolve from the
             # workspace, not the bundled catalog whose legacy `databricks-` ids
@@ -2258,6 +2275,10 @@ class PiExecutor(Executor):
     async def _load_gateway_model_wire_apis(self) -> dict[str, frozenset[ModelWireAPI]]:
         """Fetch and cache the live Databricks model catalog."""
         if self._gateway_model_wire_apis is not None:
+            return self._gateway_model_wire_apis
+        if self._server_inference_proxy:
+            self._gateway_model_entries = ()
+            self._gateway_model_wire_apis = {}
             return self._gateway_model_wire_apis
         workspace_url = self._gateway_workspace_url if self._gateway else None
         if workspace_url is None:
@@ -2374,13 +2395,18 @@ class PiExecutor(Executor):
                         "isolated Pi gateway configuration requires a credential helper command"
                     )
                 api_key = f"!{self._gateway_auth_command}"
+            model_wire_apis = dict(self._gateway_model_wire_apis or {})
+            if self._server_inference_proxy and effective_model:
+                model_wire_apis[effective_model.lower()] = frozenset(
+                    {_server_proxy_wire_api_for_model(effective_model)}
+                )
             models_json = _build_models_json(
                 self._gateway_workspace_url or self._databricks_host,
                 api_key,
                 self._base_urls_override,
                 model=effective_model,
                 catalog_models=self._gateway_model_entries or (),
-                model_wire_apis=self._gateway_model_wire_apis,
+                model_wire_apis=model_wire_apis,
                 openai_wire_api=self._openai_wire_api,
             )
             if self._launch_options.isolated_resources:
@@ -2559,6 +2585,8 @@ class PiExecutor(Executor):
         if self._gateway and effective_model:
             if self._launch_options.isolated_resources:
                 wire_apis = wire_catalog.get(effective_model.lower(), frozenset())
+                if self._server_inference_proxy:
+                    wire_apis = frozenset({_server_proxy_wire_api_for_model(effective_model)})
                 provider = _onih_pi_provider_for_model(effective_model, wire_apis)
             else:
                 provider = _pi_provider_for_model(
@@ -2617,7 +2645,22 @@ class PiExecutor(Executor):
                 while True:
                     validation_line = await validator.read_line(timeout=15.0)
                     if validation_line is None:
-                        raise RuntimeError("Pi exited while validating reconstructed session")
+                        if validator._read_task is not None and validator._read_task.done():
+                            if validator.process is not None:
+                                with contextlib.suppress(asyncio.TimeoutError):
+                                    await asyncio.wait_for(
+                                        asyncio.shield(validator.process.wait()), timeout=1.0
+                                    )
+                            if validator._stderr_task is not None:
+                                with contextlib.suppress(asyncio.TimeoutError):
+                                    await asyncio.wait_for(
+                                        asyncio.shield(validator._stderr_task), timeout=1.0
+                                    )
+                        stderr = "\n".join(validator._stderr_lines)
+                        detail = f" Stderr: {stderr}" if stderr else ""
+                        raise RuntimeError(
+                            f"Pi exited while validating reconstructed session.{detail}"
+                        )
                     validation_event = json.loads(validation_line)
                     if validation_event.get("type") != "response":
                         continue
