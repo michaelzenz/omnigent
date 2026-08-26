@@ -1207,10 +1207,9 @@ export function AgentHarnessPicker({
     const more: AvailableAgent[] = [];
     for (const a of harnessEntries) {
       const selected = a.id === effectiveAgentId;
-      // The preference strictly hides harnesses that can't launch here. The
-      // parent screen also rejects a stale active pick, so no hidden target
-      // remains selected through the trigger.
-      if (hideUnconfigured && harnessUnconfiguredOnHost(a.harness, host)) continue;
+      // Hide unavailable alternatives, but never silently discard the current
+      // pick when its host changes. Keep it visible with the setup warning.
+      if (hideUnconfigured && !selected && harnessUnconfiguredOnHost(a.harness, host)) continue;
       if (
         selected ||
         isOnihTargetName(a.name) ||
@@ -3125,15 +3124,13 @@ export function NewChatLandingScreen() {
     !harnessEntryIds.has(agent.id) ||
     !harnessUnconfiguredOnHost(agent.harness, harnessWarningHost);
 
-  // A target pick only wins while it exists in the visible execution-target
-  // catalog. With unconfigured harnesses hidden, a stale remembered pick falls
-  // through to the first target that can launch on the selected host.
+  // Preserve an existing catalog pick even if a host change makes its harness
+  // unavailable. Silently switching agents is worse than keeping the pick and
+  // showing its setup warning. Missing catalog entries still fall back.
   // Pending custom bundles are local virtual entries and cannot run in a
   // managed sandbox, whose create path does not provision uploaded bundles.
   const pendingAgentAllowedOnTarget = !sandboxSelected;
-  const pickedAgentExists = agentList.some(
-    (agent) => agent.id === pickedAgentId && targetIsVisible(agent),
-  );
+  const pickedAgentExists = agentList.some((agent) => agent.id === pickedAgentId);
   const firstVisibleAgent = agentList.find(targetIsVisible);
   const effectiveAgentId =
     pickedAgentId === PENDING_AGENT_ID && pendingAgentAllowedOnTarget
@@ -3360,6 +3357,7 @@ export function NewChatLandingScreen() {
     return routingRow;
   }, [
     smartRoutingHarnessSelected,
+    smartRoutingEligible,
     supportsPermissionMode,
     supportsApprovalMode,
     supportsCursorMode,

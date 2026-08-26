@@ -389,12 +389,52 @@ async def test_matching_remote_bundle_skips_wheel_upload(
     assert not any(args[0] == "scp" for args in uploads)
 
 
-def test_install_command_pins_python_and_uses_versioned_home_path() -> None:
+def test_install_command_pins_python_and_installs_pi_in_remote_home() -> None:
     command = build_install_command("1.2.3", remote_namespace="server-a")
     assert '"$uv_bin" python install 3.12' in command
     assert '"$uv_bin" venv --python 3.12 "$target/venv"' in command
     assert 'root="$HOME/.omnigent/host/server-a"' in command
     assert "omnigent==1.2.3" in command
+    assert 'pi_root="$root/harnesses/pi"' in command
+    assert 'npm install --prefix "$pi_root" "$pi_spec"' in command
+    assert "@earendil-works/pi-coding-agent" in command
+
+
+async def test_remote_host_starts_with_managed_pi_on_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[str] = []
+
+    async def fake_ssh_run(
+        _profile: SshConnectionProfile,
+        command: str,
+        *,
+        timeout_s: float,
+    ) -> tuple[int, bytes, bytes]:
+        del timeout_s
+        commands.append(command)
+        return 0, b"", b""
+
+    monkeypatch.setattr("omnigent.server.ssh_host_manager.ssh_run", fake_ssh_run)
+    operations = SshHostOperations(
+        local_host="127.0.0.1",
+        local_port=6767,
+        control_dir=tmp_path / "control",
+        remote_namespace="server-a",
+    )
+
+    await operations.start_host(
+        _profile(),
+        host_id="host-1",
+        host_name="Build box",
+        token="secret",
+        socket_path="/home/test/.omnigent/server.sock",
+    )
+
+    assert len(commands) == 1
+    assert 'pi_path="$root/harnesses/pi/node_modules/.bin"' in commands[0]
+    assert 'env PATH="$pi_path:$PATH"' in commands[0]
 
 
 async def test_tunnel_resolves_remote_home_and_verifies_socket(

@@ -1401,15 +1401,20 @@ describe("NewChatLandingScreen", () => {
     expect(screen.queryByTestId("new-chat-landing-harness-more")).toBeNull();
   });
 
-  it("falls back when the remembered harness is unconfigured and hidden", () => {
+  it("preserves the selected harness when it is unconfigured on the host", () => {
     writeHideUnconfiguredHarnesses(true);
     localStorage.setItem(LAST_AGENT_KEY, "a_cursor");
     mockHostWithHarnessReadiness();
     renderLanding();
 
-    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("Claude Code");
+    // A host/workspace change must not silently replace the user's harness.
+    // Keep the selected row visible and explain why it cannot launch here.
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent("Cursor");
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
-    expect(screen.queryByTestId("new-chat-landing-agent-a_cursor")).toBeNull();
+    expect(screen.getByTestId("new-chat-landing-agent-a_cursor")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-warning-a_cursor")).toHaveTextContent(
+      "needs setup",
+    );
   });
 
   it("leads with fully supported harnesses even when they need setup on the host", () => {

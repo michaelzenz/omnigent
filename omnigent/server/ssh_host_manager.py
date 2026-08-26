@@ -17,6 +17,7 @@ from pathlib import Path
 
 from omnigent.db.utils import now_epoch
 from omnigent.entities import SshConnectionProfile, SshSettings
+from omnigent.onboarding.harness_install import PI_KEY, harness_install_spec
 from omnigent.ssh_remote import ssh_run
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.ssh_host_installation_store import (
@@ -39,6 +40,14 @@ InstallCommandBuilder = Callable[
 ]
 
 _MAX_LOG_ENTRIES = 200
+
+
+def _pi_npm_package() -> str:
+    """Return Pi's canonical npm package from shared harness metadata."""
+    spec = harness_install_spec(PI_KEY)
+    if spec is None or spec.package is None:
+        raise RuntimeError("Pi has no npm install package configured")
+    return spec.package
 
 
 @dataclass(frozen=True)
@@ -134,7 +143,16 @@ def build_install_command(
         'if [ -e "$root/current" ] && [ ! -L "$root/current" ]; then '
         'mv "$root/current" "$root/current.legacy.$(date +%s).$$"; fi; '
         'link="$root/.current-$$"; rm -f "$link"; ln -s "$target" "$link"; '
-        'rm -f "$root/current"; mv "$link" "$root/current"'
+        'rm -f "$root/current"; mv "$link" "$root/current"; '
+        f"pi_spec={shlex.quote(_pi_npm_package())}; "
+        'pi_root="$root/harnesses/pi"; '
+        'pi_bin="$pi_root/node_modules/.bin/pi"; '
+        'if [ ! -x "$pi_bin" ] || '
+        '[ "$(cat "$pi_root/.package-spec" 2>/dev/null || true)" != "$pi_spec" ]; then '
+        "command -v npm >/dev/null 2>&1 || "
+        '{ echo "npm is required to install Pi on the SSH host" >&2; exit 1; }; '
+        'mkdir -p "$pi_root"; npm install --prefix "$pi_root" "$pi_spec"; '
+        'printf %s "$pi_spec" > "$pi_root/.package-spec"; fi'
     )
 
 
@@ -158,10 +176,7 @@ class SshHostOperations:
         self._install_command_builder = install_command_builder
         self._settings_reader = settings_reader or (lambda: SshSettings())
         self._remote_namespace = remote_namespace
-        self._control_dir = (
-            control_dir
-            or Path.home() / ".omnigent" / "ssh" / remote_namespace
-        )
+        self._control_dir = control_dir or Path.home() / ".omnigent" / "ssh" / remote_namespace
         self._bundle_dir = self._control_dir / "bundles"
         self._local_bundles: dict[str, list[Path] | None] = {}
 
@@ -422,12 +437,13 @@ class SshHostOperations:
         command = (
             f'set -eu; root="$HOME/.omnigent/host/{self._remote_namespace}"; '
             f'runtime="$root/runtimes"/{runtime_name}; mkdir -p "$runtime"; '
+            'pi_path="$root/harnesses/pi/node_modules/.bin"; '
             'if [ -f "$runtime/host.pid" ]; then '
             'pid="$(cat "$runtime/host.pid" 2>/dev/null || true)"; '
             'if [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null '
             '| grep -F "$root/current/venv/bin/omnigent host" >/dev/null; '
             'then kill "$pid" 2>/dev/null || true; fi; fi; '
-            f'nohup env {env} "$root/current/venv/bin/omnigent" host '
+            f'nohup env PATH="$pi_path:$PATH" {env} "$root/current/venv/bin/omnigent" host '
             f"--server http://localhost --server-unix-socket {shlex.quote(socket_path)} "
             '--non-interactive >"$runtime/host.log" 2>&1 < /dev/null & '
             'echo "$!" >"$runtime/host.pid"'
