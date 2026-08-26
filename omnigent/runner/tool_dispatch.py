@@ -84,6 +84,7 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
+from omnigent.tools.builtins.pi_file_tools import build_pi_file_tools
 from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool, is_task_api_path
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
 from omnigent.tools.builtins.spawn import (
@@ -232,6 +233,14 @@ _OS_ENV_TOOLS = frozenset(
         SysOsWriteTool.name(),
         SysOsEditTool.name(),
         SysOsShellTool.name(),
+        # Pi-compatible file-interaction tools
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "grep",
+        "find",
+        "ls",
     }
 )
 
@@ -669,6 +678,7 @@ def build_os_env_tool_schemas() -> list[_JsonObject]:
                 SysOsWriteTool(_os_env),
                 SysOsEditTool(_os_env),
                 SysOsShellTool(_os_env),
+                *build_pi_file_tools(_os_env),
             ):
                 tool_schema = _string_object_dict(tool.get_schema())
                 function = (
@@ -6104,7 +6114,7 @@ _changed_files_last_signal: dict[str, float] = {}
 # included because git-mode change detection derives from `git status`
 # and shell edits are otherwise untracked.
 _CHANGED_FILES_TOOLS = frozenset(
-    {SysOsWriteTool.name(), SysOsEditTool.name(), SysOsShellTool.name()}
+    {SysOsWriteTool.name(), SysOsEditTool.name(), SysOsShellTool.name(), "write", "edit", "bash"}
 )
 
 
@@ -6472,10 +6482,68 @@ async def _execute_os_env_tool(
             )
             if filesystem_registry is not None and conversation_id is not None:
                 filesystem_registry.record_change(_path, "modified", conversation_id)
-        elif tool_name == SysOsShellTool.name():
+        elif tool_name == SysOsShellTool.name() or tool_name == "bash":
             result = await os_env.shell(
                 command=cast("str", args.get("command", "")),
                 timeout=cast("int | None", args.get("timeout")),
+            )
+        elif tool_name == "read":
+            _start = args.get("start", 1)
+            _end = args.get("end")
+            _offset = _start if isinstance(_start, int) and _start >= 1 else 1
+            if _end is not None and isinstance(_end, int) and _end >= _offset:
+                _limit = _end - _offset + 1
+            else:
+                _limit = _DEFAULT_READ_LIMIT
+            result = await os_env.read(
+                path=cast("str", args.get("path", "")),
+                offset=_offset,
+                limit=_limit,
+            )
+        elif tool_name == "write":
+            _path = cast("str", args.get("path", ""))
+            if filesystem_registry is not None and conversation_id is not None:
+                await _seed_os_env_snapshot(os_env, _path, filesystem_registry, conversation_id)
+            result = await os_env.write(
+                path=_path,
+                content=cast("str", args.get("content", "")),
+            )
+            if filesystem_registry is not None and conversation_id is not None:
+                was_created = isinstance(result, dict) and result.get("created") is True
+                status = "created" if was_created else "modified"
+                filesystem_registry.record_change(_path, status, conversation_id)
+        elif tool_name == "edit":
+            _path = cast("str", args.get("path", ""))
+            if filesystem_registry is not None and conversation_id is not None:
+                await _seed_os_env_snapshot(os_env, _path, filesystem_registry, conversation_id)
+            result = await os_env.edit(
+                path=_path,
+                old_text=cast("str | None", args.get("oldText")),
+                new_text=cast("str | None", args.get("newText")),
+                edits=cast("list[dict[str, str]] | None", args.get("edits")),
+            )
+            if filesystem_registry is not None and conversation_id is not None:
+                filesystem_registry.record_change(_path, "modified", conversation_id)
+        elif tool_name == "grep":
+            result = await os_env.grep(
+                pattern=cast("str", args.get("pattern", "")),
+                path=cast("str", args.get("path", ".")),
+                glob=cast("str | None", args.get("glob")),
+                ignore_case=bool(args.get("ignoreCase", False)),
+                literal=bool(args.get("literal", False)),
+                context=cast("int", args.get("context", 0)),
+                limit=cast("int", args.get("limit", 100)),
+            )
+        elif tool_name == "find":
+            result = await os_env.find(
+                pattern=cast("str", args.get("pattern", "")),
+                path=cast("str", args.get("path", ".")),
+                limit=cast("int", args.get("limit", 1000)),
+            )
+        elif tool_name == "ls":
+            result = await os_env.list_dir(
+                path=cast("str", args.get("path", ".")),
+                limit=cast("int", args.get("limit", 500)),
             )
         else:
             return f"Error: {tool_name} not implemented"

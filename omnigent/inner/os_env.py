@@ -6,8 +6,10 @@ import atexit
 import base64
 import codecs
 import contextlib
+import fnmatch
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -341,6 +343,39 @@ class OSEnvironment(ABC):
         command: str,
         timeout: int | None = None,
         max_output: int | None = None,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        glob: str | None = None,
+        ignore_case: bool = False,
+        literal: bool = False,
+        context: int = 0,
+        limit: int = 100,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def find(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        limit: int = 1000,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_dir(
+        self,
+        path: str = ".",
+        *,
+        limit: int = 500,
     ) -> OpResult:
         raise NotImplementedError
 
@@ -939,6 +974,66 @@ class CallerProcessOSEnvironment(OSEnvironment):
         result = await run_sync_on_thread(self._helper.request, request)
         return cast(OpResult, result)
 
+    async def grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        glob: str | None = None,
+        ignore_case: bool = False,
+        literal: bool = False,
+        context: int = 0,
+        limit: int = 100,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "grep",
+                "pattern": pattern,
+                "path": path,
+                "glob": glob,
+                "ignore_case": ignore_case,
+                "literal": literal,
+                "context": context,
+                "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
+    async def find(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        limit: int = 1000,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "find",
+                "pattern": pattern,
+                "path": path,
+                "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
+    async def list_dir(
+        self,
+        path: str = ".",
+        *,
+        limit: int = 500,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "ls",
+                "path": path,
+                "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
     def close(self) -> None:
         self._helper.close()
         if self._fork_dir is not None:
@@ -1095,6 +1190,60 @@ def _handle_helper_request(
             cwd=cwd,
             max_output=max_output,
         )
+
+    if op == "grep":
+        raw_pattern = request.get("pattern")
+        if not isinstance(raw_pattern, str) or not raw_pattern.strip():
+            return {"error": "pattern must be a non-empty string"}
+        raw_path = request.get("path", ".")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"error": "path must be a non-empty string"}
+        path = _resolve_path(cwd, raw_path)
+        try:
+            _assert_within_reach(cwd, sandbox, path, need_write=False)
+            _assert_read_allowed(sandbox, path)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return _grep_impl(
+            pattern=raw_pattern,
+            path=path,
+            glob=request.get("glob"),
+            ignore_case=bool(request.get("ignore_case", False)),
+            literal=bool(request.get("literal", False)),
+            context=request.get("context", 0),
+            limit=request.get("limit", 100),
+        )
+
+    if op == "find":
+        raw_pattern = request.get("pattern")
+        if not isinstance(raw_pattern, str) or not raw_pattern.strip():
+            return {"error": "pattern must be a non-empty string"}
+        raw_path = request.get("path", ".")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"error": "path must be a non-empty string"}
+        path = _resolve_path(cwd, raw_path)
+        try:
+            _assert_within_reach(cwd, sandbox, path, need_write=False)
+            _assert_read_allowed(sandbox, path)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return _find_impl(
+            pattern=raw_pattern,
+            path=path,
+            limit=request.get("limit", 1000),
+        )
+
+    if op == "ls":
+        raw_path = request.get("path", ".")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"error": "path must be a non-empty string"}
+        path = _resolve_path(cwd, raw_path)
+        try:
+            _assert_within_reach(cwd, sandbox, path, need_write=False)
+            _assert_read_allowed(sandbox, path)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return _list_dir_impl(path=path, limit=request.get("limit", 500))
 
     return {"error": f"Unsupported os_env helper operation: {op!r}"}
 
@@ -1518,6 +1667,262 @@ def _shell_impl(
             result["error"] = f"Command exited with status {completed.returncode}"
     return result
 
+
+# ── grep / find / ls implementations ───────────────────────────
+
+# Directories skipped during recursive traversal to avoid noise and
+# expensive symlink loops. Mirrors ripgrep's default ignore set.
+_SKIP_DIRS: frozenset[str] = frozenset({
+    ".git", ".hg", ".svn", ".bzr", "node_modules", "__pycache__",
+    ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", "dist", "build", ".eggs", "eggs",
+})
+
+# Max bytes for a single matched-line + context output to avoid a single
+# very long line (e.g. minified JS) from saturating the context window.
+_MAX_LINE_DISPLAY = 2_000
+
+# Max total output bytes for grep before truncation.
+_MAX_GREP_OUTPUT = 200_000
+
+# Max total output bytes for find before truncation.
+_MAX_FIND_OUTPUT = 100_000
+
+
+def _load_gitignore_roots(path: Path) -> set[Path]:
+    """Collect directories whose .gitignore files should be consulted."""
+    roots: set[Path] = set()
+    # Walk up from the search root to find .gitignore files
+    current = path.resolve()
+    while current != current.parent:
+        if (current / ".gitignore").exists():
+            roots.add(current)
+        if (current / ".git").exists():
+            roots.add(current)
+            break
+        current = current.parent
+    return roots
+
+
+def _is_ignored(path: Path, roots: set[Path]) -> bool:
+    """Check if path matches any .gitignore pattern in the given root dirs."""
+    for root in roots:
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            continue
+        gitignore = root / ".gitignore"
+        if not gitignore.exists():
+            continue
+        try:
+            patterns = gitignore.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in patterns:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            negated = line.startswith("!")
+            if negated:
+                line = line[1:]
+            # fnmatch doesn't handle **, so normalize
+            pattern = line.rstrip("/")
+            if fnmatch.fnmatch(str(rel), pattern) or fnmatch.fnmatch(rel.name, pattern):
+                if not negated:
+                    return True
+    return False
+
+
+def _grep_impl(
+    *,
+    pattern: str,
+    path: Path,
+    glob: str | None,
+    ignore_case: bool,
+    literal: bool,
+    context: int,
+    limit: int,
+) -> OpResult:
+    """Search file contents for a pattern, returning matching lines with context.
+
+    Uses Python-native regex matching (not shell ``rg``/``grep``) so behavior
+    is identical across local, remote, and sandboxed environments. Respects
+    ``.gitignore`` and skips binary files and known vendored directories.
+    """
+    if not isinstance(context, int) or context < 0:
+        return {"error": "context must be >= 0"}
+    if not isinstance(limit, int) or limit < 1:
+        return {"error": "limit must be >= 1"}
+
+    if literal:
+        search_pattern = re.escape(pattern)
+    else:
+        search_pattern = pattern
+    flags = re.IGNORECASE if ignore_case else 0
+    try:
+        regex = re.compile(search_pattern, flags)
+    except re.error as exc:
+        return {"error": f"Invalid regex pattern: {exc}"}
+
+    # Determine if path is a file or directory
+    if path.is_file():
+        files_to_search: list[Path] = [path]
+        search_root = path.parent
+    else:
+        search_root = path
+        gitignore_roots = _load_gitignore_roots(path)
+        files_to_search = []
+        for dirpath, dirnames, filenames in os.walk(path):
+            # Skip vendored/build directories in-place
+            dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+            for fname in sorted(filenames):
+                fpath = Path(dirpath) / fname
+                if _is_ignored(fpath, gitignore_roots):
+                    continue
+                if glob and not fnmatch.fnmatch(fname, glob):
+                    continue
+                files_to_search.append(fpath)
+
+    matches: list[dict[str, Any]] = []
+    total_output = 0
+    truncated = False
+
+    for fpath in files_to_search:
+        if truncated:
+            break
+        if _is_binary_file(fpath):
+            continue
+        try:
+            lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for i, line in enumerate(lines):
+            if regex.search(line):
+                start = max(0, i - context)
+                end = min(len(lines), i + context + 1)
+                context_lines = []
+                for j in range(start, end):
+                    display = lines[j]
+                    if len(display) > _MAX_LINE_DISPLAY:
+                        display = display[:_MAX_LINE_DISPLAY] + " [truncated]"
+                    context_lines.append({
+                        "line": j + 1,
+                        "content": display,
+                        "match": j == i,
+                    })
+                rel_path = str(fpath.relative_to(search_root)) if fpath != path else str(fpath)
+                match_entry = {
+                    "path": rel_path,
+                    "line": i + 1,
+                    "context": context_lines,
+                }
+                entry_size = len(json.dumps(match_entry))
+                if total_output + entry_size > _MAX_GREP_OUTPUT:
+                    truncated = True
+                    break
+                matches.append(match_entry)
+                total_output += entry_size
+                if len(matches) >= limit:
+                    truncated = True
+                    break
+
+    return {
+        "pattern": pattern,
+        "path": str(path),
+        "matches": matches[:limit],
+        "count": len(matches[:limit]),
+        "truncated": truncated,
+    }
+
+
+def _find_impl(
+    *,
+    pattern: str,
+    path: Path,
+    limit: int,
+) -> OpResult:
+    """Find files matching a glob pattern, respecting .gitignore.
+
+    Returns paths relative to the search root. Uses Python-native glob
+    matching (not shell ``find``) for portability across environments.
+    """
+    if not isinstance(limit, int) or limit < 1:
+        return {"error": "limit must be >= 1"}
+
+    gitignore_roots = _load_gitignore_roots(path)
+    results: list[str] = []
+    total_output = 0
+    truncated = False
+
+    for dirpath, dirnames, filenames in os.walk(path):
+        if truncated:
+            break
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        all_entries = sorted(dirnames + filenames)
+        for entry in all_entries:
+            fpath = Path(dirpath) / entry
+            if _is_ignored(fpath, gitignore_roots):
+                continue
+            if fnmatch.fnmatch(entry, pattern) or fnmatch.fnmatch(str(fpath.relative_to(path)), pattern):
+                rel = str(fpath.relative_to(path))
+                if fpath.is_dir():
+                    rel += "/"
+                entry_size = len(rel) + 1
+                if total_output + entry_size > _MAX_FIND_OUTPUT:
+                    truncated = True
+                    break
+                results.append(rel)
+                total_output += entry_size
+                if len(results) >= limit:
+                    truncated = True
+                    break
+
+    return {
+        "pattern": pattern,
+        "path": str(path),
+        "results": results[:limit],
+        "count": len(results[:limit]),
+        "truncated": truncated,
+    }
+
+
+def _list_dir_impl(
+    *,
+    path: Path,
+    limit: int,
+) -> OpResult:
+    """List directory entries (non-recursive), including dotfiles.
+
+    Directories get a trailing ``/`` suffix. Sorted alphabetically.
+    """
+    if not isinstance(limit, int) or limit < 1:
+        return {"error": "limit must be >= 1"}
+    if not path.is_dir():
+        return {"error": f"Not a directory: {path}"}
+
+    entries: list[str] = []
+    try:
+        all_entries = sorted(os.listdir(path))
+    except OSError as exc:
+        return {"error": f"Failed to list directory: {exc}"}
+
+    truncated = False
+    for entry in all_entries[:limit]:
+        full = path / entry
+        if full.is_dir():
+            entries.append(entry + "/")
+        else:
+            entries.append(entry)
+    if len(all_entries) > limit:
+        truncated = True
+
+    return {
+        "path": str(path),
+        "entries": entries,
+        "count": len(entries),
+        "total": len(all_entries),
+        "truncated": truncated,
+    }
 
 def _normalize_edits(
     old_text: str | None,

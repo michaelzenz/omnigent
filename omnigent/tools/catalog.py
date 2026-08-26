@@ -30,8 +30,10 @@ class ToolGroup:
 GROUPS: list[ToolGroup] = [
     ToolGroup(id="skills", title="Skills", order=10),
     ToolGroup(id="files_content", title="Files & content", order=20),
+    ToolGroup(id="pi_file_interaction", title="File interaction — Pi", order=25),
     ToolGroup(id="agents_sessions", title="Agents & sessions", order=30),
     ToolGroup(id="computer_terminal", title="Computer & terminal", order=40),
+    ToolGroup(id="legacy_os_interaction", title="Legacy OS interaction", order=45),
     ToolGroup(id="automation", title="Automation", order=50),
     ToolGroup(id="web_research", title="Web & research", order=60),
     ToolGroup(id="reviews", title="Reviews", order=70),
@@ -69,16 +71,27 @@ TOOLS: list[ToolCatalogEntry] = [
     ToolCatalogEntry("sys_agent_get", "Get agent metadata", "Return the agent metadata bound to a session.", "agents_sessions"),
     ToolCatalogEntry("sys_agent_download", "Download agent bundles", "Download a session's agent bundle for inspection or forking.", "agents_sessions"),
 
+    # File interaction — Pi (new Pi-compatible tools)
+    ToolCatalogEntry("read", "Read files", "Read a text file with inclusive start/end line ranges.", "pi_file_interaction"),
+    ToolCatalogEntry("write", "Write files", "Write full file contents, creating parent directories.", "pi_file_interaction"),
+    ToolCatalogEntry("edit", "Edit files", "Perform exact text replacements in a file, with batch support.", "pi_file_interaction"),
+    ToolCatalogEntry("bash", "Run shell commands", "Run a shell command in the OS environment.", "pi_file_interaction"),
+    ToolCatalogEntry("grep", "Search file contents", "Search file contents for a pattern with context and glob filtering.", "pi_file_interaction"),
+    ToolCatalogEntry("find", "Find files", "Find files and directories matching a glob pattern.", "pi_file_interaction"),
+    ToolCatalogEntry("ls", "List directories", "List directory entries (non-recursive), including dotfiles.", "pi_file_interaction"),
+
     # Computer & terminal
-    ToolCatalogEntry("sys_os_read", "Read files", "Read a text file from the OS environment.", "computer_terminal"),
-    ToolCatalogEntry("sys_os_write", "Write files", "Write full contents of a text file in the OS environment.", "computer_terminal"),
-    ToolCatalogEntry("sys_os_edit", "Edit files", "Perform exact text replacements in a file in the OS environment.", "computer_terminal"),
-    ToolCatalogEntry("sys_os_shell", "Run shell commands", "Run a shell command in the OS environment.", "computer_terminal"),
     ToolCatalogEntry("sys_terminal_launch", "Launch terminal sessions", "Launch a named terminal (tmux session).", "computer_terminal"),
     ToolCatalogEntry("sys_terminal_send", "Send to terminals", "Send text and/or key strokes to a running terminal.", "computer_terminal"),
     ToolCatalogEntry("sys_terminal_read", "Read terminal output", "Capture the visible pane plus optional scrollback.", "computer_terminal"),
     ToolCatalogEntry("sys_terminal_list", "List terminal sessions", "List the conversation's active terminal sessions.", "computer_terminal"),
     ToolCatalogEntry("sys_terminal_close", "Close terminal sessions", "Close a running terminal session.", "computer_terminal"),
+
+    # Legacy OS interaction
+    ToolCatalogEntry("sys_os_read", "Read files (legacy)", "Read a text file from the OS environment.", "legacy_os_interaction"),
+    ToolCatalogEntry("sys_os_write", "Write files (legacy)", "Write full contents of a text file in the OS environment.", "legacy_os_interaction"),
+    ToolCatalogEntry("sys_os_edit", "Edit files (legacy)", "Perform exact text replacements in a file in the OS environment.", "legacy_os_interaction"),
+    ToolCatalogEntry("sys_os_shell", "Run shell (legacy)", "Run a shell command in the OS environment.", "legacy_os_interaction"),
 
     # Automation
     ToolCatalogEntry("sys_call_async", "Dispatch async tasks", "Dispatch a local Python tool as a background task.", "automation"),
