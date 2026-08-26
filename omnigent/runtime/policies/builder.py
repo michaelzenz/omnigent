@@ -18,6 +18,7 @@ will start instantiating them as those phases ship.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,6 +103,16 @@ _DEFAULT_POLICY_SPECS_CACHE: cachetools.TTLCache[int, list[PolicySpec]] = cachet
 _SESSION_POLICY_SPECS_CACHE: cachetools.LRUCache[tuple[int, str], list[PolicySpec]] = (
     cachetools.LRUCache(maxsize=4096)
 )
+
+# OAuth-backed Databricks profiles invoke the CLI credential helper. Policy
+# engines are rebuilt per tool call, and models commonly issue calls in
+# parallel; without synchronization each call races a separate CLI process.
+# Cache only successful resolutions for five minutes, well below normal OAuth
+# token lifetimes, and serialize cache misses so one refresh serves the burst.
+_POLICY_CONNECTION_CACHE: cachetools.TTLCache[str, dict[str, str]] = cachetools.TTLCache(
+    maxsize=32, ttl=300
+)
+_POLICY_CONNECTION_CACHE_LOCK = threading.Lock()
 
 
 def _needs_user_daily_cost(specs: list[PolicySpec]) -> bool:
@@ -744,11 +755,17 @@ def _resolve_databricks_connection(profile: str) -> dict[str, str]:
         "api_key": "dapi..."}``.
     :raises OSError: When the profile cannot be resolved.
     """
-    creds = resolve_databricks_workspace(profile)
-    return {
-        "base_url": creds.host + "/serving-endpoints",
-        "api_key": creds.token,
-    }
+    with _POLICY_CONNECTION_CACHE_LOCK:
+        cached = _POLICY_CONNECTION_CACHE.get(profile)
+        if cached is not None:
+            return dict(cached)
+        creds = resolve_databricks_workspace(profile)
+        connection = {
+            "base_url": creds.host + "/serving-endpoints",
+            "api_key": creds.token,
+        }
+        _POLICY_CONNECTION_CACHE[profile] = connection
+        return dict(connection)
 
 
 def _instantiate_policy(

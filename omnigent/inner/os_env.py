@@ -1339,7 +1339,7 @@ def _handle_helper_request(
 
 
 def _resolve_path(cwd: Path, path: str) -> Path:
-    candidate = Path(path)
+    candidate = Path(path).expanduser()
     if not candidate.is_absolute():
         candidate = cwd / candidate
     return candidate.resolve(strict=False)
