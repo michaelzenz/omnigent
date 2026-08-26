@@ -38,6 +38,7 @@ from omnigent.inner.pi_executor import (
     _PiRpcSession,
     _redact_argv_for_log,
     _safe_dumps,
+    _server_proxy_wire_api_for_model,
     _sanitize_schema,
     _split_pi_prompt,
     _ToolServer,
@@ -361,6 +362,15 @@ class TestPiProviderForModel(unittest.TestCase):
         self.assertEqual(
             _pi_provider_for_model(
                 "databricks-gpt-next",
+                frozenset({ModelWireAPI.OPENAI_RESPONSES}),
+            ),
+            "databricks-openai",
+        )
+
+    def test_catalog_responses_non_gpt_model(self):
+        self.assertEqual(
+            _pi_provider_for_model(
+                "databricks-glm-5-2",
                 frozenset({ModelWireAPI.OPENAI_RESPONSES}),
             ),
             "databricks-openai",
@@ -3376,6 +3386,13 @@ def test_databricks_wire_catalog_prefers_exact_id_over_alias_collision() -> None
 
 def test_onih_models_json_and_routing_support_openai_chat() -> None:
     """Onih Pi routes direct GLM aliases through Chat Completions."""
+    assert _server_proxy_wire_api_for_model("databricks-glm-5-2") is ModelWireAPI.OPENAI_CHAT
+    assert (
+        _server_proxy_wire_api_for_model("system.ai.glm-5-2")
+        is ModelWireAPI.OPENAI_RESPONSES
+    )
+    with pytest.raises(ValueError, match="MLflow surface"):
+        _server_proxy_wire_api_for_model("system.ai.llama-4-maverick")
     generic = _build_models_json(
         "https://host.example.com",
         "token-command",

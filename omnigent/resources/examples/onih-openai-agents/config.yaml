@@ -6,6 +6,5 @@ executor:
   type: omnigent
   config:
     harness: openai-agents
-    model: databricks-glm-5-2
 
 prompt: ""

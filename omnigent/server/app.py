@@ -50,7 +50,7 @@ from omnigent.runtime import (
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.harnesses.process_manager import HarnessProcessManager
 from omnigent.server import session_live_state, shutdown_state
-from omnigent.server.auth import AuthProvider, SharingMode
+from omnigent.server.auth import AuthProvider, SharingMode, local_single_user_enabled
 from omnigent.server.background_session_titles import (
     BackgroundSessionTitleCoordinator,
     RunnerBackgroundTitleGenerator,
@@ -77,6 +77,7 @@ from omnigent.server.routes.default_policies import create_default_policies_rout
 from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
+from omnigent.server.routes.inference_proxy import create_inference_proxy_router
 from omnigent.server.routes.memory import create_memory_router
 from omnigent.server.routes.model_settings import (
     configured_omniharness_model_options,
@@ -2699,6 +2700,14 @@ def create_app(
     )
     # Per-user LLM cost report (omni usage). User-scoped, not session-scoped,
     # so it gets its own router rather than living under /sessions.
+    app.include_router(
+        create_inference_proxy_router(
+            conversation_store,
+            enabled=local_single_user_enabled(),
+        ),
+        prefix="/v1",
+        tags=["inference_proxy"],
+    )
     app.include_router(
         create_usage_router(
             conversation_store,

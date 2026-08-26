@@ -75,6 +75,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from omnigent.harness_startup_config import resolve_harness_path
+from omnigent.inference_proxy import HARNESS_PI_SERVER_PROXY_ENV
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.executor import Executor
 from omnigent.inner.pi_executor import PiExecutor, PiLaunchOptions
@@ -259,6 +260,7 @@ def _build_pi_executor() -> Executor:
         base_urls_override=_resolve_gateway_base_urls(),
         openai_wire_api=os.environ.get(_ENV_GATEWAY_OPENAI_WIRE_API) or None,
         gateway_auth_command=os.environ.get(_ENV_GATEWAY_AUTH_COMMAND) or None,
+        server_inference_proxy=_parse_truthy(HARNESS_PI_SERVER_PROXY_ENV, default=False),
         bundle_dir=bundle_dir,
         agent_name=agent_name,
         skills_filter=_resolve_skills_filter(),

@@ -4812,6 +4812,7 @@ async def _launch_runner_on_host_impl(
     """
     from omnigent.host.frames import HostLaunchRunnerFrame, encode_host_frame
     from omnigent.runner.identity import token_bound_runner_id
+    from omnigent.server.routes._host_launch import use_server_inference_proxy
 
     binding_token = secrets.token_urlsafe(32)
     new_runner_id = token_bound_runner_id(binding_token)
@@ -4841,6 +4842,7 @@ async def _launch_runner_on_host_impl(
         asyncio.get_running_loop().create_future()
     )
     host_conn.pending_launches[request_id] = launch_future
+    resolved_harness = _resolve_harness(conv)
     launch_frame = encode_host_frame(
         HostLaunchRunnerFrame(
             request_id=request_id,
@@ -4850,7 +4852,8 @@ async def _launch_runner_on_host_impl(
             # Canonical harness (see _resolve_harness) so the host runs the
             # same configuration check it does at create-time launch. None
             # (agent not resolvable) skips the host-side check — fail open.
-            harness=_resolve_harness(conv),
+            harness=resolved_harness,
+            inference_proxy=use_server_inference_proxy(host_conn, resolved_harness),
         )
     )
     try:

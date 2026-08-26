@@ -191,7 +191,10 @@ async def create_session_internal(
                 encode_host_frame,
             )
             from omnigent.runner.identity import token_bound_runner_id
-            from omnigent.server.routes._host_launch import resolve_host_launch
+            from omnigent.server.routes._host_launch import (
+                resolve_host_launch,
+                use_server_inference_proxy,
+            )
 
             target = await asyncio.to_thread(
                 resolve_host_launch,
@@ -234,6 +237,7 @@ async def create_session_internal(
                     workspace=resp.workspace,
                     session_id=resp.id,
                     harness=resp.harness,
+                    inference_proxy=use_server_inference_proxy(conn, resp.harness),
                 )
             )
             host_registry.send_text(conn, launch_frame)

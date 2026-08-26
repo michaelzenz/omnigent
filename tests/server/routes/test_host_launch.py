@@ -7,15 +7,19 @@ Tests ``resolve_host_owner`` and ``resolve_host_launch`` directly
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.server.auth import RESERVED_USER_LOCAL
+from omnigent.server.routes import _host_launch
 from omnigent.server.routes._host_launch import (
     resolve_host_launch,
     resolve_host_owner,
+    use_server_inference_proxy,
 )
 from omnigent.stores.host_store import now_epoch
 
@@ -51,6 +55,23 @@ class _FakeConversationStore:
 
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         return self.convs.get(conversation_id)
+
+
+def test_server_inference_proxy_is_limited_to_single_user_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_host_launch, "pi_server_inference_configured", lambda: True)
+    monkeypatch.setenv("OMNIGENT_LOCAL_SINGLE_USER", "1")
+    hello = SimpleNamespace(inference_proxy=True)
+
+    assert use_server_inference_proxy(
+        SimpleNamespace(owner=RESERVED_USER_LOCAL, hello=hello),  # type: ignore[arg-type]
+        "pi",
+    )
+    assert not use_server_inference_proxy(
+        SimpleNamespace(owner="alice@example.com", hello=hello),  # type: ignore[arg-type]
+        "pi",
+    )
 
 
 # ── resolve_host_owner ───────────────────────────────────────────────

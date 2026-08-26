@@ -31,7 +31,11 @@ from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR, USER_ID_ENV_VAR
 from omnigent.env_credentials import env_names_with_omnigent_prefix
 from omnigent.gateway_inference import gateway_inference_map
 from omnigent.harness_aliases import canonicalize_harness, is_claude_sdk_harness_name
-from omnigent.harness_availability import HARNESS_BINARY_MISSING, HarnessAvailability
+from omnigent.harness_availability import (
+    HARNESS_BINARY_MISSING,
+    HARNESS_NEEDS_AUTH,
+    HarnessAvailability,
+)
 from omnigent.host import HOST_FATAL_EXIT_CODE
 from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
 from omnigent.host.frames import (
@@ -76,6 +80,11 @@ from omnigent.host.frames import (
     HostWorktreeLogFrame,
     decode_host_frame,
     encode_host_frame,
+)
+from omnigent.host.inference_relay import HostInferenceRelay
+from omnigent.inference_proxy import (
+    HOST_INFERENCE_PROXY_TOKEN_ENV,
+    HOST_INFERENCE_PROXY_URL_ENV,
 )
 from omnigent.host.git_worktree import (
     WorktreeError,
@@ -682,6 +691,8 @@ def _build_runner_env(
     initial_auth_token: str | None = None,
     host_id: str | None = None,
     harness: str | None = None,
+    inference_proxy_url: str | None = None,
+    inference_proxy_token: str | None = None,
 ) -> dict[str, str]:
     """
     Build the environment for a spawned runner subprocess.
@@ -764,6 +775,9 @@ def _build_runner_env(
         env[RUNNER_SLICE_KEY_ENV_VAR] = host_id
     if harness:
         env[RUNNER_LAUNCH_HARNESS_ENV_VAR] = harness
+    if inference_proxy_url and inference_proxy_token:
+        env[HOST_INFERENCE_PROXY_URL_ENV] = inference_proxy_url
+        env[HOST_INFERENCE_PROXY_TOKEN_ENV] = inference_proxy_token
     return env
 
 
@@ -888,6 +902,7 @@ class HostProcess:
         self._server_url = server_url.rstrip("/")
         self._instance_id = os.urandom(16).hex()
         self._runners: dict[str, _RunnerHandle] = {}
+        self._inference_relay = HostInferenceRelay(self._server_url)
         # Retain the host's refreshable auth context after the first tunnel
         # handshake so runner launches can reuse its warm bearer. Failed or
         # unavailable resolution is not latched, allowing a later reconnect
@@ -1438,7 +1453,28 @@ class HostProcess:
         # first turn dies confusingly inside the executor. ``None`` (an
         # older server, or a session with no resolvable harness) skips the
         # check so version skew fails open.
-        if frame.harness is not None and not harness_is_configured(frame.harness):
+        brokered_pi = (
+            frame.inference_proxy
+            and frame.session_id is not None
+            and canonicalize_harness(frame.harness) == "pi"
+        )
+        availability = (
+            configured_harness_map().get(canonicalize_harness(frame.harness) or frame.harness)
+            if frame.harness is not None
+            else None
+        )
+        broker_covers_auth = brokered_pi and availability == HARNESS_NEEDS_AUTH
+        _logger.info(
+            "Runner launch inference routing: harness=%r proxy_requested=%s brokered=%s",
+            frame.harness,
+            frame.inference_proxy,
+            brokered_pi,
+        )
+        if (
+            frame.harness is not None
+            and not harness_is_configured(frame.harness)
+            and not broker_covers_auth
+        ):
             return HostLaunchRunnerResultFrame(
                 request_id=frame.request_id,
                 status="failed",
@@ -1463,17 +1499,36 @@ class HostProcess:
             self._current_auth_token,
             initialize=False,
         )
-        env = _build_runner_env(
-            os.environ,
-            server_url=self._server_url,
-            runner_id=runner_id,
-            binding_token=frame.binding_token,
-            workspace=str(workspace),
-            parent_pid=os.getpid(),
-            initial_auth_token=initial_auth_token,
-            host_id=self._identity.host_id,
-            harness=frame.harness,
+        relay_endpoint = (
+            self._inference_relay.register(
+                session_id=frame.session_id,
+                runner_id=runner_id,
+                binding_token=frame.binding_token,
+            )
+            if brokered_pi and frame.session_id is not None
+            else None
         )
+        try:
+            env = _build_runner_env(
+                os.environ,
+                server_url=self._server_url,
+                runner_id=runner_id,
+                binding_token=frame.binding_token,
+                workspace=str(workspace),
+                parent_pid=os.getpid(),
+                initial_auth_token=initial_auth_token,
+                host_id=self._identity.host_id,
+                harness=frame.harness,
+                inference_proxy_url=(
+                    relay_endpoint.base_url if relay_endpoint is not None else None
+                ),
+                inference_proxy_token=(
+                    relay_endpoint.capability if relay_endpoint is not None else None
+                ),
+            )
+        except BaseException:
+            self._inference_relay.revoke(runner_id)
+            raise
         # The runner serves one primary session (plus any co-located subagents);
         # pass it so runner-level log records can be attributed to that session.
         if frame.session_id:
@@ -1501,22 +1556,32 @@ class HostProcess:
         # abandoned fork would never be watched, stopped, or reaped, and the
         # zygote would retain its exit status forever. On cancellation we let
         # the spawn land and then tear that runner down.
-        spawn = asyncio.ensure_future(
-            asyncio.to_thread(self._spawn_runner_proc, env, _session_slug, workspace)
-        )
+        try:
+            spawn = asyncio.ensure_future(
+                asyncio.to_thread(self._spawn_runner_proc, env, _session_slug, workspace)
+            )
+        except BaseException:
+            self._inference_relay.revoke(runner_id)
+            raise
         try:
             proc, log_path = await asyncio.shield(spawn)
         except asyncio.CancelledError:
+            self._inference_relay.revoke(runner_id)
             spawn.add_done_callback(self._discard_abandoned_spawn)
             raise
         except OSError as exc:
+            self._inference_relay.revoke(runner_id)
             return HostLaunchRunnerResultFrame(
                 request_id=frame.request_id,
                 status="failed",
                 error=f"failed to spawn runner: {exc}",
             )
+        except BaseException:
+            self._inference_relay.revoke(runner_id)
+            raise
 
         if proc.poll() is not None:
+            self._inference_relay.revoke(runner_id)
             # The runner died before Popen returned — its actual error
             # is in the captured log, so ship the tail with the result
             # instead of making the user go find the file on the host.
@@ -1722,6 +1787,7 @@ class HostProcess:
         :returns: Result frame with status.
         """
         handle = self._runners.pop(frame.runner_id, None)
+        self._inference_relay.revoke(frame.runner_id)
         if handle is None:
             if frame.missing_ok:
                 return HostStopRunnerResultFrame(
@@ -1833,6 +1899,7 @@ class HostProcess:
         # loop to avoid freezing the daemon on the enabled path.
         while await asyncio.to_thread(handle.proc.poll) is None:
             await asyncio.sleep(_RUNNER_WATCH_INTERVAL_S)
+        self._inference_relay.revoke(runner_id)
         if self._runners.get(runner_id) is not handle:
             # _handle_stop (or _cleanup_runners) removed it first —
             # an intentional termination, not a crash to report.
@@ -3085,52 +3152,54 @@ class HostProcess:
         # harness is reported as unknown and must not prevent registration.
         await self._initialize_capabilities()
 
-        # Reap orphaned harness/tool grandchildren that reparent here when a
-        # runner dies (this host is PID 1 in a container, or a subreaper
-        # otherwise). Without this they pile up as <defunct> zombies and can
-        # OOM the box on a long-blocked run (#1782).
-        if _install_child_subreaper():
-            _logger.debug("installed PR_SET_CHILD_SUBREAPER; host will reap orphans")
-        self._reaper_task = asyncio.create_task(
-            self._orphan_reaper_loop(), name="host-orphan-reaper"
-        )
-        # Detect wake from system suspend (laptop sleep) and force-drop the
-        # then-dead tunnel so the reconnect loop reattaches within seconds
-        # instead of waiting out the ~90s keepalive ping timeout.
-        self._suspend_task = asyncio.create_task(
-            watch_for_resume(self._on_resume_from_suspend), name="host-suspend-watch"
-        )
-        # Bind this daemon's lifetime to its registry record: hold the target's
-        # flock and watch the record so a stale daemon retires itself.
-        if self._lifecycle_lock is not None:
-            self._lifecycle_lock.acquire()
-            self._lifecycle_task = asyncio.create_task(
-                self._lifecycle_monitor_loop(), name="host-lifecycle-monitor"
-            )
-        # Warm the runner zygote now: start() blocks on its one-time import
-        # of the runner graph (~1-2s), which otherwise lands inside the first
-        # session launch of the daemon's life. Best-effort — a failure
-        # latches the same direct-Popen fallback the launch path uses.
-        if self._zygote is not None and not self._zygote_disabled:
-            self._zygote_prestart_task = asyncio.create_task(
-                asyncio.to_thread(self._ensure_zygote_started),
-                name="host-zygote-prestart",
-            )
-        from omnigent.host.polling import (
-            PollScheduler,
-            ScriptPollPluginsPoller,
-            ScriptTimerPluginsPoller,
-        )
-
-        self._poll_scheduler = PollScheduler(
-            server_url=self._server_url,
-            host_id=self._identity.host_id,
-        )
-        self._poll_scheduler.register(ScriptPollPluginsPoller())
-        self._poll_scheduler.register(ScriptTimerPluginsPoller())
-        await self._poll_scheduler.start()
-        backoff = _RECONNECT_BASE_S
+        await self._inference_relay.start()
+        self._inference_relay.add_exit_callback(self._abort_live_tunnel)
         try:
+            # Reap orphaned harness/tool grandchildren that reparent here when a
+            # runner dies (this host is PID 1 in a container, or a subreaper
+            # otherwise). Without this they pile up as <defunct> zombies and can
+            # OOM the box on a long-blocked run (#1782).
+            if _install_child_subreaper():
+                _logger.debug("installed PR_SET_CHILD_SUBREAPER; host will reap orphans")
+            self._reaper_task = asyncio.create_task(
+                self._orphan_reaper_loop(), name="host-orphan-reaper"
+            )
+            # Detect wake from system suspend (laptop sleep) and force-drop the
+            # then-dead tunnel so the reconnect loop reattaches within seconds
+            # instead of waiting out the ~90s keepalive ping timeout.
+            self._suspend_task = asyncio.create_task(
+                watch_for_resume(self._on_resume_from_suspend), name="host-suspend-watch"
+            )
+            # Bind this daemon's lifetime to its registry record: hold the target's
+            # flock and watch the record so a stale daemon retires itself.
+            if self._lifecycle_lock is not None:
+                self._lifecycle_lock.acquire()
+                self._lifecycle_task = asyncio.create_task(
+                    self._lifecycle_monitor_loop(), name="host-lifecycle-monitor"
+                )
+            # Warm the runner zygote now: start() blocks on its one-time import
+            # of the runner graph (~1-2s), which otherwise lands inside the first
+            # session launch of the daemon's life. Best-effort — a failure
+            # latches the same direct-Popen fallback the launch path uses.
+            if self._zygote is not None and not self._zygote_disabled:
+                self._zygote_prestart_task = asyncio.create_task(
+                    asyncio.to_thread(self._ensure_zygote_started),
+                    name="host-zygote-prestart",
+                )
+            from omnigent.host.polling import (
+                PollScheduler,
+                ScriptPollPluginsPoller,
+                ScriptTimerPluginsPoller,
+            )
+
+            self._poll_scheduler = PollScheduler(
+                server_url=self._server_url,
+                host_id=self._identity.host_id,
+            )
+            self._poll_scheduler.register(ScriptPollPluginsPoller())
+            self._poll_scheduler.register(ScriptTimerPluginsPoller())
+            await self._poll_scheduler.start()
+            backoff = _RECONNECT_BASE_S
             while True:
                 if self._lifecycle_lost.is_set():
                     break
@@ -3321,6 +3390,7 @@ class HostProcess:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await watcher
             self._cleanup_runners()
+            await self._inference_relay.close()
             # Final drain: _cleanup_runners has just reaped the tracked
             # runners via Popen, so any of their still-orphaned tool
             # grandchildren are now reapable and no tracked pid can be stolen.
@@ -3375,6 +3445,7 @@ class HostProcess:
         :returns: None.
         """
         for runner_id, handle in self._runners.items():
+            self._inference_relay.revoke(runner_id)
             if handle.proc.poll() is None:
                 _logger.info("Terminating runner %s on shutdown", runner_id)
                 handle.proc.terminate()
@@ -3612,6 +3683,7 @@ class HostProcess:
             skill_search_roots=skill_search_roots,
             memory_files=memory_files,
             managed_worktree_leases=True,
+            inference_proxy=self._inference_relay.started,
         )
         try:
             encoded_hello = encode_host_frame(hello)

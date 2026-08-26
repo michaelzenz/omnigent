@@ -24,8 +24,10 @@ from fastapi import HTTPException
 
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.server.auth import LEVEL_OWNER
+from omnigent.harness_aliases import canonicalize_harness
+from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL, local_single_user_enabled
 from omnigent.server.host_registry import HostConnection, HostRegistry
+from omnigent.server.routes.inference_proxy import pi_server_inference_configured
 from omnigent.server.permissions import check_session_access
 from omnigent.stores import ConversationStore
 from omnigent.stores.host_store import Host, HostStore, host_is_live
@@ -157,3 +159,14 @@ def resolve_host_launch(
         raise HTTPException(status_code=404, detail="session not found")
 
     return HostLaunchTarget(host=host, conn=conn, conv=conv)
+
+
+def use_server_inference_proxy(conn: HostConnection, harness: str | None) -> bool:
+    """Return whether this launch should use brokered Onih Pi inference."""
+    return (
+        canonicalize_harness(harness) == "pi"
+        and local_single_user_enabled()
+        and conn.owner == RESERVED_USER_LOCAL
+        and conn.hello.inference_proxy
+        and pi_server_inference_configured()
+    )

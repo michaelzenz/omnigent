@@ -172,6 +172,7 @@ def test_hello_frame_round_trip() -> None:
         runners=["runner_token_aaa", "runner_token_bbb"],
         instance_id="daemon-instance-1",
         skill_sync_harnesses={"claude": True, "codex": True, "cursor": False},
+        inference_proxy=True,
     )
     decoded = decode_host_frame(encode_host_frame(original))
     assert isinstance(decoded, HostHelloFrame)
@@ -180,6 +181,7 @@ def test_hello_frame_round_trip() -> None:
     assert decoded.name == "corey-laptop"
     assert decoded.runners == ["runner_token_aaa", "runner_token_bbb"]
     assert decoded.instance_id == "daemon-instance-1"
+    assert decoded.inference_proxy is True
     assert decoded.skill_sync_harnesses == {
         "claude": True,
         "codex": True,
@@ -215,6 +217,7 @@ def test_launch_runner_frame_round_trip() -> None:
         binding_token="secret_token_xyz",
         workspace="/Users/corey/projects/frontend",
         session_id="conv_abc123",
+        inference_proxy=True,
     )
     decoded = decode_host_frame(encode_host_frame(original))
     assert isinstance(decoded, HostLaunchRunnerFrame)
@@ -222,6 +225,7 @@ def test_launch_runner_frame_round_trip() -> None:
     assert decoded.binding_token == "secret_token_xyz"
     assert decoded.workspace == "/Users/corey/projects/frontend"
     assert decoded.session_id == "conv_abc123"
+    assert decoded.inference_proxy is True
 
 
 def test_launch_runner_result_frame_success_round_trip() -> None:
