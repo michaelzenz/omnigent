@@ -4653,3 +4653,33 @@ def test_pi_messages_to_canonical_skips_compaction_summary_role() -> None:
     assert items[0]["role"] == "user"
     assert items[1]["type"] == "message"
     assert items[1]["role"] == "assistant"
+
+
+def test_pi_messages_to_canonical_skips_thinking_blocks() -> None:
+    """Thinking blocks in compacted assistant messages are skipped, not
+    crashed on. They are internal model reasoning, not conversation content.
+    """
+    from omnigent.inner.pi_executor import _pi_messages_to_canonical
+
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "text": "let me consider..."},
+                {"type": "text", "text": "hi there"},
+            ],
+        },
+    ]
+
+    items = _pi_messages_to_canonical(messages)
+
+    assert len(items) == 2
+    assert items[0]["type"] == "message"
+    assert items[0]["role"] == "user"
+    assert items[1]["type"] == "message"
+    assert items[1]["role"] == "assistant"
+    # Only the text block survives, not the thinking block.
+    assert len(items[1]["content"]) == 1
+    assert items[1]["content"][0]["type"] == "output_text"
+    assert items[1]["content"][0]["text"] == "hi there"
