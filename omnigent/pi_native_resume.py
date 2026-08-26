@@ -220,6 +220,8 @@ def pi_session_records_from_session_items(
     - ``function_call`` -> Pi ``message`` with ``role: "assistant"`` whose
       content carries a ``toolCall`` block.
     - ``function_call_output`` -> Pi ``message`` with ``role: "toolResult"``.
+    - ``error`` -> dropped: a turn-error marker is transcript metadata for
+      the error banner (``NON_CONTENT_ITEM_TYPES``), never model history.
 
     Interrupted assistant turns (and the rest of their response group) are
     skipped so a cancelled turn isn't restored as completed history.
@@ -381,6 +383,11 @@ def _pi_entries_from_session_item(
                 },
             }
         ]
+
+    if item_type == "error":
+        # Turn-error marker: transcript metadata for the error banner
+        # (NON_CONTENT_ITEM_TYPES), not model history to rebuild.
+        return []
 
     return []
 

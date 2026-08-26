@@ -178,7 +178,7 @@ class OnihPiSessionStore:
 
     @staticmethod
     def _validate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        supported = {"message", "function_call", "function_call_output"}
+        supported = {"message", "function_call", "function_call_output", "error"}
         calls: dict[str, str] = {}
         normalized: list[dict[str, Any]] = []
         for item in items:
@@ -213,12 +213,14 @@ class OnihPiSessionStore:
                 if not isinstance(name, str) or not name:
                     raise ValueError(f"canonical function call {call_id!r} is missing its name")
                 calls[call_id] = name
-            else:
+            elif item_type == "function_call_output":
                 call_id = item.get("call_id")
                 if not isinstance(call_id, str) or call_id not in calls:
                     raise ValueError(f"unpaired canonical tool result: {call_id!r}")
                 copied.setdefault("name", calls[call_id])
                 copied.setdefault("tool_status", "success")
+            # "error" items are transcript metadata (NON_CONTENT_ITEM_TYPES),
+            # not model history; the record converter drops them.
             normalized.append(copied)
         return normalized
 

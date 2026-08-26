@@ -76,6 +76,17 @@ def _function_output_item(
     }
 
 
+def _error_item(*, item_id: str = "e1", response_id: str = "r2") -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "type": "error",
+        "response_id": response_id,
+        "source": "execution",
+        "code": "RuntimeError",
+        "message": "inner executor error: Failed to start Pi",
+    }
+
+
 # --------------------------------------------------------------------------
 # safe-id guard
 # --------------------------------------------------------------------------
@@ -238,6 +249,36 @@ def test_empty_text_items_are_dropped() -> None:
     # header + only the non-empty user message
     assert len(records) == 2
     assert records[1]["message"]["content"][0]["text"] == "real text"
+
+
+def test_error_items_are_dropped() -> None:
+    items = [
+        _user_item("first question", item_id="u1", response_id="r1"),
+        _assistant_item("first reply", item_id="a1", response_id="r1"),
+        _user_item("second question", item_id="u2", response_id="r2"),
+        _error_item(item_id="e1", response_id="r2"),
+        _user_item("retry", item_id="u3", response_id="r3"),
+    ]
+    records = pi_session_records_from_session_items(
+        items,
+        session_id="conv_abc",
+        external_session_id=_EXTERNAL_ID,
+        cwd=Path("/repo"),
+    )
+    # header + 4 messages; the error item produces no Pi entry.
+    assert [r["message"]["role"] for r in records[1:]] == [
+        "user",
+        "assistant",
+        "user",
+        "user",
+    ]
+    serialized = json.dumps(records)
+    assert "inner executor error" not in serialized
+    # Parent chain is strictly linear across the dropped item.
+    entries = records[1:]
+    assert entries[0]["parentId"] is None
+    for prev, cur in itertools.pairwise(entries):
+        assert cur["parentId"] == prev["id"]
 
 
 def test_interrupted_response_group_is_skipped() -> None:
