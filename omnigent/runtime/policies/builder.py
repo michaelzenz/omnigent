@@ -567,7 +567,21 @@ def build_policy_engine(
         from omnigent.omniharness_model_catalog import get_omniharness_model_pricing
 
         token_pricing = get_omniharness_model_pricing(spec.llm.model)
-    server_connection = _resolve_server_llm_connection(server_llm)
+    # Resolve the server LLM connection best-effort: a transient token
+    # failure (e.g. expired Databricks CLI OAuth) must not crash the
+    # engine build. Function policies that don't need an LLM (like the
+    # always-injected ask_on_add_policy guard) work fine without a
+    # connection; prompt-based policies fail at evaluation time instead.
+    try:
+        server_connection = _resolve_server_llm_connection(server_llm)
+    except OSError:
+        _logger.warning(
+            "Failed to resolve server LLM connection for policy engine "
+            "(session=%s); prompt policies will be unavailable: %s",
+            conversation_id,
+            exc_info=True,
+        )
+        server_connection = None
     # host_connection carries the per-request caller token (billed to
     # the caller). It takes precedence over the static server-level
     # connection so policy LLM calls are attributed to the right
@@ -685,10 +699,16 @@ def _build_policy_llm_client(
 
 def build_server_llm_client(server_llm: LLMConfig | None) -> PolicyLLMClient | None:
     """Build an LLM client from the complete server-level configuration."""
-    return _build_policy_llm_client(
-        server_llm,
-        _resolve_server_llm_connection(server_llm),
-    )
+    try:
+        connection = _resolve_server_llm_connection(server_llm)
+    except OSError:
+        _logger.warning(
+            "Failed to resolve server LLM connection for server LLM client; "
+            "returning None: %s",
+            exc_info=True,
+        )
+        connection = None
+    return _build_policy_llm_client(server_llm, connection)
 
 
 def _normalize_policy_model(model: str) -> str:
