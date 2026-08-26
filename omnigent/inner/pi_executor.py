@@ -689,6 +689,11 @@ _PI_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
 )
 _STREAM_READ_CHUNK_SIZE = 65536
 
+# Idle budget for one read during a turn, and the shorter drain budget once
+# an errored ``message_end`` means only the trailing ``agent_end`` is left.
+_TURN_READ_IDLE_TIMEOUT_S = 120.0
+_TURN_READ_DRAIN_TIMEOUT_S = 10.0
+
 # CLI flags whose values are sensitive (e.g. the full system prompt) and must
 # not be written to logs verbatim. The value following these flags is replaced
 # with a length-only placeholder.
@@ -1153,6 +1158,11 @@ class _PiRpcSession:
     # need to None-narrow on every access. ``None`` sentinel values are
     # pushed onto the queue to signal EOF to ``read_line``.
     _line_queue: Queue[str | None] = field(default_factory=Queue)
+    # Set by the reader just before it enqueues the EOF sentinel, so
+    # ``read_line`` callers can tell reader termination (EOF, cancel, or
+    # reader error) apart from an idle timeout without racing the child
+    # watcher's ``returncode`` update.
+    _eof: bool = False
     _stderr_lines: list[str] = field(default_factory=list)
     _tmp_dir: str | None = None
 
@@ -1254,6 +1264,7 @@ class _PiRpcSession:
         except Exception as exc:  # noqa: BLE001 — reader loop logs and exits on any unexpected error
             logger.debug("PiExecutor reader error: %s", exc)
         finally:
+            self._eof = True
             self._line_queue.put_nowait(None)
 
     async def _stderr_reader(self) -> None:
@@ -2821,14 +2832,49 @@ class PiExecutor(Executor):
         # Error reported by a ``message_end`` (stopReason=error); surfaced at
         # ``agent_end`` so the terminal event is consumed off the RPC stream.
         pending_error: str | None = None
+        # Tool calls started but not yet ended (toolCallId → tool name);
+        # named in the error if the turn stalls waiting on one.
+        inflight_tools: dict[str, str] = {}
 
         while True:
             # After an errored message the only thing left to drain is the
             # already-emitted agent_end, so don't wait the full idle budget.
-            line = await rpc.read_line(timeout=120.0 if pending_error is None else 10.0)
+            line = await rpc.read_line(
+                timeout=_TURN_READ_IDLE_TIMEOUT_S
+                if pending_error is None
+                else _TURN_READ_DRAIN_TIMEOUT_S
+            )
             if line is None:
                 if pending_error is not None:
                     yield ExecutorError(message=pending_error)
+                elif not rpc._eof:
+                    # Idle timeout with Pi still running: the turn is stuck
+                    # (e.g. a bridged tool call outlasted the read budget).
+                    # Tear the session down so the next turn spawns a fresh
+                    # process — keeping it would trip Pi's "already
+                    # processing" guard, and leftover events from the
+                    # abandoned turn would poison the next one.
+                    stuck_detail = ""
+                    if inflight_tools:
+                        names = ", ".join(sorted(set(inflight_tools.values())))
+                        stuck_detail = f' while waiting on tool "{names}"'
+                    logger.warning(
+                        "PiExecutor: Pi unresponsive mid-turn (session %s%s); closing session",
+                        session_key,
+                        stuck_detail,
+                    )
+                    try:
+                        await rpc.send_command({"type": "abort", "id": f"abort_{cmd_id}"})
+                    except Exception as exc:  # noqa: BLE001 — abort is best-effort before kill
+                        logger.debug("PiExecutor: abort after idle timeout failed: %s", exc)
+                    await self.close_session(session_key)
+                    yield ExecutorError(
+                        message=(
+                            "Pi stopped responding mid-turn"
+                            f"{stuck_detail} (no events for {_TURN_READ_IDLE_TIMEOUT_S:g}s); "
+                            "your next message will start a fresh session."
+                        )
+                    )
                 elif not streamed_any and not response_text:
                     stderr = "\n".join(rpc._stderr_lines) if rpc._stderr_lines else ""
                     stderr_suffix = f" Stderr: {stderr}" if stderr else ""
@@ -2897,6 +2943,11 @@ class PiExecutor(Executor):
                 args = event.get("args", {})
                 tool_call_id = event.get("toolCallId")
                 metadata = {"call_id": tool_call_id} if isinstance(tool_call_id, str) else {}
+                # Only id-carrying calls are tracked: without an id the end
+                # event can't be correlated, so the entry could never be
+                # removed and would later be misreported as stuck.
+                if isinstance(tool_call_id, str):
+                    inflight_tools[tool_call_id] = tool_name
                 yield ToolCallRequest(
                     name=tool_name,
                     args=args if isinstance(args, dict) else {},
@@ -2971,6 +3022,8 @@ class PiExecutor(Executor):
 
                 tool_call_id = event.get("toolCallId")
                 metadata = {"call_id": tool_call_id} if isinstance(tool_call_id, str) else {}
+                if isinstance(tool_call_id, str):
+                    inflight_tools.pop(tool_call_id, None)
                 yield ToolCallComplete(
                     name=tool_name,
                     status=status,

@@ -36,6 +36,7 @@ from omnigent.inner.pi_executor import (
     _onih_pi_provider_for_model,
     _pi_provider_for_model,
     _PiRpcSession,
+    _PiSessionState,
     _redact_argv_for_log,
     _safe_dumps,
     _sanitize_schema,
@@ -2296,6 +2297,156 @@ class TestRunTurn(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertIsInstance(events[0], ExecutorError)
             self.assertEqual(events[0].message, "boom")
+
+        _run(_test())
+
+    def test_idle_timeout_with_live_pi_closes_session_and_errors(self):
+        """When the read budget expires while Pi is still alive (stuck
+        mid-turn), the executor aborts, closes the session, and fails the
+        turn with an explicit error. Silently completing would leave Pi's
+        \"already processing\" guard armed for the next turn, and leftover
+        events from the abandoned turn would poison it.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = _FakeProcess()
+            fake_rpc._stderr_lines = []
+            # close() sets ``rpc.process`` to None, so capture stdin upfront.
+            stdin = fake_rpc.process.stdin
+
+            lines = [
+                json.dumps({"type": "response", "success": True}),
+                # A completed tool call must NOT be reported as stuck.
+                json.dumps(
+                    {
+                        "type": "tool_execution_start",
+                        "toolName": "bash",
+                        "toolCallId": "call_done",
+                        "args": {"command": "ls"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "tool_execution_end",
+                        "toolName": "bash",
+                        "toolCallId": "call_done",
+                        "result": "ok",
+                    }
+                ),
+                # The call that never returns before the read budget expires.
+                json.dumps(
+                    {
+                        "type": "tool_execution_start",
+                        "toolName": "gh",
+                        "toolCallId": "call_stuck",
+                        "args": {"command": "gh api ..."},
+                    }
+                ),
+            ]
+
+            async def fake_read_line(timeout=120.0):
+                del timeout
+                if lines:
+                    return lines.pop(0)
+                return None  # idle timeout: no EOF sentinel, no more events
+
+            fake_rpc.read_line = fake_read_line
+
+            async def fake_ensure_rpc(session_key, *args, **kwargs):
+                state = executor._session_states.setdefault(session_key, _PiSessionState())
+                state.rpc = fake_rpc
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            errors = [e for e in events if isinstance(e, ExecutorError)]
+            self.assertEqual(len(errors), 1)
+            self.assertIn("stopped responding mid-turn", errors[0].message)
+            # The in-flight tool call is named so the operator can tell
+            # which bridged tool hung; the completed call is not.
+            self.assertIn('waiting on tool "gh"', errors[0].message)
+            self.assertNotIn("bash", errors[0].message)
+            self.assertFalse(any(isinstance(e, TurnComplete) for e in events))
+            # Best-effort abort went out before the process was terminated.
+            last_command = json.loads(stdin.data[-1].decode())
+            self.assertEqual(last_command["type"], "abort")
+            # Session torn down: the next turn spawns a fresh Pi process.
+            self.assertEqual(executor._session_states, {})
+            self.assertIsNone(fake_rpc.process)
+
+        _run(_test())
+
+    def test_eof_with_dead_pi_after_partial_text_still_completes(self):
+        """EOF is not an idle timeout even when ``returncode`` is still
+        unset — the child watcher updates it after the stdout pipe closes,
+        so classification must key off the reader's ``_eof`` flag, not
+        process state. The partial-response completion is kept and the
+        session is not torn down.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = _FakeProcess()
+            # Race window: stream reached EOF (``_eof`` set by the reader)
+            # but the process exit hasn't been reaped yet.
+            fake_rpc._eof = True
+            self.assertIsNone(fake_rpc.process.returncode)
+            fake_rpc._stderr_lines = []
+
+            lines = [
+                json.dumps({"type": "response", "success": True}),
+                json.dumps(
+                    {
+                        "type": "message_update",
+                        "assistantMessageEvent": {"type": "text_delta", "delta": "partial"},
+                    }
+                ),
+            ]
+
+            async def fake_read_line(timeout=120.0):
+                del timeout
+                if lines:
+                    return lines.pop(0)
+                return None  # EOF
+
+            fake_rpc.read_line = fake_read_line
+
+            async def fake_ensure_rpc(session_key, *args, **kwargs):
+                state = executor._session_states.setdefault(session_key, _PiSessionState())
+                state.rpc = fake_rpc
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            turn_complete = [e for e in events if isinstance(e, TurnComplete)]
+            self.assertEqual(len(turn_complete), 1)
+            self.assertEqual(turn_complete[0].response, "partial")
+            self.assertNotEqual(executor._session_states, {})
 
         _run(_test())
 
