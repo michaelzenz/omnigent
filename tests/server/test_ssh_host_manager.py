@@ -271,6 +271,12 @@ async def test_reconciliation_captures_phase_and_error_logs(
     error_entry = next(entry for entry in entries if entry.level == "error")
     assert "mock install failure" in error_entry.message
 
+    # Phase messages are now descriptive, not just the phase name.
+    messages = [entry.message for entry in entries if entry.phase == "waiting_for_ssh"]
+    assert any("Checking SSH connectivity" in m for m in messages)
+    install_messages = [entry.message for entry in entries if entry.phase == "installing"]
+    assert any("Installing Omnigent" in m for m in install_messages)
+
     assert manager.retry(profile.id)
     retry_entries = manager.logs(profile.id)
     assert any("Retry requested by user" in entry.message for entry in retry_entries)

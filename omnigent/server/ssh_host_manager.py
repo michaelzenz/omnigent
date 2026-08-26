@@ -38,6 +38,7 @@ InstallCommandBuilder = Callable[
     [str, str | None, str | None, str | None, str | None, str | None, str],
     str,
 ]
+LogSink = Callable[[str, str, str, str], None]
 
 _MAX_LOG_ENTRIES = 200
 
@@ -171,6 +172,7 @@ class SshHostOperations:
         control_dir: Path | None = None,
         settings_reader: Callable[[], SshSettings] | None = None,
         remote_namespace: str,
+        log_sink: LogSink | None = None,
     ) -> None:
         self._local_host = local_host
         self._local_port = local_port
@@ -181,6 +183,11 @@ class SshHostOperations:
         self._control_dir = control_dir or Path.home() / ".omnigent" / "ssh" / remote_namespace
         self._bundle_dir = self._control_dir / "bundles"
         self._local_bundles: dict[str, list[Path] | None] = {}
+        self._log_sink = log_sink
+
+    def _log(self, connection_id: str, phase: str, level: str, message: str) -> None:
+        if self._log_sink is not None:
+            self._log_sink(connection_id, phase, level, message)
 
     def _python_index_url(self) -> str | None:
         return self._settings_reader().package_index_url
@@ -221,11 +228,23 @@ class SshHostOperations:
         return self._control_dir / f"{digest}.sock"
 
     async def check_reachable(self, profile: SshConnectionProfile) -> None:
+        self._log(
+            profile.id, "waiting_for_ssh", "info", f"Probing SSH connection to {profile.alias}..."
+        )
         code, stdout, stderr = await ssh_run(profile, "true", timeout_s=15)
         if code != 0:
-            raise RuntimeError((stderr or stdout).decode().strip() or "SSH is unreachable")
+            error_msg = (stderr or stdout).decode().strip() or "SSH is unreachable"
+            self._log(profile.id, "waiting_for_ssh", "error", f"SSH unreachable: {error_msg}")
+            raise RuntimeError(error_msg)
+        self._log(profile.id, "waiting_for_ssh", "info", "SSH connection established")
 
     async def ensure_installed(self, profile: SshConnectionProfile, version: str) -> None:
+        self._log(
+            profile.id,
+            "installing",
+            "info",
+            f"Checking remote installation for version {version}...",
+        )
         package_spec: str | None = None
         bundle_sha256: str | None = None
         find_links: str | None = None
@@ -243,7 +262,21 @@ class SshHostOperations:
             package_spec = f"{remote_package_dir}/{main_bundle.name}"
             find_links = remote_package_dir
             if not await self._remote_bundle_matches(profile, version, bundle_sha256):
+                self._log(
+                    profile.id,
+                    "installing",
+                    "info",
+                    f"Uploading {len(local_bundles)} wheel(s) to remote host...",
+                )
                 await self._upload_bundles(profile, local_bundles, remote_package_dir)
+                self._log(profile.id, "installing", "info", "Wheel upload complete")
+            else:
+                self._log(
+                    profile.id,
+                    "installing",
+                    "info",
+                    "Remote already has matching wheels, skipping upload",
+                )
         command = self._install_command_builder(
             version,
             package_spec,
@@ -253,9 +286,23 @@ class SshHostOperations:
             self._npm_registry_url(),
             self._remote_namespace,
         )
+        self._log(
+            profile.id,
+            "installing",
+            "info",
+            "Running remote installation (uv pip install, npm install Pi)...",
+        )
         code, stdout, stderr = await ssh_run(profile, command, timeout_s=600)
         if code != 0:
-            raise RuntimeError((stderr or stdout).decode().strip() or "remote install failed")
+            error_msg = (stderr or stdout).decode().strip() or "remote install failed"
+            self._log(profile.id, "installing", "error", f"Installation failed: {error_msg}")
+            raise RuntimeError(error_msg)
+        stdout_text = stdout.decode().strip()
+        if stdout_text:
+            self._log(profile.id, "installing", "info", f"Install output: {stdout_text[:500]}")
+        self._log(
+            profile.id, "installing", "info", f"Remote installation completed (version {version})"
+        )
 
     async def _remote_bundle_matches(
         self,
@@ -296,6 +343,7 @@ class SshHostOperations:
             )
         for local_bundle in local_bundles:
             remote_bundle = f"{remote_package_dir}/{local_bundle.name}"
+            self._log(profile.id, "installing", "info", f"Uploading {local_bundle.name}...")
             code, stdout, stderr = await self._run(
                 [
                     "scp",
@@ -306,7 +354,14 @@ class SshHostOperations:
                 300,
             )
             if code != 0:
-                raise RuntimeError((stderr or stdout).decode().strip() or "wheel upload failed")
+                error_msg = (stderr or stdout).decode().strip() or "wheel upload failed"
+                self._log(
+                    profile.id,
+                    "installing",
+                    "error",
+                    f"Upload failed for {local_bundle.name}: {error_msg}",
+                )
+                raise RuntimeError(error_msg)
 
     async def _local_bundle(self, version: str) -> list[Path] | None:
         """Build and cache the application and sibling SDK wheels."""
@@ -369,6 +424,7 @@ class SshHostOperations:
         return built
 
     async def ensure_tunnel(self, profile: SshConnectionProfile) -> str:
+        self._log(profile.id, "opening_tunnel", "info", "Establishing SSH reverse tunnel...")
         self._control_dir.mkdir(parents=True, exist_ok=True)
         control_path = self._control_path(profile.id, profile.alias)
         check = ["ssh", "-S", str(control_path), "-O", "check", profile.alias]
@@ -411,17 +467,23 @@ class SshHostOperations:
         ]
         code, stdout, stderr = await self._run(start, 30)
         if code != 0:
-            raise RuntimeError((stderr or stdout).decode().strip() or "reverse tunnel failed")
+            error_msg = (stderr or stdout).decode().strip() or "reverse tunnel failed"
+            self._log(profile.id, "opening_tunnel", "error", f"Tunnel failed: {error_msg}")
+            raise RuntimeError(error_msg)
         code, stdout, stderr = await ssh_run(
             profile,
             f"test -S {shlex.quote(remote_socket)}",
             timeout_s=15,
         )
         if code != 0:
-            raise RuntimeError(
-                (stderr or stdout).decode().strip()
-                or "reverse tunnel did not create the remote Unix socket"
-            )
+            error_msg = (
+                stderr or stdout
+            ).decode().strip() or "reverse tunnel did not create the remote Unix socket"
+            self._log(profile.id, "opening_tunnel", "error", f"Tunnel socket missing: {error_msg}")
+            raise RuntimeError(error_msg)
+        self._log(
+            profile.id, "opening_tunnel", "info", f"Reverse tunnel established at {remote_socket}"
+        )
         return remote_socket
 
     async def start_host(
@@ -433,6 +495,9 @@ class SshHostOperations:
         token: str,
         socket_path: str,
     ) -> None:
+        self._log(
+            profile.id, "starting_host", "info", f"Starting remote host daemon ({host_name})..."
+        )
         values = {
             "OMNIGENT_HOST_TOKEN": token,
             "OMNIGENT_HOST_ID": host_id,
@@ -456,7 +521,10 @@ class SshHostOperations:
         )
         code, stdout, stderr = await ssh_run(profile, command, timeout_s=30)
         if code != 0:
-            raise RuntimeError((stderr or stdout).decode().strip() or "remote host start failed")
+            error_msg = (stderr or stdout).decode().strip() or "remote host start failed"
+            self._log(profile.id, "starting_host", "error", f"Host start failed: {error_msg}")
+            raise RuntimeError(error_msg)
+        self._log(profile.id, "starting_host", "info", "Remote host daemon started")
 
     async def detach(self, connection_id: str, profile: SshConnectionProfile) -> None:
         control_path = self._control_path(connection_id, profile.alias)
@@ -502,6 +570,7 @@ class SshHostInstallationManager:
             local_port=local_port,
             settings_reader=store.get_settings,
             remote_namespace=settings.remote_namespace,
+            log_sink=self._append_log,
         )
         self.default_owner = default_owner
         self.scan_interval_s = scan_interval_s
@@ -680,8 +749,14 @@ class SshHostInstallationManager:
             if not renewed:
                 return
 
-    async def _phase(self, row: SshHostInstallation, phase: str) -> None:
-        self._append_log(row.connection_id, phase=phase, level="info", message=phase)
+    async def _phase(
+        self,
+        row: SshHostInstallation,
+        phase: str,
+        *,
+        message: str | None = None,
+    ) -> None:
+        self._append_log(row.connection_id, phase=phase, level="info", message=message or phase)
         changed = await asyncio.to_thread(
             self.store.set_phase,
             row.connection_id,
@@ -736,13 +811,19 @@ class SshHostInstallationManager:
                 if not changed:
                     raise _ReconciliationSuperseded
                 return
-            await self._phase(row, "waiting_for_ssh")
+            await self._phase(
+                row, "waiting_for_ssh", message=f"Checking SSH connectivity to {profile.alias}..."
+            )
             await self.operations.check_reachable(profile)
-            await self._phase(row, "installing")
+            await self._phase(
+                row,
+                "installing",
+                message=f"Installing Omnigent {row.bundle_version} and Pi on remote host...",
+            )
             await self.operations.ensure_installed(profile, row.bundle_version)
-            await self._phase(row, "opening_tunnel")
+            await self._phase(row, "opening_tunnel", message="Opening SSH reverse tunnel...")
             socket_path = await self.operations.ensure_tunnel(profile)
-            await self._phase(row, "starting_host")
+            await self._phase(row, "starting_host", message="Starting remote host daemon...")
             token = secrets.token_urlsafe(32)
             host_name = f"{profile.label[:48]}-{profile.id[:8]}"
             await asyncio.to_thread(
@@ -760,7 +841,9 @@ class SshHostInstallationManager:
                 token=token,
                 socket_path=socket_path,
             )
-            await self._phase(row, "waiting_for_host")
+            await self._phase(
+                row, "waiting_for_host", message="Waiting for remote host to come online..."
+            )
             deadline = asyncio.get_running_loop().time() + _HOST_READY_TIMEOUT_SECONDS
             while asyncio.get_running_loop().time() < deadline:
                 if await asyncio.to_thread(self.host_store.is_online, row.host_id):
