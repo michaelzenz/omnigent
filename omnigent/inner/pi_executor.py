@@ -729,13 +729,29 @@ def _redact_argv_for_log(args: Sequence[str]) -> list[str]:
     return redacted
 
 
+def _onih_pi_provider_for_model(
+    model: str,
+    wire_apis: frozenset[ModelWireAPI],
+) -> str:
+    """Resolve an isolated Onih Pi provider from authoritative wire metadata."""
+    if ModelWireAPI.ANTHROPIC_MESSAGES in wire_apis:
+        return "databricks-claude"
+    if ModelWireAPI.GEMINI_GENERATE_CONTENT in wire_apis:
+        return "databricks-gemini"
+    if ModelWireAPI.OPENAI_RESPONSES in wire_apis:
+        return "databricks-openai"
+    if ModelWireAPI.OPENAI_CHAT in wire_apis:
+        return "databricks-mlflow" if model.lower().startswith("system.ai.") else "databricks-chat"
+    raise ValueError(f"model has no Onih Pi-compatible wire API: {model}")
+
+
 def _build_onih_models_json(
     models_json: _PiModelsConfig,
     *,
     host: str,
     api_key: str,
 ) -> _PiModelsConfig:
-    """Reduce generic Pi gateway config to Onih's three supported wires."""
+    """Reduce generic Pi gateway config to Onih's supported wire providers."""
     providers = models_json["providers"]
     claude = dict(providers.get("databricks-anthropic", {}))
     claude["baseUrl"] = f"{host.rstrip('/')}/ai-gateway/anthropic"
@@ -749,6 +765,31 @@ def _build_onih_models_json(
     openai["apiKey"] = api_key
     openai["api"] = "openai-responses"
     openai["authHeader"] = True
+
+    chat_models = [
+        *providers.get("databricks", {}).get("models", []),
+        *providers.get("databricks-completions", {}).get("models", []),
+    ]
+    chat: _PiProviderConfig = {
+        "baseUrl": f"{host.rstrip('/')}/serving-endpoints",
+        "apiKey": api_key,
+        "api": "openai-completions",
+        "authHeader": True,
+        "compat": {
+            "supportsDeveloperRole": False,
+            "supportsStore": False,
+            "supportsStrictMode": False,
+            "supportsReasoningEffort": False,
+            "supportsUsageInStreaming": False,
+        },
+        "models": chat_models,
+    }
+
+    mlflow = dict(providers.get("databricks-mlflow", {}))
+    mlflow["baseUrl"] = f"{host.rstrip('/')}/ai-gateway/mlflow/v1"
+    mlflow["apiKey"] = api_key
+    mlflow["api"] = "openai-completions"
+    mlflow["authHeader"] = True
 
     gemini_models: list[_JsonObject] = []
     for provider_name in ("databricks-mlflow", "databricks-completions"):
@@ -767,6 +808,8 @@ def _build_onih_models_json(
         "providers": {
             "databricks-claude": cast(_PiProviderConfig, claude),
             "databricks-openai": cast(_PiProviderConfig, openai),
+            "databricks-chat": chat,
+            "databricks-mlflow": cast(_PiProviderConfig, mlflow),
             "databricks-gemini": gemini,
         }
     }
@@ -1022,7 +1065,12 @@ def _databricks_model_wire_catalog(
     catalog: dict[str, frozenset[ModelWireAPI]] = {}
     for model in models:
         for alias in databricks_model_aliases(model.id):
-            catalog[alias] = model.metadata.wire_apis
+            catalog.setdefault(alias, model.metadata.wire_apis)
+    # Exact catalog ids are authoritative over aliases synthesized from a
+    # different endpoint. For example, databricks-glm-5-2 speaks Chat while
+    # system.ai.glm-5-2 speaks Responses.
+    for model in models:
+        catalog[model.id.lower()] = model.metadata.wire_apis
     return catalog
 
 
@@ -2511,16 +2559,7 @@ class PiExecutor(Executor):
         if self._gateway and effective_model:
             if self._launch_options.isolated_resources:
                 wire_apis = wire_catalog.get(effective_model.lower(), frozenset())
-                if ModelWireAPI.ANTHROPIC_MESSAGES in wire_apis:
-                    provider = "databricks-claude"
-                elif ModelWireAPI.GEMINI_GENERATE_CONTENT in wire_apis:
-                    provider = "databricks-gemini"
-                elif ModelWireAPI.OPENAI_RESPONSES in wire_apis:
-                    provider = "databricks-openai"
-                else:
-                    raise ValueError(
-                        f"model has no Onih Pi-compatible wire API: {effective_model}"
-                    )
+                provider = _onih_pi_provider_for_model(effective_model, wire_apis)
             else:
                 provider = _pi_provider_for_model(
                     effective_model,

@@ -30,8 +30,10 @@ from omnigent.inner.executor import (
 from omnigent.inner.pi_executor import (
     PiExecutor,
     _build_models_json,
+    _build_onih_models_json,
     _databricks_model_wire_catalog,
     _generate_extension_js,
+    _onih_pi_provider_for_model,
     _pi_provider_for_model,
     _PiRpcSession,
     _redact_argv_for_log,
@@ -3347,6 +3349,56 @@ def test_databricks_wire_catalog_indexes_system_and_endpoint_aliases() -> None:
 
     assert catalog["system.ai.gpt-next"] == wire_apis
     assert catalog["databricks-gpt-next"] == wire_apis
+
+
+def test_databricks_wire_catalog_prefers_exact_id_over_alias_collision() -> None:
+    """Direct endpoint metadata wins over a synthesized system-model alias."""
+    responses = frozenset({ModelWireAPI.OPENAI_RESPONSES})
+    chat = frozenset({ModelWireAPI.OPENAI_CHAT})
+    catalog = _databricks_model_wire_catalog(
+        [
+            ModelEntry(
+                id="system.ai.glm-5-2",
+                family="openai",
+                metadata=ModelMetadata(wire_apis=responses),
+            ),
+            ModelEntry(
+                id="databricks-glm-5-2",
+                family="openai",
+                metadata=ModelMetadata(wire_apis=chat),
+            ),
+        ]
+    )
+
+    assert catalog["system.ai.glm-5-2"] == responses
+    assert catalog["databricks-glm-5-2"] == chat
+
+
+def test_onih_models_json_and_routing_support_openai_chat() -> None:
+    """Onih Pi routes direct GLM aliases through Chat Completions."""
+    generic = _build_models_json(
+        "https://host.example.com",
+        "token-command",
+        model="databricks-glm-5-2",
+        model_wire_apis={"databricks-glm-5-2": frozenset({ModelWireAPI.OPENAI_CHAT})},
+    )
+    isolated = _build_onih_models_json(
+        generic,
+        host="https://host.example.com",
+        api_key="!credential-helper",
+    )
+
+    chat = isolated["providers"]["databricks-chat"]
+    assert chat["api"] == "openai-completions"
+    assert chat["baseUrl"] == "https://host.example.com/serving-endpoints"
+    assert [entry["id"] for entry in chat["models"]] == ["databricks-glm-5-2"]
+    assert (
+        _onih_pi_provider_for_model(
+            "databricks-glm-5-2",
+            frozenset({ModelWireAPI.OPENAI_CHAT}),
+        )
+        == "databricks-chat"
+    )
 
 
 def test_models_json_uses_catalog_token_limits() -> None:
