@@ -330,6 +330,7 @@ from omnigent.server.schemas import (
     SkillSummary,
 )
 from omnigent.session_lifecycle import (
+    SPAWN_PARENT_RESPONSE_ID_LABEL_KEY,
     labels_with_closed_status,
     title_without_closed_marker,
 )
@@ -8427,6 +8428,13 @@ async def _create_session_from_existing_agent(
     """
     _reject_reserved_cost_control_label_seed(body.labels)
     _reject_server_reserved_label_seed(body.labels)
+    if body.parent_session_id is not None:
+        parent_response_id = _session_active_response_cache.get(body.parent_session_id)
+        if parent_response_id:
+            body.labels = {
+                **body.labels,
+                SPAWN_PARENT_RESPONSE_ID_LABEL_KEY: parent_response_id,
+            }
 
     agent = await validate_session_agent(
         user_id=user_id,

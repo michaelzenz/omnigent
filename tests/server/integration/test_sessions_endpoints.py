@@ -182,6 +182,37 @@ async def test_rewind_session_removes_target_user_message_and_later_history(
         ],
     )
 
+    kept_child = store.create_conversation(
+        title="worker:kept",
+        parent_conversation_id=session["id"],
+        agent_id=agent["id"],
+    )
+    from omnigent.server.routes._sessions.common import _session_active_response_cache
+
+    _session_active_response_cache[session["id"]] = "resp_2"
+    try:
+        child_response = await client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent["id"],
+                "parent_session_id": session["id"],
+                "title": "worker:removed",
+            },
+        )
+    finally:
+        _session_active_response_cache.pop(session["id"], None)
+    assert child_response.status_code == 201, child_response.text
+    removed_child_id = child_response.json()["id"]
+    removed_grandchild = store.create_conversation(
+        title="worker:nested",
+        parent_conversation_id=removed_child_id,
+        agent_id=agent["id"],
+    )
+    store.set_labels(kept_child.id, {"omnigent.spawn.parent_response_id": "resp_1"})
+    assert store.get_conversation(removed_child_id).labels[
+        "omnigent.spawn.parent_response_id"
+    ] == "resp_2"
+
     response = await client.post(
         f"/v1/sessions/{session['id']}/rewind",
         json={"from_message_id": items[2].id},
@@ -192,6 +223,9 @@ async def test_rewind_session_removes_target_user_message_and_later_history(
         items[0].id,
         items[1].id,
     ]
+    assert store.get_conversation(kept_child.id) is not None
+    assert store.get_conversation(removed_child_id) is None
+    assert store.get_conversation(removed_grandchild.id) is None
 
 
 async def test_first_message_schedules_background_semantic_title(

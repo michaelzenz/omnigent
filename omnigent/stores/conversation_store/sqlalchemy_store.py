@@ -91,6 +91,7 @@ from omnigent.session_import.models import (
     IMPORT_EXTERNAL_SESSION_ID_LABEL_KEY,
     IMPORT_SOURCE_LABEL_KEY,
 )
+from omnigent.session_lifecycle import SPAWN_PARENT_RESPONSE_ID_LABEL_KEY
 from omnigent.stores.conversation_store import (
     _FORK_ONLY_DROPPED_LABEL_KEYS,
     _INSTANCE_SCOPED_LABEL_KEYS,
@@ -4648,6 +4649,82 @@ class SqlAlchemyConversationStore(ConversationStore):
             up_to_response_id=up_to_response_id,
             project_id=project_id,
         )
+
+    def list_children_spawned_in_rewind_range(
+        self,
+        conversation_id: str,
+        *,
+        from_message_id: str,
+    ) -> list[str]:
+        """Return direct child roots spawned by items that rewind will remove."""
+        with self._conv_session("list_children_spawned_in_rewind_range") as session:
+            target = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == from_message_id,
+                )
+            ).scalar_one_or_none()
+            if target is None:
+                raise LookupError(
+                    f"message not found in conversation {conversation_id!r}: {from_message_id!r}"
+                )
+            target_data = self._decode_item_data_batch([target.data])[0]
+            target_item = _to_item(target, target_data)
+            if target_item.type != "message" or getattr(target_item.data, "role", None) != "user":
+                raise ValueError(f"rewind target is not a user message: {from_message_id!r}")
+
+            removed_rows = (
+                session.execute(
+                    select(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.position >= target.position,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not removed_rows:
+                return []
+
+            correlation_ids = {row.response_id for row in removed_rows if row.response_id}
+            decoded = self._decode_item_data_batch([row.data for row in removed_rows])
+            for row, item_data in zip(removed_rows, decoded, strict=True):
+                item = _to_item(row, item_data)
+                if item.type == "function_call":
+                    call_id = getattr(item.data, "call_id", None)
+                    if isinstance(call_id, str) and call_id:
+                        correlation_ids.add(call_id)
+            if not correlation_ids:
+                return []
+
+            return list(
+                session.execute(
+                    select(SqlConversation.id)
+                    .join(
+                        SqlConversationLabel,
+                        and_(
+                            SqlConversationLabel.workspace_id == SqlConversation.workspace_id,
+                            SqlConversationLabel.conversation_id == SqlConversation.id,
+                        ),
+                    )
+                    .where(
+                        SqlConversation.workspace_id == current_workspace_id(),
+                        SqlConversation.parent_conversation_id == conversation_id,
+                        or_(
+                            SqlConversationLabel.key == SPAWN_PARENT_RESPONSE_ID_LABEL_KEY,
+                            SqlConversationLabel.key.like("omnigent.%tool_call_id"),
+                            SqlConversationLabel.key.like("omnigent.%tool_use_id"),
+                        ),
+                        SqlConversationLabel.value.in_(correlation_ids),
+                    )
+                    .distinct()
+                    .order_by(SqlConversation.created_at.asc(), SqlConversation.id.asc())
+                )
+                .scalars()
+                .all()
+            )
 
     def rewind_conversation(
         self,
