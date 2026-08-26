@@ -135,9 +135,7 @@ describe("ConnectionSettingsBody", () => {
   });
 
   it("expands to show installation logs", async () => {
-    mocks.connections = [
-      connection({ phase: "installing", status: "offline", hostId: null }),
-    ];
+    mocks.connections = [connection({ phase: "installing", status: "offline", hostId: null })];
     render(<ConnectionSettingsBody />);
     fireEvent.click(await screen.findByTestId("ssh-connection-expand-saved-1"));
 
@@ -160,7 +158,8 @@ describe("ConnectionSettingsBody", () => {
       connection({
         phase: "backoff",
         status: "offline",
-        warning: "Connection is flaky — possibly bad network or another server is competing for the socket.",
+        warning:
+          "Connection is flaky — possibly bad network or another server is competing for the socket.",
       }),
     ];
     render(<ConnectionSettingsBody />);
@@ -194,11 +193,7 @@ describe("ConnectionSettingsBody", () => {
     fireEvent.click(screen.getByTestId("ssh-package-index-save"));
 
     await waitFor(() => {
-      expect(mocks.saveSshConnections).toHaveBeenCalledWith(
-        [],
-        null,
-        "https://npm.example.com",
-      );
+      expect(mocks.saveSshConnections).toHaveBeenCalledWith([], null, "https://npm.example.com");
     });
   });
 });

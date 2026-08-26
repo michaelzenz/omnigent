@@ -18,8 +18,7 @@ def upgrade() -> None:
         )
     op.execute(
         sa.text(
-            "UPDATE ssh_host_installations SET label = ssh_alias "
-            "WHERE label IS NULL OR label = ''"
+            "UPDATE ssh_host_installations SET label = ssh_alias WHERE label IS NULL OR label = ''"
         )
     )
     with op.batch_alter_table("ssh_host_installations") as batch_op:

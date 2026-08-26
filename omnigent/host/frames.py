@@ -1027,11 +1027,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "skill_sync_harnesses": frame.skill_sync_harnesses,
                 "skill_search_roots": frame.skill_search_roots,
                 "memory_files": frame.memory_files,
-                **(
-                    {"managed_worktree_leases": True}
-                    if frame.managed_worktree_leases
-                    else {}
-                ),
+                **({"managed_worktree_leases": True} if frame.managed_worktree_leases else {}),
                 **({"inference_proxy": True} if frame.inference_proxy else {}),
             }
         )

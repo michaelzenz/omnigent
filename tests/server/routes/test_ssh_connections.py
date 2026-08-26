@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi import FastAPI
 
+from omnigent.db.utils import now_epoch
 from omnigent.entities import SshConnectionProfile, SshSettings
 from omnigent.server.routes.ssh_connections import create_ssh_connections_router
 from omnigent.ssh_probe import SshProbeResult
 from omnigent.stores.host_store import Host
-from omnigent.db.utils import now_epoch
 
 
 async def test_ssh_test_route_returns_probe_result(client: httpx.AsyncClient) -> None:
@@ -65,9 +65,7 @@ async def test_put_ssh_connections_keeps_created_at_of_existing_profile(
     )
     resp = await client.put(
         "/v1/ssh/connections",
-        json={
-            "connections": [{"id": "profile-1", "label": "Arca II", "alias": "arca.ssh"}]
-        },
+        json={"connections": [{"id": "profile-1", "label": "Arca II", "alias": "arca.ssh"}]},
     )
     assert resp.status_code == 200
     stored = ssh_store.profiles()[0]
@@ -108,7 +106,9 @@ async def test_get_includes_lifecycle_and_host_status(
     )
     ssh_store = app.state.ssh_host_installation_store
     ssh_store.sync_connections({profile.id: profile}, bundle_version="test", owner="local")
-    ssh_store.update_settings(package_index_url="https://pypi.example.com/simple", npm_registry_url=None)
+    ssh_store.update_settings(
+        package_index_url="https://pypi.example.com/simple", npm_registry_url=None
+    )
     with patch.object(ssh_store, "snapshots", return_value={"profile-1": state}):
         response = await client.get("/v1/ssh/connections")
     assert response.status_code == 200
@@ -220,7 +220,7 @@ async def test_logs_unknown_connection_is_not_found(
     app: FastAPI,
 ) -> None:
     app.state.ssh_host_manager = SimpleNamespace(
-        snapshot=lambda: {},
+        snapshot=dict,
         logs=lambda _connection_id: [],
     )
     response = await client.get("/v1/ssh/connections/profile-9/logs")
@@ -262,8 +262,8 @@ async def test_non_admins_can_read_but_not_provision_ssh_targets() -> None:
     auth_provider = SimpleNamespace(get_user_id=lambda _request: "member@example.com")
     permission_store = SimpleNamespace(is_admin=lambda _user_id: False)
     ssh_store = SimpleNamespace(
-        profiles=lambda: [],
-        snapshots=lambda: {},
+        profiles=list,
+        snapshots=dict,
         get_settings=lambda: SshSettings(remote_namespace="test"),
     )
     app = FastAPI()

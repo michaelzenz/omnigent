@@ -74,7 +74,9 @@ class SshHostInstallationStore:
                         SqlSshHostInstallation.workspace_id == current_workspace_id(),
                         SqlSshHostInstallation.desired_state == "connected",
                     )
-                    .order_by(SqlSshHostInstallation.created_at, SqlSshHostInstallation.connection_id)
+                    .order_by(
+                        SqlSshHostInstallation.created_at, SqlSshHostInstallation.connection_id
+                    )
                 )
                 .scalars()
                 .all()

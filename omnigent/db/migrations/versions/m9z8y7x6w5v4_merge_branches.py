@@ -11,8 +11,6 @@ Merges the two migration heads that branched from the common root:
 
 from __future__ import annotations
 
-from alembic import op
-
 revision: str = "m9z8y7x6w5v4"
 down_revision: str | None = ("z8a2b3c4d5e6", "z9a3b4c5d6e7")
 branch_labels: str | None = None

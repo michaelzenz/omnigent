@@ -1465,9 +1465,7 @@ def test_openai_agents_model_override_switches_gateway_wire(
         lambda spec: {
             "HARNESS_OPENAI_AGENTS_MODEL": "system.ai.gpt-5-6-luna",
             "HARNESS_OPENAI_AGENTS_GATEWAY_HOST": workspace_url,
-            "HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL": (
-                f"{workspace_url}/ai-gateway/codex/v1"
-            ),
+            "HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL": (f"{workspace_url}/ai-gateway/codex/v1"),
         },
     )
     spec = AgentSpec(
@@ -1484,10 +1482,7 @@ def test_openai_agents_model_override_switches_gateway_wire(
 
     assert env is not None
     assert env["HARNESS_OPENAI_AGENTS_MODEL"] == "databricks-kimi-k3"
-    assert (
-        env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"]
-        == f"{workspace_url}/ai-gateway/openai/v1"
-    )
+    assert env["HARNESS_OPENAI_AGENTS_GATEWAY_BASE_URL"] == f"{workspace_url}/ai-gateway/openai/v1"
 
 
 def test_build_spawn_env_routes_hermes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

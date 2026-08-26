@@ -37,7 +37,7 @@ async def refresh_disabled_tools(server_client: httpx.AsyncClient | None) -> fro
         if isinstance(names, list):
             _cached = frozenset(names)
             _cached_at = time.time()
-    except Exception:  # noqa: BLE001
+    except Exception:
         _logger.debug("Failed to fetch tool preferences", exc_info=True)
     return _cached
 

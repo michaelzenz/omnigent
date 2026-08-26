@@ -3339,7 +3339,7 @@ def test_databricks_compaction_uses_responses_create_for_local_summary() -> None
         )
         executor = OpenAIAgentsSDKExecutor(client=client)
         state = executor._get_or_create_session_state(_fake_agents_sdk(), "session-local-compact")
-        set_model = getattr(state.sdk_session, "set_runtime_model")
+        set_model = state.sdk_session.set_runtime_model
         set_model("system.ai.gpt-5.3-codex")
         await state.sdk_session.add_items(
             [
@@ -3353,10 +3353,10 @@ def test_databricks_compaction_uses_responses_create_for_local_summary() -> None
             ]
         )
 
-        run_compaction = getattr(state.sdk_session, "run_compaction")
-        getattr(state.sdk_session, "set_summary_boundary")(2)
+        run_compaction = state.sdk_session.run_compaction
+        state.sdk_session.set_summary_boundary(2)
         await run_compaction({"force": True})
-        snapshot = getattr(state.sdk_session, "take_local_snapshot")()
+        snapshot = state.sdk_session.take_local_snapshot()
 
         assert len(responses.calls) == 1
         assert responses.calls[0]["model"] == "system.ai.gpt-5.3-codex"
@@ -3401,7 +3401,7 @@ def test_local_compaction_history_includes_function_call_assistant_role() -> Non
         )
         executor = OpenAIAgentsSDKExecutor(client=client)
         state = executor._get_or_create_session_state(_fake_agents_sdk(), "session-fc-compact")
-        set_model = getattr(state.sdk_session, "set_runtime_model")
+        set_model = state.sdk_session.set_runtime_model
         set_model("system.ai.gpt-5.3-codex")
         await state.sdk_session.add_items(
             [
@@ -3421,11 +3421,11 @@ def test_local_compaction_history_includes_function_call_assistant_role() -> Non
             ]
         )
 
-        run_compaction = getattr(state.sdk_session, "run_compaction")
-        getattr(state.sdk_session, "set_summary_boundary")(3)
+        run_compaction = state.sdk_session.run_compaction
+        state.sdk_session.set_summary_boundary(3)
         # Should not raise "assistant messages require 'agent'"
         await run_compaction({"force": True})
-        snapshot = getattr(state.sdk_session, "take_local_snapshot")()
+        snapshot = state.sdk_session.take_local_snapshot()
         assert snapshot is not None
         assert snapshot.summary == "Compacted summary"
 

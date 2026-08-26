@@ -351,9 +351,7 @@ def create_default_policies_router(
                         f"config so it appears in the policy registry.",
                         code=ErrorCode.INVALID_INPUT,
                     )
-            validation_error = validate_factory_params(
-                effective_handler, effective_factory_params
-            )
+            validation_error = validate_factory_params(effective_handler, effective_factory_params)
             if validation_error:
                 raise OmnigentError(validation_error, code=ErrorCode.INVALID_INPUT)
         try:

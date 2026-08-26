@@ -51,7 +51,8 @@ def _parser() -> argparse.ArgumentParser:
         help="Shared config directory (default: $OMNIGENT_CONFIG_HOME or ~/.omnigent)",
     )
     parser.add_argument(
-        "--no-build-web", action="store_true",
+        "--no-build-web",
+        action="store_true",
         help="Skip building the web UI; use whatever is in omnigent/server/static/web-ui/",
     )
     parser.add_argument(
@@ -201,9 +202,7 @@ def _open_isolated_electron(
 
         if result.returncode != 0:
             detail = (
-                result.stderr.strip()
-                or result.stdout.strip()
-                or "renderer did not become ready"
+                result.stderr.strip() or result.stdout.strip() or "renderer did not become ready"
             )
             raise RuntimeError(
                 f"Electron renderer failed: {detail}\nLog: {log_path}\n{_log_tail(log_path)}"
@@ -290,9 +289,7 @@ def _stop_instance(args: argparse.Namespace) -> None:
     config_home = metadata.get("OMNIGENT_CONFIG_HOME", str(args.config_home.expanduser()))
     electron_pid_text = metadata.get("OMNIGENT_ELECTRON_PID")
     electron_pid = (
-        int(electron_pid_text)
-        if electron_pid_text and electron_pid_text.isdigit()
-        else None
+        int(electron_pid_text) if electron_pid_text and electron_pid_text.isdigit() else None
     )
 
     if not server_url:
@@ -335,8 +332,7 @@ def _check_single_alembic_head() -> str:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            "Could not inspect Alembic heads:\n"
-            f"{result.stderr.strip() or result.stdout.strip()}"
+            f"Could not inspect Alembic heads:\n{result.stderr.strip() or result.stdout.strip()}"
         )
     heads = [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
     if len(heads) != 1:
@@ -367,9 +363,7 @@ def _check_web_dependencies() -> Path:
     )
     if probe.returncode != 0:
         detail = probe.stderr.strip() or probe.stdout.strip()
-        raise RuntimeError(
-            f"Web dependencies are incomplete; run `{install_hint}`\n{detail}"
-        )
+        raise RuntimeError(f"Web dependencies are incomplete; run `{install_hint}`\n{detail}")
     return vite_bin
 
 
@@ -441,8 +435,7 @@ def _upgrade_db_to_head(db_path: Path) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            "Database migration failed:\n"
-            f"{result.stderr.strip() or result.stdout.strip()}"
+            f"Database migration failed:\n{result.stderr.strip() or result.stdout.strip()}"
         )
 
 
@@ -511,9 +504,7 @@ def _fork_instance(args: argparse.Namespace) -> None:
             # sys.path. Put this worktree first instead of inheriting another
             # checkout's PYTHONPATH and silently running stale runner code.
             "PYTHONPATH": os.pathsep.join(
-                part
-                for part in (str(_REPO_ROOT), inherited_pythonpath)
-                if part
+                part for part in (str(_REPO_ROOT), inherited_pythonpath) if part
             ),
         }
 

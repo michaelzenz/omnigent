@@ -41,9 +41,7 @@ class SysProjectCreateTool(Tool):
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": (
-                                "Human-readable project name, e.g. 'Managed Tables'."
-                            ),
+                            "description": ("Human-readable project name, e.g. 'Managed Tables'."),
                             "minLength": 1,
                             "maxLength": 200,
                         },

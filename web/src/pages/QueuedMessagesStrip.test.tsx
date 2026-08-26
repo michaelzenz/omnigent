@@ -77,8 +77,12 @@ describe("QueuedMessagesStrip", () => {
     render(
       <QueuedMessagesStrip messages={[msg("q_1", "first")]} onDelete={vi.fn()} onEdit={vi.fn()} />,
     );
-    expect(screen.queryByRole("button", { name: "Steer queued message into running turn" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Send now, interrupting the current turn" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Steer queued message into running turn" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Send now, interrupting the current turn" }),
+    ).toBeNull();
   });
 
   it("calls onSteer with the row's queueId when its steer button is clicked", () => {
@@ -93,7 +97,9 @@ describe("QueuedMessagesStrip", () => {
         />
       </TooltipProvider>,
     );
-    const buttons = screen.getAllByRole("button", { name: "Steer queued message into running turn" });
+    const buttons = screen.getAllByRole("button", {
+      name: "Steer queued message into running turn",
+    });
     expect(buttons).toHaveLength(2);
     fireEvent.click(buttons[1]!);
     expect(onSteer).toHaveBeenCalledTimes(1);
@@ -110,7 +116,9 @@ describe("QueuedMessagesStrip", () => {
         onSendNow={onSendNow}
       />,
     );
-    const buttons = screen.getAllByRole("button", { name: "Send now, interrupting the current turn" });
+    const buttons = screen.getAllByRole("button", {
+      name: "Send now, interrupting the current turn",
+    });
     expect(buttons).toHaveLength(2);
     fireEvent.click(buttons[0]!);
     expect(onSendNow).toHaveBeenCalledTimes(1);

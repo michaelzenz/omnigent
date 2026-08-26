@@ -249,10 +249,7 @@ async function syncSkill(name: string, sourceHostId: string, sourceHarness: stri
   if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
 }
 
-async function createSkill(
-  name: string,
-  files: Record<string, string>,
-): Promise<void> {
+async function createSkill(name: string, files: Record<string, string>): Promise<void> {
   const response = await authenticatedFetch(`/v1/skills/${encodeURIComponent(name)}/files`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

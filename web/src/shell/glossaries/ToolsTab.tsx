@@ -21,7 +21,11 @@ function groupCheckedState(tools: ToolEntry[]): CheckedState {
   return "indeterminate";
 }
 
-function ToolsTabInner({ data }: { data: NonNullable<ReturnType<typeof useToolPreferences>["data"]> }) {
+function ToolsTabInner({
+  data,
+}: {
+  data: NonNullable<ReturnType<typeof useToolPreferences>["data"]>;
+}) {
   const update = useUpdateToolPreferences();
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -115,7 +119,8 @@ function ToolsTabInner({ data }: { data: NonNullable<ReturnType<typeof useToolPr
       </div>
       {update.isError && (
         <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive">
-          Failed to save tool preferences. {update.error instanceof Error ? update.error.message : ""}
+          Failed to save tool preferences.{" "}
+          {update.error instanceof Error ? update.error.message : ""}
         </p>
       )}
       <div className="rounded-lg border border-border divide-y divide-border">
@@ -123,9 +128,15 @@ function ToolsTabInner({ data }: { data: NonNullable<ReturnType<typeof useToolPr
           const groupTools = toolsByGroup.get(group.id) ?? [];
           const enabledCount = groupTools.filter((t) => t.enabled).length;
           const isChecked = groupCheckedState(groupTools);
-          const isOpen = expanded.has(group.id) || (query.length > 0 && groupTools.some(
-            (t) => t.title.toLowerCase().includes(query) || t.name.toLowerCase().includes(query) || t.description.toLowerCase().includes(query),
-          ));
+          const isOpen =
+            expanded.has(group.id) ||
+            (query.length > 0 &&
+              groupTools.some(
+                (t) =>
+                  t.title.toLowerCase().includes(query) ||
+                  t.name.toLowerCase().includes(query) ||
+                  t.description.toLowerCase().includes(query),
+              ));
 
           return (
             <div key={group.id}>
@@ -136,7 +147,11 @@ function ToolsTabInner({ data }: { data: NonNullable<ReturnType<typeof useToolPr
                   className="text-muted-foreground hover:text-foreground"
                   aria-label={isOpen ? "Collapse" : "Expand"}
                 >
-                  {isOpen ? <ChevronDownIcon className="size-4" /> : <ChevronRightIcon className="size-4" />}
+                  {isOpen ? (
+                    <ChevronDownIcon className="size-4" />
+                  ) : (
+                    <ChevronRightIcon className="size-4" />
+                  )}
                 </button>
                 <Checkbox
                   checked={isChecked}
@@ -157,10 +172,7 @@ function ToolsTabInner({ data }: { data: NonNullable<ReturnType<typeof useToolPr
               {isOpen && (
                 <div className="border-t border-border bg-muted/20">
                   {groupTools.map((tool) => (
-                    <div
-                      key={tool.name}
-                      className="flex items-center gap-3 px-3 py-2 pl-10"
-                    >
+                    <div key={tool.name} className="flex items-center gap-3 px-3 py-2 pl-10">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">{tool.title}</span>
@@ -181,7 +193,9 @@ function ToolsTabInner({ data }: { data: NonNullable<ReturnType<typeof useToolPr
           );
         })}
         {filteredGroups.length === 0 && (
-          <p className="p-6 text-center text-sm text-muted-foreground">No tools match your search.</p>
+          <p className="p-6 text-center text-sm text-muted-foreground">
+            No tools match your search.
+          </p>
         )}
       </div>
     </div>
@@ -201,8 +215,7 @@ export function ToolsTab() {
   if (prefs.isError || !prefs.data) {
     return (
       <div className="grid min-h-[20rem] place-items-center text-sm text-muted-foreground">
-        Failed to load tool preferences.{" "}
-        {prefs.error instanceof Error ? prefs.error.message : ""}
+        Failed to load tool preferences. {prefs.error instanceof Error ? prefs.error.message : ""}
       </div>
     );
   }

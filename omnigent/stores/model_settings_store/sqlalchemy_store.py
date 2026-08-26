@@ -110,11 +110,17 @@ class SqlAlchemyModelSettingsStore(ModelSettingsStore):
             if update_omniharness_system_prompt:
                 row.omniharness_system_prompt = omniharness_system_prompt or ""
             if update_prompt_profile_auto_include_limit:
-                if prompt_profile_auto_include_limit is None or prompt_profile_auto_include_limit < 1:
+                if (
+                    prompt_profile_auto_include_limit is None
+                    or prompt_profile_auto_include_limit < 1
+                ):
                     raise ValueError("prompt profile auto-include limit must be positive")
                 row.prompt_profile_auto_include_limit = prompt_profile_auto_include_limit
             if update_turn_selection_user_message_count:
-                if turn_selection_user_message_count is None or turn_selection_user_message_count < 1:
+                if (
+                    turn_selection_user_message_count is None
+                    or turn_selection_user_message_count < 1
+                ):
                     raise ValueError("turn selection user-message count must be positive")
                 row.turn_selection_user_message_count = turn_selection_user_message_count
             if update_smart_routing_cadence:

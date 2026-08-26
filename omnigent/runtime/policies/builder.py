@@ -714,8 +714,7 @@ def build_server_llm_client(server_llm: LLMConfig | None) -> PolicyLLMClient | N
         connection = _resolve_server_llm_connection(server_llm)
     except OSError:
         _logger.warning(
-            "Failed to resolve server LLM connection for server LLM client; "
-            "returning None: %s",
+            "Failed to resolve server LLM connection for server LLM client; returning None: %s",
             exc_info=True,
         )
         connection = None

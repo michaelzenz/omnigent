@@ -695,13 +695,15 @@ async def test_discovered_session_is_packaged_as_orphan_style(
     broker_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
-    payload = json.dumps({
-        "session_hint": "codex-abc",
-        "path": "/home/user/.codex/sessions/abc",
-        "tool": "codex",
-        "history_hash": "h1",
-        "transcript_snippet": "user asked about fixing a bug in the parser",
-    })
+    payload = json.dumps(
+        {
+            "session_hint": "codex-abc",
+            "path": "/home/user/.codex/sessions/abc",
+            "tool": "codex",
+            "history_hash": "h1",
+            "transcript_snippet": "user asked about fixing a bug in the parser",
+        }
+    )
     event_store.create_event(
         _uid("disc"),
         EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
@@ -773,7 +775,14 @@ async def test_discovered_session_is_isolated_from_routed_events(
     assert len(items) == 2
     # One notice has clusters (routed), the other has flat events (discovered).
     has_clusters = [it for it in items if "clusters" in json.loads(it.payload)]
-    has_events = [it for it in items if "events" in json.loads(it.payload) and "clusters" not in json.loads(it.payload)]
+    has_events = [
+        it
+        for it in items
+        if "events" in json.loads(it.payload) and "clusters" not in json.loads(it.payload)
+    ]
     assert len(has_clusters) == 1
     assert len(has_events) == 1
-    assert json.loads(has_events[0].payload)["events"][0]["event_type"] == "external.session.discovered"
+    assert (
+        json.loads(has_events[0].payload)["events"][0]["event_type"]
+        == "external.session.discovered"
+    )

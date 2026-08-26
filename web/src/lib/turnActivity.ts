@@ -59,8 +59,9 @@ function nativeMcpServer(data: Record<string, unknown>): string | undefined {
     stringField(data.server_label) ??
     stringField(data.server_name) ??
     stringField(data.serverLabel) ??
-    stringField(data.server)
-  ) ?? undefined;
+    stringField(data.server) ??
+    undefined
+  );
 }
 
 function callId(item: RenderItem, index: number): string {

@@ -81,11 +81,6 @@ from omnigent.host.frames import (
     decode_host_frame,
     encode_host_frame,
 )
-from omnigent.host.inference_relay import HostInferenceRelay
-from omnigent.inference_proxy import (
-    HOST_INFERENCE_PROXY_TOKEN_ENV,
-    HOST_INFERENCE_PROXY_URL_ENV,
-)
 from omnigent.host.git_worktree import (
     WorktreeError,
     acquire_auto_worktree_streaming,
@@ -95,7 +90,12 @@ from omnigent.host.git_worktree import (
     renew_auto_worktree_lease,
 )
 from omnigent.host.identity import CONFIG_PATH, HostIdentity, load_or_create_host_identity
+from omnigent.host.inference_relay import HostInferenceRelay
 from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
+from omnigent.inference_proxy import (
+    HOST_INFERENCE_PROXY_TOKEN_ENV,
+    HOST_INFERENCE_PROXY_URL_ENV,
+)
 from omnigent.inner import _proc
 from omnigent.onboarding.harness_auth import (
     adopt_env_credential,
@@ -145,11 +145,11 @@ from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_INTERVAL_S,
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
 )
-from omnigent.suspend_watch import watch_for_resume
 from omnigent.server_transport import (
     OMNIGENT_SERVER_UNIX_SOCKET,
     server_unix_socket_path,
 )
+from omnigent.suspend_watch import watch_for_resume
 from omnigent.tls import client_ssl_context
 from omnigent.version import VERSION
 

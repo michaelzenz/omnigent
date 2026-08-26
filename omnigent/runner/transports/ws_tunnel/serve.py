@@ -54,8 +54,8 @@ from omnigent.runner.transports.ws_tunnel.limits import (
     TUNNEL_KEEPALIVE_PING_INTERVAL_S,
     TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
 )
-from omnigent.suspend_watch import watch_for_resume
 from omnigent.server_transport import server_unix_socket_path
+from omnigent.suspend_watch import watch_for_resume
 from omnigent.tls import client_ssl_context
 
 _logger = logging.getLogger(__name__)

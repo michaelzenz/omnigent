@@ -128,9 +128,7 @@ export interface SshConnectionLogEntry {
 }
 
 export async function fetchSshConnectionLogs(id: string): Promise<SshConnectionLogEntry[]> {
-  const res = await authenticatedFetch(
-    `/v1/ssh/connections/${encodeURIComponent(id)}/logs`,
-  );
+  const res = await authenticatedFetch(`/v1/ssh/connections/${encodeURIComponent(id)}/logs`);
   if (!res.ok) {
     const body = (await res.json()) as { detail?: string };
     throw new Error(

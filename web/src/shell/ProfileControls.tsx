@@ -35,10 +35,7 @@ import {
 import { CreateAgentDialog } from "./CreateAgentDialog";
 import type { AgentBundleInput } from "@/lib/agentBundle";
 import { PromptProfileSelect } from "@/components/HarnessConfigControls";
-import {
-  useOmniHarnessSettings,
-  useUpdateOmniHarnessSettings,
-} from "@/hooks/useModelSettings";
+import { useOmniHarnessSettings, useUpdateOmniHarnessSettings } from "@/hooks/useModelSettings";
 
 export type ProfileSelection = "auto" | string;
 

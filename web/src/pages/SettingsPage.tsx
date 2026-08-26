@@ -149,10 +149,7 @@ import {
   type TranscriptViewDefault,
 } from "@/lib/transcriptViewPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
-import {
-  readAutoFetchWorktreeBase,
-  writeAutoFetchWorktreeBase,
-} from "@/lib/gitFetchPreferences";
+import { readAutoFetchWorktreeBase, writeAutoFetchWorktreeBase } from "@/lib/gitFetchPreferences";
 import {
   DEFAULT_HIDE_UNCONFIGURED_HARNESSES,
   readHideUnconfiguredHarnesses,

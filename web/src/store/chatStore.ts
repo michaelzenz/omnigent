@@ -1966,7 +1966,9 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         },
         ...(opts?.interruptFirst ? { interrupt_first: true } : {}),
         ...(submitModelOverride !== null ? { model_override: submitModelOverride } : {}),
-        ...(submitCostControlMode !== null ? { cost_control_mode_override: submitCostControlMode } : {}),
+        ...(submitCostControlMode !== null
+          ? { cost_control_mode_override: submitCostControlMode }
+          : {}),
       });
       // Policy denied the input — the server returned immediately
       // without starting a turn or persisting the user message, so

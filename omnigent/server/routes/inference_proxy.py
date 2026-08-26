@@ -106,7 +106,9 @@ def create_inference_proxy_router(
             raise HTTPException(status_code=400, detail="inference request must be JSON") from exc
         model = payload.get("model") if isinstance(payload, dict) else None
         try:
-            expected_surface = inference_surface_for_model(model) if isinstance(model, str) else None
+            expected_surface = (
+                inference_surface_for_model(model) if isinstance(model, str) else None
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if expected_surface != surface:
@@ -123,7 +125,9 @@ def create_inference_proxy_router(
         except HTTPException:
             raise
         except Exception as exc:
-            _logger.warning("Server Pi inference credential requires reauthentication", exc_info=True)
+            _logger.warning(
+                "Server Pi inference credential requires reauthentication", exc_info=True
+            )
             raise HTTPException(
                 status_code=503,
                 detail="server Databricks authentication requires login",
@@ -196,7 +200,9 @@ def _connection_header_names(value: str | None) -> frozenset[str]:
 
 def _validated_workspace_origin(value: str | None) -> str:
     if not value:
-        raise HTTPException(status_code=503, detail="server Databricks workspace is not configured")
+        raise HTTPException(
+            status_code=503, detail="server Databricks workspace is not configured"
+        )
     parsed = urlsplit(value)
     hostname = (parsed.hostname or "").lower()
     try:

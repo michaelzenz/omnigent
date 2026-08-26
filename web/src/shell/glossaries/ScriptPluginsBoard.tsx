@@ -2,16 +2,9 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import {
-  useScriptPluginHealth,
-  useUpdateScriptPollPlugin,
-} from "@/hooks/useScriptPluginHealth";
+import { useScriptPluginHealth, useUpdateScriptPollPlugin } from "@/hooks/useScriptPluginHealth";
 import type { ScriptPluginHealthRow, ScriptPluginKind } from "@/lib/agentTasksApi";
 
 interface ScriptPluginsBoardProps {
@@ -216,12 +209,24 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
   );
 }
 
-function HostGroup({ hostId, rows, nowMs, kind }: { hostId: string; rows: BoardRow[]; nowMs: number; kind: ScriptPluginKind }) {
+function HostGroup({
+  hostId,
+  rows,
+  nowMs,
+  kind,
+}: {
+  hostId: string;
+  rows: BoardRow[];
+  nowMs: number;
+  kind: ScriptPluginKind;
+}) {
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="font-mono text-xs text-muted-foreground">{hostId}</span>
-        <span className="text-xs text-muted-foreground">{rows.length} plugin{rows.length === 1 ? "" : "s"}</span>
+        <span className="text-xs text-muted-foreground">
+          {rows.length} plugin{rows.length === 1 ? "" : "s"}
+        </span>
       </div>
       <div>
         {rows.map((row) => (
@@ -262,9 +267,10 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
     return Array.from(byHost.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [query.data, nowMs]);
 
-  const headerColumns = kind === "poll"
-    ? ["plugin", "interval", "last fail", "enabled", "status"]
-    : ["plugin", "fire at", "fired at", "status"];
+  const headerColumns =
+    kind === "poll"
+      ? ["plugin", "interval", "last fail", "enabled", "status"]
+      : ["plugin", "fire at", "fired at", "status"];
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-3" data-testid={testId}>

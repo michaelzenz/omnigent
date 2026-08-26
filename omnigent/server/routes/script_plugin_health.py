@@ -151,9 +151,7 @@ def create_script_plugin_health_router(
         if host_id is None:
             # Fall back to user auth if a user posts directly (rare); otherwise
             # require a host identity so we can attribute the snapshot.
-            host_id = get_user_id(request, auth_provider) or require_user(
-                request, auth_provider
-            )
+            host_id = get_user_id(request, auth_provider) or require_user(request, auth_provider)
         if host_id is None:
             host_id = "local"
         _store.upsert(host_id, body.plugins)
@@ -219,7 +217,9 @@ def create_script_plugin_health_router(
         except HostFsUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         if payload.get("name") != plugin_name or payload.get("enabled") is not body.enabled:
-            raise HTTPException(status_code=502, detail="Host returned invalid poll plugin settings.")
+            raise HTTPException(
+                status_code=502, detail="Host returned invalid poll plugin settings."
+            )
         _store.set_enabled(host_id, plugin_name, body.enabled)
         return {"host_id": host_id, "name": plugin_name, "enabled": body.enabled}
 

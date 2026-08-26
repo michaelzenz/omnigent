@@ -119,7 +119,9 @@ def find_divergence(
 # ── Server communication ──────────────────────────────────────────
 
 
-def post_discovery(session_hint: str, path: str, tool: str, history_hash: str, snippet: str) -> None:
+def post_discovery(
+    session_hint: str, path: str, tool: str, history_hash: str, snippet: str
+) -> None:
     import httpx
 
     base = os.environ["OMNIGENT_SERVER_URL"].rstrip("/")
@@ -270,9 +272,7 @@ def main() -> None:
             }
         else:
             # Update detection
-            stored_hashes = compute_history_hashes(
-                messages[: known.get("history_length", 0)]
-            )
+            stored_hashes = compute_history_hashes(messages[: known.get("history_length", 0)])
             div = find_divergence(stored_hashes, current_hashes)
 
             if div >= len(current_hashes):
@@ -290,7 +290,7 @@ def main() -> None:
             else:
                 # Normal append
                 rewind_at = None
-                delta_messages = messages[known.get("history_length", 0):]
+                delta_messages = messages[known.get("history_length", 0) :]
 
             if not delta_messages:
                 continue
@@ -310,8 +310,7 @@ def main() -> None:
                 # Server says stop tracking — add to rejected list
                 rejected.append({"hint": hint, "rejected_at": now})
                 rejected_hints.add(hint)
-                if hint in sessions:
-                    del sessions[hint]
+                sessions.pop(hint, None)
                 continue
 
             sessions[hint] = {

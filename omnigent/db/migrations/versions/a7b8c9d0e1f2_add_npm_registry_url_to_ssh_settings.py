@@ -17,9 +17,7 @@ depends_on = None
 
 def upgrade() -> None:
     with op.batch_alter_table("ssh_settings") as batch_op:
-        batch_op.add_column(
-            sa.Column("npm_registry_url", sa.String(length=512), nullable=True)
-        )
+        batch_op.add_column(sa.Column("npm_registry_url", sa.String(length=512), nullable=True))
 
 
 def downgrade() -> None:
