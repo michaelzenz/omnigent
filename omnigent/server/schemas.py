@@ -294,6 +294,7 @@ class AgentObject(BaseModel):
     subagent_count: int = 0
     default_harness: str | None = None
     default_model: str | None = None
+    history_switch: Literal["canonical-rebuild"] | None = None
 
 
 class AgentEditRequest(BaseModel):
@@ -1133,6 +1134,7 @@ class CreateResponseRequest(BaseModel):
     # the message, so the runner can drop the buffered copy and not
     # re-deliver it in a continuation turn. ``None`` for fresh turns.
     injection_id: str | None = None
+    execution_generation: int | None = None
     conversation: ConversationRef | None = None
     # Reasoning config, e.g. {"effort": "low"|"medium"|"high"}
     reasoning: dict[str, str] | None = None
@@ -1368,6 +1370,7 @@ class SessionEventInput(BaseModel):
     cost_control_mode_override: str | None = None
     tools: list[dict[str, Any]] | None = None
     created_by: str | None = None
+    execution_generation: int | None = None
     interrupt_first: bool = False
     comment_thread_id: str | None = None
 
@@ -2211,6 +2214,7 @@ class SessionResponse(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
     runner_id: str | None = None
     host_id: str | None = None
+    execution_generation: int = 0
     runner_online: bool | None = None
     host_online: bool | None = None
     host_resumable: bool = False
@@ -2976,6 +2980,7 @@ class _SSEEventBase(BaseModel):
     """
 
     sequence_number: int | None = None
+    execution_generation: int | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -4431,6 +4436,11 @@ class CompactionCompletedEvent(_SSEEventBase):
     summary: str | None = None
     summary_model: str | None = None
     compacted_messages: list[dict[str, Any]] | None = None
+    reason: str | None = None
+    first_kept_entry_id: str | None = None
+    tokens_before: int | None = None
+    will_retry: bool = False
+    execution_generation: int | None = None
 
 
 class CompactionFailedEvent(_SSEEventBase):

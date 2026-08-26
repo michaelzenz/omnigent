@@ -24,6 +24,8 @@ import tiktoken
 from omnigent.entities import (
     CompactionData,
     ConversationItem,
+    FunctionCallData,
+    FunctionCallOutputData,
     MessageData,
 )
 from omnigent.llms.adapters._content import redact_binary_payloads
@@ -509,19 +511,44 @@ def compaction_to_history_items(
     if data.compacted_messages:
         items: list[ConversationItem] = []
         for i, msg in enumerate(data.compacted_messages):
-            msg_role = msg.get("role", "user")
+            item_type = msg.get("type", "message")
+            if item_type == "message":
+                msg_role = msg.get("role", "user")
+                item_data: MessageData | FunctionCallData | FunctionCallOutputData = MessageData(
+                    role=msg_role,
+                    content=msg.get("content", []),
+                    agent=data.model if msg_role == "assistant" else None,
+                )
+            elif item_type == "function_call":
+                arguments = msg.get("arguments", {})
+                item_data = FunctionCallData(
+                    agent=data.model or "onih-pi",
+                    name=str(msg.get("name", "")),
+                    arguments=(
+                        arguments
+                        if isinstance(arguments, str)
+                        else json.dumps(arguments, separators=(",", ":"))
+                    ),
+                    call_id=str(msg.get("call_id", "")),
+                )
+            elif item_type == "function_call_output":
+                item_data = FunctionCallOutputData(
+                    call_id=str(msg.get("call_id", "")),
+                    output=str(msg.get("output", "")),
+                    name=msg.get("name") if isinstance(msg.get("name"), str) else None,
+                    tool_status=msg.get("tool_status", "success"),
+                    error=msg.get("error") if isinstance(msg.get("error"), str) else None,
+                )
+            else:
+                raise ValueError(f"unsupported compacted message type: {item_type!r}")
             items.append(
                 ConversationItem(
                     id=f"{compaction_item.id}_compacted_{i}",
-                    type=msg.get("type", "message"),
+                    type=item_type,
                     status="completed",
                     response_id=compaction_item.response_id,
                     created_at=compaction_item.created_at,
-                    data=MessageData(
-                        role=msg_role,
-                        content=msg.get("content", []),
-                        agent=data.model if msg_role == "assistant" else None,
-                    ),
+                    data=item_data,
                 )
             )
         return items

@@ -15,6 +15,9 @@ Covers:
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -24,7 +27,10 @@ from omnigent.policies.function import FunctionPolicy, _build_event
 from omnigent.policies.types import EvaluationContext, PolicyLLMClient
 from omnigent.runtime.caps import RuntimeCaps
 from omnigent.runtime.policies.builder import (
+    _POLICY_CONNECTION_CACHE,
+    _POLICY_CONNECTION_CACHE_LOCK,
     _build_policy_llm_client,
+    _resolve_databricks_connection,
     _resolve_server_llm_connection,
     build_policy_engine,
 )
@@ -870,6 +876,44 @@ def test_resolve_server_llm_connection_resolves_databricks_profile(
         "base_url": "https://example.cloud.databricks.com/serving-endpoints",
         "api_key": "dapi-test-token",
     }
+
+
+def test_policy_databricks_connection_serializes_and_caches_parallel_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.runtime.credentials.databricks import WorkspaceCreds
+
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def resolve(profile: str) -> WorkspaceCreds:
+        nonlocal calls
+        assert profile == "parallel-profile"
+        with calls_lock:
+            calls += 1
+        time.sleep(0.02)
+        return WorkspaceCreds(host="https://example.cloud.databricks.com", token="token")
+
+    monkeypatch.setattr(
+        "omnigent.runtime.policies.builder.resolve_databricks_workspace",
+        resolve,
+    )
+    with _POLICY_CONNECTION_CACHE_LOCK:
+        _POLICY_CONNECTION_CACHE.clear()
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(
+                pool.map(
+                    _resolve_databricks_connection,
+                    ["parallel-profile"] * 8,
+                )
+            )
+    finally:
+        with _POLICY_CONNECTION_CACHE_LOCK:
+            _POLICY_CONNECTION_CACHE.clear()
+
+    assert calls == 1
+    assert all(result["api_key"] == "token" for result in results)
 
 
 def test_resolve_server_llm_connection_connection_wins_over_profile() -> None:

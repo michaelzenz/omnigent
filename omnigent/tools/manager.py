@@ -671,6 +671,20 @@ class ToolManager:
                 )
             self._tools[tool.name()] = tool
 
+        # Pi-compatible file-i  eraction tools (read, write, edit, bash,
+        # grep, find, ls).  Backed by the same OSEnvironment as the legacy
+        # sys_os_* tools, so sandbox / remote / policy behavior is identical.
+        from omnigent.tools.builtins.pi_file_tools import build_pi_file_tools
+
+        for tool in build_pi_file_tools(os_env):
+            if tool.name() in self._tools:
+                raise ValueError(
+                    f"Pi file tool {tool.name()!r} collides with an "
+                    f"already-registered tool — investigate the offending "
+                    f"earlier registration."
+                )
+            self._tools[tool.name()] = tool
+
     def _register_terminal_tools(self) -> None:
         """
         Register ``sys_terminal_*`` tools when the spec declares ``terminals``.

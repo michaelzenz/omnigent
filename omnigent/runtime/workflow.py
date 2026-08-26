@@ -1423,6 +1423,36 @@ def _build_pi_spawn_env(
     provider = _resolve_provider_for_build(spec, harness_type="pi", for_launch=True)
     if provider is not None:
         configure_agent_harness_with_provider(env, provider, harness_type="pi")
+    pi_config = spec.executor.config
+    bool_options = {
+        "persistent_session": "HARNESS_PI_PERSISTENT_SESSION",
+        "canonical_rebuild": "HARNESS_PI_CANONICAL_REBUILD",
+        "isolated_resources": "HARNESS_PI_ISOLATED_RESOURCES",
+        "native_tools": "HARNESS_PI_NATIVE_TOOLS",
+        "native_skills": "HARNESS_PI_NATIVE_SKILLS",
+    }
+    for option, env_name in bool_options.items():
+        value = pi_config.get(option)
+        if value is not None:
+            if isinstance(value, bool):
+                enabled = value
+            elif isinstance(value, str) and value.lower() in {"true", "false"}:
+                # The shared spec parser stringifies scalar executor config values.
+                enabled = value.lower() == "true"
+            else:
+                raise ValueError(f"executor.config.{option} must be a boolean")
+            env[env_name] = "1" if enabled else "0"
+    session_dir = pi_config.get("session_dir")
+    if session_dir is not None:
+        if not isinstance(session_dir, str) or not session_dir:
+            raise ValueError("executor.config.session_dir must be a non-empty string")
+        env["HARNESS_PI_SESSION_DIR"] = session_dir
+    prompt_mode = pi_config.get("system_prompt_mode")
+    if prompt_mode is not None:
+        if prompt_mode not in ("append", "replace"):
+            raise ValueError("executor.config.system_prompt_mode must be 'append' or 'replace'")
+        env["HARNESS_PI_SYSTEM_PROMPT_MODE"] = prompt_mode
+
     # Skills bridge — same shape as the claude-sdk + codex variants.
     # Always set so the harness wrap doesn't fall back to ``"all"``
     # and override an explicit ``skills: none`` from the spec.

@@ -688,6 +688,9 @@ class SqlConversationMetadata(OmnigentBase):
     # (Rule R032). NULL = unfiled. Coexists with the implicit ``omni_project``
     # label via the store's dual-read until labels are consolidated.
     project_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    execution_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0", default=0
+    )
 
     __table_args__ = (
         CheckConstraint("kind IN (1, 2)", name="ck_conversation_metadata_kind"),

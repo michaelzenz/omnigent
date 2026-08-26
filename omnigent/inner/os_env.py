@@ -6,6 +6,7 @@ import atexit
 import base64
 import codecs
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, TypedDict, cast
 from urllib.parse import urlparse, urlunparse
@@ -54,6 +56,9 @@ if TYPE_CHECKING:
 
     from .egress import EgressProxyHandle
     from .egress.proxy import EgressProxy
+from .pi_file_ops import find as _find_impl
+from .pi_file_ops import grep as _grep_impl
+from .pi_file_ops import list_dir as _list_dir_impl
 from .sandbox import (
     run_launcher as _run_launcher,
 )
@@ -332,6 +337,7 @@ class OSEnvironment(ABC):
         old_text: str | None = None,
         new_text: str | None = None,
         edits: Sequence[EditEntry] | None = None,
+        original_coordinates: bool = False,
     ) -> OpResult:
         raise NotImplementedError
 
@@ -341,6 +347,46 @@ class OSEnvironment(ABC):
         command: str,
         timeout: int | None = None,
         max_output: int | None = None,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        glob: str | None = None,
+        ignore_case: bool = False,
+        literal: bool = False,
+        context: int = 0,
+        limit: int = 100,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    async def find(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        limit: int = 1000,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    async def list_dir(
+        self,
+        path: str = ".",
+        *,
+        limit: int = 500,
+    ) -> OpResult:
+        raise NotImplementedError
+
+    async def discover_memory_files(
+        self,
+        paths: Sequence[tuple[str, bool]],
+        filename: str,
+        *,
+        max_bytes: int = 50 * 1024,
+        offsets: Mapping[str, tuple[str, int]] | None = None,
     ) -> OpResult:
         raise NotImplementedError
 
@@ -395,9 +441,7 @@ class _HelperProcessClient:
         if sandbox.active:
             self._tmpdir = create_private_tmpdir()
             system_tmp = Path(tempfile.gettempdir())
-            sandbox = with_additional_write_roots(
-                sandbox, [self._tmpdir, system_tmp]
-            )
+            sandbox = with_additional_write_roots(sandbox, [self._tmpdir, system_tmp])
             self.sandbox = sandbox
         self._proc: subprocess.Popen[str] | None = None
         # Parent-held containment handle from the sandbox backend's
@@ -905,6 +949,7 @@ class CallerProcessOSEnvironment(OSEnvironment):
         old_text: str | None = None,
         new_text: str | None = None,
         edits: Sequence[EditEntry] | None = None,
+        original_coordinates: bool = False,
     ) -> OpResult:
         result = await run_sync_on_thread(
             self._helper.request,
@@ -914,6 +959,7 @@ class CallerProcessOSEnvironment(OSEnvironment):
                 "oldText": old_text,
                 "newText": new_text,
                 "edits": list(edits) if edits is not None else None,
+                "original_coordinates": original_coordinates,
             },
         )
         return cast(OpResult, result)
@@ -937,6 +983,91 @@ class CallerProcessOSEnvironment(OSEnvironment):
         if max_output is not None:
             request["max_output"] = max_output
         result = await run_sync_on_thread(self._helper.request, request)
+        return cast(OpResult, result)
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        glob: str | None = None,
+        ignore_case: bool = False,
+        literal: bool = False,
+        context: int = 0,
+        limit: int = 100,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "grep",
+                "pattern": pattern,
+                "path": path,
+                "glob": glob,
+                "ignore_case": ignore_case,
+                "literal": literal,
+                "context": context,
+                "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
+    async def find(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        limit: int = 1000,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "find",
+                "pattern": pattern,
+                "path": path,
+                "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
+    async def list_dir(
+        self,
+        path: str = ".",
+        *,
+        limit: int = 500,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "ls",
+                "path": path,
+                "limit": limit,
+            },
+        )
+        return cast(OpResult, result)
+
+    async def discover_memory_files(
+        self,
+        paths: Sequence[tuple[str, bool]],
+        filename: str,
+        *,
+        max_bytes: int = 50 * 1024,
+        offsets: Mapping[str, tuple[str, int]] | None = None,
+    ) -> OpResult:
+        result = await run_sync_on_thread(
+            self._helper.request,
+            {
+                "op": "discover_memory_files",
+                "paths": [
+                    {"path": path, "is_directory": is_directory} for path, is_directory in paths
+                ],
+                "filename": filename,
+                "max_bytes": max_bytes,
+                "offsets": {
+                    path: {"sha256": sha256, "offset": offset}
+                    for path, (sha256, offset) in (offsets or {}).items()
+                },
+            },
+        )
         return cast(OpResult, result)
 
     def close(self) -> None:
@@ -1069,6 +1200,7 @@ def _handle_helper_request(
             request.get("oldText"),
             request.get("newText"),
             request.get("edits"),
+            original_coordinates=request.get("original_coordinates") is True,
         )
 
     if op == "shell":
@@ -1096,11 +1228,118 @@ def _handle_helper_request(
             max_output=max_output,
         )
 
+    if op == "grep":
+        raw_pattern = request.get("pattern")
+        if not isinstance(raw_pattern, str) or not raw_pattern.strip():
+            return {"error": "pattern must be a non-empty string"}
+        raw_path = request.get("path", ".")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"error": "path must be a non-empty string"}
+        path = _resolve_path(cwd, raw_path)
+        try:
+            _assert_within_reach(cwd, sandbox, path, need_write=False)
+            _assert_read_allowed(sandbox, path)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return _grep_impl(
+            pattern=raw_pattern,
+            path=path,
+            glob=request.get("glob"),
+            ignore_case=bool(request.get("ignore_case", False)),
+            literal=bool(request.get("literal", False)),
+            context=request.get("context", 0),
+            limit=request.get("limit", 100),
+        )
+
+    if op == "find":
+        raw_pattern = request.get("pattern")
+        if not isinstance(raw_pattern, str) or not raw_pattern.strip():
+            return {"error": "pattern must be a non-empty string"}
+        raw_path = request.get("path", ".")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"error": "path must be a non-empty string"}
+        path = _resolve_path(cwd, raw_path)
+        try:
+            _assert_within_reach(cwd, sandbox, path, need_write=False)
+            _assert_read_allowed(sandbox, path)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return _find_impl(
+            pattern=raw_pattern,
+            path=path,
+            limit=request.get("limit", 1000),
+        )
+
+    if op == "ls":
+        raw_path = request.get("path", ".")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"error": "path must be a non-empty string"}
+        path = _resolve_path(cwd, raw_path)
+        try:
+            _assert_within_reach(cwd, sandbox, path, need_write=False)
+            _assert_read_allowed(sandbox, path)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return _list_dir_impl(path=path, limit=request.get("limit", 500))
+
+    if op == "discover_memory_files":
+        filename = request.get("filename")
+        if filename not in {"CLAUDE.md", "AGENTS.md"}:
+            return {"error": "filename must be CLAUDE.md or AGENTS.md"}
+        raw_targets = request.get("paths")
+        if not isinstance(raw_targets, list):
+            return {"error": "paths must be an array"}
+        targets: list[tuple[Path, bool]] = []
+        for item in raw_targets:
+            if not isinstance(item, dict):
+                return {"error": "each path must be an object"}
+            raw_path = item.get("path")
+            is_directory = item.get("is_directory")
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                return {"error": "path must be a non-empty string"}
+            if not isinstance(is_directory, bool):
+                return {"error": "is_directory must be a boolean"}
+            path = _resolve_path(cwd, raw_path)
+            try:
+                _assert_within_reach(cwd, sandbox, path, need_write=False)
+                _assert_read_allowed(sandbox, path)
+            except PermissionError as exc:
+                return {"error": str(exc)}
+            targets.append((path, is_directory))
+        max_bytes = request.get("max_bytes", 50 * 1024)
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+            return {"error": "max_bytes must be a positive integer"}
+        raw_offsets = request.get("offsets", {})
+        if not isinstance(raw_offsets, dict):
+            return {"error": "offsets must be an object"}
+        offsets: dict[str, tuple[str, int]] = {}
+        for offset_path, state in raw_offsets.items():
+            if not isinstance(offset_path, str) or not isinstance(state, dict):
+                return {"error": "offsets contains an invalid path state"}
+            sha256 = state.get("sha256")
+            offset = state.get("offset")
+            if (
+                not isinstance(sha256, str)
+                or isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or offset < 0
+            ):
+                return {"error": "offsets contains an invalid hash or offset"}
+            offsets[offset_path] = (sha256, offset)
+        return _discover_memory_files_impl(
+            cwd=cwd,
+            sandbox=sandbox,
+            targets=targets,
+            filename=filename,
+            max_bytes=min(max_bytes, 2 * 1024 * 1024),
+            offsets=offsets,
+        )
+
     return {"error": f"Unsupported os_env helper operation: {op!r}"}
 
 
 def _resolve_path(cwd: Path, path: str) -> Path:
-    candidate = Path(path)
+    candidate = Path(path).expanduser()
     if not candidate.is_absolute():
         candidate = cwd / candidate
     return candidate.resolve(strict=False)
@@ -1221,6 +1460,116 @@ def _assert_write_allowed(policy: SandboxPolicy, path: Path) -> None:
     if any(_is_within(path, root) for root in policy.write_roots):
         return
     raise PermissionError(f"Write access to '{path}' is blocked by sandbox.")
+
+
+def _memory_project_root(directory: Path, cwd: Path) -> Path:
+    for candidate in (directory, *directory.parents):
+        if (candidate / ".git").exists():
+            return candidate
+        if candidate == cwd:
+            return cwd
+    return directory
+
+
+def _memory_candidate_directories(
+    target: Path,
+    cwd: Path,
+    *,
+    is_directory: bool,
+) -> list[Path]:
+    directory = target if is_directory and target.is_dir() else target.parent
+    root = _memory_project_root(directory, cwd)
+    try:
+        relative = directory.relative_to(root)
+    except ValueError:
+        return [directory]
+    result = [root]
+    cursor = root
+    for part in relative.parts:
+        cursor /= part
+        result.append(cursor)
+    return result
+
+
+def _discover_memory_files_impl(
+    *,
+    cwd: Path,
+    sandbox: SandboxPolicy,
+    targets: Sequence[tuple[Path, bool]],
+    filename: str,
+    max_bytes: int,
+    offsets: Mapping[str, tuple[str, int]],
+) -> OpResult:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for target, is_directory in targets:
+        for directory in _memory_candidate_directories(target, cwd, is_directory=is_directory):
+            candidate = (directory / filename).resolve(strict=False)
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+
+    selected: list[dict[str, Any]] = []
+    remaining = max_bytes
+    aggregate_truncated = False
+    for candidate in reversed(candidates):
+        try:
+            _assert_within_reach(cwd, sandbox, candidate, need_write=False)
+            _assert_read_allowed(sandbox, candidate)
+            if not candidate.is_file():
+                continue
+            file_size = candidate.stat().st_size
+            if file_size > 2 * 1024 * 1024:
+                return {"error": f"Applicable memory file exceeds the 2 MiB limit: {candidate}"}
+            raw = candidate.read_bytes()
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                return {"error": f"Applicable memory file is not UTF-8 text: {candidate}: {exc}"}
+            canonical = str(candidate)
+            digest = hashlib.sha256(raw).hexdigest()
+            prior = offsets.get(canonical)
+            prior_offset = prior[1] if prior is not None and prior[0] == digest else 0
+            start_byte = min(prior_offset, len(raw))
+            end_byte = min(len(raw), start_byte + remaining)
+            while end_byte > start_byte:
+                try:
+                    content = raw[start_byte:end_byte].decode("utf-8")
+                    break
+                except UnicodeDecodeError:
+                    end_byte -= 1
+            else:
+                content = ""
+            retained = end_byte - start_byte
+            truncated = end_byte < len(raw)
+            selected.append(
+                {
+                    "path": canonical,
+                    "sha256": digest,
+                    "content": content,
+                    "start_byte": start_byte,
+                    "end_byte": end_byte,
+                    "truncated": truncated,
+                }
+            )
+            remaining -= retained
+            if remaining == 0:
+                aggregate_truncated = (
+                    any(earlier.is_file() for earlier in candidates[: candidates.index(candidate)])
+                    or truncated
+                )
+                break
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        except OSError as exc:
+            return {"error": f"Failed to read applicable {filename}: {exc}"}
+    selected.reverse()
+    return {
+        "files": selected,
+        "targets": [str(path) for path, _ in targets],
+        "max_bytes": max_bytes,
+        "truncated": aggregate_truncated or any(item["truncated"] for item in selected),
+    }
 
 
 # Bytes sampled to classify a file as text vs binary. A NUL byte or an invalid
@@ -1386,6 +1735,8 @@ def _edit_impl(
     old_text: JsonValue,
     new_text: JsonValue,
     edits: JsonValue,
+    *,
+    original_coordinates: bool = False,
 ) -> OpResult:
     original = path.read_text(encoding="utf-8", errors="replace")
     try:
@@ -1397,12 +1748,38 @@ def _edit_impl(
     except ValueError as exc:
         return {"error": str(exc)}
 
-    updated = original
-    applied = 0
+    if not original_coordinates:
+        updated = original
+        for edit in replacements:
+            before = edit["oldText"]
+            after = edit["newText"]
+            if not before:
+                return {"error": "oldText must not be empty"}
+            count = updated.count(before)
+            if count == 0:
+                return {"error": f"Could not find oldText in '{path}': {before[:80]!r}"}
+            if count > 1:
+                return {
+                    "error": (
+                        f"oldText matched {count} locations in '{path}'; "
+                        "provide a more specific edit."
+                    )
+                }
+            updated = updated.replace(before, after, 1)
+        path.write_text(updated, encoding="utf-8")
+        return {
+            "path": str(path),
+            "replacements": len(replacements),
+            "bytes_written": len(updated.encode("utf-8")),
+        }
+
+    spans: list[tuple[int, int, str]] = []
     for edit in replacements:
         before = edit["oldText"]
         after = edit["newText"]
-        count = updated.count(before)
+        if not before:
+            return {"error": "oldText must not be empty"}
+        count = original.count(before)
         if count == 0:
             return {"error": f"Could not find oldText in '{path}': {before[:80]!r}"}
         if count > 1:
@@ -1411,13 +1788,25 @@ def _edit_impl(
                     f"oldText matched {count} locations in '{path}'; provide a more specific edit."
                 )
             }
-        updated = updated.replace(before, after, 1)
-        applied += 1
+        start = original.index(before)
+        spans.append((start, start + len(before), after))
 
+    spans.sort(key=lambda item: item[0])
+    for previous, current in pairwise(spans):
+        if current[0] < previous[1]:
+            return {"error": "edits must not overlap in the original file"}
+
+    parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in spans:
+        parts.extend((original[cursor:start], replacement))
+        cursor = end
+    parts.append(original[cursor:])
+    updated = "".join(parts)
     path.write_text(updated, encoding="utf-8")
     return {
         "path": str(path),
-        "replacements": applied,
+        "replacements": len(spans),
         "bytes_written": len(updated.encode("utf-8")),
     }
 
@@ -1529,6 +1918,8 @@ def _normalize_edits(
     if edits is not None:
         if not isinstance(edits, list):
             raise ValueError("edits must be an array of {oldText, newText} objects")
+        if not edits:
+            raise ValueError("edits must not be empty")
         normalized: list[EditEntry] = []
         for edit in edits:
             if not isinstance(edit, dict):

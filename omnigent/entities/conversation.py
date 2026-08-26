@@ -248,6 +248,7 @@ class Conversation:
     live_status: str | None = None
     pending_elicitation_count: int | None = None
     project_id: str | None = None
+    execution_generation: int = 0
     # Transient: populated only by list_conversations on a content search;
     # never read from or written to the DB.
     search_snippet: str | None = None
@@ -374,6 +375,9 @@ class FunctionCallOutputData(BaseModel):
 
     call_id: str
     output: str
+    name: str | None = None
+    tool_status: Literal["success", "error", "blocked", "cancelled"] = "success"
+    error: str | None = None
 
 
 class ErrorData(BaseModel):
@@ -479,6 +483,14 @@ class CompactionData(BaseModel):
     token_count: int
     compacted_messages: list[dict[str, Any]] | None = None
     window_id: int | None = None
+    pi_retained_tail_item_ids: list[str] | None = None
+    pi_entry_ids: list[str] | None = None
+    pi_first_kept_entry_id: str | None = None
+    pi_reason: str | None = None
+    pi_generation: int | None = None
+    pi_tokens_before: int | None = None
+    pi_tokens_after: int | None = None
+    pi_failed: bool = False
 
     @field_validator("compacted_messages")
     @classmethod

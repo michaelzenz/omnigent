@@ -299,7 +299,13 @@ _MCP_SERVER_NAME = "omnigent"
 # side, so auto-approving the agy-side MCP gate only avoids a hidden in-terminal
 # prompt blocking the call before Omnigent ever sees it.
 _AGY_ENABLED_TOOLS = [
+    "bash",
+    "edit",
+    "find",
+    "grep",
     "list_comments",
+    "ls",
+    "read",
     "sys_add_policy",
     "sys_agent_download",
     "sys_agent_get",
@@ -325,6 +331,7 @@ _AGY_ENABLED_TOOLS = [
     "sys_terminal_read",
     "sys_terminal_send",
     "update_comment",
+    "write",
 ]
 
 # Files copied from the user's real ``~/.gemini`` into the per-session isolated

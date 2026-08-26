@@ -16,6 +16,7 @@ from omnigent.inner.os_env import (
     _child_shell_env,
     _project_root,
     _read_impl,
+    _resolve_path,
     _shell_impl,
     build_helper_env,
     create_os_environment,
@@ -60,6 +61,19 @@ def _active_policy() -> SandboxPolicy:
         write_files=[],
         allow_network=True,
     )
+
+
+def test_resolve_path_expands_tilde_before_joining_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    workspace = home / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    assert _resolve_path(workspace, "~/Project/example") == home / "Project" / "example"
 
 
 def test_build_helper_env_inactive_strips_binding_token() -> None:

@@ -1103,6 +1103,7 @@ def _build_session_response(
         labels=labels,
         runner_id=conv.runner_id,
         host_id=conv.host_id,
+        execution_generation=conv.execution_generation,
         runner_online=runner_online,
         host_online=host_online,
         host_resumable=host_resumable,
@@ -4791,6 +4792,7 @@ async def _forward_event_to_runner(
     uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
+    memory_file_context: dict[str, Any] | None = None,
     usage_purpose: str = "user_interaction",
 ) -> str:
     """
@@ -4914,6 +4916,8 @@ async def _forward_event_to_runner(
             )
     if memory_instructions is not None:
         runner_body["memory_instructions"] = memory_instructions
+    if memory_file_context is not None:
+        runner_body["memory_file_context"] = memory_file_context
     # Persist the turn-initiating actor so /policies/evaluate and MCP
     # tools/call can read it back on any server replica.  Skip system-driven
     # forwards (sub-agent results, parent-wake carry created_by=None) — they
@@ -5872,6 +5876,7 @@ async def _dispatch_session_event_to_runner_impl(
     uses_omniharness: bool = False,
     profile_instructions: str | None = None,
     memory_instructions: str | None = None,
+    memory_file_context: dict[str, Any] | None = None,
     usage_purpose: str = "user_interaction",
 ) -> _SessionEventDispatchResult:
     """
@@ -6178,6 +6183,7 @@ async def _dispatch_session_event_to_runner_impl(
         uses_omniharness=uses_omniharness,
         profile_instructions=profile_instructions,
         memory_instructions=memory_instructions,
+        memory_file_context=memory_file_context,
         usage_purpose=usage_purpose,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
@@ -6518,6 +6524,35 @@ async def _relay_runner_stream_once(
                     except json.JSONDecodeError:
                         continue
                     evt_type = event.get("type", "")
+                    event_generation = event.get("execution_generation")
+                    if isinstance(event_generation, int) or evt_type.startswith("response."):
+                        current_conversation = await asyncio.to_thread(
+                            conversation_store.get_conversation,
+                            session_id,
+                        )
+                        generation_mismatch = (
+                            current_conversation is None
+                            or (
+                                isinstance(event_generation, int)
+                                and current_conversation.execution_generation != event_generation
+                            )
+                            or (
+                                event_generation is None
+                                and current_conversation.execution_generation > 0
+                            )
+                        )
+                        if generation_mismatch:
+                            _logger.warning(
+                                "Rejected stale runner event for %s: generation=%s current=%s",
+                                session_id,
+                                event_generation,
+                                (
+                                    current_conversation.execution_generation
+                                    if current_conversation is not None
+                                    else None
+                                ),
+                            )
+                            continue
                     # The runner emits session.status events
                     # directly.
                     # Re-publish via _publish_status so the event
@@ -10552,9 +10587,9 @@ __all__ = [
     "_persist_external_session_usage",
     "_persist_host_launch_failure_turn",
     "_persist_model_change_note",
-    "_persist_routing_enabled_note",
     "_persist_native_cumulative_usage",
     "_persist_native_terminal_failure",
+    "_persist_routing_enabled_note",
     "_persist_session_event",
     "_persist_skipped_kiro_pending_input",
     "_publish_and_wait_for_harness_elicitation",

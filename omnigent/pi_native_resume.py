@@ -374,9 +374,9 @@ def _pi_entries_from_session_item(
                 "message": {
                     "role": "toolResult",
                     "toolCallId": call_id,
-                    "toolName": "",
+                    "toolName": item.get("name") if isinstance(item.get("name"), str) else "",
                     "content": [{"type": "text", "text": output}],
-                    "isError": False,
+                    "isError": item.get("tool_status") in {"error", "blocked", "cancelled"},
                     "timestamp": 0,
                 },
             }

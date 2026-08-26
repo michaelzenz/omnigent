@@ -1,3 +1,5 @@
+import { isOnihTargetName } from "@/lib/omniharnessModels";
+
 // Pure helpers for the "fork / switch agent" flows: decide which target
 // harnesses preserve the source's conversation history (and so should appear
 // in each picker). Three carry mechanisms, all keyed off the TARGET harness —
@@ -132,12 +134,14 @@ const PREAMBLE_FORK_HARNESSES: ReadonlySet<string> = new Set([
  *
  * @param targetHarness - The harness the fork would bind.
  */
-export function forkTargetCarriesHistory(targetHarness: string | null | undefined): boolean {
+export function forkTargetCarriesHistory(
+  targetHarness: string | null | undefined,
+  targetName?: string | null,
+  historySwitch?: "canonical-rebuild" | null,
+): boolean {
+  if (historySwitch === "canonical-rebuild" || isOnihTargetName(targetName)) return true;
   if (!targetHarness) return false;
-  if (
-    NATIVE_REBUILD_HARNESSES.has(targetHarness) ||
-    PREAMBLE_FORK_HARNESSES.has(targetHarness)
-  )
+  if (NATIVE_REBUILD_HARNESSES.has(targetHarness) || PREAMBLE_FORK_HARNESSES.has(targetHarness))
     return true;
   // SDK harnesses replay AP items as context. A native TUI with a family
   // (antigravity-native → gemini) is NOT an SDK agent — the server declares
@@ -162,7 +166,12 @@ export function forkTargetCarriesHistory(targetHarness: string | null | undefine
  *
  * @param targetHarness - The harness the switch would bind.
  */
-export function switchTargetCarriesHistory(targetHarness: string | null | undefined): boolean {
+export function switchTargetCarriesHistory(
+  targetHarness: string | null | undefined,
+  targetName?: string | null,
+  historySwitch?: "canonical-rebuild" | null,
+): boolean {
+  if (historySwitch === "canonical-rebuild" || isOnihTargetName(targetName)) return true;
   if (!targetHarness) return false;
   if (NATIVE_REBUILD_HARNESSES.has(targetHarness)) return true;
   // SDK harnesses replay AP items as context. A native TUI with a family

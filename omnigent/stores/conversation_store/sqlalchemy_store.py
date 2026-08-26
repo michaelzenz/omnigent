@@ -265,6 +265,7 @@ def _to_conversation(
         ),
         pending_elicitation_count=meta.pending_elicitation_count if meta else None,
         project_id=meta.project_id if meta else None,
+        execution_generation=meta.execution_generation if meta else 0,
     )
 
 
@@ -4306,6 +4307,9 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            if meta.host_id != host_id:
+                meta.execution_generation += 1
+                meta.runner_id = None
             meta.host_id = host_id
             if workspace is not None:
                 meta.workspace = workspace

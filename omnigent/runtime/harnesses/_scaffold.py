@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import json
 import logging
 import os
 import time
@@ -259,6 +260,12 @@ class InterruptEvent(BaseModel):
     type: Literal["interrupt"]
 
 
+class CompactEvent(BaseModel):
+    """Downward request to run the live harness's native compactor."""
+
+    type: Literal["compact"]
+
+
 class ToolResultEvent(BaseModel):
     """
     Downward ``tool_result`` event — deliver a server-dispatched
@@ -360,7 +367,12 @@ class PolicyVerdictEvent(BaseModel):
 # unknown values raise 422 (fail-loud per
 # ``designs/DESIGN_PRINCIPLES.md``).
 InboundEventRequest = Annotated[
-    MessageEvent | InterruptEvent | ToolResultEvent | ApprovalEvent | PolicyVerdictEvent,
+    MessageEvent
+    | InterruptEvent
+    | CompactEvent
+    | ToolResultEvent
+    | ApprovalEvent
+    | PolicyVerdictEvent,
     Field(discriminator="type"),
 ]
 
@@ -402,8 +414,10 @@ class TurnContext:
         response_id: str,
         event_queue: asyncio.Queue[HarnessStreamEvent | None],
         cancelled: asyncio.Event,
+        execution_generation: int | None = None,
     ) -> None:
         self.response_id = response_id
+        self.execution_generation = execution_generation
         self._event_queue = event_queue
         self.cancelled = cancelled
         # Layer 3 per-tool-dispatch state: ``call_id`` →
@@ -509,6 +523,19 @@ class TurnContext:
             result = await future
             item["status"] = "completed"
             self.emit(OutputItemDoneEvent(type="response.output_item.done", item=item))
+            tool_status = "success"
+            tool_error: str | None = None
+            try:
+                decoded_result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                decoded_result = None
+            if isinstance(decoded_result, dict):
+                if decoded_result.get("blocked"):
+                    tool_status = "blocked"
+                    tool_error = str(decoded_result.get("reason", "blocked by policy"))
+                elif decoded_result.get("error"):
+                    tool_status = "error"
+                    tool_error = str(decoded_result["error"])
             self.emit(
                 OutputItemDoneEvent(
                     type="response.output_item.done",
@@ -516,9 +543,12 @@ class TurnContext:
                         "id": f"fco_{uuid.uuid4().hex[:12]}",
                         "type": "function_call_output",
                         "call_id": call_id,
+                        "name": name,
                         "output": cap_tool_output(result),
                         "arguments": arguments,
                         "status": "completed",
+                        "tool_status": tool_status,
+                        "error": tool_error,
                     },
                 )
             )
@@ -1135,6 +1165,8 @@ class HarnessApp:
             return await self._start_or_inject_turn(body.to_create_request())
         if isinstance(body, InterruptEvent):
             return await self._handle_interrupt_event()
+        if isinstance(body, CompactEvent):
+            return await self._handle_compact_event()
         if isinstance(body, ToolResultEvent):
             return await self._handle_tool_result_event(body)
         if isinstance(body, ApprovalEvent):
@@ -1148,6 +1180,12 @@ class HarnessApp:
         # falls through, fail loud rather than silently no-op.
         raise OmnigentError(
             f"unsupported inbound event type {type(body).__name__!r}",
+            code=ErrorCode.INVALID_INPUT,
+        )
+
+    async def _handle_compact_event(self) -> Response:
+        raise OmnigentError(
+            "this harness does not support native compaction",
             code=ErrorCode.INVALID_INPUT,
         )
 
@@ -1287,6 +1325,7 @@ class HarnessApp:
                 response_id=response_id,
                 event_queue=event_queue,
                 cancelled=cancelled,
+                execution_generation=request.execution_generation,
             )
             self._in_flight[response_id] = ctx
             self._active_turn_ctx = ctx
@@ -1321,6 +1360,7 @@ class HarnessApp:
         """
         sequence = 0
         for initial_event in self._initial_envelope_events(ctx, model=model, start_seq=sequence):
+            initial_event.execution_generation = ctx.execution_generation
             yield _format_sse_event(initial_event)
             sequence += 1
 
@@ -1351,6 +1391,7 @@ class HarnessApp:
                     # below.
                     break
                 event.sequence_number = sequence
+                event.execution_generation = ctx.execution_generation
                 if isinstance(event, HeartbeatEvent):
                     # Stamp timing metadata at emit time, not
                     # construction time, so ``server_time`` reflects
@@ -1373,6 +1414,7 @@ class HarnessApp:
             async with self._lock:
                 if self._active_turn_ctx is ctx:
                     self._active_turn_ctx = None
+            terminal.execution_generation = ctx.execution_generation
             yield _format_sse_event(terminal)
         finally:
             await self._teardown_turn(ctx, run_task, heartbeat_task)

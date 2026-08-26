@@ -284,7 +284,12 @@ The fingerprint covers at least:
 - Credential-helper identity, host, and profile, but never a bearer token
 
 Shared configuration must not contain per-conversation turn context or bridge
-tokens.
+tokens. Initialize each fingerprint directory under a short host-local lock.
+The first process builds and validates it in staging, then installs it with an
+atomic rename; concurrent processes wait and reuse the validated result. If an
+existing directory does not match its fingerprint, replace it atomically from a
+validated staging build. A failed repair aborts Pi startup rather than using or
+falling back to mismatched configuration.
 
 ## Process startup and reconstruction
 
@@ -563,207 +568,8 @@ future reconstruction. If required compaction persistence fails, terminate the
 current Pi process and mark the operation failed; its compacted private state
 must not become the basis of future turns.
 
-Databricks does not need a `/compact` endpoint. Pi's RPC command performs an
-ordinary model request through the configured provider.
-
-## Direct Databricks provider configuration
-
-Onih launches Pi directly; `ucode` is not a runtime dependency.
-
-Current compatibility mappings are:
-
-| Pi provider | Wire API | Databricks route |
-|---|---|---|
-| `databricks-claude` | `anthropic-messages` | `/ai-gateway/anthropic` |
-| `databricks-openai` | `openai-responses` | `/ai-gateway/codex/v1` |
-| `databricks-gemini` | `google-generative-ai` | `/ai-gateway/gemini/v1beta` |
-
-Claude additionally requires:
-
-```json
-{
-  "compat": {
-    "supportsEagerToolInputStreaming": false
-  }
-}
-```
-
-Reuse existing Onih gateway discovery and model metadata. Add contract fixtures
-against the `databricks/ucode` compatibility reference for provider name, base
-URL, wire API, headers, compatibility flags, selector, and model metadata.
-
-### Credential refresh
-
-Do not persist a literal Databricks bearer token in `models.json`, Pi history,
-or checkpoint data. Pi supports a leading command in `apiKey`:
-
-```json
-{
-  "apiKey": "!/path/to/onih-databricks-token --profile ai-devtools-prod",
-  "authHeader": true
-}
-```
-
-The Onih-owned helper resolves or refreshes credentials, prints only the token
-to stdout, sends diagnostics to stderr, and exits nonzero on failure. It may
-cache by expiry under owner-only storage. Pi resolves provider request keys at
-request time, allowing a persistent process to receive refreshed credentials.
-
-Tests must prove successive requests can observe refreshed helper output and
-that bearer tokens do not appear in configuration fingerprints, logs, Onih
-items, Pi sessions, or generated metadata.
-
-## Model selection
-
-The model allowlist remains controlled by shared Onih settings:
-
-```text
-Onih settings
-  → explicit selection or smart routing
-  → selected model
-  → target executor
-```
-
-For Pi, resolve provider, model ID, wire API, tool/reasoning support, image
-support, context window, output limit, and usage metadata. Unsupported models
-fail clearly; never silently invent a provider or fall back to another model.
-
-The initial implementation may restart Pi when the selected model changes. A
-restart reconstructs a fresh Pi session from Onih.
-
-## UI behavior
-
-- Hide legacy `omniharness` from all new/switch target pickers.
-- Sort `onih-openai-agents` and `onih-pi` before other targets.
-- Both targets use the same Onih gear settings: system prompt, subagent routing,
-  and Prompt Profile.
-- Both targets show the Onih model/smart-routing selector beside the execution
-  target selector in new and existing chats.
-- Do not show native Pi model or harness configuration for `onih-pi`.
-- Existing idle Onih conversations may switch between both targets.
-- Disable/reject executor switching while a turn is active.
-
-## Observability
-
-Record at least:
-
-- Onih target and underlying engine
-- Selected model, provider, and wire API
-- System-prompt, profile, memory, and tool-schema fingerprints
-- Input/output/cache tokens when reported
-- Tool calls and policy outcomes
-- Pi process starts/restarts and reconstruction reason
-- Reconstruction source: full history or compaction recovery state
-- Reconstruction failures and duration
-- Compaction lifecycle and usage
-- Execution generation and rejected stale-host output
-- Persistence failures that caused Pi state to be discarded
-
-Do not add comparative benchmarking.
-
-## Implementation phases
-
-### Phase 1: identity and UI
-
-- Add both target bundles and centralized Onih checks.
-- Preserve the shared settings/model namespace.
-- Implement labels, ordering, gear/model controls, and legacy hiding.
-- Add explicit canonical-rebuild switch capability.
-- Perform the database rename manually.
-
-### Phase 2: backward-compatible Pi capabilities
-
-- Add opt-in persistent session path and system-prompt replacement.
-- Add explicit resource isolation and native tool/skill controls.
-- Propagate Pi `toolCallId` through generic executor event metadata.
-- Parse Pi compaction events and support manual RPC compaction.
-- Keep ordinary Pi defaults unchanged with regression tests.
-
-### Phase 3: direct provider and bridge
-
-- Generate isolated provider/settings files.
-- Add dynamic credential-helper configuration and contract tests.
-- Add the Onih tool bridge and transient profile/memory context protocol.
-- Add turn IDs, cancellation, isolation, and stale-context cleanup.
-
-### Phase 4: deterministic reconstruction
-
-- Convert canonical Onih items into a staged Pi-native session.
-- Reuse/extract conversion primitives from `pi_native_resume.py` without
-  changing `pi-native` behavior.
-- Preserve structured tool pairs and bounded model-visible results.
-- Validate with Pi and atomically replace the active session.
-- Reconstruct on every process start and executor/host switch.
-
-### Phase 5: compaction recovery
-
-- Disable Onih generic compaction for `onih-pi`.
-- Persist Pi summary, canonical boundary, retained tail, usage, and generation.
-- Reconstruct from canonical compaction recovery state.
-- Terminate/discard Pi state when required compaction persistence fails.
-
-### Phase 6: lifecycle hardening
-
-- Enforce one active turn/process per conversation.
-- Add local session lock and execution-generation fencing.
-- Reject switching while active and stale output after host reassignment.
-- Verify restart, target switch, host switch, cancellation, persistence failure,
-  and explicit retry behavior.
-- Couple Pi directory deletion/retention to Onih conversation lifecycle.
-
-## Test plan
-
-### Identity and compatibility
-
-- Both targets are recognized as Onih targets and share settings/models.
-- Legacy `omniharness` is hidden from selection.
-- Ordinary Pi launch behavior is unchanged.
-- `pi-native` behavior is unchanged.
-- No code classifies Pi as a fake provider family.
-
-### Switching and lifecycle
-
-- OpenAI Agents to Pi reconstructs canonical history.
-- Pi to OpenAI Agents preserves canonical history.
-- Switching back to Pi rebuilds rather than resumes old private state.
-- Switching is rejected while active.
-- Queued follow-up input uses the current process and does not spawn another.
-- Ambiguous timeout does not automatically retry the whole turn.
-- Stale execution-generation output is rejected after host switch.
-
-### Reconstruction
-
-- Full history reconstructs structured user, assistant, tool-call, and result
-  items in order.
-- Tool IDs remain paired.
-- Pending input is submitted exactly once after the completed boundary.
-- Unsupported items fail visibly rather than being dropped.
-- Staged reconstruction failure leaves the active/canonical state intact.
-- Process restart always rebuilds from Onih, ignoring stale Pi data.
-
-### Isolation
-
-- Global/project Pi prompts, settings, extensions, and skills are ignored.
-- Pi-native filesystem and shell tools are unavailable.
-- Separate conversations cannot share session directories, locks, bridge state,
-  or transient context.
-- Directories and files have owner-only permissions.
-
-### Provider and credentials
-
-- Generated routes/wire APIs match compatibility fixtures.
-- Unsupported models fail clearly.
-- `models.json` contains a credential command rather than a literal token.
-- Credential refresh works without restarting Pi.
-- Secrets do not appear in logs, fingerprints, histories, or artifacts.
-
-### Compaction
-
-- Automatic and manual Pi compaction use configured model APIs.
-- Onih does not double-compact.
-- Canonical summary/boundary/tail metadata persists.
-- Restart reconstructs summary plus tail without replaying summarized history.
-- Persistence failure terminates/discards divergent Pi state.
+- A retained-tail `thinking` block fails recovery export visibly and discards
+  private Pi state; it is not silently omitted.
 
 ### UI
 
@@ -828,6 +634,8 @@ Manual database rename remains a separate explicit operation.
   alignment becomes costly.
 - Align transient profile transport across both executors if behavioral parity
   becomes important.
+- Preserve Pi `thinking` blocks in post-compaction retained-tail recovery if
+  restart continuity for those blocks becomes necessary.
 
 ## Source snapshot
 

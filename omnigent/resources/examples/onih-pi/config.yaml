@@ -1,0 +1,18 @@
+spec_version: 1
+name: onih-pi
+description: Onih using the Pi agent runtime.
+
+executor:
+  type: omnigent
+  config:
+    harness: pi
+    model: databricks-glm-5-2
+    persistent_session: true
+    canonical_rebuild: true
+    system_prompt_mode: replace
+    isolated_resources: true
+    native_tools: false
+    native_skills: false
+
+skills: none
+prompt: ""

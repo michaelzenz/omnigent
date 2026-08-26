@@ -321,6 +321,7 @@ import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
 import {
   EMPTY_OMNIHARNESS_MODEL_OPTIONS,
+  isOnihTargetName,
   OMNIHARNESS_AGENT_NAME,
   type OmniHarnessModelOption,
 } from "@/lib/omniharnessModels";
@@ -338,7 +339,7 @@ type ServerInfoValue = ServerInfo | "loading";
 export function supportsSessionProfileSelection(
   session: Pick<Session, "agentName" | "parentSessionId"> | null | undefined,
 ): boolean {
-  return session?.parentSessionId == null && session?.agentName === OMNIHARNESS_AGENT_NAME;
+  return session?.parentSessionId == null && isOnihTargetName(session?.agentName);
 }
 
 /**
@@ -1296,7 +1297,7 @@ export function ChatPage() {
           a.id !== boundAgentBySession?.id &&
           a.name !== currentName &&
           a.name !== currentRoot &&
-          switchTargetCarriesHistory(a.harness) &&
+          switchTargetCarriesHistory(a.harness, a.name, a.history_switch) &&
           !(hideUnconfigured && harnessUnconfiguredOnHost(a.harness, sessionHost)),
       )
       .map((a) => {
@@ -6041,7 +6042,7 @@ function ComposerStatusLine({
           <ContextRing
             contextWindow={contextWindow}
             tokensUsed={tokensUsed}
-            estimated={contextWindowIsEstimate && session?.agentName === OMNIHARNESS_AGENT_NAME}
+            estimated={contextWindowIsEstimate && isOnihTargetName(session?.agentName)}
           />
         )}
       </div>
@@ -7582,7 +7583,7 @@ export function Composer({
                   sdkModelOptions={sdkModelOptions}
                   costRoutingEligible={costRoutingEligible}
                   harnessLabel={harnessLabel}
-                  disabled={isReadOnly || unreachable}
+                  disabled={isReadOnly || unreachable || isWorking}
                   switchTargets={switchTargets}
                   onSwitchAgent={onSwitchAgent}
                 />
@@ -7960,7 +7961,7 @@ export function modelPickerKindForConv(
       // model_select handler, so the picker surfaces that as the live model.
       return "pi";
     default:
-      return conv?.agentName === OMNIHARNESS_AGENT_NAME ? "sdk" : null;
+      return isOnihTargetName(conv?.agentName) ? "sdk" : null;
   }
 }
 
@@ -8128,9 +8129,7 @@ function SessionConfigModal({
   const parentSessionId = useChatStore((s) => s.parentSessionId);
   const conversationId = useChatStore((s) => s.conversationId);
   const profileSelectionEnabled =
-    modelPickerKind === "sdk" &&
-    boundAgentName === OMNIHARNESS_AGENT_NAME &&
-    parentSessionId === null;
+    modelPickerKind === "sdk" && isOnihTargetName(boundAgentName) && parentSessionId === null;
   const profileSelection =
     promptProfile?.mode === "fixed"
       ? promptProfile.profileId

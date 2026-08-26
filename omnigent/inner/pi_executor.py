@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import hmac
 import json
 import logging
@@ -46,7 +47,7 @@ import tempfile
 from asyncio import Queue, Task
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, NotRequired, TypeAlias, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
 from urllib.parse import urlparse as _urlparse
 
 from omnigent import model_catalog
@@ -78,6 +79,8 @@ from .async_utils import run_sync_on_thread
 from .databricks_executor import _read_databrickscfg
 from .datamodel import OSEnvSandboxSpec, OSEnvSpec
 from .executor import (
+    CompactionComplete,
+    CompactionStarted,
     Executor,
     ExecutorConfig,
     ExecutorError,
@@ -137,6 +140,19 @@ NativePolicyGate: TypeAlias = Callable[  # type: ignore[explicit-any]
     [str, dict[str, Any]],
     Awaitable[dict[str, Any]] | dict[str, Any],
 ]
+
+
+@dataclass(frozen=True)
+class PiLaunchOptions:
+    """Opt-in Pi process behavior; defaults preserve ordinary Pi agents."""
+
+    persistent_session: bool = False
+    canonical_rebuild: bool = False
+    session_dir: pathlib.Path | None = None
+    system_prompt_mode: Literal["append", "replace"] = "append"
+    isolated_resources: bool = False
+    native_tools: bool = True
+    native_skills: bool = True
 
 
 class _PiProviderConfig(TypedDict):
@@ -404,7 +420,12 @@ def _sanitize_schema(schema: ToolSpec) -> ToolSpec:
     return result
 
 
-def _generate_extension_js(port: int, tool_schemas: list[ToolSpec], token: str) -> str:
+def _generate_extension_js(
+    port: int,
+    tool_schemas: list[ToolSpec],
+    token: str,
+    context_file: pathlib.Path | None = None,
+) -> str:
     """Generate a JavaScript Pi extension that registers Omnigent tools.
 
     Each tool is forwarded to the TCP tool server at ``127.0.0.1:<port>``.
@@ -442,16 +463,19 @@ def _generate_extension_js(port: int, tool_schemas: list[ToolSpec], token: str) 
     tools_json = json.dumps(descriptors, indent=2)
     # json.dumps so the secret is correctly JS-string-escaped.
     token_json = json.dumps(token)
+    context_file_json = json.dumps(str(context_file) if context_file is not None else "")
 
     return f"""\
 // Auto-generated Omnigent tool bridge extension for Pi.
 // Connects to the Omnigent TCP tool server on port {port}.
+const fs = require("fs");
 const net = require("net");
 
 const TOOLS = {tools_json};
 const BRIDGED = new Set(TOOLS.map((t) => t.name));
 const PORT = {port};
 const TOKEN = {token_json};
+const CONTEXT_FILE = {context_file_json};
 
 /** Send a tool call request over TCP and return the result. */
 function callTool(toolName, args) {{
@@ -544,6 +568,37 @@ function evalNativePolicy(toolName, args) {{
 }}
 
 module.exports = function(pi) {{
+  // Per-turn metadata hook.  The prompt profile is passed as Pi's real
+  // system prompt (via --system-prompt), so this hook no longer modifies
+  // messages.  It reads turn_id from turn_context.json for request
+  // correlation by the before_provider_request logging hook below.
+  function readTurnContext() {{
+    if (!CONTEXT_FILE) return {{}};
+    try {{ return JSON.parse(fs.readFileSync(CONTEXT_FILE, "utf8")) || {{}}; }} catch (_) {{ return {{}}; }}
+  }}
+
+  // Opt-in provider-request logging.  Set OMNIGENT_PI_PROVIDER_REQUEST_LOG
+  // to a file path to capture the exact payload Pi sends to the model
+  // provider (system prompt, messages, tools, provider-specific fields).
+  // Disabled by default.  The file contains full conversation content —
+  // treat as sensitive.
+  const REQUEST_LOG = process.env.OMNIGENT_PI_PROVIDER_REQUEST_LOG || "";
+  pi.on("before_provider_request", async (event) => {{
+    if (!REQUEST_LOG) return;
+    const ctx = readTurnContext();
+    const entry = {{
+      timestamp: new Date().toISOString(),
+      turn_id: ctx.turn_id || null,
+      payload: event,
+    }};
+    try {{
+      fs.appendFileSync(REQUEST_LOG, JSON.stringify(entry) + "\\n", {{ mode: 0o600 }});
+    }} catch (e) {{
+      // Logging failures must never break the model request.
+      try {{ console.error("[onih-pi] provider request log write failed:", e.message); }} catch (_) {{}}
+    }}
+  }});
+
   // Gate native (non-bridged) tool calls through Omnigent policy. Pi's
   // native tools (e.g. ``read``, enabled for skill loading) run in-process
   // and never traverse the bridged /mcp path, so without this hook they
@@ -627,6 +682,7 @@ _PI_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
         "TZ",
         OMNIGENT_SESSION_ENV_VAR,  # "inside Omnigent" marker (CLAUDE_CODE/CODEX analog)
         OMNIGENT_SERVER_UNIX_SOCKET,
+        "OMNIGENT_PI_PROVIDER_REQUEST_LOG",
     }
 )
 _STREAM_READ_CHUNK_SIZE = 65536
@@ -671,6 +727,92 @@ def _redact_argv_for_log(args: Sequence[str]) -> list[str]:
             continue
         redacted.append(arg)
     return redacted
+
+
+def _onih_pi_provider_for_model(
+    model: str,
+    wire_apis: frozenset[ModelWireAPI],
+) -> str:
+    """Resolve an isolated Onih Pi provider from authoritative wire metadata."""
+    if ModelWireAPI.ANTHROPIC_MESSAGES in wire_apis:
+        return "databricks-claude"
+    if ModelWireAPI.GEMINI_GENERATE_CONTENT in wire_apis:
+        return "databricks-gemini"
+    if ModelWireAPI.OPENAI_RESPONSES in wire_apis:
+        return "databricks-openai"
+    if ModelWireAPI.OPENAI_CHAT in wire_apis:
+        return "databricks-mlflow" if model.lower().startswith("system.ai.") else "databricks-chat"
+    raise ValueError(f"model has no Onih Pi-compatible wire API: {model}")
+
+
+def _build_onih_models_json(
+    models_json: _PiModelsConfig,
+    *,
+    host: str,
+    api_key: str,
+) -> _PiModelsConfig:
+    """Reduce generic Pi gateway config to Onih's supported wire providers."""
+    providers = models_json["providers"]
+    claude = dict(providers.get("databricks-anthropic", {}))
+    claude["baseUrl"] = f"{host.rstrip('/')}/ai-gateway/anthropic"
+    claude["apiKey"] = api_key
+    claude["api"] = "anthropic-messages"
+    claude["authHeader"] = True
+    claude["compat"] = {"supportsEagerToolInputStreaming": False}
+
+    openai = dict(providers.get("databricks-openai", {}))
+    openai["baseUrl"] = f"{host.rstrip('/')}/ai-gateway/codex/v1"
+    openai["apiKey"] = api_key
+    openai["api"] = "openai-responses"
+    openai["authHeader"] = True
+
+    chat_models = [
+        *providers.get("databricks", {}).get("models", []),
+        *providers.get("databricks-completions", {}).get("models", []),
+    ]
+    chat: _PiProviderConfig = {
+        "baseUrl": f"{host.rstrip('/')}/serving-endpoints",
+        "apiKey": api_key,
+        "api": "openai-completions",
+        "authHeader": True,
+        "compat": {
+            "supportsDeveloperRole": False,
+            "supportsStore": False,
+            "supportsStrictMode": False,
+            "supportsReasoningEffort": False,
+            "supportsUsageInStreaming": False,
+        },
+        "models": chat_models,
+    }
+
+    mlflow = dict(providers.get("databricks-mlflow", {}))
+    mlflow["baseUrl"] = f"{host.rstrip('/')}/ai-gateway/mlflow/v1"
+    mlflow["apiKey"] = api_key
+    mlflow["api"] = "openai-completions"
+    mlflow["authHeader"] = True
+
+    gemini_models: list[_JsonObject] = []
+    for provider_name in ("databricks-mlflow", "databricks-completions"):
+        for entry in providers.get(provider_name, {}).get("models", []):
+            model_id = str(entry.get("id", "")).lower()
+            if "gemini" in model_id:
+                gemini_models.append(entry)
+    gemini: _PiProviderConfig = {
+        "baseUrl": f"{host.rstrip('/')}/ai-gateway/gemini/v1beta",
+        "apiKey": api_key,
+        "api": "google-generative-ai",
+        "authHeader": True,
+        "models": gemini_models,
+    }
+    return {
+        "providers": {
+            "databricks-claude": cast(_PiProviderConfig, claude),
+            "databricks-openai": cast(_PiProviderConfig, openai),
+            "databricks-chat": chat,
+            "databricks-mlflow": cast(_PiProviderConfig, mlflow),
+            "databricks-gemini": gemini,
+        }
+    }
 
 
 def _build_models_json(
@@ -798,6 +940,7 @@ def _build_models_json(
                 "apiKey": token,
                 "api": "anthropic-messages",
                 "authHeader": True,
+                "compat": {"supportsEagerToolInputStreaming": False},
                 "models": provider_models["databricks-anthropic"],
             },
             # system.ai.* models not needing Responses API (Gemini, Llama) → mlflow gateway.
@@ -922,7 +1065,12 @@ def _databricks_model_wire_catalog(
     catalog: dict[str, frozenset[ModelWireAPI]] = {}
     for model in models:
         for alias in databricks_model_aliases(model.id):
-            catalog[alias] = model.metadata.wire_apis
+            catalog.setdefault(alias, model.metadata.wire_apis)
+    # Exact catalog ids are authoritative over aliases synthesized from a
+    # different endpoint. For example, databricks-glm-5-2 speaks Chat while
+    # system.ai.glm-5-2 speaks Responses.
+    for model in models:
+        catalog[model.id.lower()] = model.metadata.wire_apis
     return catalog
 
 
@@ -997,6 +1145,8 @@ class _PiRpcSession:
         model: str | None = None,
         system_prompt: str | None = None,
         extra_args: list[str] | None = None,
+        launch_options: PiLaunchOptions | None = None,
+        session_id: str | None = None,
     ) -> None:
         """
         Spawn the Pi subprocess in RPC mode and start the I/O readers.
@@ -1018,7 +1168,17 @@ class _PiRpcSession:
         :param extra_args: Extra CLI tokens (``--extension``,
             ``--tools``, ...). ``None`` appends nothing.
         """
-        args = [pi_path, "--mode", "rpc", "--no-session"]
+        options = launch_options or PiLaunchOptions()
+        args = [pi_path, "--mode", "rpc"]
+        if options.persistent_session:
+            if options.session_dir is None:
+                raise ValueError("persistent Pi sessions require session_dir")
+            options.session_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            args.extend(["--session-dir", str(options.session_dir)])
+            if session_id:
+                args.extend(["--session", session_id])
+        else:
+            args.append("--no-session")
         if model:
             pi_coding_agent_dir = env.get("PI_CODING_AGENT_DIR")
             args.extend(
@@ -1030,11 +1190,22 @@ class _PiRpcSession:
                 ]
             )
         if system_prompt:
-            # Use --append-system-prompt instead of --system-prompt so Pi
-            # keeps its default prompt (which includes tool descriptions from
-            # promptSnippet and guidelines).  Using --system-prompt would
-            # replace the default prompt entirely, stripping tool awareness.
-            args.extend(["--append-system-prompt", system_prompt])
+            prompt_flag = (
+                "--system-prompt"
+                if options.system_prompt_mode == "replace"
+                else "--append-system-prompt"
+            )
+            args.extend([prompt_flag, system_prompt])
+        if options.isolated_resources:
+            args.extend(
+                [
+                    "--no-extensions",
+                    "--no-skills",
+                    "--no-prompt-templates",
+                    "--no-context-files",
+                    "--no-builtin-tools",
+                ]
+            )
         if extra_args:
             args.extend(extra_args)
 
@@ -1153,6 +1324,7 @@ class _PiSessionState:
     rpc: _PiRpcSession | None = None
     system_prompt: str | None = None
     model: str | None = None
+    tool_schema_fingerprint: str | None = None
     _has_sent_prompt: bool = False
 
 
@@ -1600,6 +1772,76 @@ def _aggregate_pi_turn_usage(
     }
 
 
+def _pi_messages_to_canonical(messages: JsonValue) -> list[_JsonObject]:
+    """Convert Pi's active post-compaction context into canonical replay items."""
+    if not isinstance(messages, list):
+        raise ValueError("Pi get_messages returned an invalid message list")
+    items: list[_JsonObject] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            raise ValueError("Pi get_messages returned a non-object message")
+        role = message.get("role")
+        content = message.get("content")
+        if role in {"user", "assistant"}:
+            blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+            text_blocks: list[_JsonObject] = []
+            for block in blocks:
+                if not isinstance(block, dict):
+                    raise ValueError("Pi compacted context contains an invalid content block")
+                block_type = block.get("type")
+                if block_type == "text" and isinstance(block.get("text"), str):
+                    canonical_block: _JsonObject = {
+                        "type": "input_text" if role == "user" else "output_text",
+                        "text": block["text"],
+                    }
+                    if role == "user":
+                        text_blocks.append(canonical_block)
+                    else:
+                        items.append(
+                            {"type": "message", "role": "assistant", "content": [canonical_block]}
+                        )
+                elif role == "assistant" and block_type == "toolCall":
+                    call_id = block.get("id")
+                    name = block.get("name")
+                    if not isinstance(call_id, str) or not isinstance(name, str):
+                        raise ValueError("Pi compacted tool call is missing id or name")
+                    items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": call_id,
+                            "name": name,
+                            "arguments": block.get("arguments", {}),
+                        }
+                    )
+                else:
+                    raise ValueError(f"unsupported Pi compacted content block: {block_type!r}")
+            if role == "user" and text_blocks:
+                items.append({"type": "message", "role": role, "content": text_blocks})
+        elif role == "toolResult":
+            call_id = message.get("toolCallId")
+            if not isinstance(call_id, str):
+                raise ValueError("Pi compacted tool result is missing toolCallId")
+            text = ""
+            if isinstance(content, list):
+                text = "\n".join(
+                    str(block.get("text", ""))
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "name": message.get("toolName", ""),
+                    "output": text,
+                    "tool_status": "error" if message.get("isError") else "success",
+                }
+            )
+        else:
+            raise ValueError(f"unsupported Pi compacted message role: {role!r}")
+    return items
+
+
 class PiExecutor(Executor):
     """Execute agent turns via the Pi coding agent (``pi --mode rpc``)."""
 
@@ -1621,6 +1863,7 @@ class PiExecutor(Executor):
         bundle_dir: pathlib.Path | None = None,
         agent_name: str | None = None,
         skills_filter: str | list[str] = "all",
+        launch_options: PiLaunchOptions | None = None,
     ) -> None:
         """Create a PiExecutor.
 
@@ -1731,11 +1974,16 @@ class PiExecutor(Executor):
         self._bundle_dir = bundle_dir
         self._agent_name = agent_name
         self._skills_filter = skills_filter
+        self._launch_options = launch_options or PiLaunchOptions()
+        if self._launch_options.canonical_rebuild and not self._launch_options.persistent_session:
+            raise ValueError("canonical Pi reconstruction requires persistent_session")
         # Resolve once at construction (the bundle layout doesn't
         # change across turns within a session). Each turn's
         # ``_build_env_and_dir`` copies ``self._extra_args`` so this
         # extension is read-only after init.
-        self._extra_args.extend(_resolve_pi_skill_args(skills_filter, bundle_dir))
+        effective_skills_filter = skills_filter if self._launch_options.native_skills else "none"
+        self._skills_filter = effective_skills_filter
+        self._extra_args.extend(_resolve_pi_skill_args(effective_skills_filter, bundle_dir))
         # Set by Session._wire_sdk_executor().
         self._tool_executor: ToolExecutor | None = None
 
@@ -1802,6 +2050,12 @@ class PiExecutor(Executor):
 
         self._session_states: dict[str, _PiSessionState] = {}
         self._tool_server: _ToolServer | None = None
+        self._onih_session_store = None
+        if self._launch_options.canonical_rebuild:
+            assert self._launch_options.session_dir is not None
+            from omnigent.onih_pi_session_store import OnihPiSessionStore
+
+            self._onih_session_store = OnihPiSessionStore(self._launch_options.session_dir)
 
     def supports_streaming(self) -> bool:
         return True
@@ -1846,6 +2100,8 @@ class PiExecutor(Executor):
         state = self._session_states.pop(session_key, None)
         if state is not None and state.rpc is not None:
             await state.rpc.close()
+        if self._onih_session_store is not None:
+            self._onih_session_store.release(session_key)
 
     async def interrupt_session(self, session_key: str) -> bool:
         state = self._session_states.get(session_key)
@@ -1868,6 +2124,51 @@ class PiExecutor(Executor):
             logger.debug("PiExecutor: session close after interrupt failed: %s", exc)
             return False
 
+    async def compact_session(self, session_key: str) -> _JsonObject:
+        """Run Pi's native compactor and return its canonical recovery payload."""
+        state = self._session_states.get(session_key)
+        if state is None or state.rpc is None:
+            raise RuntimeError("no live Pi process for this conversation")
+        rpc = state.rpc
+        command_id = f"compact_{session_key}"
+        await rpc.send_command({"type": "compact", "id": command_id})
+        while True:
+            line = await rpc.read_line(timeout=180.0)
+            if line is None:
+                raise RuntimeError("Pi exited during compaction")
+            event = json.loads(line)
+            if event.get("type") != "compaction_end":
+                continue
+            result = event.get("result")
+            if not isinstance(result, dict):
+                if event.get("aborted"):
+                    raise RuntimeError("Pi compaction was aborted")
+                raise RuntimeError(str(event.get("errorMessage", "Pi compaction failed")))
+            await rpc.send_command({"type": "get_messages", "id": f"messages_{command_id}"})
+            while True:
+                messages_line = await rpc.read_line(timeout=15.0)
+                if messages_line is None:
+                    raise RuntimeError("Pi exited while exporting compacted context")
+                messages_event = json.loads(messages_line)
+                if (
+                    messages_event.get("type") != "response"
+                    or messages_event.get("command") != "get_messages"
+                ):
+                    continue
+                if not messages_event.get("success", True):
+                    raise RuntimeError(str(messages_event.get("error", "Pi get_messages failed")))
+                data = messages_event.get("data")
+                messages = data.get("messages") if isinstance(data, dict) else None
+                return {
+                    "summary": result.get("summary", ""),
+                    "total_tokens": result.get("estimatedTokensAfter", 0),
+                    "compacted_messages": _pi_messages_to_canonical(messages),
+                    "reason": event.get("reason"),
+                    "first_kept_entry_id": result.get("firstKeptEntryId"),
+                    "tokens_before": result.get("tokensBefore"),
+                    "will_retry": bool(event.get("willRetry", False)),
+                }
+
     async def close(self) -> None:
         keys = list(self._session_states.keys())
         for key in keys:
@@ -1875,6 +2176,8 @@ class PiExecutor(Executor):
         if self._tool_server is not None:
             await self._tool_server.stop()
             self._tool_server = None
+        if self._onih_session_store is not None:
+            self._onih_session_store.close()
 
     def _session_key(self, messages: list[Message]) -> str:
         if messages:
@@ -1994,7 +2297,7 @@ class PiExecutor(Executor):
 
     async def _ensure_tool_server(self, tools: list[ToolSpec]) -> int | None:
         """Start the TCP tool server if there are Omnigent tools to bridge."""
-        if not tools:
+        if not tools and not self._launch_options.isolated_resources:
             return None
         if self._tool_server is None:
             self._tool_server = _ToolServer()
@@ -2064,28 +2367,72 @@ class PiExecutor(Executor):
 
         if self._gateway:
             effective_model = model
+            api_key = self._databricks_token
+            if self._launch_options.isolated_resources:
+                if not self._gateway_auth_command:
+                    raise OSError(
+                        "isolated Pi gateway configuration requires a credential helper command"
+                    )
+                api_key = f"!{self._gateway_auth_command}"
             models_json = _build_models_json(
                 self._gateway_workspace_url or self._databricks_host,
-                self._databricks_token,
+                api_key,
                 self._base_urls_override,
                 model=effective_model,
                 catalog_models=self._gateway_model_entries or (),
                 model_wire_apis=self._gateway_model_wire_apis,
                 openai_wire_api=self._openai_wire_api,
             )
-            models_path = os.path.join(tmp_dir, "models.json")
-            with open(models_path, "w") as f:
-                json.dump(models_json, f)
-            env["PI_CODING_AGENT_DIR"] = tmp_dir
-            # Gateway mode relocates Pi's agent root — copy the user's global
-            # settings (extensions, packages, …) and symlink install trees so
-            # ``pi install`` packages still resolve. See #1423.
-            from omnigent.inner.pi_settings import prepare_managed_pi_agent_dir
+            if self._launch_options.isolated_resources:
+                models_json = _build_onih_models_json(
+                    models_json,
+                    host=self._gateway_workspace_url or self._databricks_host,
+                    api_key=api_key,
+                )
+            config_dir = pathlib.Path(tmp_dir)
+            if self._launch_options.isolated_resources:
+                fingerprint_payload = {
+                    "models": models_json,
+                    "settings": self._retry_policy.pi.settings(),
+                    "isolation": True,
+                    "bridge_protocol": 1,
+                    "session_format": 3,
+                }
+                fingerprint = hashlib.sha256(
+                    json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")
+                ).hexdigest()
+                if self._launch_options.session_dir is not None:
+                    config_root = self._launch_options.session_dir.parent / "config"
+                else:
+                    from omnigent.process_logging import data_dir
 
-            prepare_managed_pi_agent_dir(
-                pathlib.Path(tmp_dir),
-                overlay=self._retry_policy.pi.settings(),
-            )
+                    config_root = data_dir() / "pi" / "isolated" / "config"
+                from omnigent.onih_pi_session_store import ensure_shared_pi_config
+
+                models_content = json.dumps(models_json, indent=2, sort_keys=True) + "\n"
+                settings_content = (
+                    json.dumps(self._retry_policy.pi.settings(), indent=2, sort_keys=True) + "\n"
+                )
+                config_dir = ensure_shared_pi_config(
+                    config_root,
+                    fingerprint,
+                    {
+                        "models.json": models_content,
+                        "settings.json": settings_content,
+                    },
+                )
+            else:
+                models_path = config_dir / "models.json"
+                models_path.write_text(json.dumps(models_json), encoding="utf-8")
+                models_path.chmod(0o600)
+                # Ordinary Pi preserves ambient settings and installed packages.
+                from omnigent.inner.pi_settings import prepare_managed_pi_agent_dir
+
+                prepare_managed_pi_agent_dir(
+                    config_dir,
+                    overlay=self._retry_policy.pi.settings(),
+                )
+            env["PI_CODING_AGENT_DIR"] = str(config_dir)
 
         # Pi natively supports retry config via ``.pi/settings.json``
         # (see ``RetryPolicy.pi.settings()`` for schema). On the non-gateway
@@ -2115,14 +2462,26 @@ class PiExecutor(Executor):
                     json.dump(retry_settings, f, indent=2)
 
         # Generate the Omnigent tool bridge extension if tools are available.
-        if tools and tool_server_port is not None:
+        if (tools or self._launch_options.isolated_resources) and tool_server_port is not None:
             if tool_server_token is None:
                 # A port without a token would spawn the bridge
                 # unauthenticated; fail loud instead.
                 raise ValueError("tool_server_token is required when tool_server_port is set")
             ext_path = os.path.join(tmp_dir, "omnigent_tools.js")
             with open(ext_path, "w") as f:
-                f.write(_generate_extension_js(tool_server_port, tools, tool_server_token))
+                context_file = (
+                    pathlib.Path(tmp_dir) / "turn_context.json"
+                    if self._launch_options.isolated_resources
+                    else None
+                )
+                f.write(
+                    _generate_extension_js(
+                        tool_server_port,
+                        tools,
+                        tool_server_token,
+                        context_file=context_file,
+                    )
+                )
             extra_args.extend(["--extension", ext_path])
             # Allowlist the bridged tool names. ``--no-tools`` (set in
             # __init__) disables every tool by default in pi 0.68+;
@@ -2157,11 +2516,15 @@ class PiExecutor(Executor):
         system_prompt: str,
         model: str | None,
         tools: list[ToolSpec],
+        canonical_items: list[dict[str, Any]] | None = None,
     ) -> _PiRpcSession:
         """Get or create a Pi RPC subprocess for the given session."""
         state = self._session_states.setdefault(session_key, _PiSessionState())
 
         effective_model = model
+        tool_schema_fingerprint = hashlib.sha256(
+            json.dumps(tools, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
 
         if (
             state.rpc is not None
@@ -2169,6 +2532,7 @@ class PiExecutor(Executor):
             and state.rpc.process.returncode is None
             and state.system_prompt == system_prompt
             and state.model == effective_model
+            and state.tool_schema_fingerprint == tool_schema_fingerprint
         ):
             return state.rpc
 
@@ -2193,14 +2557,84 @@ class PiExecutor(Executor):
         # the model from our custom provider in models.json.
         pi_model: str | None
         if self._gateway and effective_model:
-            provider = _pi_provider_for_model(
-                effective_model,
-                wire_catalog.get(effective_model.lower()),
-                generic_openai_wire_api=self._generic_openai_wire_api(),
-            )
+            if self._launch_options.isolated_resources:
+                wire_apis = wire_catalog.get(effective_model.lower(), frozenset())
+                provider = _onih_pi_provider_for_model(effective_model, wire_apis)
+            else:
+                provider = _pi_provider_for_model(
+                    effective_model,
+                    wire_catalog.get(effective_model.lower()),
+                    generic_openai_wire_api=self._generic_openai_wire_api(),
+                )
             pi_model = f"{provider}/{effective_model}"
         else:
             pi_model = effective_model
+
+        session_id: str | None = None
+        launch_options = self._launch_options
+        if launch_options.persistent_session and launch_options.session_dir is not None:
+            digest = hashlib.sha256(session_key.encode("utf-8")).hexdigest()
+            launch_options = replace(
+                launch_options,
+                session_dir=launch_options.session_dir / digest / "active",
+            )
+        if launch_options.canonical_rebuild:
+            import uuid
+
+            session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"omnigent:{session_key}"))
+        if self._onih_session_store is not None:
+            if canonical_items is None:
+                raise ValueError("persistent Onih Pi startup requires canonical history")
+            completed_items = list(canonical_items)
+            if (
+                completed_items
+                and completed_items[-1].get("type") == "message"
+                and completed_items[-1].get("role") == "user"
+            ):
+                completed_items.pop()
+            staging_dir = self._onih_session_store.rebuild(
+                conversation_id=session_key,
+                pi_session_id=session_id or "",
+                items=completed_items,
+                workspace=pathlib.Path(self._cwd or os.getcwd()),
+                provider="omnigent",
+                model=effective_model or "",
+            )
+            validator = _PiRpcSession()
+            try:
+                await validator.start(
+                    self._pi_launch_path,
+                    env=env,
+                    cwd=self._cwd,
+                    model=pi_model or None,
+                    system_prompt=system_prompt or None,
+                    extra_args=extra_args or None,
+                    launch_options=replace(launch_options, session_dir=staging_dir),
+                    session_id=session_id,
+                )
+                validation_id = f"validate_{session_id}"
+                await validator.send_command({"type": "get_state", "id": validation_id})
+                while True:
+                    validation_line = await validator.read_line(timeout=15.0)
+                    if validation_line is None:
+                        raise RuntimeError("Pi exited while validating reconstructed session")
+                    validation_event = json.loads(validation_line)
+                    if validation_event.get("type") != "response":
+                        continue
+                    if validation_event.get("command") != "get_state":
+                        continue
+                    if not validation_event.get("success", True):
+                        raise RuntimeError(
+                            str(validation_event.get("error", "Pi rejected reconstructed session"))
+                        )
+                    break
+            except BaseException:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                raise
+            finally:
+                await validator.close()
+            active_dir = self._onih_session_store.activate(session_key, staging_dir)
+            launch_options = replace(launch_options, session_dir=active_dir)
 
         await rpc.start(
             self._pi_launch_path,
@@ -2209,11 +2643,14 @@ class PiExecutor(Executor):
             model=pi_model or None,
             system_prompt=system_prompt or None,
             extra_args=extra_args or None,
+            launch_options=launch_options,
+            session_id=session_id,
         )
         state.rpc = rpc
         state.system_prompt = system_prompt
         state.model = effective_model
-        state._has_sent_prompt = False
+        state.tool_schema_fingerprint = tool_schema_fingerprint
+        state._has_sent_prompt = self._onih_session_store is not None
         return rpc
 
     async def run_turn(
@@ -2236,11 +2673,36 @@ class PiExecutor(Executor):
         session_key = self._session_key(messages)
         model = await self._resolve_model(config)
 
+        raw_canonical_items = (config.extra if config is not None else {}).get("canonical_input")
+        canonical_items = (
+            [item for item in raw_canonical_items if isinstance(item, dict)]
+            if isinstance(raw_canonical_items, list)
+            else []
+        )
+        launch_system_prompt = system_prompt
         try:
-            rpc = await self._ensure_rpc(session_key, system_prompt, model, tools)
+            rpc = await self._ensure_rpc(
+                session_key,
+                launch_system_prompt,
+                model,
+                tools,
+                canonical_items=canonical_items,
+            )
         except Exception as exc:  # noqa: BLE001 — executor boundary surfaces startup errors as ExecutorError
             yield ExecutorError(message=f"Failed to start Pi: {exc}")
             return
+
+        if self._launch_options.isolated_resources and rpc._tmp_dir is not None:
+            context_path = pathlib.Path(rpc._tmp_dir) / "turn_context.json"
+            context_path.write_text(
+                json.dumps(
+                    {
+                        "turn_id": (config.extra if config is not None else {}).get("turn_id"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            context_path.chmod(0o600)
 
         # Build the prompt to send to Pi.  On the first turn of a new Pi
         # process, if there are prior messages (e.g. parent history passed
@@ -2275,7 +2737,12 @@ class PiExecutor(Executor):
                 return
         else:
             message = prompt
-        cmd_id = f"turn_{id(messages)}"
+        configured_turn_id = (config.extra if config is not None else {}).get("turn_id")
+        cmd_id = (
+            configured_turn_id
+            if isinstance(configured_turn_id, str) and configured_turn_id
+            else f"turn_{id(messages)}"
+        )
         command: CodexEvent = {"type": "prompt", "message": message, "id": cmd_id}
         if images:
             command["images"] = images
@@ -2360,9 +2827,12 @@ class PiExecutor(Executor):
             if event_type == "tool_execution_start":
                 tool_name = event.get("toolName", "unknown")
                 args = event.get("args", {})
+                tool_call_id = event.get("toolCallId")
+                metadata = {"call_id": tool_call_id} if isinstance(tool_call_id, str) else {}
                 yield ToolCallRequest(
                     name=tool_name,
                     args=args if isinstance(args, dict) else {},
+                    metadata=metadata,
                 )
                 continue
 
@@ -2431,11 +2901,86 @@ class PiExecutor(Executor):
                 else:
                     status = ToolCallStatus.SUCCESS
 
+                tool_call_id = event.get("toolCallId")
+                metadata = {"call_id": tool_call_id} if isinstance(tool_call_id, str) else {}
                 yield ToolCallComplete(
                     name=tool_name,
                     status=status,
                     result=result,
                     error=result_str if (is_error or is_blocked) else "",
+                    metadata=metadata,
+                )
+                continue
+
+            if event_type == "compaction_start":
+                yield CompactionStarted()
+                continue
+
+            if event_type == "compaction_end":
+                result = event.get("result")
+                if not isinstance(result, dict):
+                    if event.get("aborted"):
+                        continue
+                    error_message = event.get("errorMessage")
+                    yield ExecutorError(
+                        message=(
+                            error_message
+                            if isinstance(error_message, str) and error_message
+                            else "Pi compaction failed"
+                        )
+                    )
+                    return
+                summary = result.get("summary")
+                if not isinstance(summary, str) or not summary:
+                    yield ExecutorError(message="Pi compaction returned no recovery summary")
+                    return
+                raw_tokens = result.get("estimatedTokensAfter", 0)
+                token_count = raw_tokens if isinstance(raw_tokens, int) else 0
+                messages_id = f"compaction_messages_{cmd_id}"
+                await rpc.send_command({"type": "get_messages", "id": messages_id})
+                compacted_messages: list[_JsonObject] | None = None
+                while True:
+                    state_line = await rpc.read_line(timeout=15.0)
+                    if state_line is None:
+                        raise RuntimeError("Pi exited while exporting compacted context")
+                    state_event = json.loads(state_line)
+                    if state_event.get("type") != "response":
+                        continue
+                    if state_event.get("command") != "get_messages":
+                        continue
+                    if not state_event.get("success", True):
+                        raise RuntimeError(str(state_event.get("error", "Pi get_messages failed")))
+                    state_data = state_event.get("data")
+                    raw_messages = (
+                        state_data.get("messages") if isinstance(state_data, dict) else None
+                    )
+                    compacted_messages = _pi_messages_to_canonical(raw_messages)
+                    break
+                raw_tokens_before = result.get("tokensBefore")
+                first_kept_entry_id = result.get("firstKeptEntryId")
+                yield CompactionComplete(
+                    summary=summary,
+                    token_count=token_count,
+                    model=model,
+                    compacted_messages=compacted_messages,
+                    reason=event.get("reason") if isinstance(event.get("reason"), str) else None,
+                    first_kept_entry_id=(
+                        first_kept_entry_id if isinstance(first_kept_entry_id, str) else None
+                    ),
+                    tokens_before=(
+                        raw_tokens_before if isinstance(raw_tokens_before, int) else None
+                    ),
+                    will_retry=bool(event.get("willRetry", False)),
+                    execution_generation=(
+                        (config.extra if config is not None else {}).get("execution_generation")
+                        if isinstance(
+                            (config.extra if config is not None else {}).get(
+                                "execution_generation"
+                            ),
+                            int,
+                        )
+                        else None
+                    ),
                 )
                 continue
 
