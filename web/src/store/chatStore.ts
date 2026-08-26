@@ -2842,11 +2842,14 @@ const heldStreamSlots = new Map<string, StreamSlot>();
 async function acquireStreamSlot(id: string): Promise<boolean> {
   if (heldStreamSlots.has(id)) return true; // rebinding a still-slotted stream
   let slot = await getStreamSlotManager().tryAcquire();
+  // A deferred first message exists only in this tab until worktree creation
+  // finishes. Keep its stream alive so the ready event can dispatch it.
+  const protectedConversationIds = new Set(pendingInitialPrompts.keys());
   // Inherently sequential: each iteration must fully release a reclaimed slot
   // (so the freed lock is observable) before re-checking, or we'd over-evict.
   /* eslint-disable no-await-in-loop */
   while (slot === null) {
-    const evictedId = conversationRegistry.evictLruEvictable(id);
+    const evictedId = conversationRegistry.evictLruEvictable(id, protectedConversationIds);
     if (evictedId === null) break;
     const evictedSlot = heldStreamSlots.get(evictedId);
     if (evictedSlot !== undefined) {

@@ -11888,6 +11888,24 @@ describe("chatStore — origin-wide stream slots", () => {
     expect(useChatStore.getState().streamBudgetExceeded).toBe(false);
   });
 
+  it("keeps a background stream alive while its initial prompt waits for a worktree", async () => {
+    const slots = makeFakeSlotManager({ capacity: 2 });
+    setStreamSlotManagerForTest(slots);
+    for (const id of ["conv_waiting", "conv_b", "conv_c"]) seedSession(id, []);
+
+    await useChatStore.getState().switchTo("conv_waiting");
+    setPendingInitialPrompt("conv_waiting", { text: "start after worktree", skill: null });
+    await useChatStore.getState().switchTo("conv_b");
+    await useChatStore.getState().switchTo("conv_c");
+
+    // conv_waiting is the LRU background entry, but its deferred message exists
+    // only in this tab. Reclaim conv_b instead so the ready event can send it.
+    expect(conversationRegistry.has("conv_waiting")).toBe(true);
+    expect(conversationRegistry.has("conv_b")).toBe(false);
+    expect(conversationRegistry.has("conv_c")).toBe(true);
+    expect(slots.heldByTab()).toBe(2);
+  });
+
   it("opens the active conversation over budget, with the banner, when a fresh tab finds every slot held by others", async () => {
     // Every slot held by other tabs; this fresh tab has nothing of its own to
     // reclaim. The conversation must still open (you have to be able to use

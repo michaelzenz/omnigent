@@ -222,14 +222,14 @@ export class ConversationRegistry {
    * (leaving the new conversation cold) or opens over budget.
    *
    * Never evicts: the conversation on screen, `exemptId` (the one being bound —
-   * disposing it would hand back a dead entry), or an entry holding work the
-   * server has no record of yet (`hasUnsentWork` — evicting that loses the
-   * user's message). When nothing is evictable, returns `null` and the caller
-   * decides what to do with a saturated origin.
+   * disposing it would hand back a dead entry), an id in `protectedIds`, or an
+   * entry holding work the server has no record of yet (`hasUnsentWork`). When
+   * nothing is evictable, returns `null` and the caller decides what to do with
+   * a saturated origin.
    */
-  evictLruEvictable(exemptId?: string): string | null {
+  evictLruEvictable(exemptId?: string, protectedIds?: ReadonlySet<string>): string | null {
     for (const [id, entry] of this.entries) {
-      if (id === this.activeId || id === exemptId) continue;
+      if (id === this.activeId || id === exemptId || protectedIds?.has(id)) continue;
       if (hasUnsentWork(entry.getState())) continue;
       this.entries.delete(id);
       entry.dispose();

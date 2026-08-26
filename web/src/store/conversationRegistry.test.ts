@@ -171,6 +171,15 @@ describe("ConversationRegistry", () => {
     expect(registry.has("conv_d")).toBe(true);
   });
 
+  it("never evicts an explicitly protected conversation", () => {
+    const a = registry.acquire("conv_a");
+    registry.acquire("conv_b");
+
+    expect(registry.evictLruEvictable(undefined, new Set(["conv_a"]))).toBe("conv_b");
+    expect(registry.has("conv_a")).toBe(true);
+    expect(a.disposed).toBe(false);
+  });
+
   it("never evicts an entry holding a send the server has not acknowledged", () => {
     // The one case where eviction is NOT equivalent to a cold load: until the
     // POST returns, the message exists nowhere but this tab. Skip it, take next.
