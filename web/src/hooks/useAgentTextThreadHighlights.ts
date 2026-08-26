@@ -13,14 +13,6 @@ interface HighlightConstructor {
   new (...ranges: Range[]): unknown;
 }
 
-export interface AgentTextThreadLayoutAnchor {
-  threadId: string;
-  anchorY: number;
-}
-
-export const AGENT_TEXT_THREAD_LAYOUT_EVENT = "omnigent:agent-text-thread-layout";
-export const AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT = "omnigent:agent-text-thread-layout-request";
-
 const BASE = "omnigent-agent-thread";
 const ACTIVE = "omnigent-agent-thread-active";
 const PENDING = "omnigent-agent-thread-pending";
@@ -90,11 +82,6 @@ export function useAgentTextThreadHighlights({
       const base: Range[] = [];
       const active: Range[] = [];
       const resolved: { thread: AgentTextThread; range: Range }[] = [];
-      const layout: AgentTextThreadLayoutAnchor[] = [];
-      const scrollElement = container.querySelector<HTMLElement>(
-        ".transcript-hide-native-scrollbar",
-      );
-      const scrollRect = scrollElement?.getBoundingClientRect();
 
       for (const thread of threads) {
         const root = rootFor(container, thread.source_item_id);
@@ -104,30 +91,14 @@ export function useAgentTextThreadHighlights({
         resolved.push({ thread, range });
         if (thread.id === activeThreadId) active.push(range);
         else base.push(range);
-        const rect = Array.from(range.getClientRects()).find(
-          (candidate) => candidate.width > 0 && candidate.height > 0,
-        );
-        if (rect && scrollElement && scrollRect) {
-          layout.push({
-            threadId: thread.id,
-            anchorY: rect.top - scrollRect.top + scrollElement.scrollTop,
-          });
-        }
       }
 
       const pending: Range[] = [];
-      let pendingAnchorY: number | null = null;
       if (pendingAnchor) {
         const root = rootFor(container, pendingAnchor.conversation_item_id);
         const range = root ? resolveAgentTextCommentRange(root, pendingAnchor) : null;
         if (range) {
           pending.push(range);
-          const rect = Array.from(range.getClientRects()).find(
-            (candidate) => candidate.width > 0 && candidate.height > 0,
-          );
-          if (rect && scrollElement && scrollRect) {
-            pendingAnchorY = rect.top - scrollRect.top + scrollElement.scrollTop;
-          }
         }
       }
 
@@ -135,17 +106,6 @@ export function useAgentTextThreadHighlights({
       api.highlights.set(BASE, new api.Highlight(...base));
       api.highlights.set(ACTIVE, new api.Highlight(...active));
       api.highlights.set(PENDING, new api.Highlight(...pending));
-      window.dispatchEvent(
-        new CustomEvent(AGENT_TEXT_THREAD_LAYOUT_EVENT, {
-          detail: {
-            anchors: layout,
-            pendingAnchorY,
-            chatScrollHeight: scrollElement?.scrollHeight ?? 0,
-            chatClientHeight: scrollElement?.clientHeight ?? 0,
-            chatScrollTop: scrollElement?.scrollTop ?? 0,
-          },
-        }),
-      );
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(rebuild);
@@ -153,15 +113,10 @@ export function useAgentTextThreadHighlights({
     rebuild();
     const observer = new MutationObserver(schedule);
     observer.observe(container, { childList: true, subtree: true, characterData: true });
-    const scrollElement = container.querySelector<HTMLElement>(".transcript-hide-native-scrollbar");
-    scrollElement?.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
-    window.addEventListener(AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT, schedule);
     return () => {
       observer.disconnect();
-      scrollElement?.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
-      window.removeEventListener(AGENT_TEXT_THREAD_LAYOUT_REQUEST_EVENT, schedule);
       if (frame) cancelAnimationFrame(frame);
       rangesRef.current = [];
       api.highlights.delete(BASE);

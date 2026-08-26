@@ -7,11 +7,16 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { CheckIcon, Loader2Icon, RotateCcwIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  Loader2Icon,
+  RotateCcwIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { FilePathAwareMessageResponse } from "@/components/blocks/ChatMarkdown";
 import { Button } from "@/components/ui/button";
-import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
-import { useThreadedCommentLayout } from "@/hooks/useThreadedCommentLayout";
 import {
   useAgentTextThreads,
   useCreateAgentTextThread,
@@ -62,7 +67,6 @@ function ThreadDraftEditor({
   onBodyChange,
   onCancel,
   onSave,
-  top,
 }: {
   anchorText: string;
   body: string;
@@ -72,17 +76,11 @@ function ThreadDraftEditor({
   onBodyChange: (body: string) => void;
   onCancel: () => void;
   onSave: () => void;
-  top?: number;
 }) {
-  const positioned = top !== undefined;
   return (
     <div
       data-agent-thread-draft
-      style={positioned ? { position: "absolute", top, left: 12, right: 12 } : undefined}
-      className={cn(
-        "z-10 space-y-2 bg-background p-3",
-        positioned ? "rounded-lg border border-purple-400 shadow-sm" : "border-b border-border",
-      )}
+      className="z-10 space-y-2 rounded-lg border border-purple-400 bg-background p-3 shadow-sm"
     >
       <Quote text={anchorText} />
       <textarea
@@ -308,7 +306,6 @@ export function AgentTextThreadPanel({
     return result;
   }, [liveBlocks, threads]);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const isMobile = useIsMobileViewport();
   const processingCount = threads.reduce(
     (count, thread) =>
       count +
@@ -324,13 +321,20 @@ export function AgentTextThreadPanel({
       ).length,
     0,
   );
-  const responsePending = processingCount > 0;
-  const { positions, draftTop, canvasHeight, onScroll } = useThreadedCommentLayout(
-    threads,
-    scrollerRef,
-    ui.pendingAnchor !== null && view === "open",
-    responsePending,
-  );
+  const activeThreadIndex = threads.findIndex((thread) => thread.id === ui.activeCommentId);
+  const navigateThread = (direction: -1 | 1) => {
+    if (threads.length === 0) return;
+    const nextIndex =
+      activeThreadIndex === -1
+        ? direction === -1
+          ? threads.length - 1
+          : 0
+        : activeThreadIndex + direction;
+    const thread = threads[nextIndex];
+    if (thread) ui.activateComment(thread.id);
+  };
+  const canNavigatePrevious = threads.length > 0 && activeThreadIndex !== 0;
+  const canNavigateNext = threads.length > 0 && activeThreadIndex !== threads.length - 1;
 
   useEffect(() => {
     draftRequestIdRef.current = restoredDraftRequestIdRef.current ?? crypto.randomUUID();
@@ -350,10 +354,10 @@ export function AgentTextThreadPanel({
   }, [quoteDraft]);
 
   useEffect(() => {
-    if (!ui.pendingAnchor || (!isMobile && draftTop === null)) return;
+    if (!ui.pendingAnchor) return;
     const frame = requestAnimationFrame(() => draftRef.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
-  }, [draftTop, isMobile, ui.pendingAnchor]);
+  }, [ui.pendingAnchor]);
 
   const saveDraft = async () => {
     const anchor = ui.pendingAnchor;
@@ -362,8 +366,8 @@ export function AgentTextThreadPanel({
     const requestId = draftRequestIdRef.current;
     setError(null);
 
-    // Insert the optimistic card before consuming the draft so the first
-    // comment never collapses the canvas (and both synchronized scrollers) to 0.
+    // Start the request before closing the draft so its optimistic card
+    // replaces the editor without an empty intermediate state.
     const request = create.mutateAsync({
       ...anchor,
       client_request_id: requestId,
@@ -489,230 +493,236 @@ export function AgentTextThreadPanel({
           Resolved
         </Button>
       </div>
-      <div
-        ref={scrollerRef}
-        className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
-        data-agent-thread-scroller
-        onScroll={onScroll}
-        onClick={(event) => {
-          const target = event.target;
-          if (
-            !(target instanceof Element) ||
-            !target.closest("[data-agent-thread-card], [data-agent-thread-draft]")
-          ) {
-            ui.activateComment(null);
-          }
-        }}
-      >
-        {isMobile && ui.pendingAnchor && view === "open" && (
-          <ThreadDraftEditor
-            anchorText={ui.pendingAnchor.selected_text}
-            body={draftBody}
-            canEdit={canEdit}
-            isPending={create.isPending}
-            textareaRef={draftRef}
-            onBodyChange={ui.setDraftBody}
-            onCancel={ui.cancelDraft}
-            onSave={() => void saveDraft()}
-          />
-        )}
-        {query.isError ? (
-          <div className="flex flex-col items-center gap-2 p-8 text-sm text-destructive">
-            Could not load threaded replies.
-            <Button size="xs" variant="ghost" onClick={() => query.refetch()}>
-              Retry
-            </Button>
-          </div>
-        ) : query.isLoading ? (
-          <div className="flex justify-center p-8 text-sm text-muted-foreground">Loading…</div>
-        ) : threads.length === 0 && !ui.pendingAnchor ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            {view === "open"
-              ? "Select completed agent text and choose Comment."
-              : "No resolved threads."}
-          </div>
-        ) : (
-          <div
-            className={cn(
-              "relative",
-              (isMobile || (positions.size === 0 && draftTop === null)) && "space-y-3 p-3",
-            )}
-            style={!isMobile && canvasHeight > 0 ? { height: canvasHeight } : undefined}
-            data-agent-thread-canvas
-          >
-            {!isMobile && ui.pendingAnchor && view === "open" && draftTop !== null && (
-              <ThreadDraftEditor
-                anchorText={ui.pendingAnchor.selected_text}
-                body={draftBody}
-                canEdit={canEdit}
-                isPending={create.isPending}
-                textareaRef={draftRef}
-                onBodyChange={ui.setDraftBody}
-                onCancel={ui.cancelDraft}
-                onSave={() => void saveDraft()}
-                top={draftTop}
-              />
-            )}
-            {threads.map((thread) => {
-              const selected = ui.activeCommentId === thread.id;
-              const answer = liveAnswers.get(thread.id) ?? assistantText(thread);
-              const isStreaming =
-                thread.response_id !== null &&
-                activeResponse?.responseId === thread.response_id &&
-                activeResponse.state === "streaming";
-              const position = positions.get(thread.id);
-              const hasPendingTurns = thread.turns.some(
-                (turn) =>
-                  turn.state === "initializing" ||
-                  turn.state === "queued" ||
-                  turn.state === "submitting" ||
-                  turn.state === "running",
-              );
-              return (
-                <article
-                  key={thread.id}
-                  data-agent-thread-card={thread.id}
-                  style={
-                    !isMobile && position
-                      ? { position: "absolute", top: position.top, left: 12, right: 12 }
-                      : undefined
-                  }
-                  className={cn(
-                    "space-y-2 rounded-lg border bg-card p-3 text-sm",
-                    selected &&
-                      "flex max-h-[min(70vh,720px)] flex-col overflow-hidden border-purple-500 bg-purple-500/5",
-                  )}
-                  onClick={() => ui.activateComment(thread.id)}
-                >
-                  <Quote text={thread.selected_text} />
-                  <p className="whitespace-pre-wrap">{thread.user_comment}</p>
-                  <div
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollerRef}
+          className={cn(
+            "h-full overflow-y-auto [overflow-anchor:none]",
+            threads.length > 0 && "pb-16",
+          )}
+          data-agent-thread-scroller
+          onClick={(event) => {
+            const target = event.target;
+            if (
+              !(target instanceof Element) ||
+              !target.closest("[data-agent-thread-card], [data-agent-thread-draft]")
+            ) {
+              ui.activateComment(null);
+            }
+          }}
+        >
+          {query.isError ? (
+            <div className="flex flex-col items-center gap-2 p-8 text-sm text-destructive">
+              Could not load threaded replies.
+              <Button size="xs" variant="ghost" onClick={() => query.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : query.isLoading ? (
+            <div className="flex justify-center p-8 text-sm text-muted-foreground">Loading…</div>
+          ) : threads.length === 0 && !ui.pendingAnchor ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              {view === "open"
+                ? "Select completed agent text and choose Comment."
+                : "No resolved threads."}
+            </div>
+          ) : (
+            <div className="space-y-3 p-3" data-agent-thread-canvas>
+              {ui.pendingAnchor && view === "open" && (
+                <ThreadDraftEditor
+                  anchorText={ui.pendingAnchor.selected_text}
+                  body={draftBody}
+                  canEdit={canEdit}
+                  isPending={create.isPending}
+                  textareaRef={draftRef}
+                  onBodyChange={ui.setDraftBody}
+                  onCancel={ui.cancelDraft}
+                  onSave={() => void saveDraft()}
+                />
+              )}
+              {threads.map((thread) => {
+                const selected = ui.activeCommentId === thread.id;
+                const answer = liveAnswers.get(thread.id) ?? assistantText(thread);
+                const isStreaming =
+                  thread.response_id !== null &&
+                  activeResponse?.responseId === thread.response_id &&
+                  activeResponse.state === "streaming";
+                const hasPendingTurns = thread.turns.some(
+                  (turn) =>
+                    turn.state === "initializing" ||
+                    turn.state === "queued" ||
+                    turn.state === "submitting" ||
+                    turn.state === "running",
+                );
+                return (
+                  <article
+                    key={thread.id}
+                    data-agent-thread-card={thread.id}
                     className={cn(
-                      "border-t border-border pt-2",
-                      selected && "min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]",
+                      "space-y-2 rounded-lg border bg-card p-3 text-sm",
+                      selected &&
+                        "flex max-h-[min(70vh,720px)] flex-col overflow-hidden border-purple-500 bg-purple-500/5",
                     )}
-                    onMouseUp={selected ? captureThreadSelection : undefined}
+                    onClick={() => ui.activateComment(thread.id)}
                   >
-                    {thread.state === "initializing" ? (
-                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2Icon className="size-3 animate-spin" />
-                        Initializing…
-                      </p>
-                    ) : thread.state === "failed" ? (
-                      <div className="space-y-2">
-                        <p className="text-xs text-destructive">
-                          {thread.failure_message ?? "Could not send this comment."}
+                    <Quote text={thread.selected_text} />
+                    <p className="whitespace-pre-wrap">{thread.user_comment}</p>
+                    <div
+                      className={cn(
+                        "border-t border-border pt-2",
+                        selected && "min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]",
+                      )}
+                      onMouseUp={selected ? captureThreadSelection : undefined}
+                    >
+                      {thread.state === "initializing" ? (
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2Icon className="size-3 animate-spin" />
+                          Initializing…
                         </p>
-                        {canEdit && (
+                      ) : thread.state === "failed" ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-destructive">
+                            {thread.failure_message ?? "Could not send this comment."}
+                          </p>
+                          {canEdit && (
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                retry.mutate({ id: thread.id });
+                              }}
+                            >
+                              <RotateCcwIcon className="size-3" />
+                              Retry
+                            </Button>
+                          )}
+                        </div>
+                      ) : isStreaming ? (
+                        <div className="space-y-2">
+                          {answer && (
+                            <FilePathAwareMessageResponse>{answer}</FilePathAwareMessageResponse>
+                          )}
+                          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2Icon className="size-3 animate-spin" />
+                            Agent is answering…
+                          </p>
+                        </div>
+                      ) : thread.state === "queued" ? (
+                        <p className="text-xs text-muted-foreground">
+                          Queued behind the current response…
+                        </p>
+                      ) : thread.state === "running" && !answer ? (
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2Icon className="size-3 animate-spin" />
+                          Agent is answering…
+                        </p>
+                      ) : selected ? (
+                        <div data-agent-thread-response={thread.id}>
+                          <FilePathAwareMessageResponse>
+                            {answer || "Agent answered."}
+                          </FilePathAwareMessageResponse>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Agent answered · Click to expand
+                        </p>
+                      )}
+                      {selected &&
+                        thread.turns.map((turn) => {
+                          const turnAnswer = liveAnswers.get(turn.id) ?? assistantText(turn);
+                          const turnStreaming =
+                            turn.response_id !== null &&
+                            activeResponse?.responseId === turn.response_id &&
+                            activeResponse.state === "streaming";
+                          return (
+                            <ThreadTurnView
+                              key={turn.id}
+                              turn={turn}
+                              answer={turnAnswer}
+                              isStreaming={turnStreaming}
+                              canEdit={canEdit}
+                              retrying={retryTurn.isPending}
+                              onRetry={() => retryTurn.mutate(turn.id)}
+                            />
+                          );
+                        })}
+                    </div>
+                    {canEdit && view === "open" && (
+                      <div className="flex justify-end gap-1">
+                        {thread.state === "answered" && !hasPendingTurns && (
                           <Button
                             size="xs"
                             variant="ghost"
                             onClick={(event) => {
                               event.stopPropagation();
-                              retry.mutate({ id: thread.id });
+                              resolve.mutate(
+                                { id: thread.id },
+                                { onSuccess: () => ui.activateComment(null) },
+                              );
                             }}
                           >
-                            <RotateCcwIcon className="size-3" />
-                            Retry
+                            <CheckIcon className="size-3" />
+                            Resolve
+                          </Button>
+                        )}
+                        {(thread.state === "failed" ||
+                          (thread.state === "queued" && thread.response_id === null)) && (
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label="Delete thread"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (ui.activeCommentId === thread.id) ui.activateComment(null);
+                              remove.mutate(thread.id);
+                            }}
+                          >
+                            <Trash2Icon className="size-3.5" />
                           </Button>
                         )}
                       </div>
-                    ) : isStreaming ? (
-                      <div className="space-y-2">
-                        {answer && (
-                          <FilePathAwareMessageResponse>{answer}</FilePathAwareMessageResponse>
-                        )}
-                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Loader2Icon className="size-3 animate-spin" />
-                          Agent is answering…
-                        </p>
-                      </div>
-                    ) : thread.state === "queued" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Queued behind the current response…
-                      </p>
-                    ) : thread.state === "running" && !answer ? (
-                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2Icon className="size-3 animate-spin" />
-                        Agent is answering…
-                      </p>
-                    ) : selected ? (
-                      <div data-agent-thread-response={thread.id}>
-                        <FilePathAwareMessageResponse>
-                          {answer || "Agent answered."}
-                        </FilePathAwareMessageResponse>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Agent answered · Click to expand
-                      </p>
                     )}
-                    {selected &&
-                      thread.turns.map((turn) => {
-                        const turnAnswer = liveAnswers.get(turn.id) ?? assistantText(turn);
-                        const turnStreaming =
-                          turn.response_id !== null &&
-                          activeResponse?.responseId === turn.response_id &&
-                          activeResponse.state === "streaming";
-                        return (
-                          <ThreadTurnView
-                            key={turn.id}
-                            turn={turn}
-                            answer={turnAnswer}
-                            isStreaming={turnStreaming}
-                            canEdit={canEdit}
-                            retrying={retryTurn.isPending}
-                            onRetry={() => retryTurn.mutate(turn.id)}
-                          />
-                        );
-                      })}
-                  </div>
-                  {canEdit && view === "open" && (
-                    <div className="flex justify-end gap-1">
-                      {thread.state === "answered" && !hasPendingTurns && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            resolve.mutate(
-                              { id: thread.id },
-                              { onSuccess: () => ui.activateComment(null) },
-                            );
-                          }}
-                        >
-                          <CheckIcon className="size-3" />
-                          Resolve
-                        </Button>
-                      )}
-                      {(thread.state === "failed" ||
-                        (thread.state === "queued" && thread.response_id === null)) && (
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="Delete thread"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (ui.activeCommentId === thread.id) ui.activateComment(null);
-                            remove.mutate(thread.id);
-                          }}
-                        >
-                          <Trash2Icon className="size-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                  {selected && canEdit && view === "open" && thread.state !== "failed" && (
-                    <FollowUpComposer
-                      value={followupBody}
-                      disabled={false}
-                      onChange={setFollowupBody}
-                      onSend={() => void sendFollowup(followupBody)}
-                    />
-                  )}
-                </article>
-              );
-            })}
+                    {selected && canEdit && view === "open" && thread.state !== "failed" && (
+                      <FollowUpComposer
+                        value={followupBody}
+                        disabled={false}
+                        onChange={setFollowupBody}
+                        onSend={() => void sendFollowup(followupBody)}
+                      />
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {threads.length > 0 && (
+          <div className="pointer-events-none absolute bottom-4 right-4 z-20 flex flex-col gap-1">
+            <Button
+              className="pointer-events-auto rounded-full bg-background shadow-sm"
+              size="icon"
+              type="button"
+              variant="outline"
+              aria-label="Previous comment"
+              title="Previous comment"
+              disabled={!canNavigatePrevious}
+              onClick={() => navigateThread(-1)}
+            >
+              <ChevronUpIcon className="size-4" />
+            </Button>
+            <Button
+              className="pointer-events-auto rounded-full bg-background shadow-sm"
+              size="icon"
+              type="button"
+              variant="outline"
+              aria-label="Next comment"
+              title="Next comment"
+              disabled={!canNavigateNext}
+              onClick={() => navigateThread(1)}
+            >
+              <ChevronDownIcon className="size-4" />
+            </Button>
           </div>
         )}
       </div>
