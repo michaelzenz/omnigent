@@ -4263,7 +4263,8 @@ def _publish_worktree_status(
     retains the reason so a reload still shows it.
 
     :param session_id: Session/conversation identifier.
-    :param stage: ``"creating"``, ``"ready"``, or ``"failed"``.
+    :param stage: ``"creating"``, ``"launching"``, ``"reacquiring"``,
+        ``"relocating"``, ``"ready"``, or ``"failed"``.
     :param branch: The branch being created.
     :param error: Failure detail when ``stage == "failed"``.
     """

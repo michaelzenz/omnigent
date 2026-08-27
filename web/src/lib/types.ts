@@ -558,7 +558,7 @@ export interface SandboxStatus {
  */
 export interface WorktreeStatus {
   /** Current creation or restore stage. */
-  stage: "creating" | "reacquiring" | "relocating" | "ready" | "failed";
+  stage: "creating" | "launching" | "reacquiring" | "relocating" | "ready" | "failed";
   /** The branch being created, e.g. `"feature/login"`. */
   branch?: string | null;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */

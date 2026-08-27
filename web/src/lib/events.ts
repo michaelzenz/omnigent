@@ -673,14 +673,15 @@ export interface SessionWorktreeLogEvent {
 /**
  * `session.worktree_status` — async git-worktree creation status
  * transition. Emitted when the background task starts (`creating`),
- * succeeds (`ready` — workspace patched, runner launching), or fails
- * (`failed` + `error`). A client connecting mid-creation seeds from
- * the session snapshot's `worktreeStatus` field.
+ * advances past git into the runner start (`launching`), succeeds
+ * (`ready` — runner launch settled), or fails (`failed` + `error`).
+ * A client connecting mid-creation seeds from the session snapshot's
+ * `worktreeStatus` field.
  */
 export interface SessionWorktreeStatusEvent {
   type: "session_worktree_status";
   conversationId: string;
-  stage: "creating" | "reacquiring" | "relocating" | "ready" | "failed";
+  stage: "creating" | "launching" | "reacquiring" | "relocating" | "ready" | "failed";
   branch?: string | null;
   /** Failure detail when `stage === "failed"`; `null` otherwise. */
   error?: string | null;

@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostHelloFrame,
+    HostLaunchRunnerFrame,
     HostRemoveWorktreeFrame,
     HostStatFrame,
     decode_host_frame,
@@ -92,7 +93,12 @@ async def register_worktree_host(
     """
     conns: list[HostConnection] = []
 
-    def _register(*, create_status: str = "ok", create_error: str | None = None) -> _HostCapture:
+    def _register(
+        *,
+        create_status: str = "ok",
+        create_error: str | None = None,
+        launch_gate: asyncio.Event | None = None,
+    ) -> _HostCapture:
         HostStore(db_uri).upsert_on_connect(_HOST_ID, "wt-host", RESERVED_USER_LOCAL)
         conn = app.state.host_registry.register(
             host_id=_HOST_ID,
@@ -144,6 +150,23 @@ async def register_worktree_host(
                                     "error": create_error,
                                 }
                             )
+                elif isinstance(frame, HostLaunchRunnerFrame):
+                    # Answer the runner launch so the background worktree
+                    # task's launch-result wait settles in test time
+                    # (unanswered, it rides its 10s timeout). An optional
+                    # gate holds the reply so a test can observe the
+                    # "launching" stage deterministically.
+                    if launch_gate is not None:
+                        await launch_gate.wait()
+                    fut = conn.pending_launches.pop(frame.request_id, None)
+                    if fut is not None and not fut.done():
+                        fut.set_result(
+                            {
+                                "status": "launched",
+                                "runner_id": "runner_from_host",
+                                "error": None,
+                            }
+                        )
                 elif isinstance(frame, HostRemoveWorktreeFrame):
                     cap.remove.append(frame)
                     fut = conn.pending_remove_worktrees.pop(frame.request_id, None)
@@ -435,3 +458,157 @@ async def test_session_persistence_failure_does_not_start_worktree(
     # are durable, so there is nothing to roll back in this failure window.
     assert cap.create == []
     assert cap.remove == []
+
+
+async def test_message_gate_reports_stage_specific_reason(
+    client: httpx.AsyncClient,
+) -> None:
+    """A message sent while the worktree task is in flight 409s with the
+    reason matching the ACTUAL stage — not a stale "still creating" claim
+    once the worktree exists and only the runner start remains."""
+    from omnigent.server.routes._sessions.common import _session_worktree_status_cache
+    from omnigent.server.schemas import WorktreeStatus
+
+    agent = await create_test_agent(client, name="wt-gate-agent")
+    resp = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert resp.status_code == 201, resp.text
+    session_id = resp.json()["id"]
+
+    cases = [
+        ("creating", "Worktree creation is still running; retry after it completes."),
+        ("launching", "the session runner is still starting"),
+        ("reacquiring", "The session workspace is being restored; retry after it completes."),
+        ("relocating", "The session workspace is being restored; retry after it completes."),
+        ("failed", "Worktree creation failed; resolve the failure before sending a message."),
+    ]
+    try:
+        for stage, expected in cases:
+            _session_worktree_status_cache[session_id] = WorktreeStatus.model_validate(
+                {"stage": stage, "branch": "feature/x"}
+            )
+            response = await client.post(
+                f"/v1/sessions/{session_id}/events",
+                json={
+                    "type": "message",
+                    "data": {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "hello"}],
+                    },
+                },
+            )
+            assert response.status_code == 409, (stage, response.text)
+            assert expected in response.text, (stage, response.text)
+    finally:
+        _session_worktree_status_cache.pop(session_id, None)
+
+
+async def test_worktree_status_advances_through_launching_stage(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """The snapshot stage moves creating → launching once the worktree
+    exists, so a blocked message send reports the true phase.
+
+    The fake host's launch reply is gated on an event the test releases
+    after asserting the 409, so the "launching" window is deterministic.
+    """
+    launch_gate = asyncio.Event()
+    register_worktree_host(launch_gate=launch_gate)
+    agent = await create_test_agent(client, name="wt-stages-agent")
+    resp = await _create_git_session(client, agent["id"], {"branch_name": "feature/stages"})
+    assert resp.status_code == 201, resp.text
+    session_id = resp.json()["id"]
+
+    saw_launching = False
+    for _ in range(200):
+        body = (await client.get(f"/v1/sessions/{session_id}")).json()
+        status = body.get("worktree_status")
+        if status is None:
+            break  # ready — cache evicted
+        if status.get("stage") == "launching":
+            saw_launching = True
+            break
+        if status.get("stage") == "failed":
+            pytest.fail(f"unexpected worktree failure: {status.get('error')}")
+        await asyncio.sleep(0.01)
+    assert saw_launching, "never observed the launching stage"
+
+    # The gate reports the honest phase while the runner starts.
+    response = await client.post(
+        f"/v1/sessions/{session_id}/events",
+        json={
+            "type": "message",
+            "data": {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}],
+            },
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "the session runner is still starting" in response.text
+
+    # Settles ready once the fake host is allowed to answer the launch frame.
+    launch_gate.set()
+    body = await _wait_for_worktree_settled(client, session_id)
+    assert body.get("worktree_status") is None
+
+
+async def test_runner_launch_crash_settles_worktree_status_failed(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash in the runner-launch phase settles the stage to failed.
+
+    Without the catch-all, an unexpected exception would kill the
+    background task mid-flight and strand the session at
+    creating/launching forever — every later message send would 409 with
+    a stale "still running" reason.
+    """
+    register_worktree_host()
+    agent = await create_test_agent(client, name="wt-launch-crash-agent")
+
+    async def _crash(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.orchestration._launch_runner_on_host",
+        _crash,
+    )
+    resp = await _create_git_session(
+        client, agent["id"], {"branch_name": "feature/crash", "base_branch": "main"}
+    )
+    assert resp.status_code == 201, resp.text
+    body = await _wait_for_worktree_settled(client, resp.json()["id"])
+    status = body["worktree_status"]
+    assert status["stage"] == "failed"
+    assert status["error"] == "internal error during runner launch"
+
+
+async def test_worktree_task_crash_settles_failed_via_dead_letter(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bug escaping the task's guarded blocks still settles the stage.
+
+    The spawn's done-callback dead-letters any uncaught exception into a
+    failed status — without it the session would sit at "creating"
+    forever, every later message send 409ing with a stale reason.
+    """
+    register_worktree_host()
+    agent = await create_test_agent(client, name="wt-deadletter-agent")
+
+    async def _crash(**kwargs: Any) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.orchestration._run_worktree_creation",
+        _crash,
+    )
+    resp = await _create_git_session(client, agent["id"], {"branch_name": "feature/dead"})
+    assert resp.status_code == 201, resp.text
+    body = await _wait_for_worktree_settled(client, resp.json()["id"])
+    status = body["worktree_status"]
+    assert status["stage"] == "failed"
+    assert status["error"] == "internal error during worktree creation"

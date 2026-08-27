@@ -785,11 +785,17 @@ def register_events_routes(
             and not retrying_auto_restore
             and body.type in ("message", _SLASH_COMMAND_TYPE, _RETRY_SESSION_TYPE)
         ):
-            detail = (
-                "Worktree creation is still running; retry after it completes."
-                if worktree_status.stage == "creating"
-                else "Worktree creation failed; resolve the failure before sending a message."
-            )
+            if worktree_status.stage == "creating":
+                detail = "Worktree creation is still running; retry after it completes."
+            elif worktree_status.stage == "launching":
+                detail = (
+                    "Worktree is ready; the session runner is still starting. "
+                    "Retry in a few seconds."
+                )
+            elif worktree_status.stage in ("reacquiring", "relocating"):
+                detail = "The session workspace is being restored; retry after it completes."
+            else:
+                detail = "Worktree creation failed; resolve the failure before sending a message."
             raise OmnigentError(detail, code=ErrorCode.CONFLICT)
         if body.type in ("message", _SLASH_COMMAND_TYPE, _RETRY_SESSION_TYPE):
             if retrying_auto_restore:
