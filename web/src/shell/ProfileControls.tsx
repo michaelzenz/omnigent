@@ -432,7 +432,6 @@ function ManageProfilesDialog({
         onOpenChange={setCreateOpen}
         onCreate={(input) => void addProfile(input)}
         showMcpServers={false}
-        showHarnessModel={false}
         title="Add profile"
         submitLabel={create.isPending ? "Adding…" : "Add profile"}
       />
@@ -450,7 +449,6 @@ function ManageProfilesDialog({
             : undefined
         }
         showMcpServers={false}
-        showHarnessModel={false}
         title="Edit profile"
         submitLabel={update.isPending ? "Saving…" : "Save changes"}
       />

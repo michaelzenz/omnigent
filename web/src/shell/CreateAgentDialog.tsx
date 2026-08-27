@@ -121,7 +121,6 @@ export function CreateAgentDialog({
   submitLabel = "Create",
   initialValue,
   showMcpServers = true,
-  showHarnessModel = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -130,7 +129,6 @@ export function CreateAgentDialog({
   submitLabel?: string;
   initialValue?: AgentBundleInput;
   showMcpServers?: boolean;
-  showHarnessModel?: boolean;
 }) {
   const brainHarnessLabels = useBrainHarnessLabels();
   const harnessOptions = Object.entries(brainHarnessLabels).map(([value, label]) => ({
@@ -207,7 +205,7 @@ export function CreateAgentDialog({
     onOpenChange(false);
   }
 
-  const canSubmit = name.trim().length > 0 && (!showHarnessModel || model.trim().length > 0);
+  const canSubmit = name.trim().length > 0 && model.trim().length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -257,49 +255,45 @@ export function CreateAgentDialog({
             </div>
 
             {/* Harness */}
-            {showHarnessModel && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-muted-foreground">
-                  Harness <span className="text-destructive">*</span>
-                </label>
-                <Select
-                  value={harness}
-                  onValueChange={setHarness}
-                  componentId="create_agent.harness"
-                  valueHasNoPii
-                >
-                  <SelectTrigger data-testid="create-agent-harness" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {harnessOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-muted-foreground">
+                Harness <span className="text-destructive">*</span>
+              </label>
+              <Select
+                value={harness}
+                onValueChange={setHarness}
+                componentId="create_agent.harness"
+                valueHasNoPii
+              >
+                <SelectTrigger data-testid="create-agent-harness" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {harnessOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             {/* Model */}
-            {showHarnessModel && (
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="create-agent-model"
-                  className="text-sm font-medium text-muted-foreground"
-                >
-                  Model <span className="text-destructive">*</span>
-                </label>
-                <Input
-                  id="create-agent-model"
-                  data-testid="create-agent-model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="claude-sonnet-4-20250514"
-                />
-              </div>
-            )}
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="create-agent-model"
+                className="text-sm font-medium text-muted-foreground"
+              >
+                Model <span className="text-destructive">*</span>
+              </label>
+              <Input
+                id="create-agent-model"
+                data-testid="create-agent-model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="claude-sonnet-4-20250514"
+              />
+            </div>
           </div>
 
           {/* Instructions / System Prompt */}

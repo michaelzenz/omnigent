@@ -10,26 +10,15 @@ const mocks = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   rows: [] as PromptProfile[],
 }));
-vi.mock("@/lib/agentLabels", () => ({
-  useBrainHarnessLabels: () => ({
-    "claude-sdk": "Claude SDK",
-    codex: "Codex",
-    cursor: "Cursor",
-    pi: "Pi",
+vi.mock("@/hooks/useModelSettings", () => ({
+  useOmniHarnessSettings: () => ({
+    data: { systemPrompt: "", promptProfileAutoIncludeLimit: 5 },
   }),
-  BRAIN_HARNESS_LABELS: { "claude-sdk": "Claude SDK" },
+  useUpdateOmniHarnessSettings: () => ({
+    mutateAsync: mocks.updateSettings,
+    isPending: false,
+  }),
 }));
-vi.mock("@/hooks/useModelSettings", () => {
-  // Stable reference so useEffect depending on data doesn't re-fire every render.
-  const data = { systemPrompt: "", promptProfileAutoIncludeLimit: 5 };
-  return {
-    useOmniHarnessSettings: () => ({ data }),
-    useUpdateOmniHarnessSettings: () => ({
-      mutateAsync: mocks.updateSettings,
-      isPending: false,
-    }),
-  };
-});
 
 vi.mock("@/hooks/usePromptProfiles", () => ({
   usePromptProfiles: () => ({ data: mocks.rows, isLoading: false, isError: false }),
@@ -158,9 +147,6 @@ describe("ProfileControls", () => {
 
     fireEvent.click(screen.getByTestId("new-chat-landing-profile-gear"));
     fireEvent.click(screen.getByTestId("manage-profiles-add"));
-    // Harness and model fields must not appear for prompt profiles.
-    expect(screen.queryByTestId("create-agent-harness")).toBeNull();
-    expect(screen.queryByTestId("create-agent-model")).toBeNull();
     fireEvent.change(screen.getByTestId("create-agent-name"), {
       target: { value: "New profile" },
     });
@@ -178,45 +164,5 @@ describe("ProfileControls", () => {
       }),
     );
     expect(onSelect).toHaveBeenCalledWith("profile_new", created);
-  });
-
-  it("edits a profile and saves without requiring harness or model", async () => {
-    mocks.rows = [profile()];
-    mocks.update.mockResolvedValue(profile({ name: "Research v2" }));
-    render(
-      <ProfileControls
-        profiles={[]}
-        selection="auto"
-        selectedProfileId={null}
-        disabled={false}
-        onSelect={() => {}}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("new-chat-landing-profile-gear"));
-    fireEvent.click(screen.getByTestId("manage-profile-edit-profile_research"));
-    // Harness and model fields must not appear for prompt profiles.
-    expect(screen.queryByTestId("create-agent-harness")).toBeNull();
-    expect(screen.queryByTestId("create-agent-model")).toBeNull();
-    fireEvent.change(screen.getByTestId("create-agent-name"), {
-      target: { value: "Research v2" },
-    });
-    fireEvent.change(screen.getByTestId("create-agent-instructions"), {
-      target: { value: "Cite all sources" },
-    });
-    // Submit must not be disabled — model is not required for profiles.
-    expect(
-      (screen.getByTestId("create-agent-submit") as HTMLButtonElement).disabled,
-    ).toBe(false);
-    fireEvent.click(screen.getByTestId("create-agent-submit"));
-
-    await waitFor(() =>
-      expect(mocks.update).toHaveBeenCalledWith({
-        id: "profile_research",
-        name: "Research v2",
-        description: "Investigates difficult questions",
-        instructions: "Cite all sources",
-      }),
-    );
   });
 });
