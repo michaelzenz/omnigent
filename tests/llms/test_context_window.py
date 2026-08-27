@@ -17,9 +17,11 @@ from omnigent.llms.context_window import (
     ModelPricing,
     _catalog_context_window,
     _encoded_context_window,
+    _hardcoded_context_window,
     compute_llm_cost,
     fetch_model_pricing,
     get_model_context_window,
+    lookup_model_context_window,
     resolve_effective_context_window,
 )
 from omnigent.onboarding.providers import ModelInfo
@@ -358,3 +360,41 @@ def test_get_model_context_window_encoded_and_offline_fallback(
     assert get_model_context_window("claude-opus-4-8[1m]") == 1_000_000
     assert get_model_context_window("anthropic/claude-opus-4-8[1m]") == 1_000_000
     assert get_model_context_window("uncatalogued-model") == 128_000
+
+
+def test_hardcoded_context_window_fills_catalog_gap_for_kimi_k3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``kimi-k3`` resolves to 1M when the MLflow catalog omits it.
+
+    The Databricks-served ``kimi-k3`` isn't published with max_input_tokens,
+    so without this fallback every kimi-k3 session compacts against the 128K
+    default — ~8x too small for a 1M-window model. Both the ``databricks-``
+    and ``system.ai.`` spellings resolve, and the source is reported as
+    ``hardcoded`` so callers can distinguish it from catalog metadata.
+    """
+    monkeypatch.delenv("AP_CONTEXT_WINDOW_OVERRIDE", raising=False)
+    monkeypatch.setattr(context_window, "find_catalog_models", lambda _model: [])
+
+    assert get_model_context_window("databricks-kimi-k3") == 1_000_000
+    assert get_model_context_window("system.ai.kimi-k3") == 1_000_000
+    assert _hardcoded_context_window("kimi-k3") == 1_000_000
+
+    window, source = lookup_model_context_window("databricks-kimi-k3")
+    assert window == 1_000_000
+    assert source == "hardcoded"
+
+
+def test_hardcoded_context_window_yields_to_catalog_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A published catalog window overrides the hardcoded fallback."""
+    monkeypatch.delenv("AP_CONTEXT_WINDOW_OVERRIDE", raising=False)
+    monkeypatch.setattr(
+        context_window,
+        "find_catalog_models",
+        lambda _model: [
+            ModelInfo(name="kimi-k3", provider="provider", max_input_tokens=256_000)
+        ],
+    )
+    assert get_model_context_window("databricks-kimi-k3") == 256_000

@@ -46,6 +46,23 @@ def _catalog_context_window(model: str) -> int | None:
     return None
 
 
+# Known context windows for models whose MLflow catalog entry omits
+# max_input_tokens. Catalog stays authoritative; this fills the gap so
+# compaction doesn't fall back to the 128K default for a large-window model.
+_HARDCODED_CONTEXT_WINDOWS: dict[str, int] = {
+    "kimi-k3": 1_000_000,
+}
+
+
+def _hardcoded_context_window(model: str) -> int | None:
+    """Return a known context window for a model the catalog omits."""
+    bare = model.rsplit("/", 1)[-1].split(":", 1)[0].strip().lower()
+    for prefix in ("databricks-", "system.ai."):
+        if bare.startswith(prefix):
+            bare = bare[len(prefix) :]
+    return _HARDCODED_CONTEXT_WINDOWS.get(bare)
+
+
 # Fallback cache pricing as a multiple of the plain input rate, used when the
 # catalog publishes no explicit cache rate for a model (e.g. ``databricks-*``
 # entries today omit them). Both providers we serve publish the same ratios:
@@ -76,6 +93,9 @@ def lookup_model_context_window(model: str) -> tuple[int | None, str | None]:
     catalog_window = _catalog_context_window(model)
     if catalog_window is not None:
         return catalog_window, "mlflow"
+    hardcoded = _hardcoded_context_window(model)
+    if hardcoded is not None:
+        return hardcoded, "hardcoded"
     try:
         litellm = cast(_LiteLLM, importlib.import_module("litellm"))
     except ImportError:
@@ -107,9 +127,12 @@ def get_model_context_window(model: str) -> int:
        in the model id, currently Anthropic's ``[1m]`` beta marker.
     3. Shared MLflow catalog metadata. This is the authoritative dynamic
        source and reuses the onboarding/model-resolver cache.
-    4. ``litellm.get_model_info()`` — optional local metadata. Also
+    4. :data:`_HARDCODED_CONTEXT_WINDOWS` — known windows for models the
+       catalog omits (e.g. ``kimi-k3``), so they aren't sized by the 128K
+       default.
+    5. ``litellm.get_model_info()`` — optional local metadata. Also
        tried with the ``databricks/`` prefix for Databricks models.
-    5. ``_DEFAULT_CONTEXT_WINDOW`` (128 K) — conservative fallback.
+    6. ``_DEFAULT_CONTEXT_WINDOW`` (128 K) — conservative fallback.
 
     :param model: The model identifier, e.g. ``"openai/gpt-4o"`` or
         ``"databricks-gpt-5-5"``.
