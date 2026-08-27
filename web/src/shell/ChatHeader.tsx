@@ -213,14 +213,16 @@ export function ChatHeader({
   onToggleRightPanel,
   mobileMenu,
 }: ChatHeaderProps) {
-  // Dwell on the toggle for 1s to peek the sidebar; leaving before then cancels
+  // Dwell on the toggle for 400ms to peek the sidebar; leaving before then cancels
   // the pending peek so a quick pass-over never opens it. Peek is a desktop
   // hover affordance — on mobile the toggle just opens the full-screen overlay,
   // so a tap's synthetic pointerenter must not trigger it.
   const isMobile = useIsMobileViewport();
   const { trackClick } = useOmnigentAnalytics();
   const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peekRequest = useRef(0);
   const cancelPeek = useCallback(() => {
+    peekRequest.current += 1;
     if (peekTimer.current) {
       clearTimeout(peekTimer.current);
       peekTimer.current = null;
@@ -229,7 +231,10 @@ export function ChatHeader({
   const onPeekSidebar = useCallback(() => {
     if (isMobile) return;
     cancelPeek();
+    const request = peekRequest.current;
     peekTimer.current = setTimeout(() => {
+      peekTimer.current = null;
+      if (peekRequest.current !== request) return;
       onOpenSidebar(true);
     }, 400);
   }, [isMobile, onOpenSidebar, cancelPeek]);
@@ -398,6 +403,7 @@ export function ChatHeader({
                   MOBILE_GLASS_PILL,
                 )}
                 onPointerEnter={onPeekSidebar}
+                onPointerDown={cancelPeek}
                 onPointerLeave={cancelPeek}
               >
                 <PanelLeftIcon className="size-4" />

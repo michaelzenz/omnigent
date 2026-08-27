@@ -2524,7 +2524,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       });
       // Harness has no effort control: undo the optimistic session-scoped write
       // so this conversation doesn't claim an effort the server will never hold.
-      if (!supportsEffortControl(session)) {
+      if (!supportsEffortControl({ labels: session.labels, agentName: session.agentName })) {
         setterFor(conversationId)({ sessionReasoningEffort: null });
         return;
       }
@@ -3179,7 +3179,10 @@ async function ensureBoundSession(
     onSessionResolved?.(sessionId);
     // Native runners read reasoning_effort during bind.
     const preBindEffort = useChatStore.getState().selectedEffort;
-    if (preBindEffort != null && supportsEffortControl(session)) {
+    if (
+      preBindEffort != null &&
+      supportsEffortControl({ labels: session.labels, agentName: session.agentName })
+    ) {
       await updateSession(sessionId, {
         reasoningEffort: preBindEffort,
         silent: true,
@@ -3546,7 +3549,10 @@ async function bindStream(
     const bindingPatch = sessionBindingPatch(session);
     // Sub-agents inherit orchestrator choices.
     const isSubAgentSession = session.parentSessionId != null;
-    const canApplyEffort = supportsEffortControl(session);
+    const canApplyEffort = supportsEffortControl({
+      labels: session.labels,
+      agentName: session.agentName,
+    });
     const stickyEffort = get().selectedEffort;
     const stickyModel = get().selectedModel;
     // Apply sticky effort only where the Web UI control is meaningful.
