@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import fcntl
 import hashlib
+import logging
 import os
 import shutil
 import tempfile
@@ -17,6 +19,29 @@ from omnigent.pi_native_resume import (
     pi_session_records_from_session_items,
     write_pi_session_records,
 )
+
+_logger = logging.getLogger(__name__)
+
+
+def _inline_text_file_data(file_data: object) -> str:
+    """Decode a text ``input_file`` ``file_data`` data URI into inline text.
+
+    Text files are decoded so the model retains pasted content during Pi
+    session reconstruction; binary files return ``""``. A bare, non-data-URI
+    string is treated as already-inline text.
+    """
+    if not isinstance(file_data, str) or not file_data:
+        return ""
+    if not file_data.startswith("data:"):
+        return file_data
+    try:
+        meta, b64 = file_data.split(",", 1)
+        mime = meta.split(";")[0].removeprefix("data:")
+        if not mime.startswith("text/"):
+            return ""
+        return base64.b64decode(b64).decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 — best-effort; never break a rebuild on a bad URI
+        return ""
 
 
 def delete_onih_pi_session(conversation_id: str) -> None:
@@ -196,15 +221,43 @@ class OnihPiSessionStore:
                 if not isinstance(content, list) or not content:
                     raise ValueError("canonical message has no reconstructable content")
                 expected_type = "input_text" if role == "user" else "output_text"
+                normalized_content: list[dict[str, Any]] = []
                 for block in content:
-                    if (
-                        not isinstance(block, dict)
-                        or block.get("type") != expected_type
-                        or not isinstance(block.get("text"), str)
-                    ):
+                    if not isinstance(block, dict):
                         raise ValueError(
                             f"unsupported canonical {role} content during Pi reconstruction"
                         )
+                    block_type = block.get("type")
+                    if block_type == expected_type and isinstance(block.get("text"), str):
+                        normalized_content.append(block)
+                    elif role == "user" and block_type == "input_file":
+                        # Pi session reconstruction is text-only. Decode
+                        # text-like file attachments into inline text so the
+                        # model retains the pasted content; skip binary ones.
+                        inlined = _inline_text_file_data(block.get("file_data"))
+                        if inlined:
+                            normalized_content.append(
+                                {"type": "input_text", "text": inlined}
+                            )
+                        else:
+                            _logger.warning(
+                                "Pi reconstruction: skipping non-text input_file"
+                            )
+                    elif role == "user" and block_type == "input_image":
+                        # Images can't be replayed into Pi's text-only session
+                        # format; drop them rather than failing the rebuild.
+                        _logger.warning(
+                            "Pi reconstruction: skipping input_image block"
+                        )
+                    else:
+                        raise ValueError(
+                            f"unsupported canonical {role} content during Pi reconstruction"
+                        )
+                if not normalized_content:
+                    raise ValueError(
+                        f"canonical {role} message has no reconstructable content"
+                    )
+                copied["content"] = normalized_content
             elif item_type == "function_call":
                 call_id = item.get("call_id")
                 name = item.get("name")
