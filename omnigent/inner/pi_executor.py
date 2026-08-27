@@ -1379,8 +1379,12 @@ class _PiRpcSession:
                 self._line_queue.put_nowait(line)
         return result
 
-    async def read_line(self, timeout: float = 120.0) -> str | None:
-        """Read the next JSONL line from Pi's stdout. Returns None on EOF."""
+    async def read_line(self, timeout: float | None = 120.0) -> str | None:
+        """Read the next JSONL line from Pi's stdout. Returns None on EOF.
+
+        ``timeout=None`` waits indefinitely (used while a bridged tool is
+        executing — the tool's own timeout governs, not the read budget).
+        """
         try:
             return await asyncio.wait_for(self._line_queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -3015,17 +3019,23 @@ class PiExecutor(Executor):
         # ``agent_end`` so the terminal event is consumed off the RPC stream.
         pending_error: str | None = None
         # Tool calls started but not yet ended (toolCallId → tool name);
-        # named in the error if the turn stalls waiting on one.
+        # while non-empty, the read loop waits indefinitely (no idle timeout)
+        # so a legitimate long-running tool call isn't abandoned.
         inflight_tools: dict[str, str] = {}
 
         while True:
             # After an errored message the only thing left to drain is the
             # already-emitted agent_end, so don't wait the full idle budget.
-            line = await rpc.read_line(
-                timeout=_TURN_READ_IDLE_TIMEOUT_S
-                if pending_error is None
-                else _TURN_READ_DRAIN_TIMEOUT_S
-            )
+            # When a bridged tool is in flight, wait indefinitely — the tool's
+            # own timeout governs, and killing the session mid-tool would
+            # abandon a legitimate long-running call.
+            if pending_error is not None:
+                read_timeout: float | None = _TURN_READ_DRAIN_TIMEOUT_S
+            elif inflight_tools:
+                read_timeout = None
+            else:
+                read_timeout = _TURN_READ_IDLE_TIMEOUT_S
+            line = await rpc.read_line(timeout=read_timeout)
             if line is None:
                 if pending_error is not None:
                     yield ExecutorError(
@@ -3033,20 +3043,15 @@ class PiExecutor(Executor):
                         retryable=_is_transient_error(pending_error),
                     )
                 elif not rpc._eof:
-                    # Idle timeout with Pi still running: the turn is stuck
-                    # (e.g. a bridged tool call outlasted the read budget).
-                    # Tear the session down so the next turn spawns a fresh
-                    # process — keeping it would trip Pi's "already
-                    # processing" guard, and leftover events from the
-                    # abandoned turn would poison the next one.
-                    stuck_detail = ""
-                    if inflight_tools:
-                        names = ", ".join(sorted(set(inflight_tools.values())))
-                        stuck_detail = f' while waiting on tool "{names}"'
+                    # Idle timeout with Pi still running and no tool in flight:
+                    # Pi itself is stuck (e.g. the model API hung).  Tear the
+                    # session down so the next turn spawns a fresh process —
+                    # keeping it would trip Pi's "already processing" guard,
+                    # and leftover events from the abandoned turn would poison
+                    # the next one.
                     logger.warning(
-                        "PiExecutor: Pi unresponsive mid-turn (session %s%s); closing session",
+                        "PiExecutor: Pi unresponsive mid-turn (session %s); closing session",
                         session_key,
-                        stuck_detail,
                     )
                     try:
                         await rpc.send_command({"type": "abort", "id": f"abort_{cmd_id}"})
@@ -3056,7 +3061,7 @@ class PiExecutor(Executor):
                     yield ExecutorError(
                         message=(
                             "Pi stopped responding mid-turn"
-                            f"{stuck_detail} (no events for {_TURN_READ_IDLE_TIMEOUT_S:g}s); "
+                            f" (no events for {_TURN_READ_IDLE_TIMEOUT_S:g}s); "
                             "your next message will start a fresh session."
                         )
                     )

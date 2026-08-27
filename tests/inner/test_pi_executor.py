@@ -2352,11 +2352,12 @@ class TestRunTurn(unittest.TestCase):
         _run(_test())
 
     def test_idle_timeout_with_live_pi_closes_session_and_errors(self):
-        """When the read budget expires while Pi is still alive (stuck
-        mid-turn), the executor aborts, closes the session, and fails the
-        turn with an explicit error. Silently completing would leave Pi's
-        \"already processing\" guard armed for the next turn, and leftover
-        events from the abandoned turn would poison it.
+        """When the read budget expires while Pi is still alive and no tool is
+        in flight (Pi itself is stuck), the executor aborts, closes the
+        session, and fails the turn with an explicit error. Silently
+        completing would leave Pi's "already processing" guard armed for the
+        next turn, and leftover events from the abandoned turn would poison
+        it.
         """
 
         async def _test():
@@ -2371,32 +2372,7 @@ class TestRunTurn(unittest.TestCase):
 
             lines = [
                 json.dumps({"type": "response", "success": True}),
-                # A completed tool call must NOT be reported as stuck.
-                json.dumps(
-                    {
-                        "type": "tool_execution_start",
-                        "toolName": "bash",
-                        "toolCallId": "call_done",
-                        "args": {"command": "ls"},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "tool_execution_end",
-                        "toolName": "bash",
-                        "toolCallId": "call_done",
-                        "result": "ok",
-                    }
-                ),
-                # The call that never returns before the read budget expires.
-                json.dumps(
-                    {
-                        "type": "tool_execution_start",
-                        "toolName": "gh",
-                        "toolCallId": "call_stuck",
-                        "args": {"command": "gh api ..."},
-                    }
-                ),
+                # No more events: Pi is stuck (e.g. model API hung).
             ]
 
             async def fake_read_line(timeout=120.0):
@@ -2426,10 +2402,6 @@ class TestRunTurn(unittest.TestCase):
             errors = [e for e in events if isinstance(e, ExecutorError)]
             self.assertEqual(len(errors), 1)
             self.assertIn("stopped responding mid-turn", errors[0].message)
-            # The in-flight tool call is named so the operator can tell
-            # which bridged tool hung; the completed call is not.
-            self.assertIn('waiting on tool "gh"', errors[0].message)
-            self.assertNotIn("bash", errors[0].message)
             self.assertFalse(any(isinstance(e, TurnComplete) for e in events))
             # Best-effort abort went out before the process was terminated.
             last_command = json.loads(stdin.data[-1].decode())
@@ -2437,6 +2409,83 @@ class TestRunTurn(unittest.TestCase):
             # Session torn down: the next turn spawns a fresh Pi process.
             self.assertEqual(executor._session_states, {})
             self.assertIsNone(fake_rpc.process)
+
+        _run(_test())
+
+    def test_inflight_tool_uses_no_read_timeout(self):
+        """While a bridged tool is executing, the read loop must not apply the
+        idle timeout — the tool's own timeout governs, and killing the session
+        mid-tool would abandon a legitimate long-running call.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = _FakeProcess()
+            fake_rpc._stderr_lines = []
+
+            lines = [
+                json.dumps({"type": "response", "success": True}),
+                json.dumps(
+                    {
+                        "type": "tool_execution_start",
+                        "toolName": "bash",
+                        "toolCallId": "call_1",
+                        "args": {"command": "ls"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "tool_execution_end",
+                        "toolName": "bash",
+                        "toolCallId": "call_1",
+                        "result": "ok",
+                    }
+                ),
+                json.dumps({"type": "agent_end"}),
+            ]
+
+            read_timeouts: list[float | None] = []
+
+            async def fake_read_line(timeout=120.0):
+                read_timeouts.append(timeout)
+                if lines:
+                    return lines.pop(0)
+                return None
+
+            fake_rpc.read_line = fake_read_line
+
+            async def fake_ensure_rpc(session_key, *args, **kwargs):
+                state = executor._session_states.setdefault(session_key, _PiSessionState())
+                state.rpc = fake_rpc
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            # Turn completed successfully.
+            self.assertTrue(any(isinstance(e, TurnComplete) for e in events))
+            # While the bash tool was in flight, read_line was called with
+            # None (no idle timeout). Before and after, the normal 120s
+            # budget applies.
+            #   call 0: response ack        → 120s (no tool in flight)
+            #   call 1: tool_execution_start → 120s (tool not yet in flight)
+            #   call 2: tool_execution_end   → None  (tool is in flight)
+            #   call 3: agent_end            → 120s (tool completed)
+            self.assertGreaterEqual(len(read_timeouts), 4)
+            self.assertIsNone(read_timeouts[2])
+            self.assertEqual(read_timeouts[0], 120.0)
+            self.assertEqual(read_timeouts[3], 120.0)
 
         _run(_test())
 
