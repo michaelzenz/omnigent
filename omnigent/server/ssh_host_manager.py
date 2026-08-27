@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import secrets
 import shlex
 import shutil
@@ -98,6 +99,28 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+_WHEEL_BUILD_EXCLUDE_DIRS = frozenset({
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+    ".omnigent",
+})
+
+
+def _newest_source_mtime(root: Path, exclude: frozenset[str]) -> float:
+    """Newest mtime among files under root, skipping generated/build dirs."""
+    newest = 0.0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in exclude]
+        for name in filenames:
+            try:
+                mtime = Path(dirpath, name).stat().st_mtime
+            except OSError:
+                continue
+            if mtime > newest:
+                newest = mtime
+    return newest
 
 
 async def _run_local_command(args: list[str], timeout_s: float) -> tuple[int, bytes, bytes]:
@@ -394,13 +417,19 @@ class SshHostOperations:
             return None
         output_dir = self._bundle_dir / version
         output_dir.mkdir(parents=True, exist_ok=True)
-        for stale in output_dir.glob("*.whl"):
-            stale.unlink()
         projects = [
             source_root / "sdks" / "python-client",
             source_root / "sdks" / "ui",
             source_root,
         ]
+        existing = sorted(output_dir.glob("*.whl"))
+        if len(existing) >= len(projects):
+            oldest_wheel = min(w.stat().st_mtime for w in existing)
+            if _newest_source_mtime(source_root, _WHEEL_BUILD_EXCLUDE_DIRS) <= oldest_wheel:
+                self._local_bundles[version] = existing
+                return existing
+        for stale in output_dir.glob("*.whl"):
+            stale.unlink()
         build_prefix = [uv]
         index_url = self._python_index_url()
         if index_url:
