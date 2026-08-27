@@ -261,18 +261,18 @@ def _resolve_worktree_path(repo_root: str) -> Path:
     """Compute a unique Omnigent worktree directory path.
 
     Places the worktree at
-    ``~/.omnigent/worktrees/<repo-name>/worktree-<timestamp>``, using
+    ``~/.omnigent/worktrees/<repo-name>/<repo-name>-<timestamp>``, using
     nanosecond precision for collision-free uniqueness without a suffix
     loop.
 
     :param repo_root: Absolute path of the repository's main work tree,
         e.g. ``"/Users/alice/myrepo"``.
     :returns: A path that does not yet exist, e.g.
-        ``Path("/Users/alice/.omnigent/worktrees/myrepo/worktree-1709123456789012345")``.
+        ``Path("/Users/alice/.omnigent/worktrees/myrepo/myrepo-1709123456789012345")
     """
     base_dir = Path.home() / ".omnigent" / "worktrees"
     repo_name = _sanitize_repo_name(Path(repo_root).name)
-    return base_dir / repo_name / f"worktree-{time.time_ns()}"
+    return base_dir / repo_name / f"{repo_name}-{time.time_ns()}"
 
 
 def _ensure_base_resolvable(repo_root: str, base_branch: str) -> None:
