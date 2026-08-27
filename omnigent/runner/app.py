@@ -12347,6 +12347,17 @@ def create_runner_app(
         msg_body: _JsonObject,
         conv: str,
     ) -> None:
+        # Sync execution_generation from the server's dispatch envelope
+        # so a host/worktree change (e.g. fork auto-worktree) that
+        # incremented it server-side is reflected in our cached snapshot
+        # before the turn stamps its events with the generation.
+        _fwd_generation = msg_body.get("execution_generation")
+        if isinstance(_fwd_generation, int):
+            _cached_snap = _session_snapshot_cache.get(conv)
+            if _cached_snap is not None and _cached_snap.execution_generation != _fwd_generation:
+                _session_snapshot_cache[conv] = dataclasses.replace(
+                    _cached_snap, execution_generation=_fwd_generation
+                )
         _dispatched_agent_id = cast(str | None, msg_body.get("agent_id"))
         _prior_agent_id = _session_agent_ids.get(conv)
         _raw_agent_version = msg_body.get("agent_version")
@@ -12543,12 +12554,20 @@ def create_runner_app(
         )
 
         dispatch_snapshot = await _session_snapshot(conv)
+        # Prefer the server's forwarded execution_generation (authoritative
+        # at dispatch time) over the cached snapshot, which may be stale
+        # after a host/worktree change incremented it server-side.
+        _dispatch_generation = (
+            _fwd_generation
+            if isinstance(_fwd_generation, int)
+            else dispatch_snapshot.execution_generation
+        )
         harness_body: _JsonObject = {
             "type": "message",
             "role": "user",
             "model": msg_body.get("model", ""),
             "conversation": {"id": conv},
-            "execution_generation": dispatch_snapshot.execution_generation,
+            "execution_generation": _dispatch_generation,
         }
         # The routed model rides in-band on the forwarded message. This body is
         # built field by field (not copied), so it must be threaded explicitly:

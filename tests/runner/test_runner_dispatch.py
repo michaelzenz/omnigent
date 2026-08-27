@@ -1364,6 +1364,86 @@ async def test_runner_background_turn_forwards_reasoning_to_harness() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runner_background_turn_syncs_execution_generation_from_dispatch() -> None:
+    """The runner uses execution_generation from the server's dispatch body.
+
+    A fork's auto-worktree background task calls ``set_host_id``, which
+    increments ``execution_generation`` on the server. The runner's cached
+    ``_session_snapshot`` still holds the old value; without syncing, the
+    runner stamps its events with the stale generation and the server rejects
+    every event as stale (``generation=0 current=1``), so the agent appears to
+    die while the runner is actually working.
+
+    The fix threads ``execution_generation`` through the forwarded event body
+    and uses it at dispatch time, overriding the stale cached snapshot.
+    """
+    conv = "conv_gen_sync"
+    captured: dict[str, Any] = {}
+    reached = asyncio.Event()
+
+    class _StaleGenServerClient:
+        """Server stub returning ``execution_generation=0`` so the snapshot caches the stale value."""
+
+        class _Response:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {"agent_id": "ag_reasoning", "execution_generation": 0}
+
+            def raise_for_status(self) -> None:
+                pass
+
+        async def get(self, url: str, **kwargs: Any) -> _Response:
+            del url, kwargs
+            return self._Response()
+
+        async def post(self, url: str, **kwargs: Any) -> _Response:
+            del url, kwargs
+            return self._Response()
+
+        async def patch(self, url: str, **kwargs: Any) -> _Response:
+            del url, kwargs
+            return self._Response()
+
+    from omnigent.runner import app as runner_app
+
+    runner_app._session_histories_ref.pop(conv, None)
+    app = create_runner_app(
+        process_manager=cast(
+            HarnessProcessManager,
+            _ContentCapturingProcessManager(captured, reached),
+        ),
+        spec_resolver=_reasoning_spec_resolver,
+        server_client=cast(httpx.AsyncClient, _StaleGenServerClient()),
+    )
+    try:
+        async with _runner_test_client(app) as http:
+            response = await http.post(
+                f"/v1/sessions/{conv}/events",
+                json={
+                    "type": "message",
+                    "role": "user",
+                    "agent_id": "ag_reasoning",
+                    "model": "x",
+                    "content": [{"type": "input_text", "text": "hi"}],
+                    # Server's current generation after worktree set_host_id.
+                    "execution_generation": 1,
+                },
+            )
+            assert response.status_code == 202
+            await asyncio.wait_for(reached.wait(), timeout=10.0)
+    finally:
+        runner_app._session_histories_ref.pop(conv, None)
+
+    body = captured["body"]
+    assert body.get("execution_generation") == 1, (
+        f"stale execution_generation reached the harness: "
+        f"got {body.get('execution_generation')!r}, expected 1 "
+        f"(keys={sorted(body)})"
+    )
+
+
+@pytest.mark.asyncio
 async def test_runner_stream_turn_forwards_reasoning_to_harness() -> None:
     """The ``?stream=true`` branch must keep carrying ``reasoning``.
 
