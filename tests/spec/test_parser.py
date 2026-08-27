@@ -4045,10 +4045,10 @@ def test_resolve_session_mcp_servers_merges_include(tmp_path: Path) -> None:
     assert spec.mcp_servers == []
 
 
-def test_openai_agents_implicitly_loads_global_mcp_servers(
+def test_onih_family_implicitly_loads_global_mcp_servers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """openai-agents reads ~/.omnigent/mcp-servers.yaml without YAML opt-in."""
+    """Onih-family specs read ~/.omnigent/mcp-servers.yaml without YAML opt-in."""
     from omnigent.spec.parser import resolve_session_mcp_servers
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -4063,11 +4063,10 @@ def test_openai_agents_implicitly_loads_global_mcp_servers(
         yaml.dump(
             {
                 "spec_version": 1,
-                "name": "openai-agent",
+                "name": "onih-pi",
                 "executor": {
                     "type": "omnigent",
-                    "config": {"harness": "openai-agents"},
-                    "model": "databricks-glm-5-2",
+                    "config": {"harness": "pi"},
                 },
             }
         )
@@ -4076,6 +4075,27 @@ def test_openai_agents_implicitly_loads_global_mcp_servers(
     resolved = resolve_session_mcp_servers(parse(agent_dir), expand_env=False)
 
     assert [server.name for server in resolved.mcp_servers] == ["slack"]
+
+
+    # Non-onih agent with the same harness must NOT get the implicit file.
+    other_dir = tmp_path / "other-agent"
+    other_dir.mkdir()
+    (other_dir / "config.yaml").write_text(
+        yaml.dump(
+            {
+                "spec_version": 1,
+                "name": "custom-pi-agent",
+                "executor": {
+                    "type": "omnigent",
+                    "config": {"harness": "pi"},
+                },
+            }
+        )
+    )
+
+    other_resolved = resolve_session_mcp_servers(parse(other_dir), expand_env=False)
+
+    assert other_resolved.mcp_servers == []
 
 
 def test_resolve_session_mcp_servers_rereads_on_change(tmp_path: Path) -> None:

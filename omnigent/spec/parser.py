@@ -2702,14 +2702,19 @@ def resolve_session_mcp_servers(
     """Merge default and explicit external MCP servers at session load time.
 
     ``spec.mcp_servers`` carries only the bundle-owned inline + discovered
-    entries (immutable, cached). ``openai-agents`` specs implicitly read
+    entries (immutable, cached). Onih-family specs implicitly read
     ``~/.omnigent/mcp-servers.yaml``; an explicit ``tools_include`` is applied
     afterward and can override matching names. External files are re-read here
     so a sync takes effect for new sessions without a server restart.
     """
     include_paths: list[str] = []
-    harness = spec.executor.config.get("harness")
-    if harness == "openai-agents" or spec.executor.type == "agents_sdk":
+    from omnigent.execution_targets import LEGACY_OMNIHARNESS_TARGET, is_onih_spec
+
+    if (
+        is_onih_spec(spec)
+        or spec.name == LEGACY_OMNIHARNESS_TARGET
+        or spec.executor.type == "agents_sdk"
+    ):
         default_path = Path.home() / ".omnigent" / "mcp-servers.yaml"
         # The implicit global file is optional. An explicitly requested missing
         # include still follows _parse_included_mcp_servers' warning path.
