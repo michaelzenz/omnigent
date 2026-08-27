@@ -4960,7 +4960,7 @@ function UserBubble({
   const currentAuthor = getCurrentAuthorId();
   const canEdit =
     canRewindSession &&
-    sessionHarness === "openai-agents" &&
+    (sessionHarness === "openai-agents" || sessionHarness === "pi") &&
     !bubble.itemId.startsWith("pend_") &&
     (author == null || author === currentAuthor);
 
