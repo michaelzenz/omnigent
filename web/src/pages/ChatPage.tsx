@@ -8579,7 +8579,7 @@ function SessionConfigModal({
                     {SMART_ROUTING_LABEL}
                   </SelectItem>
                   <SelectItem value="off" data-subagent-routing="off">
-                    Default
+                    Off
                   </SelectItem>
                 </SelectContent>
               </Select>
