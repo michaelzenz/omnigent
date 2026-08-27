@@ -1707,9 +1707,6 @@ function HarnessConfigModal({
   const [draftBypass, setDraftBypass] = useState(bypassSandbox);
   const [draftHarness, setDraftHarness] = useState<string | null>(pickedHarness);
   const [draftRouting, setDraftRouting] = useState<CostControlMode>(costControlMode);
-  const [draftSubagentRouting, setDraftSubagentRouting] = useState<"on" | "off" | null>(
-    subagentRoutingMode,
-  );
   const [draftProfileSelection, setDraftProfileSelection] =
     useState<ProfileSelection>(profileSelection);
 
@@ -1724,7 +1721,6 @@ function HarnessConfigModal({
     setDraftBypass(bypassSandbox);
     setDraftHarness(pickedHarness);
     setDraftRouting(costControlMode);
-    setDraftSubagentRouting(subagentRoutingMode);
     setDraftProfileSelection(profileSelection);
     // Seed once per open from the current live values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1865,7 +1861,9 @@ function HarnessConfigModal({
         promptProfile: draftProfileSelection,
       };
       if (smartRoutingEligible) {
-        const committedSubagentRouting = draftSubagentRouting ?? (smartRoutingOn ? "on" : "off");
+        // Subagent routing follows the main session's Smart Routing state:
+        // "on" when routing is on, "off" otherwise. No independent toggle.
+        const committedSubagentRouting = smartRoutingOn ? "on" : "off";
         setSubagentRoutingMode(committedSubagentRouting);
         rememberedOptions.subagentRouting = committedSubagentRouting;
       }
@@ -1964,14 +1962,14 @@ function HarnessConfigModal({
             </ConfigRow>
           )}
 
-          {!autoRouting && isOmniHarness && smartRoutingEligible && (
+          {!autoRouting && isOmniHarness && smartRoutingEligible && smartRoutingOn && (
             <ConfigRow
               label="Subagent routing"
-              description="Model routing for subagents this session spawns"
+              description="Subagents this session spawns use Smart Routing"
             >
               <Select
-                value={draftSubagentRouting ?? (smartRoutingOn ? "on" : "off")}
-                onValueChange={(value) => setDraftSubagentRouting(value === "on" ? "on" : "off")}
+                value="on"
+                disabled
               >
                 <SelectTrigger
                   className="w-full"
@@ -1982,7 +1980,6 @@ function HarnessConfigModal({
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
                   <SelectItem value="on">Smart Routing</SelectItem>
-                  <SelectItem value="off">Default</SelectItem>
                 </SelectContent>
               </Select>
             </ConfigRow>
