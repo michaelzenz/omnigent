@@ -86,6 +86,7 @@ def _build_item(user_id: str | None, conv: Conversation) -> object:
         user_is_admin=False,
         permissions_enabled=False,
         pending_count=0,
+        pending_updated_at=None,
         child_session_ids=[],
         comments_fingerprint=None,
     )

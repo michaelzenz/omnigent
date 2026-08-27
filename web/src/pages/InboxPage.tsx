@@ -55,6 +55,7 @@ import { relativeTime } from "@/lib/relativeTime";
 import { Link } from "@/lib/routing";
 import { useOmnigentAnalytics } from "@/lib/analytics";
 import { approve, getSession } from "@/lib/sessionsApi";
+import { recordApproval } from "@/lib/pendingApprovalCache";
 import { userColor, userInitials } from "@/lib/userBadge";
 import { cn } from "@/lib/utils";
 import { conversationDisplayLabel, getConversationAgentType } from "@/shell/sidebarNav";
@@ -167,7 +168,10 @@ export function InboxPage() {
         elicitationId,
         content === undefined ? { action } : { action, content },
       ).then(
-        () => {
+        (resp) => {
+          if (resp.serverTime !== undefined) {
+            recordApproval(item.row.id, resp.serverTime);
+          }
           void queryClient.invalidateQueries({ queryKey: ["conversations"] });
         },
         () => {

@@ -82,6 +82,14 @@ export interface PostEventResponse {
   recovered?: boolean;
   /** Machine-readable recovery outcome for retry_session control events. */
   recovery?: "already_connected" | "native_terminal_ready" | "runner_relaunched";
+  /**
+   * Server wall-clock timestamp (epoch seconds) from the resolve
+   * endpoint. The client records this per-session to detect stale
+   * `pending_elicitations_count` values: if the count's
+   * `pending_elicitations_updated_at` is ≤ this timestamp, the count
+   * predates the approval and the client keeps its optimistic zero.
+   */
+  serverTime?: number;
 }
 
 /**
@@ -444,6 +452,7 @@ function postEventResponseFromWire(wire: {
   pending_id?: string;
   recovered?: boolean;
   recovery?: PostEventResponse["recovery"];
+  server_time?: number;
 }): PostEventResponse {
   return {
     queued: wire.queued,
@@ -452,6 +461,7 @@ function postEventResponseFromWire(wire: {
     pendingId: wire.pending_id,
     recovered: wire.recovered,
     recovery: wire.recovery,
+    serverTime: wire.server_time,
   };
 }
 
@@ -1117,6 +1127,6 @@ export async function approve(
     },
   );
   return postEventResponseFromWire(
-    await readJsonOrThrow<{ queued: boolean; item_id?: string }>(res),
+    await readJsonOrThrow<{ queued: boolean; item_id?: string; server_time?: number }>(res),
   );
 }

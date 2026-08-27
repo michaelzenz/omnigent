@@ -2747,6 +2747,14 @@ class SessionListItem(BaseModel):
     owner: str | None = None
     external_session_id: str | None = None
     pending_elicitations_count: int = 0
+    #: Wall-clock timestamp (epoch seconds) of the last change to
+    #: ``pending_elicitations_count`` on the server replica that built
+    #: this item. ``None`` when this replica doesn't hold the session's
+    #: runner tunnel (cross-replica). Clients use it to detect stale
+    #: counts after a quick approve: if the timestamp is older than the
+    #: approval's server-time, the count predates the verdict and the
+    #: client keeps its optimistic zero.
+    pending_elicitations_updated_at: float | None = None
     workspace: str | None = None
     git_branch: str | None = None
     archived: bool = False

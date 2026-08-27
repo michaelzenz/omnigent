@@ -74,6 +74,7 @@ import {
   type SessionItemsPage,
   updateSession,
 } from "@/lib/sessionsApi";
+import { recordApproval } from "@/lib/pendingApprovalCache";
 import type {
   McpServerStartup,
   SessionInputConsumedEvent,
@@ -2510,11 +2511,14 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       status: action === "accept" ? "success" : action === "decline" ? "failure" : "cancelled",
     });
     try {
-      await approveElicitation(
+      const resp = await approveElicitation(
         targetSessionId,
         elicitationId,
         content === undefined ? { action } : { action, content },
       );
+      if (resp.serverTime !== undefined) {
+        recordApproval(sessionId, resp.serverTime);
+      }
     } catch {
       // Roll back to pending so the user can retry. Surfacing the
       // error is a future affordance — for now, the buttons

@@ -805,6 +805,7 @@ def _build_session_list_item(
     user_is_admin: bool,
     permissions_enabled: bool,
     pending_count: int,
+    pending_updated_at: float | None,
     child_session_ids: list[str],
     comments_fingerprint: CommentsFingerprint | None,
 ) -> SessionListItem:
@@ -840,6 +841,13 @@ def _build_session_list_item(
         wired; gates owner/level population to mirror ``list_sessions``.
     :param pending_count: Number of outstanding elicitations for this
         conversation, from ``pending_elicitations.counts_for()``.
+    :param pending_updated_at: Wall-clock timestamp of the last count
+        change, from ``pending_elicitations.counts_with_timestamps_for()``.
+        When present, the in-memory count is authoritative on this
+        replica (it was decremented synchronously during the resolve
+        POST) and the persisted row's async-lagging count must not
+        override it via ``max()``. ``None`` on a cross-replica read
+        where this replica doesn't hold the runner tunnel.
     :param child_session_ids: Direct sub-agent children for this
         conversation, as returned by
         ``conversation_store.list_child_conversation_ids_by_parent()``.
@@ -889,13 +897,25 @@ def _build_session_list_item(
         # decrement) must not override it. Gating on runner_id keeps the
         # cross-replica fallback where it's needed while making the unbound
         # path index-only and free of the persist-lag race.
-        pending_elicitations_count=(
-            max(pending_count, conv.pending_elicitation_count or 0)
-            if conv.runner_id is not None
-            else pending_count
-        ),
+        #
+        # When the in-memory index has a timestamp (``pending_updated_at``),
+        # the in-memory count is authoritative even at 0: it was decremented
+        # synchronously during the resolve POST, while the persisted row
+        # lags behind a background-worker write. Using max(0, stale_row=1)
+        # in that window keeps the badge stuck after a quick approve. Only
+        # when the timestamp is absent (cross-replica, no in-memory tracking)
+        # does the max() fallback apply.
+        if conv.runner_id is not None and pending_updated_at is not None:
+            pending_elicitations_count = pending_count
+        elif conv.runner_id is not None:
+            pending_elicitations_count = max(
+                pending_count, conv.pending_elicitation_count or 0
+            )
+        else:
+            pending_elicitations_count = pending_count,
         workspace=conv.workspace,
         git_branch=conv.git_branch,
+        pending_elicitations_updated_at=pending_updated_at,
         archived=conv.archived,
         comments_count=comments_fingerprint.count if comments_fingerprint else 0,
         comments_updated_at=(

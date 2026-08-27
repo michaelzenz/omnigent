@@ -387,6 +387,32 @@ def test_pending_session_ids_tracks_publish_and_resolve() -> None:
     assert pending_elicitations.pending_session_ids() == ["conv_b"]
 
 
+def test_counts_with_timestamps_tracks_resolve() -> None:
+    """
+    The batch lookup returns a ``(count, timestamp)`` tuple per session.
+
+    After a resolve, the count drops to 0 but the timestamp advances —
+    the session-list builder uses that timestamp to decide whether the
+    in-memory count is authoritative (skip ``max()`` with the stale DB
+    row) or whether to fall back to the cross-replica ``max()``.
+    """
+    # Untracked session → (0, None).
+    assert pending_elicitations.counts_with_timestamps_for(["conv_x"]) == {
+        "conv_x": (0, None),
+    }
+    pending_elicitations.record_publish("conv_a", _elicit_event("elicit_1"))
+    data = pending_elicitations.counts_with_timestamps_for(["conv_a", "conv_b"])
+    assert data["conv_a"][0] == 1
+    assert data["conv_a"][1] is not None  # timestamp set on publish
+    assert data["conv_b"] == (0, None)  # never tracked
+    ts_publish = data["conv_a"][1]
+    pending_elicitations.resolve("conv_a", "elicit_1")
+    data = pending_elicitations.counts_with_timestamps_for(["conv_a", "conv_b"])
+    assert data["conv_a"][0] == 0  # count dropped
+    assert data["conv_a"][1] is not None  # timestamp still present
+    assert data["conv_a"][1] > ts_publish  # timestamp advanced past publish
+
+
 def test_record_publish_ignores_tool_observations_for_pending_prompt() -> None:
     """
     Forwarded tool transcript events do not resolve pending prompts.

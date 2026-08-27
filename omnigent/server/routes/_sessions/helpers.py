@@ -1374,6 +1374,7 @@ async def _apply_liveness_to_items(
         # runner reconnects (see ``_on_runner_connect``'s pending resync).
         if not result.runner_online:
             item.pending_elicitations_count = 0
+            item.pending_elicitations_updated_at = None
 
 
 def _targeted_elicitation_event(

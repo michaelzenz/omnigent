@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from fastapi import (
@@ -128,7 +129,7 @@ def register_elicitations_routes(
         await _apply_pending_policy_ask_writes(
             session_id, conv, conversation_store, agent_store, _resolve_data
         )
-        return {"queued": False}
+        return {"queued": False, "server_time": time.time()}
 
     @router.get(
         "/sessions/{session_id}/elicitations/{elicitation_id}",
