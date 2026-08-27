@@ -551,6 +551,7 @@ def _tool_call_event(
     *,
     state: dict | None = None,
     llm_client: Any = None,
+    trajectory: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     return {
         "type": "tool_call",
@@ -559,6 +560,7 @@ def _tool_call_event(
         "context": {},
         "session_state": state or {},
         "llm_client": llm_client,
+        "trajectory": trajectory or [],
     }
 
 
@@ -683,7 +685,10 @@ async def test_intent_based_authorization_cached_on_task_skips_llm() -> None:
     intent = "fix the login bug"
     tool = "read_file"
     args_repr = json.dumps({}, sort_keys=True, default=str)
-    check_hash = hashlib.sha256(f"{intent}\x00{tool}\x00{args_repr}".encode()).hexdigest()[:16]
+    context_repr = json.dumps({"u": [], "a": []}, sort_keys=True, default=str)
+    check_hash = hashlib.sha256(
+        f"{intent}\x00{tool}\x00{args_repr}\x00{context_repr}".encode()
+    ).hexdigest()[:16]
     cache_key = f"{_INTENT_CHECK_PREFIX}{check_hash}"
 
     result = await policy(
@@ -706,7 +711,10 @@ async def test_intent_based_authorization_cached_off_task_asks_without_llm() -> 
     intent = "fix the login bug"
     tool = "send_email"
     args_repr = json.dumps({}, sort_keys=True, default=str)
-    check_hash = hashlib.sha256(f"{intent}\x00{tool}\x00{args_repr}".encode()).hexdigest()[:16]
+    context_repr = json.dumps({"u": [], "a": []}, sort_keys=True, default=str)
+    check_hash = hashlib.sha256(
+        f"{intent}\x00{tool}\x00{args_repr}\x00{context_repr}".encode()
+    ).hexdigest()[:16]
     cache_key = f"{_INTENT_CHECK_PREFIX}{check_hash}"
 
     result = await policy(
@@ -759,6 +767,144 @@ async def test_intent_based_authorization_classifier_failure_abstains() -> None:
         )
     )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_intent_based_authorization_feeds_trajectory_to_classifier() -> None:
+    """Recent user/agent messages from trajectory appear in the classifier prompt."""
+    client = _FakePolicyLLMClient(_on_task_response())
+    policy = intent_based_authorization()
+
+    trajectory = [
+        {"role": "user", "text": "fix the login bug"},
+        {"role": "assistant", "text": "I'll investigate the auth module."},
+        {"role": "user", "text": "yes, please check src/auth.py"},
+    ]
+
+    await policy(
+        _tool_call_event(
+            "read_file",
+            {"path": "src/auth.py"},
+            state={_INTENT_KEY: "fix the login bug"},
+            llm_client=client,
+            trajectory=trajectory,
+        )
+    )
+
+    sent_text = client._mock_create.await_args.kwargs["input"][0]["content"][0]["text"]
+    assert "Recent user messages:" in sent_text
+    assert "fix the login bug" in sent_text
+    assert "yes, please check src/auth.py" in sent_text
+    assert "Recent agent responses:" in sent_text
+    assert "I'll investigate the auth module." in sent_text
+
+
+@pytest.mark.asyncio
+async def test_intent_based_authorization_trajectory_truncates_to_last_n() -> None:
+    """Only the last 3 user and last 2 agent messages are included."""
+    client = _FakePolicyLLMClient(_on_task_response())
+    policy = intent_based_authorization()
+
+    trajectory = [
+        {"role": "user", "text": "old user 1"},
+        {"role": "assistant", "text": "old agent 1"},
+        {"role": "user", "text": "old user 2"},
+        {"role": "assistant", "text": "old agent 2"},
+        {"role": "user", "text": "old user 3"},
+        {"role": "assistant", "text": "recent agent 1"},
+        {"role": "user", "text": "recent user 1"},
+        {"role": "assistant", "text": "recent agent 2"},
+        {"role": "user", "text": "recent user 2"},
+        {"role": "user", "text": "recent user 3"},
+    ]
+
+    await policy(
+        _tool_call_event(
+            "read_file",
+            state={_INTENT_KEY: "fix the login bug"},
+            llm_client=client,
+            trajectory=trajectory,
+        )
+    )
+
+    sent_text = client._mock_create.await_args.kwargs["input"][0]["content"][0]["text"]
+    assert "recent user 1" in sent_text
+    assert "recent user 2" in sent_text
+    assert "recent user 3" in sent_text
+    assert "old user 1" not in sent_text
+    assert "old user 2" not in sent_text
+    assert "old user 3" not in sent_text
+    assert "recent agent 1" in sent_text
+    assert "recent agent 2" in sent_text
+    assert "old agent 1" not in sent_text
+    assert "old agent 2" not in sent_text
+
+
+@pytest.mark.asyncio
+async def test_intent_based_authorization_different_trajectory_invalidates_cache() -> None:
+    """Different conversation context produces a different cache key."""
+    client = _FakePolicyLLMClient(_on_task_response())
+    policy = intent_based_authorization()
+
+    intent = "fix the login bug"
+    tool = "read_file"
+    args_repr = json.dumps({}, sort_keys=True, default=str)
+
+    # Cache key with empty trajectory
+    ctx_repr_empty = json.dumps({"u": [], "a": []}, sort_keys=True, default=str)
+    hash_empty = hashlib.sha256(
+        f"{intent}\x00{tool}\x00{args_repr}\x00{ctx_repr_empty}".encode()
+    ).hexdigest()[:16]
+    cache_key_empty = f"{_INTENT_CHECK_PREFIX}{hash_empty}"
+
+    # Cache key with non-empty trajectory should differ
+    ctx_repr_full = json.dumps(
+        {"u": ["hello"], "a": ["hi there"]}, sort_keys=True, default=str
+    )
+    hash_full = hashlib.sha256(
+        f"{intent}\x00{tool}\x00{args_repr}\x00{ctx_repr_full}".encode()
+    ).hexdigest()[:16]
+    cache_key_full = f"{_INTENT_CHECK_PREFIX}{hash_full}"
+
+    assert cache_key_empty != cache_key_full
+
+    # Cached ON_TASK with empty trajectory does NOT match a call with trajectory
+    result = await policy(
+        _tool_call_event(
+            tool,
+            state={_INTENT_KEY: intent, cache_key_empty: "ON_TASK"},
+            llm_client=client,
+            trajectory=[
+                {"role": "user", "text": "hello"},
+                {"role": "assistant", "text": "hi there"},
+            ],
+        )
+    )
+    # Cache miss → classifier IS called
+    client._mock_create.assert_awaited_once()
+    assert result is not None
+    assert result["result"] == "ALLOW"
+
+
+@pytest.mark.asyncio
+async def test_intent_based_authorization_no_trajectory_works_as_before() -> None:
+    """Without trajectory (non-tool-call phase or tests), classification still works."""
+    client = _FakePolicyLLMClient(_on_task_response())
+    policy = intent_based_authorization()
+
+    result = await policy(
+        _tool_call_event(
+            "read_file",
+            state={_INTENT_KEY: "fix the login bug"},
+            llm_client=client,
+            trajectory=[],
+        )
+    )
+    assert result is not None
+    assert result["result"] == "ALLOW"
+    sent_text = client._mock_create.await_args.kwargs["input"][0]["content"][0]["text"]
+    assert "Original intent: fix the login bug" in sent_text
+    assert "Conversation context:" not in sent_text
 
 
 # ── dangerous_actions_intent_classifier ─────────────────────────────────────

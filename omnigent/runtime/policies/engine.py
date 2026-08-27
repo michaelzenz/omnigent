@@ -13,6 +13,7 @@ The orchestration here handles composition.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -22,12 +23,15 @@ from omnigent.policies.types import EvaluationContext, PolicyResult
 from omnigent.spec.types import (
     DEFAULT_ASK_TIMEOUT,
     LabelDef,
+    Phase,
     PolicyAction,
     PolicySpec,
     StateUpdate,
     StateUpdateAction,
 )
 from omnigent.stores.conversation_store import ConversationStore
+
+_log = logging.getLogger(__name__)
 
 # Number of recent conversation items the engine fetches from
 # the conversation store and threads onto :class:`EvaluationContext`
@@ -347,6 +351,7 @@ class PolicyEngine:
         ctx = self._inject_model(ctx)
         ctx = self._inject_labels(ctx)
         ctx = self._inject_llm_client(ctx)
+        ctx = self._inject_trajectory(ctx)
 
         for policy in self.policies:
             if not self._should_fire(policy.spec, ctx):
@@ -806,6 +811,59 @@ class PolicyEngine:
             hot cache.
         """
         return replace(ctx, session_state=dict(self._session_state))
+
+    def _inject_trajectory(
+        self, ctx: EvaluationContext
+    ) -> EvaluationContext:
+        """
+        Return a copy of *ctx* with ``trajectory`` populated.
+
+        Queries the conversation store for recent message items so
+        function policy callables can read recent user/assistant
+        messages via ``event["trajectory"]``. Only populated on
+        TOOL_CALL phase to avoid a DB read on every evaluation; other
+        phases get ``None`` (callables treat that as empty).
+
+        :param ctx: Original :class:`EvaluationContext` from the
+            caller.
+        :returns: *ctx* unchanged on non-TOOL_CALL phases or store
+            errors; else a copy with ``trajectory`` set to a list of
+            ``{"role": str, "text": str}`` dicts (oldest first).
+        """
+        if ctx.phase != Phase.TOOL_CALL:
+            return ctx
+        try:
+            result = self._store.list_items(
+                self._conversation_id,
+                limit=10,
+                type="message",
+                order="desc",
+            )
+        except Exception:  # fail-open: no trajectory
+            _log.debug(
+                "PolicyEngine._inject_trajectory: list_items failed",
+                exc_info=True,
+            )
+            return ctx
+        trajectory: list[dict[str, str]] = []
+        for item in reversed(result.data):
+            data = item.data
+            role = getattr(data, "role", None)
+            if role not in ("user", "assistant"):
+                continue
+            content = getattr(data, "content", [])
+            if not isinstance(content, list):
+                continue
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            text = "\n".join(parts)
+            if text.strip():
+                trajectory.append({"role": role, "text": text})
+        return replace(ctx, trajectory=trajectory)
 
     def _filter_schema_valid(
         self,
