@@ -3178,6 +3178,11 @@ export function ConversationScrollPosition({
             return;
           }
         } else {
+          // Anchor not yet loaded (history is paginated). Stay at the
+          // currently rendered bottom rather than sitting at scrollTop=0,
+          // so a running session doesn't flash to the top while waiting.
+          if (!markConversationScrollRestoring(el, generation)) return;
+          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
           // A shrinking document can make the old location permanently invalid.
           // Once that shrink settles, bottom is the only valid fallback.
           const shrank = scrollHeight < largestScrollHeight;
