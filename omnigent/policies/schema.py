@@ -240,6 +240,10 @@ class PolicyEvent(TypedDict, total=False):
     session_state: dict[str, object]
     llm_client: PolicyLLMClient | None
     request_data: object
+    # Recent conversation messages (oldest first), populated on
+    # ``tool_call`` phase. Each entry: ``{"role": "user"|"assistant",
+    # "text": str}``. Empty list when no history or non-tool-call phase.
+    trajectory: list[dict[str, str]]
 
 
 # ── Response (output from callable) ──────────────────────────────────────────

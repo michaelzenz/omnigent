@@ -203,6 +203,7 @@ def _build_event(ctx: EvaluationContext) -> PolicyEvent:
             "session_state": {...},
             "llm_client": <PolicyLLMClient-or-None>,
             "request_data": <original-tool-call-on-TOOL_RESULT>,
+            "trajectory": [{"role": "user"|"assistant", "text": str}, ...],
         }
 
     On ``TOOL_RESULT`` phase, ``request_data`` carries the
@@ -247,6 +248,9 @@ def _build_event(ctx: EvaluationContext) -> PolicyEvent:
         # make LLM calls (e.g. classify prompt difficulty). None when
         # the server has no ``llm:`` config.
         "llm_client": ctx.llm_client,
+        # Recent conversation messages (oldest first), populated by the
+        # engine only on TOOL_CALL phase. Empty list otherwise.
+        "trajectory": ctx.trajectory if ctx.trajectory is not None else [],
     }
     if ctx.request_data is not None:
         event["request_data"] = ctx.request_data

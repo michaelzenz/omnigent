@@ -250,6 +250,10 @@ _INTENT_KEY = "_intent_based_authorization_intent"
 # Full key: ``_intent_based_authorization_check:<hex16-of-intent+tool+args>``.
 _INTENT_CHECK_PREFIX = "_intent_based_authorization_check:"
 
+# How many recent user / agent messages to feed the classifier.
+_MAX_RECENT_USER_MSGS = 3
+_MAX_RECENT_AGENT_MSGS = 2
+
 
 def _off_task_reason(tool_name: str, intent: str) -> str:
     return (
@@ -265,6 +269,10 @@ You are a security policy enforcer for an AI agent.
 The agent was given a specific task (the "original intent") at the start of the
 session. Your job is to decide whether a proposed tool call is consistent with
 completing that task, or whether it goes beyond / outside the task scope.
+
+You will also receive recent user messages and agent responses for context.
+Use these to understand how the conversation has evolved and what the agent
+is currently working on.
 
 Be permissive for sub-tasks and helper steps that clearly serve the original
 intent. Only flag tool calls that have no plausible connection to the stated
@@ -387,14 +395,37 @@ def intent_based_authorization(
         if not intent:
             return None  # no intent captured yet — fail open
 
+        # ── Extract recent conversation context from trajectory ──────────
+        trajectory = event.get("trajectory") or []
+        recent_user_msgs: list[str] = []
+        recent_agent_msgs: list[str] = []
+        for item in trajectory:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            text = item.get("text", "")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if role == "user":
+                recent_user_msgs.append(text.strip()[:500])
+            elif role == "assistant":
+                recent_agent_msgs.append(text.strip()[:500])
+        recent_user_msgs = recent_user_msgs[-_MAX_RECENT_USER_MSGS:]
+        recent_agent_msgs = recent_agent_msgs[-_MAX_RECENT_AGENT_MSGS:]
+
         tool_name: str = event.get("target") or ""
         data = event.get("data") or {}
         tool_args = data.get("arguments", {}) if isinstance(data, dict) else {}
 
         # ── Cache lookup ─────────────────────────────────────────────────
         args_repr = json.dumps(tool_args, sort_keys=True, default=str)
+        context_repr = json.dumps(
+            {"u": recent_user_msgs, "a": recent_agent_msgs},
+            sort_keys=True,
+            default=str,
+        )
         check_hash = hashlib.sha256(
-            f"{intent}\x00{tool_name}\x00{args_repr}".encode()
+            f"{intent}\x00{tool_name}\x00{args_repr}\x00{context_repr}".encode()
         ).hexdigest()[:16]
         cache_key = f"{_INTENT_CHECK_PREFIX}{check_hash}"
         cached = state.get(cache_key)
@@ -416,11 +447,23 @@ def intent_based_authorization(
             )
             return None
 
-        user_prompt = (
-            f"Original intent: {intent[:500]}\n\n"
-            f"Proposed tool call: {tool_name}\n"
-            f"Arguments: {args_repr[:500]}"
-        )
+        context_lines: list[str] = []
+        if recent_user_msgs:
+            context_lines.append("Recent user messages:")
+            for i, msg in enumerate(recent_user_msgs, 1):
+                context_lines.append(f"  {i}. {msg}")
+        if recent_agent_msgs:
+            context_lines.append("Recent agent responses:")
+            for i, msg in enumerate(recent_agent_msgs, 1):
+                context_lines.append(f"  {i}. {msg}")
+        context_block = "\n".join(context_lines)
+
+        prompt_parts = [f"Original intent: {intent[:500]}"]
+        if context_block:
+            prompt_parts.append(f"Conversation context:\n{context_block}")
+        prompt_parts.append(f"Proposed tool call: {tool_name}")
+        prompt_parts.append(f"Arguments: {args_repr[:500]}")
+        user_prompt = "\n\n".join(prompt_parts)
 
         try:
             response = await llm_client.create(

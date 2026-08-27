@@ -115,16 +115,16 @@ class EvaluationContext:
         ``TOOL_CALL`` and ``TOOL_RESULT``; ``None`` on
         ``REQUEST``, ``RESPONSE``, ``LLM_REQUEST``, and
         ``LLM_RESPONSE``.
-    :param trajectory: Recent conversation items (oldest first)
-        the classifier may consume to produce situational
-        reason text — see designs/LIVE_POLICIES.md §4.1. The
-        engine populates this on every ``evaluate()`` call by
-        querying the conversation store; callers leave it
-        ``None``. ``FunctionPolicy`` ignores the field;
-        ``PromptPolicy`` formats it into the
-        classifier prompt. ``None`` means "engine never
-        populated it" (test contexts); empty list means
-        "brand-new conversation, no items yet."
+    :param trajectory: Recent conversation messages (oldest first)
+        queried from the conversation store by the engine.
+        Populated only on ``TOOL_CALL`` phase to avoid a DB
+        read on every evaluation; ``None`` on all other phases
+        and in test contexts. Each entry is
+        ``{"role": "user"|"assistant", "text": str}``. Surfaced
+        to function policy callables via
+        ``event["trajectory"]`` (empty list when not populated).
+        Empty list means a brand-new conversation with no
+        messages yet.
     :param actor: Identity of the principal executing the
         request. Shape:
         ``{"run_as": "<email>", "client_id": "<oauth-client>"}``.
@@ -216,6 +216,13 @@ class EvaluationContext:
     harness: str | None = None
     labels: dict[str, str] | None = None
     llm_client: PolicyLLMClient | None = None
+    # Recent conversation messages (oldest first) queried from the
+    # conversation store, populated only on TOOL_CALL phase to avoid
+    # a DB read on every evaluation. Each entry is ``{"role": "user"|
+    # "assistant", "text": str}``. ``None`` means not populated (test
+    # contexts / non-tool-call phases); empty list means a brand-new
+    # conversation.
+    trajectory: list[dict[str, str]] | None = None
 
 
 @dataclass(frozen=True)
