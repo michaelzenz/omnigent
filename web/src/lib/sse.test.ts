@@ -300,3 +300,72 @@ describe("parseEvent — session.mcp_startup", () => {
     ).toBeNull();
   });
 });
+
+describe("parseEvent — session.worktree_status", () => {
+  it("parses every stage, threading branch and error", () => {
+    // The background auto-send and the worktree panel both hang off this
+    // frame — a parser gap here silently strands sessions (the store
+    // handler never sees the event).
+    for (const stage of [
+      "creating",
+      "launching",
+      "reacquiring",
+      "relocating",
+      "ready",
+      "failed",
+    ] as const) {
+      const ev = parseEvent("session.worktree_status", {
+        conversation_id: "conv_a",
+        stage,
+        branch: "feature/x",
+        error: stage === "failed" ? "boom" : null,
+      });
+      expect(ev).toEqual({
+        type: "session_worktree_status",
+        conversationId: "conv_a",
+        stage,
+        branch: "feature/x",
+        error: stage === "failed" ? "boom" : null,
+      });
+    }
+  });
+
+  it("rejects frames with an unknown stage or no conversation id", () => {
+    expect(
+      parseEvent("session.worktree_status", { conversation_id: "conv_a", stage: "exploded" }),
+    ).toBeNull();
+    expect(parseEvent("session.worktree_status", { stage: "ready" })).toBeNull();
+  });
+
+  it("tolerates absent branch/error on non-failed stages", () => {
+    expect(parseEvent("session.worktree_status", { conversation_id: "conv_a", stage: "ready" })).toEqual({
+      type: "session_worktree_status",
+      conversationId: "conv_a",
+      stage: "ready",
+      branch: null,
+      error: null,
+    });
+  });
+});
+
+describe("parseEvent — session.worktree_log", () => {
+  it("parses one git output line", () => {
+    expect(
+      parseEvent("session.worktree_log", {
+        conversation_id: "conv_a",
+        line: "Updating files: 42%",
+      }),
+    ).toEqual({
+      type: "session_worktree_log",
+      conversationId: "conv_a",
+      line: "Updating files: 42%",
+    });
+  });
+
+  it("rejects frames without a conversation id or a string line", () => {
+    expect(parseEvent("session.worktree_log", { line: "x" })).toBeNull();
+    expect(
+      parseEvent("session.worktree_log", { conversation_id: "conv_a", line: 42 }),
+    ).toBeNull();
+  });
+});

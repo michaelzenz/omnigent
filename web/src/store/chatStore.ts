@@ -93,6 +93,7 @@ import {
 } from "@/lib/sse";
 import { clearSseLog, pushSseEvent } from "@/lib/sseEventLog";
 import { childSessionsQueryKey, type ChildSessionInfo } from "@/hooks/useChildSessions";
+import { registerUnseenExemption } from "@/hooks/useUnseenConversations";
 import { sessionItemsQueryKey } from "@/hooks/useSessionItems";
 import type { Conversation, ConversationsPage } from "@/hooks/useConversations";
 import { overlayTitleIntoCaches, type ConversationsInfiniteData } from "@/lib/sessionListCache";
@@ -1458,6 +1459,12 @@ export function peekPendingInitialPrompt(conversationId: string): PendingInitial
 export function deletePendingInitialPrompt(conversationId: string): void {
   pendingInitialPrompts.delete(conversationId);
 }
+
+// A session with a parked initial prompt is mid-startup: its updated_at
+// bumps (worktree progress, workspace patch, runner launch) are setup noise
+// that must not light the sidebar unread dot — nothing is readable until
+// the prompt dispatches and the first turn produces content.
+registerUnseenExemption((id) => peekPendingInitialPrompt(id) !== null);
 
 /**
  * Auto-send a pending initial prompt for a conversation whose worktree just
