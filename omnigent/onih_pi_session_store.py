@@ -204,9 +204,32 @@ class OnihPiSessionStore:
     @staticmethod
     def _validate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         supported = {"message", "function_call", "function_call_output", "error"}
+        # Identify interrupted turns so their items can be skipped during
+        # validation, matching pi_session_records_from_session_items (which
+        # drops them by response_id).  An interrupted turn may carry an
+        # unpaired function_call_output — e.g. a native Pi tool whose
+        # function_call was emitted with status "in_progress" (not persisted;
+        # only "completed" is durable) or a race between ToolCallRequest and
+        # the tool callback that leaves the ToolCallComplete's call_id
+        # unpaired.  Validating those items would raise a fatal error that
+        # permanently breaks the session.
+        skip_response_ids: set[str] = set()
+        for item in items:
+            if (
+                item.get("type") == "message"
+                and item.get("role") == "assistant"
+                and item.get("interrupted") is True
+            ):
+                rid = item.get("response_id")
+                if isinstance(rid, str) and rid:
+                    skip_response_ids.add(rid)
+
         calls: dict[str, str] = {}
         normalized: list[dict[str, Any]] = []
         for item in items:
+            rid = item.get("response_id")
+            if isinstance(rid, str) and rid in skip_response_ids:
+                continue
             item_type = item.get("type")
             if item_type not in supported:
                 raise ValueError(
@@ -236,27 +259,19 @@ class OnihPiSessionStore:
                         # model retains the pasted content; skip binary ones.
                         inlined = _inline_text_file_data(block.get("file_data"))
                         if inlined:
-                            normalized_content.append(
-                                {"type": "input_text", "text": inlined}
-                            )
+                            normalized_content.append({"type": "input_text", "text": inlined})
                         else:
-                            _logger.warning(
-                                "Pi reconstruction: skipping non-text input_file"
-                            )
+                            _logger.warning("Pi reconstruction: skipping non-text input_file")
                     elif role == "user" and block_type == "input_image":
                         # Images can't be replayed into Pi's text-only session
                         # format; drop them rather than failing the rebuild.
-                        _logger.warning(
-                            "Pi reconstruction: skipping input_image block"
-                        )
+                        _logger.warning("Pi reconstruction: skipping input_image block")
                     else:
                         raise ValueError(
                             f"unsupported canonical {role} content during Pi reconstruction"
                         )
                 if not normalized_content:
-                    raise ValueError(
-                        f"canonical {role} message has no reconstructable content"
-                    )
+                    raise ValueError(f"canonical {role} message has no reconstructable content")
                 copied["content"] = normalized_content
             elif item_type == "function_call":
                 call_id = item.get("call_id")
@@ -268,8 +283,20 @@ class OnihPiSessionStore:
                 calls[call_id] = name
             elif item_type == "function_call_output":
                 call_id = item.get("call_id")
-                if not isinstance(call_id, str) or call_id not in calls:
-                    raise ValueError(f"unpaired canonical tool result: {call_id!r}")
+                if not isinstance(call_id, str) or not call_id:
+                    continue
+                if call_id not in calls:
+                    # Unpaired tool result — drop it rather than failing the
+                    # rebuild.  This happens when the function_call was not
+                    # persisted (native Pi tool with in_progress status) or
+                    # when a ToolCallRequest/tool-callback race produces a
+                    # duplicate output under a different call_id.  Failing
+                    # here would permanently break the session.
+                    _logger.warning(
+                        "Pi reconstruction: dropping unpaired tool result %r",
+                        call_id,
+                    )
+                    continue
                 copied.setdefault("name", calls[call_id])
                 copied.setdefault("tool_status", "success")
             # "error" items are transcript metadata (NON_CONTENT_ITEM_TYPES),
