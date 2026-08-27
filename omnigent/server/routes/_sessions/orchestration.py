@@ -5093,11 +5093,13 @@ async def _forward_event_to_runner(
         if body.cost_control_mode_override is not None
         else conv.cost_control_mode_override
     )
-    _routing_enabled = (
-        _effective_cost_control == "on" and conv.parent_conversation_id is None
-    ) or _parent_routing_on
     _harness = _resolve_harness(conv)
+    _is_onih_child = conv.parent_conversation_id is not None and uses_omniharness
     _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None
+    _routing_enabled = (
+        _effective_cost_control == "on"
+        and (conv.parent_conversation_id is None or _is_onih_child)
+    ) or _parent_routing_on
     _profile_dynamic = (
         body.type == "message"
         and body.data.get("role") == "user"
@@ -8803,6 +8805,21 @@ async def _create_session_from_existing_agent(
         )
     ):
         subagent_routing_override = "on"
+
+    # "Follow current model selection" (subagent_routing_override == "off")
+    # means the child inherits the parent's model strategy. When the parent
+    # is on Smart Routing (cost_control_mode_override == "on"), the child
+    # should also smart-route — staying within the same harness family —
+    # rather than falling back to the harness default. Limited to omniharness
+    # family agents for upstream compatibility.
+    if (
+        subagent_routing_override == "off"
+        and cost_control_mode_override is None
+        and _parent_for_routing is not None
+        and _parent_for_routing.cost_control_mode_override == "on"
+        and is_omniharness_agent(agent)
+    ):
+        cost_control_mode_override = "on"
 
     # Validated against the loaded spec (known harness + omnigent
     # executor type) before any row exists, mirroring the CLI's
