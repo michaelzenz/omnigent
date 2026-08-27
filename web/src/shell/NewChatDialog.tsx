@@ -1982,7 +1982,7 @@ function HarnessConfigModal({
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
                   <SelectItem value="on">Smart Routing</SelectItem>
-                  <SelectItem value="off">Default</SelectItem>
+                  <SelectItem value="off">Off</SelectItem>
                 </SelectContent>
               </Select>
             </ConfigRow>
