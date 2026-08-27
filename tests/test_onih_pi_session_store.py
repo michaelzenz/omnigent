@@ -124,3 +124,93 @@ def test_validate_items_skips_input_image() -> None:
     assert len(content) == 1
     assert content[0]["type"] == "input_text"
     assert content[0]["text"] == "describe this:"
+
+
+def _function_call_item(call_id: str, name: str = "read") -> dict[str, Any]:
+    return {
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": "{}",
+    }
+
+
+def _function_output_item(call_id: str, output: str = "ok") -> dict[str, Any]:
+    return {
+        "type": "function_call_output",
+        "call_id": call_id,
+        "name": "read",
+        "output": output,
+        "tool_status": "success",
+    }
+
+
+def _interrupted_assistant_item(text: str, response_id: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "assistant",
+        "interrupted": True,
+        "response_id": response_id,
+        "content": [{"type": "output_text", "text": text}],
+    }
+
+
+def test_validate_items_drops_unpaired_tool_result() -> None:
+    """An unpaired function_call_output is dropped, not fatal."""
+    items = [
+        _user_item("q"),
+        _function_output_item("call_orphan"),
+        _assistant_item("a"),
+    ]
+    normalized = OnihPiSessionStore._validate_items(items)
+    types = [item["type"] for item in normalized]
+    assert "function_call_output" not in types
+    assert types == ["message", "message"]
+
+
+def test_validate_items_skips_interrupted_turn_with_unpaired_output() -> None:
+    """Items from an interrupted turn (including unpaired outputs) are skipped."""
+    items = [
+        _user_item("q"),
+        _assistant_item("prior answer"),
+        {**_user_item("q2"), "response_id": "resp_interrupted"},
+        {**_function_call_item("call_1"), "response_id": "resp_interrupted"},
+        {**_function_output_item("call_1"), "response_id": "resp_interrupted"},
+        # Unpaired output from the interrupted turn (e.g. native Pi tool race).
+        {**_function_output_item("call_orphan"), "response_id": "resp_interrupted"},
+        _interrupted_assistant_item("partial...", "resp_interrupted"),
+    ]
+    normalized = OnihPiSessionStore._validate_items(items)
+    # Everything from resp_interrupted is skipped; only the prior turn survives.
+    rids = [item.get("response_id") for item in normalized]
+    assert "resp_interrupted" not in rids
+    assert len(normalized) == 2
+
+
+def test_rebuild_with_unpaired_output_does_not_raise(tmp_path: Path) -> None:
+    """A session with an unpaired tool result rebuilds without error."""
+    store = OnihPiSessionStore(tmp_path)
+    try:
+        staging = store.rebuild(
+            conversation_id="conv_abc",
+            pi_session_id=_PI_SESSION_ID,
+            items=[
+                _user_item("q"),
+                _function_output_item("call_orphan"),
+                _assistant_item("a"),
+            ],
+            workspace=Path("/repo"),
+            provider="omnigent",
+            model="claude-opus-4-8",
+        )
+        session_files = list(staging.glob("*.jsonl"))
+        assert len(session_files) == 1
+        records = [
+            json.loads(line) for line in session_files[0].read_text(encoding="utf-8").splitlines()
+        ]
+        # Header + user + assistant; the orphan tool result is dropped.
+        assert len(records) == 3
+        assert records[0]["type"] == "session"
+        assert [r["message"]["role"] for r in records[1:]] == ["user", "assistant"]
+    finally:
+        store.close()
