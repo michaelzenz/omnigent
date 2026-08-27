@@ -38,6 +38,31 @@ def _error_item() -> dict[str, Any]:
     }
 
 
+def _user_file_item(text: str, mime: str = "text/plain") -> dict[str, Any]:
+    import base64
+
+    encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "fix this file:"},
+            {"type": "input_file", "file_data": f"data:{mime};base64,{encoded}"},
+        ],
+    }
+
+
+def _user_image_item() -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "describe this:"},
+            {"type": "input_image", "image_url": "data:image/png;base64,iVBOR="},
+        ],
+    }
+
+
 def test_validate_items_accepts_error_items() -> None:
     items = [_user_item("q"), _error_item(), _assistant_item("a")]
     normalized = OnihPiSessionStore._validate_items(items)
@@ -70,3 +95,32 @@ def test_rebuild_with_error_item_writes_session_without_it(tmp_path: Path) -> No
         assert "inner executor error" not in json.dumps(records)
     finally:
         store.close()
+
+
+def test_validate_items_converts_text_file_to_input_text() -> None:
+    """A pasted text file (input_file) is decoded into input_text for Pi."""
+    items = [_user_file_item("hello world")]
+    normalized = OnihPiSessionStore._validate_items(items)
+    content = normalized[0]["content"]
+    assert all(block["type"] == "input_text" for block in content)
+    assert content[1]["text"] == "hello world"
+
+
+def test_validate_items_skips_binary_file() -> None:
+    """Non-text input_file blocks are skipped, not fatal."""
+    items = [_user_file_item("binary", mime="application/octet-stream")]
+    normalized = OnihPiSessionStore._validate_items(items)
+    content = normalized[0]["content"]
+    # Only the input_text block survives; the binary file is dropped.
+    assert len(content) == 1
+    assert content[0]["type"] == "input_text"
+
+
+def test_validate_items_skips_input_image() -> None:
+    """input_image blocks are skipped, not fatal."""
+    items = [_user_image_item()]
+    normalized = OnihPiSessionStore._validate_items(items)
+    content = normalized[0]["content"]
+    assert len(content) == 1
+    assert content[0]["type"] == "input_text"
+    assert content[0]["text"] == "describe this:"
