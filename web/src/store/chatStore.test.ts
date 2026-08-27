@@ -249,6 +249,12 @@ let sessionCostControlOverrides: Map<string, "on" | "off">;
 let sessionSubagentRoutingOverrides: Map<string, "on" | "off">;
 // Per-session labels the snapshot/PATCH handlers serve.
 let sessionLabels: Map<string, Record<string, string>>;
+// Per-session worktree status the snapshot handler serves; absent key =
+// no worktree in flight (worktree_status: null).
+let sessionWorktreeStatuses: Map<
+  string,
+  { stage: string; branch?: string; error?: string | null; log_lines?: string[] }
+>;
 
 /** Default fetch router: dispatch by URL. Tests override per-call as needed. */
 function defaultFetchHandler(input: RequestInfo | URL, init?: RequestInit): Response {
@@ -367,6 +373,7 @@ function defaultFetchHandler(input: RequestInfo | URL, init?: RequestInit): Resp
       pending_inputs: sessionPendingInputs.get(sessionId) ?? [],
       cost_control_mode_override: sessionCostControlOverrides.get(sessionId) ?? null,
       subagent_routing_override: sessionSubagentRoutingOverrides.get(sessionId) ?? null,
+      worktree_status: sessionWorktreeStatuses.get(sessionId) ?? null,
     });
   }
   if (url === "/v1/sessions" && init?.method === "POST") {
@@ -469,6 +476,7 @@ beforeEach(() => {
   sessionCostControlOverrides = new Map();
   sessionSubagentRoutingOverrides = new Map();
   sessionLabels = new Map();
+  sessionWorktreeStatuses = new Map();
   initChatStore(client);
   // Generous, deterministic slots for tests that aren't about the cap; the
   // dedicated stream-slot tests install their own small-capacity manager.
@@ -1784,6 +1792,34 @@ describe("chatStore — switchTo", () => {
     // send was NOT called — switchTo already bound the stream and ChatPage's
     // auto-send effect owns the foreground dispatch.
     expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a background session whose ready SSE was dropped mid-bind", async () => {
+    vi.useFakeTimers();
+    // The snapshot lands with a stale in-progress worktreeStatus while the
+    // terminal SSE was skipped by the loadingConversation guard: without a
+    // background reconcile the pending prompt would never send.
+    seedSession("conv_active", []);
+    seedSession("conv_bg_race", []);
+    await useChatStore.getState().switchTo("conv_active");
+    sessionWorktreeStatuses.set("conv_bg_race", { stage: "creating", branch: "feature/race" });
+    setPendingInitialPrompt("conv_bg_race", { text: "start in background", skill: null });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ send: sendSpy });
+
+    await useChatStore.getState().bindBackgroundSession("conv_bg_race", "agent_xyz", "Test Agent");
+    // In-progress snapshot: nothing sent yet, and the reconcile is armed.
+    expect(sendSpy).not.toHaveBeenCalled();
+
+    // The server finishes the worktree + launch: the next reconcile read
+    // sees worktreeStatus null and starts the agent.
+    sessionWorktreeStatuses.delete("conv_bg_race");
+    await vi.advanceTimersByTimeAsync(2100);
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual(["start in background", "agent_xyz"]);
+    expect(peekPendingInitialPrompt("conv_bg_race")).toBeNull();
+    expect(useChatStore.getState().conversationId).toBe("conv_active");
   });
 });
 
@@ -9431,6 +9467,17 @@ describe("gcPendingInitialPrompts", () => {
       skill: null,
     });
     releaseConversation("conv_gc_creating");
+  });
+
+  it("keeps a stale prompt while the session's runner is still launching", () => {
+    bindConversationForTest("conv_gc_launching", { worktreeStatus: { stage: "launching" } });
+    setPendingInitialPrompt("conv_gc_launching", { text: "waiting for runner", skill: null });
+    gcPendingInitialPrompts(Date.now() + MAX_AGE + 1);
+    expect(peekPendingInitialPrompt("conv_gc_launching")).toEqual({
+      text: "waiting for runner",
+      skill: null,
+    });
+    releaseConversation("conv_gc_launching");
   });
 
   it("refreshes the timestamp of a worktree-creating entry so it survives another cycle", () => {

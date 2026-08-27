@@ -31,3 +31,19 @@ def test_worktree_logs_survive_late_stream_connection_and_failure() -> None:
         assert failed.log_lines == status.log_lines
     finally:
         _session_worktree_status_cache.pop(session_id, None)
+
+
+def test_launching_stage_is_retained_and_ready_evicts() -> None:
+    """The worktree-done/runner-starting stage keeps logs and cache until ready."""
+    session_id = "worktree-launching-stage-test"
+    try:
+        _publish_worktree_status(session_id, "creating", branch="feature/x")
+        _publish_worktree_log(session_id, "Preparing worktree")
+        _publish_worktree_status(session_id, "launching", branch="feature/x")
+        status = _session_worktree_status_cache[session_id]
+        assert status.stage == "launching"
+        assert status.log_lines == ["Preparing worktree"]
+        _publish_worktree_status(session_id, "ready", branch="feature/x")
+        assert session_id not in _session_worktree_status_cache
+    finally:
+        _session_worktree_status_cache.pop(session_id, None)

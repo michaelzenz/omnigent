@@ -1445,6 +1445,7 @@ describe("shouldSendInitialPrompt", () => {
     promptConversationId: "conv_abc",
     sentForConversationId: null,
     conversationId: "conv_abc",
+    activeConversationId: "conv_abc",
     loadingConversation: false,
     agentId: "ag_abc123",
   } as const;
@@ -1470,6 +1471,20 @@ describe("shouldSendInitialPrompt", () => {
     expect(shouldSendInitialPrompt({ ...ready, initialPrompt })).toBe(false);
   });
 
+  it("does not send while the store still mirrors the outgoing conversation", () => {
+    // The switch-commit race: the URL is already :b but the store root
+    // still projects :a's entry (switchTo runs in a later effect), so
+    // loadingConversation/worktreeStatus belong to :a. Without this gate
+    // a :a state of (false, null) passes every other check and fires :b's
+    // pending prompt into the worktree 409 gate — consuming it, so the
+    // agent never starts. A failure here reopens that race.
+    expect(shouldSendInitialPrompt({ ...ready, activeConversationId: "conv_outgoing" })).toBe(
+      false,
+    );
+    // Landing (no active conversation) must not fire either.
+    expect(shouldSendInitialPrompt({ ...ready, activeConversationId: null })).toBe(false);
+  });
+
   it("does not send twice for the same conversation (once-guard)", () => {
     // sentForConversationId mirrors the effect's ref after the first
     // dispatch for this session. A failure means a re-render (e.g. runner
@@ -1489,6 +1504,9 @@ describe("shouldSendInitialPrompt", () => {
         promptConversationId: "conv_xyz",
         sentForConversationId: "conv_abc",
         conversationId: "conv_xyz",
+        // The store has caught up to the URL (see the switch-commit race
+        // gate): this models the settled post-switch render.
+        activeConversationId: "conv_xyz",
       }),
     ).toBe(true);
   });

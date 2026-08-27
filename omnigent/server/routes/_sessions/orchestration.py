@@ -9408,7 +9408,34 @@ def _spawn_worktree_creation_task(
         )
     )
     _worktree_creation_tasks.add(task)
-    task.add_done_callback(_worktree_creation_tasks.discard)
+
+    def _settle_on_crash(finished: asyncio.Task[None]) -> None:
+        """Dead-letter the launch state when the task dies unsettled.
+
+        Every failure path inside the task publishes its own precise
+        ``failed``; this catches only escapes (a bug above the guarded
+        blocks), which would otherwise strand the session at
+        ``"creating"`` forever — every message send 409ing with a stale
+        "still running" reason.
+        """
+        _worktree_creation_tasks.discard(finished)
+        if finished.cancelled():
+            return
+        if finished.exception() is None:
+            return
+        _logger.error(
+            "Worktree creation task crashed for %s",
+            session_id,
+            exc_info=finished.exception(),
+        )
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=branch_name,
+            error="internal error during worktree creation",
+        )
+
+    task.add_done_callback(_settle_on_crash)
 
 
 async def _run_worktree_creation(
@@ -9554,6 +9581,10 @@ async def _run_worktree_creation(
     # Launch the runner now that the workspace is the worktree path.
     # The create POST skipped the synchronous host launch; the background
     # task owns it here, mirroring the managed-sandbox launch pattern.
+    # The worktree exists from here on — advance the stage so a message
+    # send blocked at the gate gets an honest "runner still starting"
+    # reason instead of "worktree creation is still running".
+    _publish_worktree_status(session_id, "launching", branch=created.branch)
     _publish_worktree_log(session_id, "Worktree created. Launching runner…")
     host_store = getattr(request.app.state, "host_store", None)
     permission_store = getattr(request.app.state, "permission_store", None)
@@ -9586,15 +9617,28 @@ async def _run_worktree_creation(
         )
         return
     conv = target.conv
-    # Set terminal_pending for terminal-first sessions right before launch.
-    if conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE:
-        _publish_terminal_pending(session_id, True)
-    launch_attempt = await _launch_runner_on_host(
-        conv,
-        conversation_store,
-        host_registry,
-        target.conn,
-    )
+    try:
+        # Set terminal_pending for terminal-first sessions right before launch.
+        if conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE:
+            _publish_terminal_pending(session_id, True)
+        launch_attempt = await _launch_runner_on_host(
+            conv,
+            conversation_store,
+            host_registry,
+            target.conn,
+        )
+    except Exception:  # noqa: BLE001
+        # Without this catch, an unexpected crash strands the session at
+        # "creating"/"launching" forever — every message send then 409s
+        # with a stale "still running" reason.
+        _logger.exception("Runner launch crashed for %s after worktree creation", session_id)
+        _publish_worktree_status(
+            session_id,
+            "failed",
+            branch=created.branch,
+            error="internal error during runner launch",
+        )
+        return
     if launch_attempt.error is not None:
         _logger.warning(
             "Runner launch failed for session %s after worktree creation: %s",

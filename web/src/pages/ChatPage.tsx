@@ -928,14 +928,14 @@ export function ChatPage() {
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
   const worktreeStatus = useChatStore((s) => s.worktreeStatus);
   // Worktree status has one authority: the session snapshot. Poll only while
-  // creation is active; SSE remains responsible for low-latency log lines.
-  // This avoids ordering races between bind hydration and transient status
-  // events while still clearing the send gate promptly on ready/failed.
+  // creation/launch is active; SSE remains responsible for low-latency log
+  // lines. This avoids ordering races between bind hydration and transient
+  // status events while still clearing the send gate promptly on ready/failed.
   useEffect(() => {
     if (
       urlConvId === undefined ||
       activeConversationId !== urlConvId ||
-      worktreeStatus?.stage !== "creating"
+      !isWorktreeStageInProgress(worktreeStatus?.stage)
     ) {
       return;
     }
@@ -957,11 +957,11 @@ export function ChatPage() {
               : state.worktreeLogLines,
         }));
       } catch {
-        // A transient snapshot failure is retried while the creating state remains.
+        // A transient snapshot failure is retried while the in-progress state remains.
       }
       if (
         !controller.signal.aborted &&
-        useChatStore.getState().worktreeStatus?.stage === "creating"
+        isWorktreeStageInProgress(useChatStore.getState().worktreeStatus?.stage)
       ) {
         timer = window.setTimeout(() => void poll(), 1000);
       }
@@ -1142,6 +1142,7 @@ export function ChatPage() {
         promptConversationId: initialPrompt?.conversationId ?? null,
         sentForConversationId: initialPromptSentForConvRef.current,
         conversationId: urlConvId,
+        activeConversationId,
         loadingConversation,
         agentId,
       })
@@ -1177,7 +1178,14 @@ export function ChatPage() {
     deletePendingInitialPrompt(urlConvId);
     const { send, sendSlashCommand } = useChatStore.getState();
     dispatchInitialPrompt(initialPrompt.prompt, agentId, send, sendSlashCommand);
-  }, [initialPrompt, urlConvId, loadingConversation, agentId, worktreeStatus]);
+  }, [
+    initialPrompt,
+    urlConvId,
+    activeConversationId,
+    loadingConversation,
+    agentId,
+    worktreeStatus,
+  ]);
 
   // A failed worktree never gets a runner, so return the consumed landing
   // prompt to the in-session composer instead of leaving it trapped in this
@@ -4239,6 +4247,16 @@ export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
   );
 }
 
+/** Stages where the background worktree task is still running (vs terminal). */
+function isWorktreeStageInProgress(stage: WorktreeStatus["stage"] | undefined): boolean {
+  return (
+    stage === "creating" ||
+    stage === "launching" ||
+    stage === "reacquiring" ||
+    stage === "relocating"
+  );
+}
+
 /**
  * Scrolling log panel for async git-worktree creation. Shows each
  * streamed git output line in a capped-height scrollable box (not in
@@ -4284,7 +4302,9 @@ export function WorktreeCreationPanel({
             <span className="text-muted-foreground">
               {status.stage === "relocating" || status.stage === "reacquiring"
                 ? "Restoring session workspace"
-                : "Creating worktree"}
+                : status.stage === "launching"
+                  ? "Worktree ready — starting the session runner"
+                  : "Creating worktree"}
               {status.branch ? ` on branch "${status.branch}"` : ""}…
             </span>
           </>
@@ -7764,12 +7784,20 @@ export function shouldSendInitialPrompt(params: {
   promptConversationId: string | null;
   sentForConversationId: string | null;
   conversationId: string | null | undefined;
+  activeConversationId: string | null;
   loadingConversation: boolean;
   agentId: string | null;
 }): boolean {
   // Reject falsy (null or "") so a manipulated router state can't fire
   // send("") — defense-in-depth alongside the dialog's blank guard.
   if (!params.initialPrompt) return false;
+  // In the switch commit `/c/:a` → `/c/:b` the URL is already :b but the
+  // store root still mirrors :a's entry (the URL effect's switchTo runs
+  // after this effect), so `loadingConversation`/`worktreeStatus` read
+  // below belong to :a. A :a state of (false, null) would pass every
+  // check and fire :b's pending prompt straight into the worktree gate.
+  // Require the store to have caught up with the URL before sending.
+  if (params.activeConversationId !== params.conversationId) return false;
   // The prompt must still belong to the active session. `initialPrompt` is
   // set by an effect whose `setInitialPrompt` doesn't flush until the next
   // render, so when the user switches `/c/:a` → `/c/:b` the auto-send effect

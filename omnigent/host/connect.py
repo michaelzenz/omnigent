@@ -2902,6 +2902,16 @@ class HostProcess:
                 status="failed",
                 error=f"managed worktree state error: {exc}",
             )
+        except Exception:
+            # The server waits for the result frame without a deadline —
+            # an unexpected crash must still settle it, or the session
+            # stays "creating" forever.
+            _logger.exception("Worktree creation crashed on host")
+            return HostCreateWorktreeResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error="internal error during worktree creation",
+            )
         _logger.info(
             "Created worktree %s (branch %s) from %s",
             created.worktree_path,
@@ -2942,6 +2952,15 @@ class HostProcess:
                 request_id=frame.request_id,
                 status="failed",
                 error=exc.message,
+            )
+        except Exception:
+            # The server waits for the result frame without a deadline —
+            # an unexpected crash must still settle it.
+            _logger.exception("Worktree removal crashed on host")
+            return HostRemoveWorktreeResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error="internal error during worktree removal",
             )
         _logger.info(
             "Removed worktree %s (delete_branch=%s, branch=%s)",

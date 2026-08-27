@@ -1369,10 +1369,11 @@ let pendingPromptGcTimer: ReturnType<typeof setInterval> | null = null;
 /**
  * Evict unconsumed prompts older than {@link PENDING_PROMPT_GC_MAX_AGE_MS}.
  *
- * A prompt whose session still has a worktree in the "creating" stage is
- * exempt: its `setAt` is refreshed so a long-running worktree creation
- * (e.g. a large repo clone) doesn't lose the message before the runner
- * launches. Sessions without a live conversation-registry entry (already
+ * A prompt whose session still has a worktree in the "creating" or
+ * "launching" stage is exempt: its `setAt` is refreshed so a
+ * long-running worktree creation (e.g. a large repo clone) doesn't
+ * lose the message before the runner launches. Sessions without a
+ * live conversation-registry entry (already
  * evicted/closed) are not exempt — the client can't observe their worktree
  * status, so keeping the prompt would leak indefinitely.
  *
@@ -1382,10 +1383,12 @@ export function gcPendingInitialPrompts(now: number = Date.now()): void {
   for (const [id, entry] of pendingInitialPrompts) {
     const age = now - entry.setAt;
     if (age < PENDING_PROMPT_GC_MAX_AGE_MS) continue;
-    // Check if the session's worktree is still being created.
+    // Check if the session's worktree is still being created (git or
+    // the runner start that follows it).
     const liveEntry = conversationRegistry.peek(id);
     const state = liveEntry?.getState();
-    if (state?.worktreeStatus?.stage === "creating") {
+    const stage = state?.worktreeStatus?.stage;
+    if (stage === "creating" || stage === "launching") {
       // Still working — refresh the timestamp so the prompt survives.
       entry.setAt = now;
       continue;
@@ -1483,6 +1486,62 @@ function maybeAutoSendInitialPrompt(conversationId: string): void {
   } else {
     void send(prompt.text, state.boundAgentId, prompt.files ?? [], opts);
   }
+}
+
+// ── Background worktree reconcile ──────────────────────────
+//
+// A background conversation (created then switched away from, or bound via
+// `bindBackgroundSession`) can land its snapshot with a stale in-progress
+// worktreeStatus when the "ready"/`"failed"` SSE raced the fetch and was
+// dropped by the loadingConversation guard. Unlike the foreground
+// conversation (ChatPage polls), a background entry has no recovery: it
+// would sit at "creating"/"launching" forever and the pending initial
+// prompt would never send — the agent never starts. Arm a bounded
+// reconcile that re-reads the snapshot until the stage turns terminal.
+const BACKGROUND_WORKTREE_RECONCILE_INTERVAL_MS = 2000;
+const BACKGROUND_WORKTREE_RECONCILE_MAX_ATTEMPTS = 150; // ~5 minutes
+const backgroundWorktreeReconciles = new Map<
+  string,
+  { timer: ReturnType<typeof setTimeout>; attempts: number }
+>();
+
+function scheduleBackgroundWorktreeReconcile(id: string): void {
+  if (backgroundWorktreeReconciles.has(id)) return;
+  const reconcile = { timer: 0 as unknown as ReturnType<typeof setTimeout>, attempts: 0 };
+  const tick = async (): Promise<void> => {
+    backgroundWorktreeReconciles.delete(id);
+    // The foreground conversation polls itself (ChatPage); a disposed
+    // entry is gone for good.
+    if (useChatStore.getState().conversationId === id) return;
+    if (isConversationDisposed(id)) return;
+    reconcile.attempts += 1;
+    let status: WorktreeStatus | null;
+    try {
+      status = (await getSessionSlim(id)).worktreeStatus ?? null;
+    } catch {
+      // Transient fetch failure: keep the entry's current status and retry.
+      status = conversationRegistry.peek(id)?.getState().worktreeStatus ?? null;
+    }
+    if (useChatStore.getState().conversationId === id || isConversationDisposed(id)) return;
+    setterFor(id)((s) => ({
+      worktreeStatus: status,
+      worktreeLogLines:
+        (status?.logLines?.length ?? 0) > s.worktreeLogLines.length
+          ? (status?.logLines ?? [])
+          : s.worktreeLogLines,
+    }));
+    if (status === null) {
+      // Ready — the dropped-event race is settled; start the agent.
+      maybeAutoSendInitialPrompt(id);
+      return;
+    }
+    if (status.stage === "failed") return;
+    if (reconcile.attempts >= BACKGROUND_WORKTREE_RECONCILE_MAX_ATTEMPTS) return;
+    reconcile.timer = setTimeout(() => void tick(), BACKGROUND_WORKTREE_RECONCILE_INTERVAL_MS);
+    backgroundWorktreeReconciles.set(id, reconcile);
+  };
+  reconcile.timer = setTimeout(() => void tick(), BACKGROUND_WORKTREE_RECONCILE_INTERVAL_MS);
+  backgroundWorktreeReconciles.set(id, reconcile);
 }
 
 export const useChatStore = create<ChatState>((_rootSet, get) => ({
@@ -3796,8 +3855,15 @@ async function bindStream(
     // ChatPage's auto-send effect handles it (the pending-map delete
     // prevents a duplicate even if both fire, but restricting to background
     // avoids the redundant send+skip cycle).
-    if (session.worktreeStatus == null && useChatStore.getState().conversationId !== id) {
-      maybeAutoSendInitialPrompt(id);
+    // The inverse race — the snapshot landed with a stale in-progress
+    // status while the terminal SSE was skipped — is covered by the
+    // background reconcile; the foreground conversation polls (ChatPage).
+    if (useChatStore.getState().conversationId !== id) {
+      if (session.worktreeStatus == null) {
+        maybeAutoSendInitialPrompt(id);
+      } else if (session.worktreeStatus.stage !== "failed") {
+        scheduleBackgroundWorktreeReconcile(id);
+      }
     }
   } catch (err) {
     if (controller.signal.aborted || isConversationDisposed(id)) return;

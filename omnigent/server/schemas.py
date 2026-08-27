@@ -1854,10 +1854,12 @@ class SandboxStatus(BaseModel):
     error: str | None = None
 
 
-# Stages of async git-worktree launch: ``creating`` while git runs and the
-# runner starts, then terminal ``ready`` or ``failed``.
+# Stages of async git-worktree launch: ``creating`` while git runs,
+# ``launching`` once the worktree exists and only the runner start remains,
+# then terminal ``ready`` or ``failed``.
 WorktreeLaunchStage = Literal[
     "creating",
+    "launching",
     "reacquiring",
     "relocating",
     "ready",
@@ -1873,7 +1875,8 @@ class WorktreeStatus(BaseModel):
     pending worktree and once launch succeeds.
 
     :param stage: Current stage: ``"creating"`` while git runs on the
-        host and its runner starts, ``"ready"`` once launch succeeds, or
+        host, ``"launching"`` once the worktree exists and only the
+        runner start remains, ``"ready"`` once launch succeeds, or
         ``"failed"`` on a git or runner-launch error.
     :param branch: The branch being created, e.g. ``"feature/login"``.
     :param error: Failure detail when ``stage == "failed"``, e.g.
@@ -3384,12 +3387,14 @@ class SessionWorktreeStatusEvent(_SSEEventBase):
     """Async git-worktree creation status transition.
 
     Emitted when the background worktree task starts (``creating``),
-    succeeds (``ready`` — the workspace is patched and the runner is
-    launching), or fails (``failed`` + ``error``).
+    advances past git into the runner start (``launching``), succeeds
+    (``ready`` — the runner launch settled), or fails (``failed`` +
+    ``error``).
 
     :param type: Always ``"session.worktree_status"``.
     :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
-    :param stage: ``"creating"``, ``"ready"``, or ``"failed"``.
+    :param stage: ``"creating"``, ``"launching"``, ``"reacquiring"``,
+        ``"relocating"``, ``"ready"``, or ``"failed"``.
     :param branch: The branch being created, e.g. ``"feature/login"``.
     :param error: Failure detail when ``stage == "failed"``.
 

@@ -4783,3 +4783,115 @@ def test_post_connect_auth_rejection_escalates_without_going_fatal(
     assert "omnigent login http://localhost:8000" in escalated
     assert "no longer a transient network blip" in escalated
     assert host._auth_retry_streak == _AUTH_REJECT_ESCALATE_ATTEMPTS
+
+
+async def test_handle_create_worktree_converts_unexpected_crash_to_failed_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected crash still answers with a failed result frame.
+
+    The server awaits the worktree result without a deadline, so an
+    exception escaping the handler (no result frame) would strand the
+    session at "creating" forever. Only WorktreeError/OSError/ValueError
+    were mapped before; anything else must still settle the waiter.
+    """
+    from omnigent.host.frames import HostCreateWorktreeFrame
+
+    host = _make_host_process()
+
+    def _crash(**kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("omnigent.host.connect.create_worktree_streaming", _crash)
+    result = await host._handle_create_worktree(
+        HostCreateWorktreeFrame(
+            request_id="req_crash",
+            repo_path="/tmp/whatever",
+            branch_name="feature/x",
+        ),
+        SimpleNamespace(),  # type: ignore[arg-type] — unused: the crash precedes any log send
+    )
+    assert result.request_id == "req_crash"
+    assert result.status == "failed"
+    assert result.error == "internal error during worktree creation"
+    _cleanup_host(host)
+
+
+async def test_handle_create_worktree_maps_worktree_error_to_failed_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user-correctable git failure keeps its specific message."""
+    from omnigent.host.frames import HostCreateWorktreeFrame
+    from omnigent.host.git_worktree import WorktreeError
+
+    host = _make_host_process()
+
+    def _fail(**kwargs: object) -> object:
+        raise WorktreeError("branch already exists")
+
+    monkeypatch.setattr("omnigent.host.connect.create_worktree_streaming", _fail)
+    result = await host._handle_create_worktree(
+        HostCreateWorktreeFrame(
+            request_id="req_wt_err",
+            repo_path="/tmp/whatever",
+            branch_name="feature/x",
+        ),
+        SimpleNamespace(),  # type: ignore[arg-type] — unused: the failure precedes any log send
+    )
+    assert result.status == "failed"
+    assert result.error == "branch already exists"
+    _cleanup_host(host)
+
+
+async def test_handle_remove_worktree_converts_unexpected_crash_to_failed_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same no-deadline guarantee for removal: a crash still answers."""
+    from omnigent.host.frames import HostRemoveWorktreeFrame
+
+    host = _make_host_process()
+
+    def _crash(**kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("omnigent.host.connect.remove_worktree", _crash)
+    result = await host._handle_remove_worktree(
+        HostRemoveWorktreeFrame(
+            request_id="req_rm_crash",
+            worktree_path="/tmp/whatever-worktrees/feature-x",
+            branch="feature/x",
+            delete_branch=True,
+        )
+    )
+    assert result.request_id == "req_rm_crash"
+    assert result.status == "failed"
+    assert result.error == "internal error during worktree removal"
+    _cleanup_host(host)
+
+
+async def test_handle_create_worktree_auto_reuse_crash_becomes_failed_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The managed-lease auto path (what session auto-creation uses) too."""
+    from omnigent.host.frames import HostCreateWorktreeFrame
+
+    host = _make_host_process()
+
+    def _crash(**kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("omnigent.host.connect.acquire_auto_worktree_streaming", _crash)
+    result = await host._handle_create_worktree(
+        HostCreateWorktreeFrame(
+            request_id="req_auto_crash",
+            repo_path="/tmp/whatever",
+            branch_name="agent/x",
+            auto_reuse=True,
+            lease_owner="session_1",
+        ),
+        SimpleNamespace(),  # type: ignore[arg-type] — unused: the crash precedes any log send
+    )
+    assert result.request_id == "req_auto_crash"
+    assert result.status == "failed"
+    assert result.error == "internal error during worktree creation"
+    _cleanup_host(host)
