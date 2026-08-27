@@ -2244,6 +2244,56 @@ class TestRunTurn(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertIsInstance(events[0], ExecutorError)
             self.assertIn("Rate limited", events[0].message)
+            # Non-transient errors are not retryable.
+            self.assertFalse(events[0].retryable)
+
+        _run(_test())
+
+    def test_message_end_error_429_is_retryable(self):
+        """A 429 from the provider is marked retryable so the adapter can classify it."""
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = MagicMock()
+            fake_rpc.process.returncode = None
+            fake_rpc.process.stdin = _FakeStreamWriter()
+            fake_rpc._stderr_lines = []
+
+            errored = {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error",
+                "errorMessage": "429 status code (no body)",
+            }
+            lines = [
+                json.dumps({"type": "response", "success": True}),
+                json.dumps({"type": "message_end", "message": errored}),
+                json.dumps({"type": "agent_end", "messages": [errored]}),
+            ]
+            for line in lines:
+                fake_rpc._line_queue.put_nowait(line)
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            self.assertEqual(len(events), 1)
+            self.assertIsInstance(events[0], ExecutorError)
+            self.assertIn("429", events[0].message)
+            self.assertTrue(events[0].retryable)
 
         _run(_test())
 

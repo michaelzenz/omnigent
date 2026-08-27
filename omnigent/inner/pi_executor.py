@@ -106,6 +106,19 @@ from .executor import (
 
 logger = logging.getLogger(__name__)
 
+_TRANSIENT_STATUS_RE = re.compile(r"\b(429|5\d{2})\s+status\s+code\b", re.IGNORECASE)
+
+
+def _is_transient_error(message: str) -> bool:
+    """True when an error message references a transient HTTP status (429, 5xx).
+
+    Pi surfaces provider/edge errors as plain strings (e.g.
+    ``"429 status code (no body)"``) via ``stopReason=error``. Requires
+    ``status code`` alongside the number to avoid matching unrelated
+    digits (ports, line numbers, token counts).
+    """
+    return bool(_TRANSIENT_STATUS_RE.search(message))
+
 # Each line of Pi's JSONL output; the event schema is owned by the Pi CLI
 # not us, and varies across subcommands (response ack, message_update,
 # tool_execution_start/end, agent_end, message_end, etc.).
@@ -3015,7 +3028,10 @@ class PiExecutor(Executor):
             )
             if line is None:
                 if pending_error is not None:
-                    yield ExecutorError(message=pending_error)
+                    yield ExecutorError(
+                        message=pending_error,
+                        retryable=_is_transient_error(pending_error),
+                    )
                 elif not rpc._eof:
                     # Idle timeout with Pi still running: the turn is stuck
                     # (e.g. a bridged tool call outlasted the read budget).
@@ -3212,12 +3228,14 @@ class PiExecutor(Executor):
                     if event.get("aborted"):
                         continue
                     error_message = event.get("errorMessage")
+                    compaction_msg = (
+                        error_message
+                        if isinstance(error_message, str) and error_message
+                        else "Pi compaction failed"
+                    )
                     yield ExecutorError(
-                        message=(
-                            error_message
-                            if isinstance(error_message, str) and error_message
-                            else "Pi compaction failed"
-                        )
+                        message=compaction_msg,
+                        retryable=_is_transient_error(compaction_msg),
                     )
                     return
                 summary = result.get("summary")
@@ -3277,7 +3295,10 @@ class PiExecutor(Executor):
             # Agent ended — the turn is complete.
             if event_type == "agent_end":
                 if pending_error is not None:
-                    yield ExecutorError(message=pending_error)
+                    yield ExecutorError(
+                        message=pending_error,
+                        retryable=_is_transient_error(pending_error),
+                    )
                     return
                 end_messages = event.get("messages", [])
                 if not response_text:
@@ -3327,7 +3348,10 @@ class PiExecutor(Executor):
                     stop: str | None = raw_stop if isinstance(raw_stop, str) else None
                     if stop == "aborted":
                         err = msg.get("errorMessage", stop)
-                        yield ExecutorError(message=str(err))
+                        yield ExecutorError(
+                            message=str(err),
+                            retryable=_is_transient_error(str(err)),
+                        )
                         return
                     if stop == "error":
                         # Pi emits the turn-terminal ``agent_end`` after an
