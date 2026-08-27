@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -54,6 +55,11 @@ from typing import Any
 # SSE chokepoint). Empty inner dicts are popped eagerly so
 # :func:`count_for` doesn't see stale keys.
 _pending: dict[str, dict[str, dict[str, Any]]] = {}
+# Wall-clock timestamp of the last count change per session. Survives
+# entry pops (resolve to 0) so the session-list builder can tell
+# "count 0, updated just now (just resolved on this replica)" from
+# "count 0, never tracked on this replica (cross-replica)".
+_pending_updated_at: dict[str, float] = {}
 _lock = threading.Lock()
 
 # Optional observer (``subagent_block_notifier``) run synchronously on every
@@ -149,6 +155,7 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> None:
             ids = _pending.setdefault(conversation_id, {})
             ids[elicitation_id] = event
             count = len(ids)
+            _pending_updated_at[conversation_id] = time.time()
         _notify_count_hook(conversation_id, count)
         _notify_observer(conversation_id, event)
         return
@@ -210,6 +217,8 @@ def resolve(conversation_id: str, elicitation_id: str) -> None:
         count = len(ids)
         if not ids:
             _pending.pop(conversation_id, None)
+        if removed:
+            _pending_updated_at[conversation_id] = time.time()
     if removed:
         _notify_count_hook(conversation_id, count)
 
@@ -245,6 +254,34 @@ def counts_for(conversation_ids: list[str]) -> dict[str, int]:
     with _lock:
         return {
             conv_id: len(_pending[conv_id]) if conv_id in _pending else 0
+            for conv_id in conversation_ids
+        }
+
+
+def counts_with_timestamps_for(
+    conversation_ids: list[str],
+) -> dict[str, tuple[int, float | None]]:
+    """
+    Batch lookup of pending counts and last-update timestamps.
+
+    Same as :func:`counts_for` but also returns the wall-clock
+    timestamp of the last count change per session (from
+    :func:`record_publish` / :func:`resolve`). The session-list
+    builder uses the timestamp to decide whether the in-memory count
+    is authoritative (recent, on this replica) or whether to fall
+    back to the persisted row's count (cross-replica / stale).
+
+    :param conversation_ids: Conversation/session ids to query.
+    :returns: Mapping from each id to a ``(count, updated_at)`` tuple.
+        ``count`` is 0 and ``updated_at`` is ``None`` for sessions
+        never tracked on this replica.
+    """
+    with _lock:
+        return {
+            conv_id: (
+                len(_pending[conv_id]) if conv_id in _pending else 0,
+                _pending_updated_at.get(conv_id),
+            )
             for conv_id in conversation_ids
         }
 
@@ -380,4 +417,5 @@ def reset_for_tests() -> None:
     global _observer
     with _lock:
         _pending.clear()
+        _pending_updated_at.clear()
     _observer = None

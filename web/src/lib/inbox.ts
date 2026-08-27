@@ -6,6 +6,7 @@
 import type { Comment } from "@/hooks/useComments";
 import type { Conversation } from "@/hooks/useConversations";
 import type { ElicitationRequest } from "./events";
+import { effectivePendingCount } from "./pendingApprovalCache";
 import { parseEvent } from "./sse";
 
 /** One pending approval prompt, paired with the session that owns it. */
@@ -128,7 +129,11 @@ export function sumPendingApprovals(rows: Conversation[]): number {
   let total = 0;
   for (const row of rows) {
     if (row.archived) continue;
-    total += row.pending_elicitations_count ?? 0;
+    total += effectivePendingCount(
+      row.id,
+      row.pending_elicitations_count ?? 0,
+      row.pending_elicitations_updated_at,
+    );
   }
   return total;
 }

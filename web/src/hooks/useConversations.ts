@@ -142,6 +142,14 @@ export interface Conversation {
   agent_name?: string | null;
   /** Outstanding approval prompts — powers the sidebar "needs attention" badge. */
   pending_elicitations_count?: number;
+  /**
+   * Server wall-clock timestamp (epoch seconds) of the last change to
+   * `pending_elicitations_count`. `undefined` when the server replica
+   * that built this row doesn't hold the session's runner tunnel
+   * (cross-replica). The client compares this with the approval's
+   * `serverTime` to detect stale counts after a quick approve.
+   */
+  pending_elicitations_updated_at?: number;
   status?: "idle" | "running" | "failed";
   /**
    * Whether the session's runner is reachable, matching `GET /health`.
@@ -328,6 +336,7 @@ export async function fetchConversationById(id: string): Promise<Conversation | 
     agent_id: wire.agent_id,
     agent_name: wire.agent_name ?? null,
     pending_elicitations_count: wire.pending_elicitations_count ?? 0,
+    pending_elicitations_updated_at: wire.pending_elicitations_updated_at ?? undefined,
     status: wire.status ?? "idle",
     runner_online: wire.runner_online ?? undefined,
     host_online: wire.host_online ?? undefined,

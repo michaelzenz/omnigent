@@ -1112,7 +1112,7 @@ def register_core_routes(
             user_is_admin = False
         # In-memory lookup — no I/O, so batching avoids re-acquiring
         # the index's lock per row but otherwise has no DB cost.
-        pending_counts = pending_elicitations.counts_for(conv_ids)
+        pending_data = pending_elicitations.counts_with_timestamps_for(conv_ids)
         comments_fingerprints = await _comments_fingerprints_for(conv_ids)
         items: list[SessionListItem] = [
             _build_session_list_item(
@@ -1123,7 +1123,8 @@ def register_core_routes(
                 user_id=user_id,
                 user_is_admin=user_is_admin,
                 permissions_enabled=permission_store is not None,
-                pending_count=pending_counts.get(conv.id, 0),
+                pending_count=pending_data.get(conv.id, (0, None))[0],
+                pending_updated_at=pending_data.get(conv.id, (0, None))[1],
                 child_session_ids=child_ids_by_parent[conv.id],
                 comments_fingerprint=comments_fingerprints.get(conv.id),
             )
@@ -1250,7 +1251,7 @@ def register_core_routes(
             ),
             _comments_fingerprints_for(conv_ids),
         )
-        pending_counts = pending_elicitations.counts_for(conv_ids)
+        pending_data = pending_elicitations.counts_with_timestamps_for(conv_ids)
         items = [
             _build_session_list_item(
                 conv,
@@ -1260,7 +1261,8 @@ def register_core_routes(
                 user_id=user_id,
                 user_is_admin=user_is_admin,
                 permissions_enabled=permission_store is not None,
-                pending_count=pending_counts.get(conv.id, 0),
+                pending_count=pending_data.get(conv.id, (0, None))[0],
+                pending_updated_at=pending_data.get(conv.id, (0, None))[1],
                 child_session_ids=child_ids_by_parent[conv.id],
                 comments_fingerprint=comments_fingerprints.get(conv.id),
             )
