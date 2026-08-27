@@ -799,22 +799,32 @@ class ExecutorAdapter(HarnessApp):
                 )
             )
         elif isinstance(event, CompactionComplete):
-            from omnigent.server.schemas import CompactionCompletedEvent
+            from omnigent.server.schemas import CompactionCompletedEvent, CompactionFailedEvent
 
-            ctx.emit(
-                CompactionCompletedEvent(
-                    type="response.compaction.completed",
-                    total_tokens=event.token_count,
-                    summary=event.summary,
-                    summary_model=event.model,
-                    compacted_messages=event.compacted_messages,
-                    reason=event.reason,
-                    first_kept_entry_id=event.first_kept_entry_id,
-                    tokens_before=event.tokens_before,
-                    will_retry=event.will_retry,
-                    execution_generation=event.execution_generation,
+            if event.summary:
+                ctx.emit(
+                    CompactionCompletedEvent(
+                        type="response.compaction.completed",
+                        total_tokens=event.token_count,
+                        summary=event.summary,
+                        summary_model=event.model,
+                        compacted_messages=event.compacted_messages,
+                        reason=event.reason,
+                        first_kept_entry_id=event.first_kept_entry_id,
+                        tokens_before=event.tokens_before,
+                        will_retry=event.will_retry,
+                        execution_generation=event.execution_generation,
+                    )
                 )
-            )
+            else:
+                # Synthetic CompactionComplete (empty summary) — compaction was
+                # interrupted (Pi died, timed out, aborted). Emit failed so the
+                # UI dismisses the spinner without a permanent marker.
+                ctx.emit(
+                    CompactionFailedEvent(
+                        type="response.compaction.failed",
+                    )
+                )
         # ExecutorError handled by the caller (re-raises so the
         # scaffold can build a response.failed terminal event).
 
