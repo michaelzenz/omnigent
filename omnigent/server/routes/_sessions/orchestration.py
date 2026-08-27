@@ -869,6 +869,32 @@ def _build_session_list_item(
     # dots straight from the list (no separate fetch). Built per-user here —
     # `user_id` is the requesting caller, never broadcast to other viewers.
     viewer_last_seen, viewer_unread = _read_state_entry(user_id, conv.id)
+    # The persisted row count is a CROSS-REPLICA mirror: the replica
+    # holding the runner's tunnel writes it, and a replica that doesn't
+    # hold it falls back to the row (max() prefers "shows the parked
+    # approval" whichever side lags). That fallback only makes sense for
+    # a runner-bound session — an unbound session (no runner_id) has no
+    # tunnel on any replica, so the local in-memory index is
+    # authoritative and the row (an async mirror that lags a resolve's
+    # decrement) must not override it. Gating on runner_id keeps the
+    # cross-replica fallback where it's needed while making the unbound
+    # path index-only and free of the persist-lag race.
+    #
+    # When the in-memory index has a timestamp (``pending_updated_at``),
+    # the in-memory count is authoritative even at 0: it was decremented
+    # synchronously during the resolve POST, while the persisted row
+    # lags behind a background-worker write. Using max(0, stale_row=1)
+    # in that window keeps the badge stuck after a quick approve. Only
+    # when the timestamp is absent (cross-replica, no in-memory tracking)
+    # does the max() fallback apply.
+    if conv.runner_id is not None and pending_updated_at is not None:
+        pending_elicitations_count = pending_count
+    elif conv.runner_id is not None:
+        pending_elicitations_count = max(
+            pending_count, conv.pending_elicitation_count or 0
+        )
+    else:
+        pending_elicitations_count = pending_count
     return SessionListItem(
         id=conv.id,
         agent_id=conv.agent_id,
@@ -887,32 +913,7 @@ def _build_session_list_item(
         permission_level=level,
         owner=owner,
         external_session_id=conv.external_session_id,
-        # The persisted row count is a CROSS-REPLICA mirror: the replica
-        # holding the runner's tunnel writes it, and a replica that doesn't
-        # hold it falls back to the row (max() prefers "shows the parked
-        # approval" whichever side lags). That fallback only makes sense for
-        # a runner-bound session — an unbound session (no runner_id) has no
-        # tunnel on any replica, so the local in-memory index is
-        # authoritative and the row (an async mirror that lags a resolve's
-        # decrement) must not override it. Gating on runner_id keeps the
-        # cross-replica fallback where it's needed while making the unbound
-        # path index-only and free of the persist-lag race.
-        #
-        # When the in-memory index has a timestamp (``pending_updated_at``),
-        # the in-memory count is authoritative even at 0: it was decremented
-        # synchronously during the resolve POST, while the persisted row
-        # lags behind a background-worker write. Using max(0, stale_row=1)
-        # in that window keeps the badge stuck after a quick approve. Only
-        # when the timestamp is absent (cross-replica, no in-memory tracking)
-        # does the max() fallback apply.
-        if conv.runner_id is not None and pending_updated_at is not None:
-            pending_elicitations_count = pending_count
-        elif conv.runner_id is not None:
-            pending_elicitations_count = max(
-                pending_count, conv.pending_elicitation_count or 0
-            )
-        else:
-            pending_elicitations_count = pending_count,
+        pending_elicitations_count=pending_elicitations_count,
         workspace=conv.workspace,
         git_branch=conv.git_branch,
         pending_elicitations_updated_at=pending_updated_at,
@@ -4961,6 +4962,10 @@ async def _forward_event_to_runner(
         # load on every turn for agents without MCP servers.
         "has_mcp_servers": has_mcp_servers,
         "agent_version": agent_version,
+        # Server's current execution_generation so the runner can
+        # sync its cached snapshot after a host/worktree change
+        # (e.g. fork auto-worktree) incremented it server-side.
+        "execution_generation": conv.execution_generation,
     }
     if body.comment_thread_id is not None:
         runner_body["comment_thread_id"] = body.comment_thread_id
