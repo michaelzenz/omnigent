@@ -1821,6 +1821,45 @@ describe("chatStore — switchTo", () => {
     expect(peekPendingInitialPrompt("conv_bg_race")).toBeNull();
     expect(useChatStore.getState().conversationId).toBe("conv_active");
   });
+
+  it("starts a background session from a wire-level worktree ready frame", async () => {
+    // End-to-end through the real SSE pipeline: parseSseStream → parseEvent
+    // → tapSessionEvents → handleSessionEvent → maybeAutoSendInitialPrompt.
+    // The store handler was previously unreachable in production because
+    // parseEvent dropped the frame; only a wire-level test covers the link.
+    seedSession("conv_active", []);
+    seedSession("conv_bg_wire", []);
+    await useChatStore.getState().switchTo("conv_active");
+    sessionWorktreeStatuses.set("conv_bg_wire", { stage: "creating", branch: "feature/wire" });
+    setPendingInitialPrompt("conv_bg_wire", { text: "start in background", skill: null });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useChatStore.setState({ send: sendSpy });
+
+    await useChatStore.getState().bindBackgroundSession("conv_bg_wire", "agent_xyz", "Test Agent");
+    // Snapshot said "creating": nothing sent yet.
+    expect(sendSpy).not.toHaveBeenCalled();
+
+    const sink = pushableStream();
+    const controller = new AbortController();
+    const setState = useChatStore.setState as unknown as Parameters<typeof pumpStreamEvents>[3];
+    const getState = useChatStore.getState as unknown as Parameters<typeof pumpStreamEvents>[4];
+    void pumpStreamEvents("conv_bg_wire", sink.stream, controller, setState, getState);
+    sink.push(
+      sse("session.worktree_status", {
+        conversation_id: "conv_bg_wire",
+        stage: "ready",
+        branch: "feature/wire",
+        error: null,
+      }),
+    );
+    await tick();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0]!.slice(0, 2)).toEqual(["start in background", "agent_xyz"]);
+    expect(peekPendingInitialPrompt("conv_bg_wire")).toBeNull();
+    expect(useChatStore.getState().conversationId).toBe("conv_active");
+    controller.abort();
+  });
 });
 
 describe("chatStore — send (first-send ordering)", () => {

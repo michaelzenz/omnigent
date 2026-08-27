@@ -301,6 +301,16 @@ export function useUnseenTick(): number {
   );
 }
 
+// Registered exemptions that suppress the unseen dot for a conversation
+// (e.g. a parked initial prompt: worktree progress bumps are setup noise,
+// not content to read). Registration keeps this module free of store imports.
+const unseenExemptions: ((conversationId: string) => boolean)[] = [];
+
+/** Register a predicate that suppresses the unseen dot while it returns true. */
+export function registerUnseenExemption(fn: (conversationId: string) => boolean): void {
+  unseenExemptions.push(fn);
+}
+
 /**
  * A conversation is "unseen" only when (a) the agent has finished
  * a turn — status is "idle" or "failed", not "running" — and
@@ -314,6 +324,7 @@ export function isConversationUnseen(
   status: string | undefined,
 ): boolean {
   if (status === "running" || status === undefined) return false;
+  if (unseenExemptions.some((fn) => fn(conversationId))) return false;
   const stored = lastSeenMap[conversationId];
   if (stored === undefined) return false;
   return updatedAt > stored;

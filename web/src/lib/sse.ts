@@ -55,6 +55,8 @@ import type {
   SessionAgentChangedEvent,
   SessionTodosEvent,
   SessionSandboxStatusEvent,
+  SessionWorktreeLogEvent,
+  SessionWorktreeStatusEvent,
   McpServerStartup,
   SessionMcpStartupEvent,
   SessionTerminalPendingEvent,
@@ -735,6 +737,41 @@ export function parseEvent(rawType: string, data: Record<string, unknown>): Stre
       conversationId,
       pending,
     } satisfies SessionTerminalPendingEvent;
+  }
+  if (eventType === "session.worktree_log") {
+    const conversationId = data.conversation_id;
+    if (typeof conversationId !== "string" || !conversationId) return null;
+    const line = data.line;
+    if (typeof line !== "string") return null;
+    return {
+      type: "session_worktree_log",
+      conversationId,
+      line,
+    } satisfies SessionWorktreeLogEvent;
+  }
+  if (eventType === "session.worktree_status") {
+    const conversationId = data.conversation_id;
+    if (typeof conversationId !== "string" || !conversationId) return null;
+    const stage = data.stage;
+    // Drop frames with an unknown stage rather than rendering a bogus
+    // state — the snapshot re-seeds the panel on the next load.
+    if (
+      stage !== "creating" &&
+      stage !== "launching" &&
+      stage !== "reacquiring" &&
+      stage !== "relocating" &&
+      stage !== "ready" &&
+      stage !== "failed"
+    ) {
+      return null;
+    }
+    return {
+      type: "session_worktree_status",
+      conversationId,
+      stage,
+      branch: typeof data.branch === "string" ? data.branch : null,
+      error: typeof data.error === "string" ? data.error : null,
+    } satisfies SessionWorktreeStatusEvent;
   }
   if (eventType === "session.sandbox_status") {
     const conversationId = data.conversation_id;

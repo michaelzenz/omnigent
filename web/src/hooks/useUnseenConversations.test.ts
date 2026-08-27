@@ -122,6 +122,18 @@ describe("isConversationUnseen", () => {
     expect(mod.isConversationUnseen("conv-1", 2_000, "failed")).toBe(true);
     expect(mod.isConversationUnseen("conv-1", 1_000, "idle")).toBe(false); // equal, not greater
   });
+
+  it("returns false while a registered exemption holds, true again once lifted", async () => {
+    // A parked initial prompt exempts a mid-startup session: its updated_at
+    // bumps are worktree/runner setup noise, not content to read.
+    const mod = await loadFresh();
+    mod.seedReadState([{ id: "conv-1", viewer_last_seen: 1_000 }]);
+    let exempt = true;
+    mod.registerUnseenExemption(() => exempt);
+    expect(mod.isConversationUnseen("conv-1", 2_000, "idle")).toBe(false);
+    exempt = false;
+    expect(mod.isConversationUnseen("conv-1", 2_000, "idle")).toBe(true);
+  });
 });
 
 describe("markConversationSeen", () => {
