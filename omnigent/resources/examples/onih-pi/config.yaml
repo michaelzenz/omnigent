@@ -13,5 +13,5 @@ executor:
     native_tools: false
     native_skills: false
 
-skills: none
+skills: all
 prompt: ""
