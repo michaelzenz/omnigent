@@ -5094,10 +5094,11 @@ async def _forward_event_to_runner(
         else conv.cost_control_mode_override
     )
     _harness = _resolve_harness(conv)
+    _is_onih_child = conv.parent_conversation_id is not None and uses_omniharness
     _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None
     _routing_enabled = (
         _effective_cost_control == "on"
-        and (conv.parent_conversation_id is None or _uses_omniharness)
+        and (conv.parent_conversation_id is None or _is_onih_child)
     ) or _parent_routing_on
     _profile_dynamic = (
         body.type == "message"
