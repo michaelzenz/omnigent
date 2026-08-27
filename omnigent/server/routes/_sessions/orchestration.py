@@ -5138,7 +5138,7 @@ async def _forward_event_to_runner(
             runner_body["execution_context"] = execution_context
 
     _omniharness_routing_settings = None
-    if model_settings_store is not None and _uses_omniharness:
+    if model_settings_store is not None and (_uses_omniharness or _is_onih_child):
         try:
             _omniharness_routing_settings = await asyncio.to_thread(model_settings_store.get)
         except (OSError, RuntimeError, ValueError):
