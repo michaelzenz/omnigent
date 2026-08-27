@@ -1966,8 +1966,8 @@ function HarnessConfigModal({
 
           {!autoRouting && isOmniHarness && smartRoutingEligible && (
             <ConfigRow
-              label="Subagent routing"
-              description="Model routing for subagents this session spawns"
+              label="Subagent Smart Routing"
+              description="Model selection for subagent spawns"
             >
               <Select
                 value={draftSubagentRouting ?? (smartRoutingOn ? "on" : "off")}
@@ -1976,13 +1976,13 @@ function HarnessConfigModal({
                 <SelectTrigger
                   className="w-full"
                   data-testid="new-chat-landing-config-subagent-routing"
-                  aria-label="Subagent routing"
+                  aria-label="Subagent Smart Routing"
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
                   <SelectItem value="on">Smart Routing</SelectItem>
-                  <SelectItem value="off">Default</SelectItem>
+                  <SelectItem value="off">Follow current model selection</SelectItem>
                 </SelectContent>
               </Select>
             </ConfigRow>

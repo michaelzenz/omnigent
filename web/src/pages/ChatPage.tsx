@@ -8117,8 +8117,8 @@ function formatEffortLabel(effort: string): string {
 }
 
 /** Gear-modal row governing the routing of sub-agents the session spawns. */
-const SUBAGENT_ROUTING_LABEL = "Subagent routing";
-const SUBAGENT_ROUTING_DESCRIPTION = "Model routing for subagents this session spawns";
+const SUBAGENT_ROUTING_LABEL = "Subagent Smart Routing";
+const SUBAGENT_ROUTING_DESCRIPTION = "Model selection for subagent spawns";
 
 function SessionPromptProfileRow({
   value,
@@ -8579,7 +8579,7 @@ function SessionConfigModal({
                     {SMART_ROUTING_LABEL}
                   </SelectItem>
                   <SelectItem value="off" data-subagent-routing="off">
-                    Default
+                    Follow current model selection
                   </SelectItem>
                 </SelectContent>
               </Select>
