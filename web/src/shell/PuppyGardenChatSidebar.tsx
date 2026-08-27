@@ -189,6 +189,7 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
   const capabilitySource = {
     labels: activeSessionLabels ?? {},
     harness: activeSession?.harness ?? null,
+    agentName: activeSession?.agentName ?? null,
   };
   const modelPickerKind = modelPickerKindForConv(capabilitySource);
   const effortLevels = effortLevelsForConv(

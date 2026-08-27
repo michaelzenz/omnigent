@@ -311,6 +311,7 @@ import {
 } from "@/lib/claudePermissionMode";
 import { isCodexNativeSession } from "@/lib/codexPlanMode";
 import { getCliServerUrl } from "@/lib/host";
+import { useOmnigentAnalytics } from "@/lib/analyticsEmit";
 import { SessionImage } from "@/components/SessionImage";
 import { TurnActivityPopover } from "@/components/TurnActivityPopover";
 import { collectTurnActivity } from "@/lib/turnActivity";
@@ -321,6 +322,7 @@ import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
 import {
   EMPTY_OMNIHARNESS_MODEL_OPTIONS,
+  isOnihPiTargetName,
   isOnihTargetName,
   OMNIHARNESS_AGENT_NAME,
   type OmniHarnessModelOption,
@@ -492,7 +494,8 @@ export function collectBubbleMarkdown(items: RenderItem[]): string {
 }
 
 // All chat-column elements must share this width to stay aligned.
-const CHAT_COLUMN_WIDTH = "max-w-3xl min-[1921px]:max-w-4xl min-[2561px]:max-w-5xl";
+const CHAT_COLUMN_WIDTH =
+  "max-w-3xl min-[1921px]:max-w-4xl min-[2561px]:max-w-[clamp(64rem,40vw,100rem)]";
 
 const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const DISPLAY_MATH_RE = /(^|\n)\s*(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/;
@@ -2056,7 +2059,7 @@ export interface WarmTerminalEntry {
 /**
  * How many sessions' terminal surfaces stay warm at once (the active one
  * included). Each warm surface holds a WebSocket + a runner-side
- * ``tmux attach``, a WebGL context (browsers cap those per page; losing
+ * tmux control client, a WebGL context (browsers cap those per page; losing
  * one falls back to xterm's DOM renderer), and keeps parsing any output
  * its TUI streams while hidden — so the cache is bounded rather than
  * unbounded, but sized to cover a working set of sessions, not just a
@@ -5349,6 +5352,7 @@ function AssistantBubble({
   // element — the hover footer's timestamp/actions belong to assistant text,
   // not to the error.
   const errorOnly = hasError && !markdownText;
+  const spansFullColumn = isWide || hasError;
 
   return (
     <>
@@ -5356,14 +5360,16 @@ function AssistantBubble({
         from="assistant"
         data-testid="message-bubble"
         data-role="assistant"
-        className={isWide ? "max-w-full" : "max-w-3xl"}
+        className={
+          spansFullColumn ? "max-w-full" : "max-w-3xl min-[2561px]:max-w-[clamp(56rem,30vw,64rem)]"
+        }
       >
         {/* A fold-only bubble takes w-full at the ordinary max-w-3xl cap
             rather than shrink-wrapping to the summary row's ~110px, which
             collapsed the row's trailing hairline (a flex-1 span) to zero
             and stopped its click target short of the column. Keeping the
             cap lands the hairline where an answered turn's does. */}
-        <MessageContent className={isWide || foldOnly || hasError ? "w-full" : undefined}>
+        <MessageContent className={spansFullColumn || foldOnly ? "w-full" : undefined}>
           <BlockRenderer
             items={bubble.items}
             sessionStatus={sessionStatus}
@@ -6331,6 +6337,10 @@ export function Composer({
   // Nonce bumped when bare "/model" is submitted; opens the AgentPicker
   // dropdown instead of sending (see submit()).
   const [pickerOpenNonce, setPickerOpenNonce] = useState(0);
+  // Single send-telemetry point (see submit()). Emitting here rather than via
+  // the Button's componentId covers Enter-key sends too — a textarea Enter never
+  // submits the form, so it would otherwise bypass the Button entirely.
+  const { trackClick } = useOmnigentAnalytics();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Declared after textareaRef so dictation can place the caret after the
@@ -6931,6 +6941,11 @@ export function Composer({
       hasPendingElicitation
     )
       return;
+
+    // A send is actually happening: report it for both pointer clicks (which
+    // reach here via the form submit) and Enter-key sends. Placed after the
+    // guard so guarded no-ops don't emit, matching the disabled Send button.
+    trackClick("chat.composer.send", "button");
 
     // Slash command path: the first token must read as "/name" (the shared
     // isSlashCommandText guard — file paths like "/Users/foo/bar.txt" don't
@@ -7611,7 +7626,6 @@ export function Composer({
             <Button
               type="submit"
               size="icon"
-              componentId="chat.composer.send"
               variant={showInterruptButton ? "destructive" : "default"}
               // Send button fades more decisively when there's no draft —
               // overrides the base 50% disabled-opacity so the affordance
@@ -7873,6 +7887,17 @@ const EFFORT_LEVELS = ["low", "medium", "high"] as const;
 /** Anthropic-side efforts for claude-native sessions (matches ANTHROPIC_EFFORTS in reasoning_effort.py). */
 const CLAUDE_NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
+/** Pi thinking ladder (matches PI_EFFORTS in reasoning_effort.py; ``ultra`` aliases to ``max`` on Pi so omitted). */
+const PI_NATIVE_EFFORT_LEVELS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
 type NativeModelPickerKind = "claude" | "codex" | "cursor" | "kiro" | "opencode" | "pi" | "sdk";
 
 type LabelSource = { labels?: Record<string, string | null> | null } | null | undefined;
@@ -7906,7 +7931,10 @@ export function readOnlyReasonForSessionLabels(
 }
 
 export function effortLevelsForConv(
-  conv: { labels?: Record<string, string | null> | null } | null | undefined,
+  conv: {
+    labels?: Record<string, string | null> | null;
+    agentName?: string | null;
+  } | null | undefined,
   codexModelOptions: readonly NativeModelOption[] = [],
   currentModel: string | null = null,
 ): readonly string[] {
@@ -7915,8 +7943,11 @@ export function effortLevelsForConv(
       return CLAUDE_NATIVE_EFFORT_LEVELS;
     case "codex-native-ui":
       return codexEffortLevelsForModel(codexModelOptions, currentModel);
+    case "pi-native-ui":
+      return PI_NATIVE_EFFORT_LEVELS;
     default:
-      return EFFORT_LEVELS;
+      // Onih-pi runs the Pi engine in-process, so it shares pi-native's ladder.
+      return isOnihPiTargetName(conv?.agentName) ? PI_NATIVE_EFFORT_LEVELS : EFFORT_LEVELS;
   }
 }
 
@@ -7986,7 +8017,10 @@ export function shouldShowModelPicker(
  * :returns: True only when the session supports Web UI effort controls.
  */
 export function shouldShowEffortPicker(
-  conv: { labels?: Record<string, string | null> | null } | null | undefined,
+  conv: {
+    labels?: Record<string, string | null> | null;
+    agentName?: string | null;
+  } | null | undefined,
 ): boolean {
   return supportsEffortControl(conv);
 }

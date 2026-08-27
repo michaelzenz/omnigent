@@ -19,6 +19,11 @@ export function isOnihTargetName(name: string | null | undefined): boolean {
   return root !== null && ONIH_TARGET_NAMES.has(root);
 }
 
+/** True for the onih-pi execution target (fork/switch suffixes stripped). */
+export function isOnihPiTargetName(name: string | null | undefined): boolean {
+  return onihRootTargetName(name) === ONIH_PI_TARGET;
+}
+
 export interface OmniHarnessModelOption {
   id: string;
   displayName: string;

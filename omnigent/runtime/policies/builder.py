@@ -28,7 +28,7 @@ from omnigent.entities import Conversation
 from omnigent.entities import Policy as StoredPolicy
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.execution_targets import is_omniharness_spec
-from omnigent.llms.context_window import fetch_model_pricing
+from omnigent.llms.context_window import fetch_model_pricing, fetch_provider_config_pricing
 from omnigent.policies.base import Policy
 from omnigent.policies.function import resolve_function_policy
 from omnigent.policies.schema import (
@@ -572,12 +572,32 @@ def build_policy_engine(
         else (spec.llm.model if spec.llm else None)
     )
     # Pass the full ModelPricing so the engine can price cache-read and
-    # cache-write tokens at their own rates via compute_llm_cost().
-    token_pricing = fetch_model_pricing(spec.llm.model) if spec.llm else None
-    if spec.llm and is_omniharness_spec(spec):
+    # cache-write tokens at their own rates via compute_llm_cost(). Pricing
+    # resolution order: provider-configured rates, then the OmniHarness
+    # catalog, then the MLflow catalog. Use the effective model from the
+    # session (honors model_override) rather than the static spec model.
+    token_pricing: Any = None
+    if initial_model:
+        # Load provider config to check for custom pricing
+        from omnigent.onboarding.provider_config import load_config
+
+        provider_config = load_config()
+        # Match the harness running this session; an override wins over the
+        # agent's configured executor harness.
+        harness = (
+            conv.harness_override
+            if conv is not None and conv.harness_override
+            else spec.executor.harness_kind
+        )
+        # Provider-configured rates win over any built-in catalog.
+        token_pricing = fetch_provider_config_pricing(provider_config, harness)
+    # OmniHarness catalog beats the MLflow catalog but not configured rates.
+    if token_pricing is None and spec.llm and is_omniharness_spec(spec):
         from omnigent.omniharness_model_catalog import get_omniharness_model_pricing
 
         token_pricing = get_omniharness_model_pricing(spec.llm.model)
+    if token_pricing is None and initial_model:
+        token_pricing = fetch_model_pricing(initial_model)
     # Resolve the server LLM connection best-effort: a transient token
     # failure (e.g. expired Databricks CLI OAuth) must not crash the
     # engine build. Function policies that don't need an LLM (like the

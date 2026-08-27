@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/command";
 import {
   CLAUDE_NATIVE_EFFORTS,
+  PI_NATIVE_EFFORTS,
   ConfigRow,
   DescribedSelect,
   EFFORT_SELECT_NONE,
@@ -155,6 +156,7 @@ import {
 } from "@/lib/agentGrouping";
 import {
   EMPTY_OMNIHARNESS_MODEL_OPTIONS,
+  isOnihPiTargetName,
   isOnihTargetName,
   LEGACY_OMNIHARNESS_TARGET,
   ONIH_OPENAI_AGENTS_TARGET,
@@ -183,7 +185,9 @@ import {
   controlHost,
   getHostIdentity,
   isElectronShell,
+  isIOSShell,
   onHostStatusChanged,
+  setNativeViewMode,
   type HostIdentity,
 } from "@/lib/nativeBridge";
 import {
@@ -431,6 +435,7 @@ function createdHarnessOptions({
   supportsCursorMode,
   supportsAgySkipPermissions,
   supportsModelPicker,
+  supportsEffortPicker,
   permissionMode,
   approvalMode,
   bypassSandbox,
@@ -447,6 +452,7 @@ function createdHarnessOptions({
   supportsCursorMode: boolean;
   supportsAgySkipPermissions: boolean;
   supportsModelPicker: boolean;
+  supportsEffortPicker: boolean;
   permissionMode: string;
   approvalMode: string;
   bypassSandbox: boolean;
@@ -461,6 +467,7 @@ function createdHarnessOptions({
 
   const options: HarnessOptions = {};
   if (supportsModelPicker) options.model = pickedModel;
+  if (supportsEffortPicker && !supportsPermissionMode) options.effort = pickedEffort;
   if (supportsPermissionMode) {
     options.mode = permissionMode;
     options.effort = pickedEffort;
@@ -1797,7 +1804,9 @@ function HarnessConfigModal({
       }
     } else if (hasModelPicker) {
       setPickedModel(draftModel);
-      if (entryHarness) writeHarnessOption(entryHarness, { model: draftModel });
+      setPickedEffort(draftEffort);
+      if (entryHarness)
+        writeHarnessOption(entryHarness, { model: draftModel, effort: draftEffort });
     } else if (hasApproval) {
       if (isCodex) setPickedModel(draftModel);
       setApprovalMode(draftApproval);
@@ -1889,14 +1898,42 @@ function HarnessConfigModal({
 
         <div className="flex flex-col gap-5 py-1">
           {!autoRouting && hasModelPicker && !hasPermission && (
-            <ConfigRow label="Model" description="Underlying LLM" controlClassName="sm:w-80">
-              <SearchableModelPicker
-                value={modelValue}
-                options={piModelOptions}
-                loading={piModelsLoading}
-                onValueChange={onModelChange}
-              />
-            </ConfigRow>
+            <>
+              <ConfigRow label="Model" description="Underlying LLM" controlClassName="sm:w-80">
+                <SearchableModelPicker
+                  value={modelValue}
+                  options={piModelOptions}
+                  loading={piModelsLoading}
+                  onValueChange={onModelChange}
+                />
+              </ConfigRow>
+              <ConfigRow label="Thinking level" description="Reasoning depth vs. speed">
+                <Select
+                  value={draftEffort || EFFORT_SELECT_NONE}
+                  onValueChange={(v) => setDraftEffort(v === EFFORT_SELECT_NONE ? "" : v)}
+                >
+                  <SelectTrigger
+                    className="w-full cursor-pointer"
+                    data-testid="new-chat-landing-config-pi-effort"
+                    aria-label="Thinking level"
+                  >
+                    <SelectValue placeholder={EFFORT_UNAVAILABLE_PLACEHOLDER} />
+                  </SelectTrigger>
+                  <SelectContent
+                    position="popper"
+                    align="start"
+                    className="w-(--radix-select-trigger-width) [&_[data-slot=select-item]]:pl-2.5"
+                  >
+                    <SelectItem value={EFFORT_SELECT_NONE}>Default</SelectItem>
+                    {PI_NATIVE_EFFORTS.map((e) => (
+                      <SelectItem key={e.value} value={e.value}>
+                        {e.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </ConfigRow>
+            </>
           )}
 
           {/* Model selection lives in the landing composer's quick-select
@@ -2266,6 +2303,70 @@ export function resetLandingDraft(): void {
 }
 
 /**
+ * Quick thinking-level dropdown for the onih-pi landing composer — same
+ * commit-immediately pattern as LandingSdkModelSelect. Rendered only for the
+ * onih-pi target: its in-process Pi executor reads the session's persisted
+ * reasoning_effort at spawn / turn time.
+ */
+function LandingPiEffortSelect({
+  pickedEffort,
+  disabled,
+  onPickEffort,
+}: {
+  pickedEffort: string;
+  disabled: boolean;
+  onPickEffort: (effort: string) => void;
+}) {
+  const label = pickedEffort
+    ? (PI_NATIVE_EFFORTS.find((e) => e.value === pickedEffort)?.label ?? "Default")
+    : "Default";
+
+  return (
+    <div
+      className="flex items-center rounded-lg transition-colors hover:bg-muted dark:hover:bg-muted/50"
+      data-testid="new-chat-landing-effort-group"
+    >
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            className="h-9 gap-1.5 pr-2 pl-2.5 font-normal text-muted-foreground md:h-8"
+            data-testid="new-chat-landing-effort-select"
+          >
+            <span className="max-w-48 truncate text-ui text-foreground">Thinking: {label}</span>
+            <ChevronDownIcon className="size-3.5 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-40">
+          <DropdownMenuItem
+            data-testid="new-chat-landing-effort-default"
+            data-active={!pickedEffort ? "true" : undefined}
+            onSelect={() => onPickEffort("")}
+            className="data-[active=true]:bg-muted"
+          >
+            Default
+          </DropdownMenuItem>
+          {PI_NATIVE_EFFORTS.map((option) => (
+            <DropdownMenuItem
+              key={option.value}
+              data-testid={`new-chat-landing-effort-${option.value}`}
+              data-active={pickedEffort === option.value ? "true" : undefined}
+              onSelect={() => onPickEffort(option.value)}
+              className="data-[active=true]:bg-muted"
+            >
+              <span className="truncate">{option.label}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/**
  * Quick model-select dropdown for the OmniHarness landing composer — replaces
  * the prompt-profile selector. Commits immediately (no Save button) by setting
  * local picked-model/cost-control state and persisting the pick via
@@ -2349,6 +2450,26 @@ export function NewChatLandingScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const isMobileViewport = useIsMobileViewport();
+  // Single send-telemetry point (see handleCreate). Emitting there rather than
+  // via the Start button's componentId covers Enter-key sends too, which never
+  // submit the form and would otherwise bypass the Button entirely.
+  const { trackClick } = useOmnigentAnalytics();
+  // No session here, so there is nothing to switch between: assert the iOS
+  // shell's native Chat/Terminal bar is hidden. ChatPage's own bar is driven by
+  // the session surface and hides itself on unmount, but that is the only thing
+  // holding the native state down — and the bar was showing over this screen,
+  // so state the truth for this route instead of trusting a teardown that runs
+  // elsewhere. Idempotent, and re-asserted on every mount of this screen.
+  useEffect(() => {
+    if (!isIOSShell()) return;
+    setNativeViewMode({
+      mode: "chat",
+      terminalEnabled: false,
+      terminalStartingUp: false,
+      visible: false,
+    });
+  }, []);
   const heading = useHeading();
   const poweredBy = usePoweredBy();
   const serverUrl = getCliServerUrl();
@@ -2358,7 +2479,11 @@ export function NewChatLandingScreen() {
   });
   // refetchOnFocus: returning from a terminal `omni setup` must clear the
   // readiness badge even if the live push was missed while the tab was hidden.
-  const { data: hosts, isLoading: hostsLoading } = useHosts({ refetchOnFocus: true });
+  const {
+    data: hosts,
+    isLoading: hostsLoading,
+    isFetching: hostsFetching,
+  } = useHosts({ refetchOnFocus: true });
 
   const { agentList, agentEntries, harnessEntries } = useMemo(
     () => groupNewSessionAgents(agents ?? []),
@@ -2959,7 +3084,11 @@ export function NewChatLandingScreen() {
         setSelectedHostId(stored.host_id);
         return;
       }
-      // Stored host is gone or offline — fall through to the default.
+      // Cached data can omit the remembered host while a fresh list is already
+      // in flight. Let that refresh settle before using the normal fallback.
+      if (hostsFetching) return;
+      // The fresh list confirms the stored host is gone or offline — fall
+      // through to the default.
     }
 
     if (managedSandboxesEnabled) {
@@ -2972,6 +3101,7 @@ export function NewChatLandingScreen() {
   }, [
     hosts,
     hostsLoading,
+    hostsFetching,
     selectedHostId,
     sandboxSelected,
     managedSandboxesEnabled,
@@ -3149,6 +3279,7 @@ export function NewChatLandingScreen() {
   );
   const selectedNativeHarness = nativeCodingAgentForAvailableAgent(selectedAgent)?.harness ?? null;
   const omniharnessSelected = isOnihTargetName(selectedAgent?.name);
+  const onihPiSelected = isOnihPiTargetName(selectedAgent?.name);
   const promptProfilesEnabled = omniharnessSelected;
   const harnessPickerAgentId = effectiveAgentId;
   useEffect(() => {
@@ -3437,6 +3568,11 @@ export function NewChatLandingScreen() {
           ? stored.model
           : "",
       );
+      setPickedEffort(
+        stored.effort != null && PI_NATIVE_EFFORTS.some((e) => e.value === stored.effort)
+          ? stored.effort
+          : "",
+      );
     }
     if (supportsPermissionMode) {
       setPermissionMode(
@@ -3489,7 +3625,8 @@ export function NewChatLandingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNativeHarness, claudeModelOptions, codexModelOptions, piModelOptions]);
   // OmniHarness has no host-side model catalog, so seed its model
-  // choices independently from the native harness options above.
+  // choices independently from the native harness options above. Effort is
+  // seeded only for onih-pi — other targets have no effort ladder.
   useEffect(() => {
     if (!selectedAgentUsesOmniHarness) return;
     const stored = readHarnessOptions(OMNIHARNESS_AGENT_NAME);
@@ -3499,7 +3636,7 @@ export function NewChatLandingScreen() {
         ? storedModel
         : "",
     );
-    setPickedEffort("");
+    setPickedEffort(isOnihPiTargetName(selectedAgent?.name) ? (stored.effort ?? "") : "");
     if (omniharnessSelected) {
       setProfileSelection(stored.promptProfile ?? "auto");
       setSubagentRoutingMode(
@@ -4261,6 +4398,10 @@ export function NewChatLandingScreen() {
     // and form-submit paths that call this directly can't create a session with
     // a blank message, host, agent, or workspace.
     if (!canSubmit) return;
+    // A create is actually happening: report it for pointer clicks (via the
+    // form submit) and Enter-key sends alike. After the guard so guarded no-ops
+    // don't emit, matching the disabled Start button.
+    trackClick("new_chat.start_session", "button");
     setCreating(true);
     setCreateError(null);
     // The draft is spent from the moment it is submitted: it belongs to the
@@ -4481,7 +4622,9 @@ export function NewChatLandingScreen() {
             reasoning_effort:
               !smartRoutingHarnessSelected &&
               !routingOwnsModel &&
-              agentSupportsPermissionMode &&
+              (agentSupportsPermissionMode ||
+                selectedNativeHarness === "pi-native" ||
+                isOnihPiTargetName(agent?.name)) &&
               pickedEffort
                 ? pickedEffort
                 : undefined,
@@ -4548,6 +4691,7 @@ export function NewChatLandingScreen() {
           supportsCursorMode: agentSupportsCursorMode,
           supportsAgySkipPermissions: agentSupportsAgySkip,
           supportsModelPicker: agentSupportsModelPicker || nativeAgent?.harness === "codex-native",
+          supportsEffortPicker: selectedNativeHarness === "pi-native",
           permissionMode,
           approvalMode,
           bypassSandbox,
@@ -4856,23 +5000,29 @@ export function NewChatLandingScreen() {
                 placeholder={pillSkills.length > 0 ? "" : placeholderText}
                 aria-label={placeholderText}
                 rows={1}
-                autoFocus
+                // Desktop only. This screen mounts on every arrival at "/" —
+                // including ones the user didn't make to type, like Back out of
+                // Settings — and on a phone focusing the field throws up the
+                // keyboard (and auto-zooms, per the note below) over whatever
+                // is on screen, sometimes with the sidebar drawer still open on
+                // top of it. Phones expect to be tapped before they type.
+                autoFocus={!isMobileViewport}
                 data-testid="new-chat-landing-input"
-                // Compose-pill text spec: SF Pro Text system stack at
-                // 14px/20px. (Note: sub-16px inputs make mobile Safari
+                // Compose-pill text spec: inherited UI font at 14px/20px.
+                // (Note: sub-16px inputs make mobile Safari
                 // auto-zoom on focus — accepted tradeoff per the design.)
                 // Heights are border-box (12px top + 8px bottom padding lives
                 // inside them): max 200px = the spec's 180px of content.
                 // A 60px floor holds two 20px lines plus that padding;
                 // useAutoGrowTextarea expands from there to the unchanged cap.
-                className="block min-h-[60px] max-h-[200px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-2 font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-ui leading-5 text-foreground outline-none [scrollbar-width:none] placeholder:text-muted-foreground md:select-text [&::-webkit-scrollbar]:hidden"
+                className="block min-h-[60px] max-h-[200px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-2 text-ui leading-5 text-foreground outline-none [scrollbar-width:none] placeholder:text-muted-foreground md:select-text [&::-webkit-scrollbar]:hidden"
               />
               {/* Gated on an empty draft so it reads as the placeholder.
                 pointer-events-none lets clicks fall through to focus the
                 textarea; the pills themselves opt back in. */}
               {pillSkills.length > 0 && message.length === 0 && (
                 <div className="pointer-events-none absolute inset-x-4 top-3 flex flex-wrap items-center gap-2">
-                  <span className="font-['SF_Pro_Text',-apple-system,BlinkMacSystemFont,system-ui,sans-serif] text-ui leading-5 text-muted-foreground">
+                  <span className="text-ui leading-5 text-muted-foreground">
                     Describe a task, or try a skill
                   </span>
                   <SkillPills skills={pillSkills} onPick={applySkillPill} />
@@ -5021,6 +5171,16 @@ export function NewChatLandingScreen() {
                     }}
                   />
                 )}
+                {onihPiSelected && (
+                  <LandingPiEffortSelect
+                    pickedEffort={pickedEffort}
+                    disabled={creating}
+                    onPickEffort={(effort) => {
+                      setPickedEffort(effort);
+                      writeHarnessOption(OMNIHARNESS_AGENT_NAME, { effort });
+                    }}
+                  />
+                )}
                 <div className="flex items-center rounded-lg transition-colors has-[button:not(:disabled)]:hover:bg-muted dark:has-[button:not(:disabled)]:hover:bg-muted/50 has-aria-expanded:bg-muted dark:has-aria-expanded:bg-muted/50 [&>button]:bg-transparent!">
                   {/* Agent / harness picker — selects the agent or harness only.
                     Its run-config knobs (model / effort / permission mode for
@@ -5166,7 +5326,6 @@ export function NewChatLandingScreen() {
                           aria-busy={creating}
                           data-testid="new-chat-landing-submit"
                           className="size-8 rounded-lg bg-foreground disabled:bg-muted disabled:text-muted-foreground transition-opacity hover:opacity-80 disabled:opacity-100 "
-                          componentId="new_chat.start_session"
                         >
                           {creating ? (
                             <Loader2Icon className="size-4 animate-spin" />
