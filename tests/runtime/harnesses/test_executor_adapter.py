@@ -471,6 +471,53 @@ def test_build_error_detail_uses_omnigent_error_code() -> None:
     assert base_detail.code == "RuntimeError"
 
 
+def test_build_error_detail_classifies_retryable_executor_error() -> None:
+    """A retryable ExecutorError surfaces as an OmnigentError with a semantic code.
+
+    When an inner executor marks an error retryable (e.g. Pi reporting a 429),
+    the adapter raises ``OmnigentError(code="rate_limit_exceeded")`` instead of
+    a bare ``RuntimeError``. ``_build_error_detail`` then preserves the code so
+    the AP retry classifier can act on it.
+    """
+    from omnigent.errors import OmnigentError
+    from omnigent.runtime.harnesses._executor_adapter import (
+        ExecutorAdapter,
+        _classify_retryable_error,
+    )
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _StubExecutor())
+
+    # 429 → rate_limit_exceeded
+    error_429 = OmnigentError(
+        "inner executor error: 429 status code (no body)",
+        code="rate_limit_exceeded",
+    )
+    detail_429 = adapter._build_error_detail(error_429)
+    assert detail_429.code == "rate_limit_exceeded"
+
+    # 500 → server_error
+    error_500 = OmnigentError(
+        "inner executor error: 500 Internal Server Error",
+        code="server_error",
+    )
+    detail_500 = adapter._build_error_detail(error_500)
+    assert detail_500.code == "server_error"
+
+    # Non-retryable RuntimeError still falls back to class name.
+    base_detail = adapter._build_error_detail(RuntimeError("inner executor error: boom"))
+    assert base_detail.code == "RuntimeError"
+
+    # Direct classifier tests.
+    assert _classify_retryable_error("429 status code (no body)") == "rate_limit_exceeded"
+    assert _classify_retryable_error("500 status code Internal Server Error") == "server_error"
+    assert _classify_retryable_error("503 status code Service Unavailable") == "server_error"
+    assert _classify_retryable_error("connection reset") == "connection_error"
+    # Requires "status code" — bare numbers don't trigger.
+    assert _classify_retryable_error("500 Internal Server Error") == "connection_error"
+    # Word-boundary: 429 inside a larger number must NOT match.
+    assert _classify_retryable_error("502 status code from 14290") == "server_error"
+
+
 def test_classify_openai_exception_maps_known_types() -> None:
     """
     The OpenAI SDK classifier maps each recognized exception

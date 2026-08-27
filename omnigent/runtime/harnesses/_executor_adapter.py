@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import secrets
 import uuid
 from collections import deque
@@ -22,7 +23,7 @@ from typing import Any
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from omnigent.errors import ElicitationDeclinedError
+from omnigent.errors import ElicitationDeclinedError, OmnigentError
 from omnigent.inner.executor import (
     CompactionComplete,
     CompactionStarted,
@@ -326,6 +327,11 @@ class ExecutorAdapter(HarnessApp):
                             agent_span = None
                         # Guard: empty message surfaces as "inner executor error: " with no detail.
                         detail = event.message or "no detail reported (see runner/harness logs)"
+                        if event.retryable:
+                            raise OmnigentError(
+                                f"inner executor error: {detail}",
+                                code=_classify_retryable_error(detail),
+                            )
                         raise RuntimeError(f"inner executor error: {detail}")
         except ElicitationDeclinedError:
             # Fallback for non-SDK executors; SDK-based paths use ctx.cancelled.set() instead.
@@ -936,6 +942,25 @@ def classify_inner_exception(exception: BaseException) -> str | None:
     if is_context_length_exceeded(exception):
         return "context_length_exceeded"
     return None
+
+
+_RATE_LIMIT_RE = re.compile(r"\b429\s+status\s+code\b", re.IGNORECASE)
+_RETRIABLE_STATUS_RE = re.compile(r"\b(429|5\d{2})\s+status\s+code\b", re.IGNORECASE)
+
+
+def _classify_retryable_error(message: str) -> str:
+    """Map a retryable ExecutorError message to a semantic error code.
+
+    Inner executors (e.g. Pi) surface provider errors as plain strings.
+    Extract the HTTP status to pick the right code so ``_build_error_detail``
+    produces an ``ErrorDetail`` the retry classifier recognizes. Requires
+    ``status code`` alongside the number to avoid false positives.
+    """
+    if _RATE_LIMIT_RE.search(message):
+        return "rate_limit_exceeded"
+    if _RETRIABLE_STATUS_RE.search(message):
+        return "server_error"
+    return "connection_error"
 
 
 def _normalize_tool_schemas(
