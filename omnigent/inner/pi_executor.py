@@ -3017,6 +3017,11 @@ class PiExecutor(Executor):
         # Tool calls started but not yet ended (toolCallId → tool name);
         # named in the error if the turn stalls waiting on one.
         inflight_tools: dict[str, str] = {}
+        # True between ``compaction_start`` and ``compaction_end``. If the turn
+        # ends (EOF, timeout, error) while this is set, ``CompactionComplete``
+        # must be yielded to dismiss the UI's "Compacting…" indicator —
+        # otherwise it stays stuck forever.
+        compaction_active = False
 
         while True:
             # After an errored message the only thing left to drain is the
@@ -3027,6 +3032,14 @@ class PiExecutor(Executor):
                 else _TURN_READ_DRAIN_TIMEOUT_S
             )
             if line is None:
+                if compaction_active:
+                    compaction_active = False
+                    yield CompactionComplete(
+                        summary="",
+                        token_count=0,
+                        model=model,
+                        compacted_messages=None,
+                    )
                 if pending_error is not None:
                     yield ExecutorError(
                         message=pending_error,
@@ -3219,13 +3232,21 @@ class PiExecutor(Executor):
                 continue
 
             if event_type == "compaction_start":
+                compaction_active = True
                 yield CompactionStarted()
                 continue
 
             if event_type == "compaction_end":
+                compaction_active = False
                 result = event.get("result")
                 if not isinstance(result, dict):
                     if event.get("aborted"):
+                        yield CompactionComplete(
+                            summary="",
+                            token_count=0,
+                            model=model,
+                            compacted_messages=None,
+                        )
                         continue
                     error_message = event.get("errorMessage")
                     compaction_msg = (
@@ -3250,14 +3271,22 @@ class PiExecutor(Executor):
                 while True:
                     state_line = await rpc.read_line(timeout=15.0)
                     if state_line is None:
-                        raise RuntimeError("Pi exited while exporting compacted context")
+                        yield ExecutorError(
+                            message="Pi exited while exporting compacted context",
+                            retryable=True,
+                        )
+                        return
                     state_event = json.loads(state_line)
                     if state_event.get("type") != "response":
                         continue
                     if state_event.get("command") != "get_messages":
                         continue
                     if not state_event.get("success", True):
-                        raise RuntimeError(str(state_event.get("error", "Pi get_messages failed")))
+                        yield ExecutorError(
+                            message=str(state_event.get("error", "Pi get_messages failed")),
+                            retryable=True,
+                        )
+                        return
                     state_data = state_event.get("data")
                     raw_messages = (
                         state_data.get("messages") if isinstance(state_data, dict) else None
@@ -3294,6 +3323,14 @@ class PiExecutor(Executor):
 
             # Agent ended — the turn is complete.
             if event_type == "agent_end":
+                if compaction_active:
+                    compaction_active = False
+                    yield CompactionComplete(
+                        summary="",
+                        token_count=0,
+                        model=model,
+                        compacted_messages=None,
+                    )
                 if pending_error is not None:
                     yield ExecutorError(
                         message=pending_error,
@@ -3346,19 +3383,13 @@ class PiExecutor(Executor):
                         message_usages.append(captured)
                     raw_stop = msg.get("stopReason")
                     stop: str | None = raw_stop if isinstance(raw_stop, str) else None
-                    if stop == "aborted":
-                        err = msg.get("errorMessage", stop)
-                        yield ExecutorError(
-                            message=str(err),
-                            retryable=_is_transient_error(str(err)),
-                        )
-                        return
-                    if stop == "error":
+                    if stop in ("aborted", "error"):
                         # Pi emits the turn-terminal ``agent_end`` after an
-                        # errored LLM call; returning here would leave it
-                        # queued, so the next turn on this RPC session reads
-                        # the stale event as its own end. Record the error
-                        # and keep draining until ``agent_end``.
+                        # aborted or errored LLM call; returning here would
+                        # leave it queued, so the next turn on this RPC
+                        # session reads the stale event as its own end (or
+                        # trips Pi's "already processing" guard). Record the
+                        # error and keep draining until ``agent_end``.
                         pending_error = str(msg.get("errorMessage", stop))
                 continue
 

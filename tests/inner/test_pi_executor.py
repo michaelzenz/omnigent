@@ -18,6 +18,8 @@ import pytest
 
 from omnigent.inner.databricks_executor import DatabricksCredentials
 from omnigent.inner.executor import (
+    CompactionComplete,
+    CompactionStarted,
     ExecutorConfig,
     ExecutorError,
     ReasoningChunk,
@@ -2348,6 +2350,120 @@ class TestRunTurn(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertIsInstance(events[0], ExecutorError)
             self.assertEqual(events[0].message, "boom")
+
+        _run(_test())
+
+    def test_message_end_aborted_drains_agent_end_before_failing(self):
+        """A message_end with stopReason=aborted must drain the trailing
+        agent_end before failing — returning early leaves Pi in the
+        "already processing" state and a stale agent_end queued for the
+        next turn.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = MagicMock()
+            fake_rpc.process.returncode = None
+            fake_rpc.process.stdin = _FakeStreamWriter()
+            fake_rpc._stderr_lines = []
+
+            aborted = {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "aborted",
+                "errorMessage": "Request aborted",
+            }
+            lines = [
+                json.dumps({"type": "response", "success": True}),
+                json.dumps({"type": "message_end", "message": aborted}),
+                # Pi always emits agent_end after an aborted call.
+                json.dumps({"type": "agent_end", "messages": [aborted]}),
+            ]
+            for line in lines:
+                fake_rpc._line_queue.put_nowait(line)
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            self.assertEqual(len(events), 1)
+            self.assertIsInstance(events[0], ExecutorError)
+            self.assertIn("Request aborted", events[0].message)
+            # The trailing agent_end was consumed: nothing stale is left
+            # for the next turn on this RPC session.
+            self.assertTrue(fake_rpc._line_queue.empty())
+
+        _run(_test())
+
+    def test_compaction_start_eof_yields_compaction_complete(self):
+        """When Pi exits after compaction_start but before compaction_end,
+        CompactionComplete must be yielded to dismiss the UI's "Compacting…"
+        indicator — otherwise it stays stuck forever.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = MagicMock()
+            fake_rpc.process.returncode = None
+            fake_rpc.process.stdin = _FakeStreamWriter()
+            fake_rpc._stderr_lines = []
+
+            lines = [
+                json.dumps({"type": "response", "success": True}),
+                json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "hello"}}),
+                json.dumps({"type": "message_end", "message": {"stopReason": "stop"}}),
+                json.dumps({"type": "compaction_start"}),
+                # Pi exits after compaction_start — no compaction_end, no agent_end.
+            ]
+
+            async def fake_read_line(timeout=120.0):
+                del timeout
+                if lines:
+                    return lines.pop(0)
+                return None  # EOF: process died after compaction_start.
+
+            fake_rpc.read_line = fake_read_line
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            # Must have CompactionStarted followed by CompactionComplete,
+            # so the UI's "Compacting…" indicator is dismissed even when Pi
+            # dies mid-compaction.
+            compaction_events = [e for e in events if isinstance(e, (CompactionStarted, CompactionComplete))]
+            self.assertEqual(len(compaction_events), 2)
+            self.assertIsInstance(compaction_events[0], CompactionStarted)
+            self.assertIsInstance(compaction_events[1], CompactionComplete)
+            # Turn ends with an error (Pi died) — not TurnComplete.
+            self.assertTrue(any(isinstance(e, ExecutorError) for e in events))
+            self.assertFalse(any(isinstance(e, TurnComplete) for e in events))
 
         _run(_test())
 
