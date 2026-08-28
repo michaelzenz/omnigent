@@ -317,7 +317,7 @@ class SshHostOperations:
                     "info",
                     "Remote already has matching wheels, skipping upload",
                 )
-        command = self._install_command_builder(
+        install_command = self._install_command_builder(
             version,
             package_spec,
             bundle_sha256,
@@ -326,6 +326,7 @@ class SshHostOperations:
             self._npm_registry_url(),
             self._remote_namespace,
         )
+        command = f'${{SHELL:-bash}} -l -c {shlex.quote(install_command)}'
         self._log(
             profile.id,
             "installing",
@@ -551,7 +552,11 @@ class SshHostOperations:
         }
         env = " ".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
         runtime_name = shlex.quote(f"{self._remote_namespace}-{profile.id}")
-        command = (
+        # Run through the user's login shell so the daemon inherits the same
+        # PATH they see in an interactive session — git, nvm, asdf, Homebrew,
+        # etc. Without this the non-interactive SSH session only has the
+        # minimal default PATH (often just /usr/bin:/bin).
+        inner = (
             f'set -eu; root="$HOME/.omnigent/host/{self._remote_namespace}"; '
             f'runtime="$root/runtimes"/{runtime_name}; mkdir -p "$runtime"; '
             'pi_path="$root/harnesses/pi/node_modules/.bin"; '
@@ -565,6 +570,7 @@ class SshHostOperations:
             '--non-interactive >"$runtime/host.log" 2>&1 < /dev/null & '
             'echo "$!" >"$runtime/host.pid"'
         )
+        command = f'${{SHELL:-bash}} -l -c {shlex.quote(inner)}'
         code, stdout, stderr = await ssh_run(profile, command, timeout_s=30)
         if code != 0:
             error_msg = (stderr or stdout).decode().strip() or "remote host start failed"
