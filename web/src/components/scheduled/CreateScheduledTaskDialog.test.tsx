@@ -194,6 +194,7 @@ function scheduledTask(overrides: Partial<ScheduledTasksApiModule.ScheduledTask>
     lastRunStatus: null,
     lastRunConversationId: null,
     nextRunAt: null,
+    catchUp: true,
     ...overrides,
   } satisfies ScheduledTasksApiModule.ScheduledTask;
 }

@@ -2004,6 +2004,9 @@ class SqlScheduledTask(OmnigentBase):
     # SCHEDULED_TASK_STATE: active=1, paused=2, deleted=3). The
     # store converts to/from the string name at the row↔entity boundary.
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    # When True (default), boot-time catch-up fires once if a missed
+    # occurrence exists. When False, missed occurrences are skipped on boot.
+    catch_up: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1", default=True)
     last_run_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Relates to conversations.id. No DB foreign key (Rule R032); the
     # application nulls this out when the referenced conversation is deleted.

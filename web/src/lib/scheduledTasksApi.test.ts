@@ -42,6 +42,7 @@ const TASK_WIRE = {
   state: "active",
   last_run_at: null,
   last_run_conversation_id: null,
+  catch_up: true,
 };
 
 const fetchMock = vi.fn();

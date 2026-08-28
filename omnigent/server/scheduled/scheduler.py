@@ -154,6 +154,11 @@ class ScheduledTaskScheduler:
                     task.rrule,
                     exc,
                 )
+                continue
+            # Fire any missed occurrence since the last fire. Coalesced into a
+            # single fire — the prompt is identical each tick, so replaying
+            # every missed tick wastes agent sessions.
+            await self._catch_up_missed(task)
         self._started = True
         _logger.info("ScheduledTaskScheduler started with %d job(s)", len(self._jobs))
 
@@ -228,6 +233,45 @@ class ScheduledTaskScheduler:
         if job is None:
             return False
         return await self._fire_job(job, scheduled_epoch=self._now())
+
+    # ── boot catch-up ───────────────────────────────────────────────────────
+
+    async def _catch_up_missed(self, task: ScheduledTask) -> None:
+        """Fire once if any scheduled occurrence was missed since ``last_run_at``.
+
+        All missed ticks are coalesced into a single fire — the prompt is
+        identical each tick, so replaying every missed tick wastes agent
+        sessions. ``catch_up`` (default True) gates whether boot-time catch-up
+        fires at all; when False, missed occurrences are silently skipped.
+        """
+        if not task.catch_up:
+            return
+        if task.last_run_at is None:
+            return  # never fired — nothing to catch up
+
+        now_epoch = self._now()
+
+        job = self._jobs.get((task.workspace_id, task.id))
+        if job is None:
+            return  # bad rrule — not registered
+
+        last_fire = datetime.fromtimestamp(task.last_run_at, tz=_UTC)
+        next_after_last = job.trigger.next_fire_after(last_fire, job.tz)
+        if next_after_last is None:
+            return  # rule exhausted (COUNT/UNTIL ended)
+        if next_after_last.timestamp() >= now_epoch:
+            return  # next occurrence is still future — nothing missed
+
+        _logger.info(
+            "scheduler: task %s catch-up fire (missed %s, last fired %s)",
+            task.id,
+            next_after_last.isoformat(),
+            last_fire.isoformat(),
+        )
+        try:
+            await self._on_fire(job.workspace_id, job.task_id)
+        except Exception:
+            _logger.exception("scheduler: catch-up fire for task %s failed", task.id)
 
     # ── internals ────────────────────────────────────────────────────────────
 

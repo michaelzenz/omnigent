@@ -49,6 +49,9 @@ export interface ScheduledTask {
   /** Pinned host, or `null` (server resolves the connected host at fire time). */
   hostId: string | null;
   state: ScheduledTaskState;
+  /** When true (default), boot-time catch-up fires once if a missed
+   * occurrence exists. When false, missed occurrences are skipped on boot. */
+  catchUp: boolean;
   /** Epoch seconds of the last fire, or `null` if it has never fired. */
   lastRunAt: number | null;
   /**
@@ -96,6 +99,8 @@ export interface CreateScheduledTaskInput {
   workspace?: string | null;
   /** Optional pinned host. */
   hostId?: string | null;
+  /** Catch-up toggle; omit for the server default (true). */
+  catchUp?: boolean;
 }
 
 /**
@@ -114,6 +119,7 @@ export interface UpdateScheduledTaskInput {
   workspace?: string;
   hostId?: string;
   state?: ScheduledTaskState;
+  catchUp?: boolean;
 }
 
 /** Wire shape of a task row (snake_case), matching `_to_response`. */
@@ -137,6 +143,7 @@ interface ScheduledTaskWire {
   last_run_status: ScheduledTaskRunStatus | null;
   last_run_conversation_id: string | null;
   next_run_at: string | null;
+  catch_up: boolean;
 }
 
 /** Wire shape of a run row (snake_case), matching `_run_to_response`. */
@@ -212,6 +219,7 @@ function taskFromWire(wire: ScheduledTaskWire): ScheduledTask {
     lastRunStatus: wire.last_run_status,
     lastRunConversationId: wire.last_run_conversation_id,
     nextRunAt: wire.next_run_at,
+    catchUp: wire.catch_up,
   };
 }
 
@@ -267,6 +275,7 @@ export async function createScheduledTask(input: CreateScheduledTaskInput): Prom
   if (input.permissionMode != null) body.permission_mode = input.permissionMode;
   if (input.workspace != null) body.workspace = input.workspace;
   if (input.hostId != null) body.host_id = input.hostId;
+  if (input.catchUp !== undefined) body.catch_up = input.catchUp;
   const res = await authenticatedFetch("/v1/scheduled-tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -295,6 +304,7 @@ export async function updateScheduledTask(
   if (input.workspace !== undefined) body.workspace = input.workspace;
   if (input.hostId !== undefined) body.host_id = input.hostId;
   if (input.state !== undefined) body.state = input.state;
+  if (input.catchUp !== undefined) body.catch_up = input.catchUp;
   const res = await authenticatedFetch(`/v1/scheduled-tasks/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

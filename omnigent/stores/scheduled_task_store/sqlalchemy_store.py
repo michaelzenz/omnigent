@@ -62,6 +62,7 @@ def _to_entity(row: SqlScheduledTask) -> ScheduledTask:
         state=decode_scheduled_task_state(row.state),
         last_run_at=row.last_run_at,
         last_run_conversation_id=row.last_run_conversation_id,
+        catch_up=row.catch_up,
         updated_at=row.updated_at,
     )
 
@@ -134,6 +135,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
         workspace: str | None = None,
         host_id: str | None = None,
         state: str = "active",
+        catch_up: bool = True,
     ) -> ScheduledTask:
         """Insert a new scheduled task with a required recurring ``rrule``."""
         row = SqlScheduledTask(
@@ -153,6 +155,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
             execution_target=encode_scheduled_task_execution_target("connected_host"),
             host_id=host_id,
             state=encode_scheduled_task_state(state),
+            catch_up=catch_up,
             last_run_at=None,
             last_run_conversation_id=None,
             created_at=now_epoch(),
@@ -259,6 +262,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
         state: str | None = None,
         last_run_at: int | None = None,
         last_run_conversation_id: str | None = _UNSET,
+        catch_up: bool | None = None,
     ) -> ScheduledTask | None:
         """Update mutable fields.
 
@@ -318,6 +322,9 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
                 row.last_run_conversation_id != last_run_conversation_id
             ):
                 row.last_run_conversation_id = last_run_conversation_id
+                changed = True
+            if catch_up is not None and row.catch_up != catch_up:
+                row.catch_up = catch_up
                 changed = True
             if changed:
                 row.updated_at = now_epoch()

@@ -174,6 +174,7 @@ export function CreateScheduledTaskDialog({
   // Optional pinned host/workspace. "" = unset (server resolves at fire time).
   const [hostId, setHostId] = useState<string>("");
   const [workspace, setWorkspace] = useState<string>("");
+  const [catchUp, setCatchUp] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [scheduleUnsupported, setScheduleUnsupported] = useState(false);
 
@@ -199,6 +200,7 @@ export function CreateScheduledTaskDialog({
         setScheduleUnsupported(parsedSchedule === null);
         setHostId(editingTask.hostId ?? "");
         setWorkspace(editingTask.workspace ?? "");
+        setCatchUp(editingTask.catchUp);
       } else {
         setName(initialName ?? "");
         setPrompt(initialPrompt ?? "");
@@ -210,6 +212,7 @@ export function CreateScheduledTaskDialog({
         setScheduleUnsupported(false);
         setHostId("");
         setWorkspace("");
+        setCatchUp(true);
       }
       setError(null);
     }
@@ -256,6 +259,7 @@ export function CreateScheduledTaskDialog({
     setSchedule(DEFAULT_SCHEDULE_MODEL);
     setHostId("");
     setWorkspace("");
+    setCatchUp(true);
     setError(null);
     setScheduleUnsupported(false);
   }
@@ -273,6 +277,7 @@ export function CreateScheduledTaskDialog({
         prompt: prompt.trim(),
         rrule: buildRRule(schedule),
         timezone: editingTask?.timezone ?? localTimezone(),
+        catchUp,
         ...(hostId !== "" ? { hostId } : {}),
         ...(hostId !== "" && workspace.trim() !== "" ? { workspace: workspace.trim() } : {}),
       };
@@ -478,6 +483,36 @@ export function CreateScheduledTaskDialog({
           {/* Timezone is inferred from the browser (localTimezone via Intl) and
               intentionally has no visible control. It is still sent in the create
               payload so the schedule evaluates in the user's local zone. */}
+
+          {/* Catch-up toggle: when on (default), fire once on restart if a
+              scheduled run was missed. When off, missed runs are skipped. */}
+          <div className="flex items-center justify-between gap-3" data-testid="task-catch-up-field">
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="task-catch-up">Catch up missed runs</Label>
+              <p className="text-sm text-muted-foreground">
+                Fire once on restart if a scheduled run was missed. Turn off to skip missed runs.
+              </p>
+            </div>
+            <button
+              type="button"
+              id="task-catch-up"
+              role="switch"
+              aria-checked={catchUp}
+              data-testid="task-catch-up-toggle"
+              onClick={() => setCatchUp((v) => !v)}
+              className={
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors " +
+                (catchUp ? "bg-primary" : "bg-input")
+              }
+            >
+              <span
+                className={
+                  "inline-block size-4 transform rounded-full bg-background shadow transition-transform " +
+                  (catchUp ? "translate-x-4" : "translate-x-0.5")
+                }
+              />
+            </button>
+          </div>
 
           {/* Optional host + workspace pin. Left unset, the server resolves the
               owner's connected host and its home directory at fire time. */}

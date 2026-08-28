@@ -91,6 +91,10 @@ class ScheduledTask:
     execution_target: str = "connected_host"
     host_id: str | None = None
     state: str = "active"
+    # When True (default), a boot-time catch-up fires once if any scheduled
+    # occurrence was missed since last_run_at. When False, missed
+    # occurrences are silently skipped on boot.
+    catch_up: bool = True
     last_run_at: int | None = None
     last_run_conversation_id: str | None = None
     updated_at: int | None = None

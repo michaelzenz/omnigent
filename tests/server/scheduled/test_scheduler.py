@@ -25,9 +25,9 @@ class _FakeTask:
     """The slice of ``ScheduledTask`` the scheduler reads.
 
     The scheduler only touches ``id``, ``workspace_id``, ``rrule``,
-    ``timezone``, and ``state``, so the tests drive it with this local stand-in
-    rather than the full persisted entity — keeping the scheduler unit tests
-    independent of the entity's field set.
+    ``timezone``, ``state``, ``last_run_at``, and ``catch_up``, so the tests
+    drive it with this local stand-in rather than the full persisted entity —
+    keeping the scheduler unit tests independent of the entity's field set.
     """
 
     id: str
@@ -35,6 +35,8 @@ class _FakeTask:
     timezone: str
     state: str
     workspace_id: int = 0
+    last_run_at: int | None = None
+    catch_up: bool = True
 
 
 # ── Fakes ────────────────────────────────────────────────────────────────────
@@ -113,6 +115,8 @@ def _task(
     timezone: str = "UTC",
     state: str = "active",
     workspace_id: int = 0,
+    last_run_at: int | None = None,
+    catch_up: bool = True,
 ) -> _FakeTask:
     return _FakeTask(
         id=task_id,
@@ -120,6 +124,8 @@ def _task(
         timezone=timezone,
         state=state,
         workspace_id=workspace_id,
+        last_run_at=last_run_at,
+        catch_up=catch_up,
     )
 
 
@@ -350,3 +356,56 @@ async def _fire_timer(timer) -> None:
 def scheduler_task_of(scheduler: ScheduledTaskScheduler, task_id: str) -> _FakeTask:
     """Reach into the fake store to get the seed task for update tests."""
     return scheduler._store.get(task_id)  # type: ignore[attr-defined]
+
+
+# ── boot catch-up ────────────────────────────────────────────────────────────
+
+
+async def test_catch_up_fires_missed_occurrence() -> None:
+    """A task whose last_run_at predates a missed occurrence fires on boot."""
+    clock = FakeClock(start=1_800_000_000.0)
+    # last_run_at = 2h ago; hourly rule → one occurrence was missed 1h ago
+    last_run = int(clock.now()) - 2 * 3600
+    task = _task("a", last_run_at=last_run)
+    scheduler, _clock, _seam, fired = _make([task], clock=clock)
+    await scheduler.start()
+    assert fired.calls == [(0, "a")]
+
+
+async def test_catch_up_skips_when_no_missed_occurrence() -> None:
+    """last_run_at is recent — next occurrence is still future → no catch-up."""
+    clock = FakeClock(start=1_800_000_000.0)
+    last_run = int(clock.now()) - 60  # 1 min ago; hourly rule fires in 59min
+    task = _task("a", last_run_at=last_run)
+    scheduler, _clock, _seam, fired = _make([task], clock=clock)
+    await scheduler.start()
+    assert fired.calls == []
+
+
+async def test_catch_up_skips_when_never_fired() -> None:
+    """last_run_at is None (brand-new task) — no catch-up."""
+    task = _task("a", last_run_at=None)
+    scheduler, _clock, _seam, fired = _make([task])
+    await scheduler.start()
+    assert fired.calls == []
+
+
+async def test_catch_up_disabled_does_not_fire() -> None:
+    """catch_up=False: never fires on boot, even if occurrences were missed."""
+    clock = FakeClock(start=1_800_000_000.0)
+    last_run = int(clock.now()) - 48 * 3600  # 48h ago — many missed occurrences
+    task = _task("a", last_run_at=last_run, catch_up=False)
+    scheduler, _clock, _seam, fired = _make([task], clock=clock)
+    await scheduler.start()
+    assert fired.calls == []
+
+
+async def test_catch_up_does_not_block_normal_timer() -> None:
+    """Catch-up fires AND the normal timer is still armed for the next occurrence."""
+    clock = FakeClock(start=1_800_000_000.0)
+    last_run = int(clock.now()) - 2 * 3600
+    task = _task("a", last_run_at=last_run)
+    scheduler, _clock, seam, fired = _make([task], clock=clock)
+    await scheduler.start()
+    assert fired.calls == [(0, "a")]
+    assert len(seam.live()) == 1  # normal timer still armed

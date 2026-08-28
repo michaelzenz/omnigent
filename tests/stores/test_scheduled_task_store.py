@@ -72,6 +72,7 @@ def test_create_returns_scheduled_task_with_all_fields(
     assert task.execution_target == "connected_host"
     assert task.host_id == _uid("host_abc123")
     assert task.state == "active"
+    assert task.catch_up is True
     assert task.last_run_at is None
     assert task.last_run_conversation_id is None
     assert task.created_at > 0
@@ -168,6 +169,58 @@ def test_update_state_reads_back(store: SqlAlchemyScheduledTaskStore) -> None:
     updated = store.update(_uid("st_upd_state"), state="paused")
     assert updated is not None
     assert updated.state == "paused"
+
+
+def test_create_catch_up_defaults_true(store: SqlAlchemyScheduledTaskStore) -> None:
+    """``catch_up`` defaults to True when omitted on create."""
+    task = store.create(
+        scheduled_task_id=_uid("st_cu_def"),
+        name="n",
+        prompt="p",
+        rrule="FREQ=MINUTELY",
+        user_id="u",
+        agent_id=_uid("ag"),
+        timezone="UTC",
+    )
+    assert task.catch_up is True
+
+
+def test_create_catch_up_false_persists(store: SqlAlchemyScheduledTaskStore) -> None:
+    """``catch_up=False`` round-trips through the store."""
+    task = store.create(
+        scheduled_task_id=_uid("st_cu_false"),
+        name="n",
+        prompt="p",
+        rrule="FREQ=MINUTELY",
+        user_id="u",
+        agent_id=_uid("ag"),
+        timezone="UTC",
+        catch_up=False,
+    )
+    assert task.catch_up is False
+    reloaded = store.get(_uid("st_cu_false"))
+    assert reloaded is not None
+    assert reloaded.catch_up is False
+
+
+def test_update_catch_up_reads_back(store: SqlAlchemyScheduledTaskStore) -> None:
+    """Updating ``catch_up`` reads the new value back."""
+    store.create(
+        scheduled_task_id=_uid("st_upd_cu"),
+        name="n",
+        prompt="p",
+        rrule="FREQ=MINUTELY",
+        user_id="u",
+        agent_id=_uid("ag"),
+        timezone="UTC",
+    )
+    updated = store.update(_uid("st_upd_cu"), catch_up=False)
+    assert updated is not None
+    assert updated.catch_up is False
+    # Toggle back.
+    updated_again = store.update(_uid("st_upd_cu"), catch_up=True)
+    assert updated_again is not None
+    assert updated_again.catch_up is True
 
 
 # ── recurring trigger (rrule) ─────────────────────────────────────────────────

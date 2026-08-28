@@ -55,6 +55,7 @@ class ScheduledTaskStore(ABC):
         workspace: str | None = None,
         host_id: str | None = None,
         state: str = "active",
+        catch_up: bool = True,
     ) -> ScheduledTask:
         """
         Insert a new scheduled task.
@@ -77,6 +78,9 @@ class ScheduledTaskStore(ABC):
         :param host_id: The connected host to pin the run to.
         :param state: Lifecycle state — ``active``/``paused``/``deleted``.
             Defaults to ``"active"``.
+        :param catch_up: When True (default), boot-time catch-up fires once
+            if a missed occurrence exists. When False, missed occurrences are
+            skipped on boot.
         :returns: The newly created :class:`ScheduledTask`.
         :raises ValueError: If ``state`` is not a recognized value.
         """
@@ -143,6 +147,7 @@ class ScheduledTaskStore(ABC):
         state: str | None = None,
         last_run_at: int | None = None,
         last_run_conversation_id: str | None = _UNSET,
+        catch_up: bool | None = None,
     ) -> ScheduledTask | None:
         """
         Update mutable fields of a task.

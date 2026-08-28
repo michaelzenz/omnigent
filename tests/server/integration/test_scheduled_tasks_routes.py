@@ -145,6 +145,7 @@ async def test_create_lists_and_gets(auth_client: httpx.AsyncClient, db_uri: str
     assert created["owner_user_id"] == "alice@example.com"
     assert created["workspace"] == "/repo"
     assert created["host_id"] == "4b653f6031f35d168cc0b37caa1306d1"
+    assert created["catch_up"] is True
     assert "base_branch" not in created
     assert "execution_target" not in created
     task_id = created["id"]
@@ -191,6 +192,31 @@ async def test_create_rejects_workspace_without_host(
     del body["host_id"]
     resp = await auth_client.post("/v1/scheduled-tasks", json=body, headers=_headers())
     assert resp.status_code == 400, resp.text
+
+
+async def test_create_catch_up_false_persists_and_updates(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    """catch_up=False persists, reads back, and can be toggled via PATCH."""
+    _make_user(db_uri)
+    resp = await auth_client.post(
+        "/v1/scheduled-tasks",
+        json=_create_body(catch_up=False),
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    created = resp.json()
+    assert created["catch_up"] is False
+    task_id = created["id"]
+
+    # PATCH toggles it back to True.
+    patched = await auth_client.patch(
+        f"/v1/scheduled-tasks/{task_id}",
+        json={"catch_up": True},
+        headers=_headers(),
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["catch_up"] is True
 
 
 async def test_create_rejects_invalid_rrule(auth_client: httpx.AsyncClient, db_uri: str) -> None:

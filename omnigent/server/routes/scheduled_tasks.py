@@ -67,6 +67,9 @@ class CreateScheduledTaskRequest(BaseModel):
     # ``UpdateScheduledTaskRequest``).
     workspace: str | None = Field(default=None, min_length=1)
     host_id: str | None = Field(default=None, min_length=1)
+    # When True (default), boot-time catch-up fires once if a missed occurrence
+    # exists. When False, missed occurrences are skipped on boot.
+    catch_up: bool = True
 
 
 class UpdateScheduledTaskRequest(BaseModel):
@@ -85,6 +88,7 @@ class UpdateScheduledTaskRequest(BaseModel):
     workspace: str | None = Field(default=None, min_length=1)
     host_id: str | None = Field(default=None, min_length=1)
     state: str | None = None
+    catch_up: bool | None = None
 
     @model_validator(mode="after")
     def _validate_patch(self) -> UpdateScheduledTaskRequest:
@@ -134,6 +138,7 @@ def _to_response(
         "workspace": task.workspace,
         "host_id": task.host_id,
         "state": task.state,
+        "catch_up": task.catch_up,
         "last_run_at": task.last_run_at,
         "last_run_status": last_run_status,
         "last_run_conversation_id": task.last_run_conversation_id,
@@ -336,6 +341,7 @@ def create_scheduled_tasks_router(
             max_cost_usd=body.max_cost_usd,
             workspace=workspace,
             host_id=body.host_id,
+            catch_up=body.catch_up,
         )
         scheduler = _scheduler(request)
         if scheduler is not None:
