@@ -16,9 +16,11 @@ from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 from omnigent.agent_tasks.broker_session import (
     NO_HOST_AVAILABLE_MESSAGE,
     apply_broker_session_labels,
+    ensure_role_profile,
     get_or_create_role_profile,
 )
 from omnigent.db.utils import generate_agent_id
+from omnigent.execution_targets import ONIH_OPENAI_AGENTS_TARGET
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -34,7 +36,7 @@ def _uid(seed: str) -> str:
 def test_get_or_create_role_profile_uses_first_live_host(db_uri: str) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-broker", bundle_location="test:///bundle")
+    agent_store.create(agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///bundle")
     host_store = HostStore(db_uri)
     host_id = _uid("broker_host")
     host_store.upsert_on_connect(host_id, "broker-host", RESERVED_USER_LOCAL)
@@ -56,7 +58,7 @@ def test_get_or_create_role_profile_uses_first_live_host(db_uri: str) -> None:
 def test_get_or_create_role_profile_fails_without_live_host(db_uri: str) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="task-broker", bundle_location="test:///bundle")
+    agent_store.create(agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///bundle")
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
 
     with pytest.raises(OmnigentError) as exc_info:
@@ -85,3 +87,67 @@ def test_apply_broker_session_labels_for_claude_native(db_uri: str) -> None:
     labels = refreshed.labels
     assert labels[UI_MODE_LABEL_KEY] == UI_MODE_TERMINAL_VALUE
     assert labels[WRAPPER_LABEL_KEY] == CLAUDE_NATIVE_WRAPPER_VALUE
+
+
+def test_ensure_role_profile_refreshes_stale_agent_id(db_uri: str) -> None:
+    """When the stored agent_profile_id is gone, the profile is refreshed."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+
+    old_agent_id = generate_agent_id()
+    agent_store.create(old_agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///old")
+    # Simulate a profile created against the old agent.
+    profile_store.upsert(
+        TASK_BROKER_ROLE,
+        agent_profile_id=old_agent_id,
+        prompt_profile_id=None,
+        harness="openai-agents",
+        host_id=None,
+        workspace="~/omnigent",
+    )
+
+    # Drop the old agent and re-seed with a new id (same name).
+    agent_store.delete(old_agent_id)
+    new_agent_id = generate_agent_id()
+    agent_store.create(new_agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///new")
+
+    profile = ensure_role_profile(
+        role=TASK_BROKER_ROLE,
+        auth_user_id=None,
+        task_role_profile_store=profile_store,
+        agent_store=agent_store,
+    )
+    assert profile.agent_profile_id == new_agent_id
+
+
+def test_get_or_create_role_profile_refreshes_stale_agent_id(db_uri: str) -> None:
+    """get_or_create path also refreshes a stale agent_profile_id."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    host_store = HostStore(db_uri)
+    host_id = _uid("broker_host")
+    host_store.upsert_on_connect(host_id, "broker-host", RESERVED_USER_LOCAL)
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+
+    old_agent_id = generate_agent_id()
+    agent_store.create(old_agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///old")
+    profile_store.upsert(
+        TASK_BROKER_ROLE,
+        agent_profile_id=old_agent_id,
+        prompt_profile_id=None,
+        harness="openai-agents",
+        host_id=host_id,
+        workspace="~/omnigent",
+    )
+
+    agent_store.delete(old_agent_id)
+    new_agent_id = generate_agent_id()
+    agent_store.create(new_agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///new")
+
+    profile = get_or_create_role_profile(
+        role=TASK_BROKER_ROLE,
+        auth_user_id=None,
+        task_role_profile_store=profile_store,
+        host_store=host_store,
+        agent_store=agent_store,
+    )
+    assert profile.agent_profile_id == new_agent_id

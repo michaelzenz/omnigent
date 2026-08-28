@@ -106,6 +106,7 @@ def ensure_role_profile(
         existing is not None
         and (existing.prompt_profile_id or prompt_profile_store is None)
         and (host_store is None or existing.host_id is not None)
+        and agent_store.get(existing.agent_profile_id) is not None
     ):
         return existing
 
@@ -153,6 +154,7 @@ def get_or_create_role_profile(
         existing is not None
         and (existing.prompt_profile_id or prompt_profile_store is None)
         and existing.host_id is not None
+        and agent_store.get(existing.agent_profile_id) is not None
     ):
         return existing
 
