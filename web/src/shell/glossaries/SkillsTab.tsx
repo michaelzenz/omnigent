@@ -629,13 +629,13 @@ export function SkillsTab() {
             </header>
 
             {compareVariant ? (
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-100 p-3">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-muted/30 p-3">
                 {tree.isLoading || compareTree.isLoading ? (
                   <div className="grid min-h-[32rem] place-items-center text-sm text-muted-foreground">
                     Loading differences…
                   </div>
                 ) : comparedFiles.length === 0 ? (
-                  <div className="grid min-h-[20rem] place-items-center rounded-xl border border-slate-300 bg-white text-sm text-slate-500">
+                  <div className="grid min-h-[20rem] place-items-center rounded-xl border border-border bg-background text-sm text-muted-foreground">
                     No file differences.
                   </div>
                 ) : (
@@ -644,9 +644,9 @@ export function SkillsTab() {
                     return (
                       <section
                         key={path}
-                        className="overflow-hidden rounded-xl border border-slate-300 bg-white text-slate-950 shadow-sm"
+                        className="overflow-hidden rounded-xl border border-border bg-background text-foreground shadow-sm"
                       >
-                        <div className="flex items-center gap-2 border-b border-slate-300 bg-white px-4 py-3">
+                        <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
                           <code className="text-xs font-medium">{path}</code>
                           <Badge
                             variant={status === "deleted" ? "destructive" : "outline"}
@@ -689,16 +689,16 @@ export function SkillsTab() {
                 )}
               </div>
             ) : (
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-100 p-3">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-muted/30 p-3">
                 <div className="px-1 text-xs text-muted-foreground">
                   Variant {selectedVariant ? selected.variants.indexOf(selectedVariant) + 1 : "—"}
                 </div>
                 {(tree.data ?? []).map((file) => (
                   <section
                     key={file.path}
-                    className="overflow-hidden rounded-xl border border-slate-300 bg-white text-slate-950 shadow-sm"
+                    className="overflow-hidden rounded-xl border border-border bg-background text-foreground shadow-sm"
                   >
-                    <div className="flex items-center gap-2 border-b border-slate-300 bg-white px-4 py-3">
+                    <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
                       <code className="text-xs font-medium">{file.path}</code>
                       {!file.binary && file.path.endsWith(".md") && (
                         <Button
@@ -737,12 +737,12 @@ export function SkillsTab() {
                           value={drafts[file.path] ?? file.content}
                           onChange={(event) => scheduleSave(file.path, event.target.value)}
                           disabled={!selectedOccurrence || tree.isLoading}
-                          className="min-h-[32rem] resize-none rounded-none border-0 bg-white font-mono text-xs text-slate-950 focus-visible:ring-0"
+                          className="min-h-[32rem] resize-none rounded-none border-0 bg-background font-mono text-xs text-foreground focus-visible:ring-0"
                           spellCheck={false}
                         />
                       )
                     ) : (
-                      <pre className="overflow-x-auto whitespace-pre-wrap bg-white p-3 font-mono text-xs text-slate-950">
+                      <pre className="overflow-x-auto whitespace-pre-wrap bg-background p-3 font-mono text-xs text-foreground">
                         {file.content}
                       </pre>
                     )}

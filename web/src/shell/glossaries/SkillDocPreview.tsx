@@ -116,11 +116,11 @@ export function SkillDocPreview({ content, onChange }: SkillDocPreviewProps) {
   return (
     <div className="flex min-h-[32rem] flex-col">
       {entries.length > 0 && (
-        <dl className="flex flex-wrap gap-x-6 gap-y-1.5 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <dl className="flex flex-wrap gap-x-6 gap-y-1.5 border-b border-border bg-muted/30 px-4 py-3">
           {entries.map((entry) => (
             <div key={entry.key} className="flex items-baseline gap-1.5">
-              <dt className="text-xs font-medium text-slate-500">{entry.key}</dt>
-              <dd className="text-xs text-slate-700">{entry.value}</dd>
+              <dt className="text-xs font-medium text-muted-foreground">{entry.key}</dt>
+              <dd className="text-xs text-foreground">{entry.value}</dd>
             </div>
           ))}
         </dl>
