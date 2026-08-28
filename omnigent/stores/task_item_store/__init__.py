@@ -64,6 +64,10 @@ class TaskItemStore(ABC):
         """List task items ordered by created_at asc."""
 
     @abstractmethod
+    def delete_items_for_task(self, task_id: str, *, exclude_states: set[str] | None = None) -> int:
+        """Delete items for a task, optionally excluding certain states. Returns count deleted."""
+
+    @abstractmethod
     def update_item(
         self,
         item_id: str,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, delete, desc, select
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.db.db_models import (
@@ -344,6 +344,17 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             session.delete(row)
             session.flush()
             return True
+
+    def delete_subscriptions_for_task(self, task_id: str) -> int:
+        with self._session() as session:
+            result = session.execute(
+                delete(SqlTaskEventSubscription).where(
+                    SqlTaskEventSubscription.workspace_id == current_workspace_id(),
+                    SqlTaskEventSubscription.task_id == task_id,
+                )
+            )
+            session.flush()
+            return result.rowcount or 0
 
     def list_deliveries_for_event(self, parent_event_id: str) -> list[TaskEvent]:
         with self._session() as session:

@@ -133,6 +133,10 @@ class TaskEventStore(ABC):
         """Delete a subscription. Returns whether a row was removed."""
 
     @abstractmethod
+    def delete_subscriptions_for_task(self, task_id: str) -> int:
+        """Delete all subscriptions for a task. Returns count deleted."""
+
+    @abstractmethod
     def list_deliveries_for_event(self, parent_event_id: str) -> list[TaskEvent]:
         """List subscription fan-out copies of a canonical event, ``created_at ASC``."""
 

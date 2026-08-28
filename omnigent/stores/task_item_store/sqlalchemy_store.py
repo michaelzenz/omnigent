@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, delete, desc, select
 
 from omnigent.db.db_models import (
     SqlFyiCluster,
@@ -179,6 +179,19 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             )
             rows = session.execute(stmt).scalars().all()
             return [_item_to_entity(row) for row in rows]
+
+    def delete_items_for_task(self, task_id: str, *, exclude_states: set[str] | None = None) -> int:
+        with self._session() as session:
+            stmt = delete(SqlTaskItem).where(
+                SqlTaskItem.workspace_id == current_workspace_id(),
+                SqlTaskItem.task_id == task_id,
+            )
+            if exclude_states:
+                excluded_codes = [encode_task_item_state(s) for s in exclude_states]
+                stmt = stmt.where(~SqlTaskItem.state.in_(excluded_codes))
+            result = session.execute(stmt)
+            session.flush()
+            return result.rowcount or 0
 
     def update_item(
         self,

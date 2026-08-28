@@ -43,6 +43,7 @@ from omnigent.agent_tasks.fyi_clusters import (
     list_fyi_board_cards,
     resolve_fyi_cluster,
 )
+from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import (
     complete_human_action,
@@ -68,7 +69,6 @@ from omnigent.agent_tasks.role_keys import (
     role_kind_from_key,
     role_profile_title,
 )
-from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.task_match import (
     _LIVE_TASK_STATES,
     collect_event_tags,
@@ -595,7 +595,6 @@ class ResolveFyiClusterRequest(BaseModel):
     host_id: str | None = None
     workspace: str | None = None
     harness: str | None = None
-
 
 
 async def _best_effort_ensure_conversation_runner(
@@ -1574,7 +1573,13 @@ def create_agent_tasks_router(
 
     @router.delete("/agent-tasks/{task_id}/permanent")
     async def permanently_delete_task(request: Request, task_id: str) -> dict[str, Any]:
-        """Permanently delete a managed task and its related data."""
+        """Permanently delete a managed task and its related data.
+
+        Deletes task items (except running/queued), assets, event
+        subscriptions, worker rows, and tags. Manager and worker sessions
+        are left running as regular conversations. Events, executions,
+        and routing history are preserved.
+        """
         user_id = require_user(request, auth_provider)
         task = await _get_task_or_404(task_id, user_id)
         if task.state != "archived":
@@ -1582,6 +1587,18 @@ def create_agent_tasks_router(
                 "Task must be archived before permanent deletion",
                 code=ErrorCode.CONFLICT,
             )
+        # Delete non-running, non-queued items. Running/queued items
+        # are still active and left in place.
+        await asyncio.to_thread(
+            task_item_store.delete_items_for_task,
+            task_id,
+            exclude_states={"running", "queued"},
+        )
+        # Delete all assets for this task.
+        await asyncio.to_thread(task_asset_store.delete_assets_for_task, task_id)
+        # Delete all event subscriptions for this task.
+        await asyncio.to_thread(task_event_store.delete_subscriptions_for_task, task_id)
+        # Delete worker rows and tags, then the task itself.
         deleted = await asyncio.to_thread(task_store.delete, task_id)
         if not deleted:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
@@ -1990,9 +2007,7 @@ def create_agent_tasks_router(
                     continue
                 if item.state == "done":
                     continue
-                await asyncio.to_thread(
-                    task_item_store.update_item, item.id, state="cancelled"
-                )
+                await asyncio.to_thread(task_item_store.update_item, item.id, state="cancelled")
 
             # Stop managed workers; external sessions keep running.
             if worker.kind != WORKER_KIND_EXTERNAL and worker.target_id is not None:
@@ -2033,9 +2048,7 @@ def create_agent_tasks_router(
                     continue
                 if item.state == "done":
                     continue
-                await asyncio.to_thread(
-                    task_item_store.update_item, item.id, state="cancelled"
-                )
+                await asyncio.to_thread(task_item_store.update_item, item.id, state="cancelled")
 
             # Move the worker.
             updated = await asyncio.to_thread(
@@ -3047,7 +3060,8 @@ def create_agent_tasks_router(
                 "worker_id": worker.id if worker is not None else None,
                 "proposal": (
                     _event_to_response(proposal_event)
-                    if proposal_event is not None and proposal_event.event_type == "session.adoption"
+                    if proposal_event is not None
+                    and proposal_event.event_type == "session.adoption"
                     else None
                 ),
                 "event": _event_to_response(adopted_event),

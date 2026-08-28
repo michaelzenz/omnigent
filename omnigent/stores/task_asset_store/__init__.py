@@ -32,3 +32,7 @@ class TaskAssetStore(ABC):
     @abstractmethod
     def delete_asset(self, task_id: str, asset_id: int) -> bool:
         """Delete one asset from a task. Return True if a row was removed."""
+
+    @abstractmethod
+    def delete_assets_for_task(self, task_id: str) -> int:
+        """Delete all assets for a task. Returns count deleted."""

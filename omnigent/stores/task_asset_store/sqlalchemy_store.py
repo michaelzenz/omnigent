@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import asc, func, select
+from sqlalchemy import asc, delete, func, select
 
 from omnigent.db.db_models import SqlTaskAsset, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
@@ -82,3 +82,14 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
             session.delete(row)
             session.flush()
             return True
+
+    def delete_assets_for_task(self, task_id: str) -> int:
+        with self._session() as session:
+            result = session.execute(
+                delete(SqlTaskAsset).where(
+                    SqlTaskAsset.workspace_id == current_workspace_id(),
+                    SqlTaskAsset.task_id == task_id,
+                )
+            )
+            session.flush()
+            return result.rowcount or 0
