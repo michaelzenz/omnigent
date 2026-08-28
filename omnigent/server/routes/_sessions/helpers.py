@@ -577,8 +577,22 @@ async def _maybe_adopt_session(session_id: str) -> None:
     If the session has no worker binding, trigger adoption.
     If the session already has a worker binding, emit a turn-finished event
     directly to the task's manager queue (bypasses packager batching).
+
+    Blocked entirely when the external_session_watcher plugin is disabled
+    on all hosts — controls both adoption and turn-finish events.
     """
     try:
+        from omnigent.server.routes.script_plugin_health import get_plugin_health_store
+
+        health_store = get_plugin_health_store()
+        plugins = health_store.list(kind="poll")
+        watcher_enabled = any(
+            p.plugin.name == "session_watcher" and p.plugin.enabled
+            for p in plugins
+        )
+        if not watcher_enabled:
+            return
+
         from omnigent.agent_tasks.adoption import (
             emit_turn_finished_event,
             get_session_adoption_context,
