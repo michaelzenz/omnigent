@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  EyeIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
@@ -43,6 +45,7 @@ import {
 } from "@/hooks/useSkills";
 import { cn } from "@/lib/utils";
 import { CreateSkillDialog } from "./CreateSkillDialog";
+import { SkillDocPreview } from "./SkillDocPreview";
 
 const SkillVariantDiff = lazy(() =>
   import("./SkillVariantDiff").then((module) => ({ default: module.SkillVariantDiff })),
@@ -292,6 +295,7 @@ export function SkillsTab() {
   const [message, setMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [previewPaths, setPreviewPaths] = useState<Set<string>>(new Set());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRevision = useRef(0);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
@@ -348,6 +352,7 @@ export function SkillsTab() {
   }, [firstVariantHash, selected?.name, selected?.variants]);
   useEffect(() => {
     setCompareVariantHash(null);
+    setPreviewPaths(new Set());
   }, [selectedVariantHash]);
 
   const tree = useSkillTree(
@@ -695,6 +700,26 @@ export function SkillsTab() {
                   >
                     <div className="flex items-center gap-2 border-b border-slate-300 bg-white px-4 py-3">
                       <code className="text-xs font-medium">{file.path}</code>
+                      {!file.binary && file.path.endsWith(".md") && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="ml-auto"
+                          aria-label={
+                            previewPaths.has(file.path) ? `Edit ${file.path}` : `Preview ${file.path}`
+                          }
+                          onClick={() =>
+                            setPreviewPaths((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(file.path)) next.delete(file.path);
+                              else next.add(file.path);
+                              return next;
+                            })
+                          }
+                        >
+                          {previewPaths.has(file.path) ? <PencilIcon /> : <EyeIcon />}
+                        </Button>
+                      )}
                       {file.binary && (
                         <Badge variant="outline" className="ml-auto">
                           Binary
@@ -702,13 +727,20 @@ export function SkillsTab() {
                       )}
                     </div>
                     {!file.binary ? (
-                      <Textarea
-                        value={drafts[file.path] ?? file.content}
-                        onChange={(event) => scheduleSave(file.path, event.target.value)}
-                        disabled={!selectedOccurrence || tree.isLoading}
-                        className="min-h-[32rem] resize-none rounded-none border-0 bg-white font-mono text-xs text-slate-950 focus-visible:ring-0"
-                        spellCheck={false}
-                      />
+                      previewPaths.has(file.path) ? (
+                        <SkillDocPreview
+                          content={drafts[file.path] ?? file.content}
+                          onChange={(value) => scheduleSave(file.path, value)}
+                        />
+                      ) : (
+                        <Textarea
+                          value={drafts[file.path] ?? file.content}
+                          onChange={(event) => scheduleSave(file.path, event.target.value)}
+                          disabled={!selectedOccurrence || tree.isLoading}
+                          className="min-h-[32rem] resize-none rounded-none border-0 bg-white font-mono text-xs text-slate-950 focus-visible:ring-0"
+                          spellCheck={false}
+                        />
+                      )
                     ) : (
                       <pre className="overflow-x-auto whitespace-pre-wrap bg-white p-3 font-mono text-xs text-slate-950">
                         {file.content}
