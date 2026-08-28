@@ -1433,6 +1433,51 @@ def register_resources_routes(
             },
         )
 
+    @router.get(
+        "/sessions/{session_id}/resources/files/{file_id}/preview",
+        response_model=None,
+    )
+    async def get_session_file_preview(
+        request: Request,
+        session_id: str,
+        file_id: str,
+    ) -> Response:
+        """Serve a session file's HTML content inline for iframe preview.
+
+        Unlike the content endpoint (which forces ``attachment`` to
+        prevent stored XSS), this serves HTML inline so it renders in
+        a sandboxed iframe on the frontend. The iframe's ``sandbox``
+        attribute strips ``allow-same-origin``, so the HTML executes in
+        a unique origin that cannot access the app's cookies, storage,
+        or DOM.
+
+        :param session_id: Session/conversation identifier.
+        :param file_id: Unique file identifier.
+        :returns: Response with HTML content, ``text/html``.
+        """
+
+        await _validate_session(session_id, request, LEVEL_READ)
+        if file_store is None or artifact_store is None:
+            raise HTTPException(
+                status_code=501,
+                detail="file store not configured",
+            )
+        stored = await asyncio.to_thread(file_store.get, file_id, session_id=session_id)
+        if stored is None:
+            raise OmnigentError(
+                "File not found",
+                code=ErrorCode.NOT_FOUND,
+            )
+        content = await asyncio.to_thread(artifact_store.get, stored.id)
+        return Response(
+            content=content,
+            media_type="text/html",
+            headers={
+                "Content-Disposition": "inline",
+                "Cache-Control": FILE_CONTENT_CACHE_CONTROL,
+            },
+        )
+
     @router.delete(
         "/sessions/{session_id}/resources/files/{file_id}",
         response_model=None,

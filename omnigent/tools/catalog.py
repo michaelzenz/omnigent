@@ -76,6 +76,12 @@ TOOLS: list[ToolCatalogEntry] = [
         "files_content",
     ),
     ToolCatalogEntry(
+        "serve_html",
+        "Serve HTML preview",
+        "Serve HTML content for in-app preview (sandboxed iframe).",
+        "files_content",
+    ),
+    ToolCatalogEntry(
         "search_conversations",
         "Search conversations",
         "Search past conversations for relevant information.",
