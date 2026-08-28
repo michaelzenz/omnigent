@@ -219,7 +219,8 @@ async def ensure_broker_session(
 
     session = user_role_session_store.get(owner_user_id, TASK_BROKER_ROLE)
     if session is not None and session.conversation_id is not None:
-        if conversation_store.get_conversation(session.conversation_id) is not None:
+        conv = conversation_store.get_conversation(session.conversation_id)
+        if conv is not None and conv.runner_id is not None:
             return session.conversation_id
 
     from omnigent.agent_tasks.bootstrap import build_role_session_request
