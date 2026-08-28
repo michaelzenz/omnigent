@@ -1581,12 +1581,7 @@ def create_agent_tasks_router(
         and routing history are preserved.
         """
         user_id = require_user(request, auth_provider)
-        task = await _get_task_or_404(task_id, user_id)
-        if task.state != "archived":
-            raise OmnigentError(
-                "Task must be archived before permanent deletion",
-                code=ErrorCode.CONFLICT,
-            )
+        await _get_task_or_404(task_id, user_id)
         # Delete non-running, non-queued items. Running/queued items
         # are still active and left in place.
         await asyncio.to_thread(

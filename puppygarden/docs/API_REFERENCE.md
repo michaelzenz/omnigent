@@ -47,6 +47,7 @@ response then carries `deliveries: [{event_id, task_id}]`.
 | POST | `/v1/agent-tasks/{id}/manager-queue-hold` |
 | DELETE | `/v1/agent-tasks/{id}/manager-queue-hold/{token}` |
 | DELETE | `/v1/agent-tasks/{id}` |
+| DELETE | `/v1/agent-tasks/{id}/permanent` |
 | PUT | `/v1/agent-tasks/{id}/tags` |
 | GET | `/v1/agent-tasks/{id}/executions` |
 | POST | `/v1/agent-tasks/{id}/event-subscriptions` |
