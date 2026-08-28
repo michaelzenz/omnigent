@@ -155,7 +155,8 @@ async def notify_new_session(
 
     active_tasks = live_tasks(_context.task_store)
     if not active_tasks:
-        return False  # no tasks yet — nothing to adopt into
+        # No live tasks — broker creates one during triage.
+        return await enqueue_orphan_session(session_id, owner_user_id=owner_user_id)
 
     routing_tags = resolve_session_routing_tags(session_id, conv)
     ranked = rank_tasks_for_event_tags(
