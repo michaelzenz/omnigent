@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import errno
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -3837,6 +3838,64 @@ def test_run_host_process_exits_nonzero_on_fatal(
     # The actionable message reached stderr (banner + the 403 cause).
     assert "Could not connect" in err
     assert "HTTP 403" in err
+
+
+def test_enrich_path_sources_interactive_rc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_enrich_path_from_interactive_shell updates os.environ["PATH"].
+
+    A non-interactive SSH session only sources login profiles. The function
+    must source the matching interactive rc file (.zshrc/.bashrc/.profile)
+    to pick up Homebrew/nvm/asdf on the daemon's PATH.
+    """
+    from omnigent.host.connect import _enrich_path_from_interactive_shell
+
+    rc_file = tmp_path / ".zshrc"
+    rc_file.write_text(f'export PATH="/opt/homebrew/bin:$PATH"\n')
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    _enrich_path_from_interactive_shell()
+
+    enriched = os.environ["PATH"]
+    assert "/opt/homebrew/bin" in enriched, (
+        f"expected /opt/homebrew/bin in PATH, got {enriched!r}"
+    )
+
+
+def test_enrich_path_noop_when_rc_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No rc file → PATH unchanged, no error."""
+    from omnigent.host.connect import _enrich_path_from_interactive_shell
+
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    original = "/usr/bin:/bin"
+    monkeypatch.setenv("PATH", original)
+
+    _enrich_path_from_interactive_shell()
+
+    assert os.environ["PATH"] == original
+
+
+def test_enrich_path_falls_back_to_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Unknown shell falls back to ~/.profile."""
+    from omnigent.host.connect import _enrich_path_from_interactive_shell
+
+    profile = tmp_path / ".profile"
+    profile.write_text(f'export PATH="/custom/bin:$PATH"\n')
+    monkeypatch.setenv("SHELL", "/bin/fish")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    _enrich_path_from_interactive_shell()
+
+    assert "/custom/bin" in os.environ["PATH"]
 
 
 def test_run_host_process_announces_session_log_dir_on_start(

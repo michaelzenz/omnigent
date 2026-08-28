@@ -390,6 +390,54 @@ _SILENT_CONNECT_ESCALATE_ATTEMPTS = 10
 # Capability discovery is advisory and must not delay the host channel forever.
 _HOST_CAPABILITY_INIT_TIMEOUT_S = 15.0
 
+_logger = logging.getLogger(__name__)
+
+
+def _enrich_path_from_interactive_shell() -> None:
+    """Enrich PATH by sourcing the user's interactive rc file.
+
+    A non-interactive SSH session (``ssh alias 'omnigent host ...'``) only
+    sources login profiles (``-l``): ``.zprofile`` / ``.bash_profile``. Most
+    PATH modifications — Homebrew, nvm, asdf — live in interactive rc files
+    (``.zshrc`` / ``.bashrc``) that ``-l`` does NOT source. The daemon then
+    calls ``git`` and spawns runners with that minimal PATH, so ``git``
+    (typically ``/opt/homebrew/bin/git``) is not found.
+
+    Resolve the interactive PATH by sourcing the matching rc file with the
+    matching shell, then update ``os.environ["PATH"]`` so every subsequent
+    ``subprocess`` call (git worktree ops, runner spawns) inherits the full
+    interactive PATH.
+    """
+    import shlex
+
+    shell = os.environ.get("SHELL", "")
+    shell_name = os.path.basename(shell) if shell else ""
+    # Map the user's shell to its interactive rc file and the shell to
+    # source it with. Unknown shells fall back to ~/.profile sourced by sh.
+    rc_map = {
+        "zsh": ("~/.zshrc", "zsh"),
+        "bash": ("~/.bashrc", "bash"),
+    }
+    rc_file, source_shell = rc_map.get(shell_name, ("~/.profile", "sh"))
+    rc_path = os.path.expanduser(rc_file)
+    if not os.path.exists(rc_path):
+        return
+    try:
+        result = subprocess.run(
+            [source_shell, "-l", "-c", f"source {shlex.quote(rc_path)} 2>/dev/null; echo $PATH"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return
+    if result.returncode != 0:
+        return
+    enriched = result.stdout.strip()
+    if enriched and enriched != os.environ.get("PATH", ""):
+        os.environ["PATH"] = enriched
+
+
 # Host-environment variables a spawned runner is allowed to inherit.
 # Deliberately an allowlist (not ``{**os.environ}``): the host runs as the
 # user, so its environment holds the user's personal secrets (API keys,
@@ -4055,6 +4103,12 @@ def run_host_process(
         to stderr first.
     """
     host_log_path = configure_process_logging("host")
+    # Enrich PATH with the user's interactive rc file so git/Homebrew/nvm/asdf
+    # are findable. The daemon is often launched via a non-interactive SSH
+    # session whose login shell (``-l``) only sources login profiles, not
+    # interactive rc files. Without this, ``subprocess.run(["git", ...])``
+    # raises FileNotFoundError because git lives in /opt/homebrew/bin.
+    _enrich_path_from_interactive_shell()
     # Initialize tracing so the host daemon exports its own spans
     # (e.g. handling launch_runner / stat / list_dir frames) into the
     # same distributed trace as the server that requested them. The
