@@ -180,8 +180,8 @@ To reduce token cost, use the special infra below, for EX add the code that dire
 There are two infra you can use in this system
 ## Script Poller
 See `<host.puppygarden.root>/docs/POLL_PLUGINS.md`, you can create arbitrary poller, program it such that when it sees status change, send an event with taskId so that the event will fast route to you. Look at the folder to find out what you can use, if nothing useful, create new one.
-## Timer
-See `<host.puppygarden.root>/docs/TIMER_PLUGINS.md`, you can create arbitrary timer, similarly you can program is such that when the condition meets, send an event that can fast route to yourself
+## Automation
+Use `sys_scheduled_task_create` to schedule a recurring agent session on an RRULE schedule. For example, "check this PR every hour" or "remind me tomorrow at 9am". Automations run full agent sessions with MCP tools, have a catch-up toggle for missed runs, and can be managed via `sys_scheduled_task_list` / `sys_scheduled_task_update` / `sys_scheduled_task_delete`.
 
 # Appendix
 In case you need it, `<host.puppygarden.root>/docs/API_REFERENCE.md` contains all the APIs.
