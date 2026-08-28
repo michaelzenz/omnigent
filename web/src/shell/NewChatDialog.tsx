@@ -6002,11 +6002,19 @@ export function NewChatLandingScreen() {
                           </DialogDescription>
                         )}
                       </DialogHeader>
-                      <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+                      {/* Fixed-column grid so status / reuse / size align
+                          across rows: path (flex) | status | reuse | size. */}
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground/60 grid grid-cols-[minmax(0,1fr)_5rem_4.5rem_6rem] items-center gap-2 pb-1">
+                        <span>Path</span>
+                        <span className="text-center">Status</span>
+                        <span className="text-center">Reuse</span>
+                        <span className="text-right">Size</span>
+                      </div>
+                      <div className="flex flex-col gap-2 max-h-[55vh] overflow-y-auto">
                         {worktreeSizes.data.map((wt) => (
                           <div
                             key={wt.path}
-                            className="flex items-center justify-between gap-4 text-sm"
+                            className="grid grid-cols-[minmax(0,1fr)_5rem_4.5rem_6rem] items-center gap-2 text-sm"
                           >
                             <div className="flex min-w-0 items-center gap-2">
                               {wt.is_main ? (
@@ -6033,18 +6041,38 @@ export function NewChatLandingScreen() {
                               )}
                             </div>
                             {wt.error ? (
-                              <span className="shrink-0 text-amber-500" title={wt.error}>
-                                ⚠ error
-                              </span>
+                              <>
+                                <span className="text-center text-xs text-amber-500" title={wt.error}>
+                                  ⚠ error
+                                </span>
+                                <span className="text-center text-xs text-muted-foreground/40">—</span>
+                                <span className="text-right text-xs text-muted-foreground/40">—</span>
+                              </>
                             ) : (
                               <>
                                 <span
-                                  className={`shrink-0 text-xs ${wt.dirty ? "text-amber-500" : "text-muted-foreground/50"}`}
+                                  className={`text-center text-xs ${wt.dirty ? "text-amber-500" : "text-muted-foreground/50"}`}
                                   title={wt.dirty ? "Has uncommitted changes" : "Clean"}
                                 >
                                   {wt.dirty ? "dirty" : "clean"}
                                 </span>
-                                <span className="shrink-0 font-medium tabular-nums">
+                                <span
+                                  className={`text-center text-xs ${wt.reusable ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground/40"}`}
+                                  title={
+                                    wt.reusable
+                                      ? "Auto New Worktree can reuse this worktree"
+                                      : wt.is_main
+                                        ? "The main worktree is never reused"
+                                        : wt.managed
+                                          ? wt.dirty
+                                            ? "Dirty — auto reuse skips it"
+                                            : "Not managed by auto worktrees"
+                                          : "Not managed by auto worktrees"
+                                  }
+                                >
+                                  {wt.reusable ? "yes" : "no"}
+                                </span>
+                                <span className="text-right font-medium tabular-nums">
                                   {formatBytes(wt.size_bytes)}
                                 </span>
                               </>
@@ -6052,13 +6080,13 @@ export function NewChatLandingScreen() {
                           </div>
                         ))}
                       </div>
-                      <div className="flex items-center justify-between pt-3 mt-2 border-t border-border">
-                        <span className="text-sm font-medium">
+                      <div className="grid grid-cols-[minmax(0,1fr)_5rem_4.5rem_6rem] items-center gap-2 pt-3 mt-2 border-t border-border">
+                        <span className="col-span-3 text-sm font-medium">
                           {errorCount > 0
                             ? `Total (${succeededCount} of ${worktreeSizes.data.length} succeeded)`
                             : "Total"}
                         </span>
-                        <span className="text-sm font-medium tabular-nums">
+                        <span className="text-right text-sm font-medium tabular-nums">
                           {formatBytes(worktreeSizes.total_bytes)}
                         </span>
                       </div>
