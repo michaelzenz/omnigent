@@ -137,9 +137,6 @@ async def create_session_internal(
         await asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
         resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
     _announce_session_added(user_id, resp.id)
-    from omnigent.agent_tasks.adoption import notify_new_session
-
-    await notify_new_session(resp.id, user_id=user_id, host_id=body.host_id)
 
     launch_host_id = body.host_id
     if body.host_type == "managed" and resp.runner_id is None:

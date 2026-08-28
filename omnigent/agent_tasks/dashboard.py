@@ -33,6 +33,8 @@ def build_task_dashboard(
     executions = task_event_store.list_executions_for_task(task.id)
     item_by_id = {item.id: item for item in items}
     workers = worker_store.list_workers_for_task(task.id)
+    # Exclude terminated workers — they're untracked but kept for audit.
+    workers = [w for w in workers if w.state != "terminated"]
     worker_by_id = {worker.id: worker for worker in workers}
 
     worker_ids = set(worker_by_id)

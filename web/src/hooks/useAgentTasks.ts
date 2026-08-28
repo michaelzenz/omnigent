@@ -15,12 +15,14 @@ import {
   fetchTaskDashboard,
   interruptAgentQueueItem,
   moveTaskToQueueEnd,
+  reassignWorker,
   rejectAgentTaskPackage,
   resetBrokerSession,
   resetSecretarySession,
   patchAgentTask,
   resolveTaskItem,
   retryTaskItemDispatch,
+  untrackWorker,
   updateTaskItem,
   type CreateTaskItemRequest,
   type DispatchPayload,
@@ -407,5 +409,26 @@ export function useMoveTaskToQueueEnd(taskId: string) {
   return useMutation({
     mutationFn: () => moveTaskToQueueEnd(taskId),
     onSuccess: async () => invalidateTaskQueries(queryClient, taskId),
+  });
+}
+
+export function useUntrackWorker() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (workerId: string) => untrackWorker(workerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["task-dashboard"] });
+    },
+  });
+}
+
+export function useReassignWorker() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workerId, taskId }: { workerId: string; taskId: string }) =>
+      reassignWorker(workerId, taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["task-dashboard"] });
+    },
   });
 }

@@ -15,6 +15,7 @@ import {
   useAssignTaskItemWorker,
   useCreateTaskItem,
   useResolveTaskItem,
+  useUntrackWorker,
 } from "@/hooks/useAgentTasks";
 import { useWorkerProviders } from "@/hooks/useWorkerProviders";
 import {
@@ -307,7 +308,28 @@ function NewTaskItem({ taskId, onClose }: { taskId: string; onClose: () => void 
 
 function HumanActionItemRow({ taskId, item }: { taskId: string; item: TaskItemSummary }) {
   const resolveItem = useResolveTaskItem(taskId);
+  const untrack = useUntrackWorker();
   const done = item.state === "done";
+
+  // Parse worker_id from internal_note for the dismiss → untrack flow.
+  let workerId: string | null = null;
+  try {
+    const note = JSON.parse(item.internal_note ?? "{}");
+    workerId = note.worker_id ?? null;
+  } catch {
+    // malformed or missing — skip untrack
+  }
+
+  const handleDismiss = async () => {
+    if (workerId) {
+      try {
+        await untrack.mutateAsync(workerId);
+      } catch {
+        // untrack failed — still reject the item
+      }
+    }
+    await resolveItem.mutateAsync({ taskItemId: item.id, resolution: "reject_item" });
+  };
   return (
     <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
       <div className="flex min-w-0 items-start justify-between gap-2">
@@ -331,9 +353,8 @@ function HumanActionItemRow({ taskId, item }: { taskId: string; item: TaskItemSu
             size="sm"
             disabled={resolveItem.isPending}
             aria-label="Dismiss human action"
-            onClick={() =>
-              void resolveItem.mutateAsync({ taskItemId: item.id, resolution: "reject_item" })
-            }
+            disabled={resolveItem.isPending || untrack.isPending}
+            onClick={() => void handleDismiss()}
           >
             <XIcon aria-hidden /> Dismiss
           </Button>

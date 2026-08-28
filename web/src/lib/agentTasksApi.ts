@@ -410,6 +410,26 @@ export interface WorkerLaneSummary {
 }
 
 /** Initialize a Worker asynchronously. */
+export async function untrackWorker(workerId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/task-workers/${encodeURIComponent(workerId)}/untrack`,
+    { method: "POST" },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
+export async function reassignWorker(workerId: string, taskId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/task-workers/${encodeURIComponent(workerId)}/reassign`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId }),
+    },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
 export async function initializeWorker(workerId: string): Promise<WorkerLaneSummary> {
   const res = await authenticatedFetch(
     `/v1/task-workers/${encodeURIComponent(workerId)}/initialize`,

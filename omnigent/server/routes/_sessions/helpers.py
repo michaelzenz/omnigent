@@ -571,6 +571,33 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
     )
 
 
+async def _maybe_adopt_session(session_id: str) -> None:
+    """Check if a finished-turn session needs PuppyGarden adoption.
+
+    Skips sessions that already have a worker binding or are sub-agents.
+    The actual adoption logic lives in ``adoption.notify_new_session``.
+    """
+    try:
+        from omnigent.agent_tasks.adoption import (
+            get_session_adoption_context,
+            notify_new_session,
+        )
+
+        ctx = get_session_adoption_context()
+        if ctx is None:
+            return
+        # Skip if already has a worker — session is already adopted.
+        worker = ctx.worker_store.get_by_target_id(session_id)
+        if worker is not None:
+            return
+        conv = ctx.conversation_store.get_conversation(session_id)
+        if conv is None or conv.kind == "sub_agent":
+            return
+        await notify_new_session(session_id, source="internal")
+    except Exception:
+        _logger.warning("session adoption check failed for %s", session_id, exc_info=True)
+
+
 def announce_hosts_changed(
     user_id: str | None,
     *,
@@ -3981,6 +4008,8 @@ def _publish_status(
     # edges are skipped entirely so the hot path pays nothing mid-turn.
     if status == "idle":
         session_live_state.persist_scheduled_run_completion(session_id, "succeeded")
+        # Fire-and-forget: check if this session needs adoption after a turn.
+        asyncio.create_task(_maybe_adopt_session(session_id))
     elif status == "failed":
         # Canonical server-side broken-turn signal: every server-originated
         # failed turn (runner disconnect mid-turn, setup/dispatch failure,

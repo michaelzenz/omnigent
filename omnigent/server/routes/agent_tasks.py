@@ -16,15 +16,12 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from omnigent.agent_tasks.adoption import (
-    SESSION_ADOPTION_PROPOSAL,
+    SESSION_ADOPTED,
     adopt_external_session,
-    adopt_session,
-    find_open_adoption_proposal,
+    adopt_session_to_task,
     find_open_external_adoption_proposal,
     propose_external_session_adoption,
-    propose_session_adoption,
     reject_external_session_adoption,
-    reject_session_adoption,
 )
 from omnigent.agent_tasks.agent_builtins import (
     TASK_BROKER_ROLE,
@@ -71,7 +68,9 @@ from omnigent.agent_tasks.role_keys import (
     role_kind_from_key,
     role_profile_title,
 )
+from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.task_match import (
+    _LIVE_TASK_STATES,
     collect_event_tags,
     load_events,
     rank_tasks_for_events,
@@ -119,7 +118,7 @@ from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
-from omnigent.stores.worker_store import WorkerStore
+from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
 
@@ -331,6 +330,12 @@ class CreateTaskAssetRequest(BaseModel):
         if not stripped:
             raise ValueError("must be a non-empty string")
         return stripped
+
+
+class ReassignWorkerRequest(BaseModel):
+    """Request body for ``POST /v1/task-workers/{worker_id}/reassign``."""
+
+    task_id: str
 
 
 class AckEventsRequest(BaseModel):
@@ -591,15 +596,6 @@ class ResolveFyiClusterRequest(BaseModel):
     workspace: str | None = None
     harness: str | None = None
 
-
-class AdoptSessionRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
-
-    task_id: str
-    host_id: str | None = None
-    workspace: str | None = None
-    harness: str | None = None
-    model: str | None = None
 
 
 async def _best_effort_ensure_conversation_runner(
@@ -1960,6 +1956,108 @@ def create_agent_tasks_router(
             assert updated is not None
             return _worker_to_response(updated)
 
+        @router.post("/task-workers/{worker_id}/untrack")
+        async def untrack_worker(request: Request, worker_id: str) -> dict[str, Any]:
+            """Remove a worker from its task. Done items stay for audit; all
+            other items are cancelled. The session keeps running as a regular
+            session — only the PuppyGarden binding is removed.
+            """
+            user_id = require_user(request, auth_provider)
+            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
+            if worker is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            await _get_task_or_404(worker.task_id, user_id)
+
+            # Cancel all non-done items for this worker.
+            items = await asyncio.to_thread(task_item_store.list_items_for_task, worker.task_id)
+            for item in items:
+                if item.worker_id != worker_id:
+                    continue
+                if item.state == "done":
+                    continue
+                await asyncio.to_thread(
+                    task_item_store.update_item, item.id, state="cancelled"
+                )
+
+            # Stop managed workers; external sessions keep running.
+            if worker.kind != WORKER_KIND_EXTERNAL and worker.target_id is not None:
+                await _control_worker(worker, "stop_session", request)
+
+            updated = await asyncio.to_thread(
+                worker_store.update_worker,
+                worker.id,
+                state="terminated",
+                needs_response=False,
+            )
+            assert updated is not None
+            return _worker_to_response(updated)
+
+        @router.post("/task-workers/{worker_id}/reassign")
+        async def reassign_worker(
+            request: Request,
+            worker_id: str,
+            body: ReassignWorkerRequest,
+        ) -> dict[str, Any]:
+            """Move a worker to a different task. Done items stay on the
+            source task; all other items are cancelled. A ``session.adopted``
+            event wakes the target task's manager.
+            """
+            user_id = require_user(request, auth_provider)
+            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
+            if worker is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            await _get_task_or_404(worker.task_id, user_id)
+            target_task = await _get_task_or_404(body.task_id, user_id)
+            if target_task.state not in _LIVE_TASK_STATES:
+                raise OmnigentError("Target task is not live", code=ErrorCode.CONFLICT)
+
+            # Cancel all non-done items for this worker on the source task.
+            items = await asyncio.to_thread(task_item_store.list_items_for_task, worker.task_id)
+            for item in items:
+                if item.worker_id != worker_id:
+                    continue
+                if item.state == "done":
+                    continue
+                await asyncio.to_thread(
+                    task_item_store.update_item, item.id, state="cancelled"
+                )
+
+            # Move the worker.
+            updated = await asyncio.to_thread(
+                worker_store.update_worker,
+                worker.id,
+                task_id=body.task_id,
+                state="idle",
+                needs_response=False,
+            )
+            assert updated is not None
+
+            # Emit session.adopted event to wake the target task's manager.
+            adopted_event = await asyncio.to_thread(
+                task_event_store.create_event,
+                uuid.uuid4().hex,
+                SESSION_ADOPTED,
+                f"Session rebind: {worker.provider_name or worker_id}",
+                source_key=worker.target_id,
+                source="adoption",
+                task_id=body.task_id,
+                state="received",
+                owner_user_id=target_task.owner_user_id,
+            )
+            await ingress_event(
+                event=adopted_event,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+                conversation_store=conversation_store,
+                task_role_profile_store=task_role_profile_store,
+                owner_user_id=target_task.owner_user_id,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
+            return _worker_to_response(updated)
+
         @router.post("/agent-tasks/{task_id}/assets")
         async def create_task_asset_route(
             request: Request,
@@ -2798,24 +2896,10 @@ def create_agent_tasks_router(
                 conversation_store,
             )
 
-        @router.post("/agent-tasks/sessions/{session_id}/propose-adoption")
-        async def propose_session_adoption_route(
-            request: Request,
-            session_id: str,
-        ) -> dict[str, Any]:
-            """Score tasks and create a user-gated session adoption proposal."""
-            user_id = require_user(request, auth_provider)
-            await _require_session_or_404(session_id, user_id)
-            created = await asyncio.to_thread(
-                propose_session_adoption,
-                session_id=session_id,
-                task_store=task_store,
-                task_event_store=task_event_store,
-                worker_store=worker_store,
-                conversation_store=conversation_store,
-                owner_user_id=_effective_user_id(user_id),
-            )
-            return _event_to_response(created)
+        class AdoptSessionRequest(BaseModel):
+            """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
+
+            task_id: str
 
         @router.post("/agent-tasks/sessions/{session_id}/adopt")
         async def adopt_session_route(
@@ -2823,74 +2907,45 @@ def create_agent_tasks_router(
             session_id: str,
             body: AdoptSessionRequest,
         ) -> dict[str, Any]:
-            """Bind an orphan session to a task after user acceptance."""
+            """Directly adopt a session to a task (Worker + human_action item).
+
+            Replaces the old propose → accept → reject flow. The broker calls
+            this when it triages a low-score orphan and decides which task to
+            bind the session to.
+            """
             user_id = require_user(request, auth_provider)
             await _require_session_or_404(session_id, user_id)
             task = await _get_task_or_404(body.task_id, user_id)
-            profile = await _manager_role_profile_for_task(task, user_id)
-            params = resolve_bootstrap_params(
-                host_id=body.host_id,
-                workspace=body.workspace,
-                harness=body.harness,
-                model=body.model,
-                role_profile=profile,
-            )
-            proposal = await asyncio.to_thread(
-                find_open_adoption_proposal,
-                task_event_store,
-                session_id,
-            )
-            proposal_event, adopted_event = await adopt_session(
-                session_id=session_id,
-                task_id=body.task_id,
-                task_store=task_store,
-                task_event_store=task_event_store,
-                worker_store=worker_store,
-                conversation_store=conversation_store,
-                params=params,
-                proposal_event=proposal,
-                session_creator=session_creator,
-                app_state=request.app.state,
-                user_id=user_id,
-            )
-            worker = await asyncio.to_thread(worker_store.get_by_target_id, session_id)
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+            if conv is None:
+                raise OmnigentError("Session not found", code=ErrorCode.NOT_FOUND)
+
+            def _adopt() -> tuple[str, str]:
+                return adopt_session_to_task(
+                    session_id=session_id,
+                    task=task,
+                    conv=conv,
+                    owner_user_id=_effective_user_id(user_id),
+                )
+
+            worker_id, item_id = await asyncio.to_thread(_adopt)
+            # Reconcile the orphan event if one exists.
+            from omnigent.agent_tasks.adoption import find_open_orphan_event
+
+            orphan = find_open_orphan_event(task_event_store, session_id)
+            if orphan is not None:
+                await asyncio.to_thread(
+                    task_event_store.update_event,
+                    orphan.id,
+                    state="reconciled",
+                    processed_at=now_epoch(),
+                )
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,
                 "task_id": body.task_id,
-                "worker_kind": worker.kind if worker is not None else None,
-                "proposal": (
-                    _event_to_response(proposal_event)
-                    if proposal_event.event_type == SESSION_ADOPTION_PROPOSAL
-                    else None
-                ),
-                "event": _event_to_response(adopted_event),
-            }
-
-        @router.post("/agent-tasks/sessions/{session_id}/reject-adoption")
-        async def reject_session_adoption_route(
-            request: Request,
-            session_id: str,
-        ) -> dict[str, Any]:
-            """Dismiss adoption for a session that should stay orphan."""
-            user_id = require_user(request, auth_provider)
-            await _require_session_or_404(session_id, user_id)
-            proposal = await asyncio.to_thread(
-                find_open_adoption_proposal,
-                task_event_store,
-                session_id,
-            )
-            dismissed = await asyncio.to_thread(
-                reject_session_adoption,
-                session_id=session_id,
-                conversation_store=conversation_store,
-                task_event_store=task_event_store,
-                proposal_event=proposal,
-            )
-            return {
-                "object": "agent.task.session_adoption_rejection",
-                "session_id": session_id,
-                "proposal": _event_to_response(dismissed) if dismissed is not None else None,
+                "worker_id": worker_id,
+                "item_id": item_id,
             }
 
         # ── External session adoption (watcher-discovered) ──────────
@@ -2977,7 +3032,7 @@ def create_agent_tasks_router(
                 "worker_id": worker.id if worker is not None else None,
                 "proposal": (
                     _event_to_response(proposal_event)
-                    if proposal_event.event_type == SESSION_ADOPTION_PROPOSAL
+                    if proposal_event is not None and proposal_event.event_type == "session.adoption"
                     else None
                 ),
                 "event": _event_to_response(adopted_event),

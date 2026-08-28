@@ -2955,6 +2955,7 @@ def create_app(
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
+                task_item_store=task_item_store,
                 task_role_profile_store=task_role_profile_store,
                 host_store=host_store,
                 runner_router=runner_router,

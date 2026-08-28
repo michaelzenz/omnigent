@@ -162,6 +162,31 @@ puppygarden_api(
 - Pass `cluster_id` to attach more events to an open FYI card.
 - Linked events move to `classified_fyi`; user dismisses on the board.
 
+### 4. Orphan session adoption
+
+A `session.orphan` event means a session finished a turn but has no task
+binding. The system already auto-adopts high-confidence matches. You only
+see orphans where the match score was low — read the session transcript to
+understand what it's working on, then:
+
+1. **Adopt to an existing task** — if the session relates to an active task:
+
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/sessions/{session_id}/adopt",
+  body={"task_id": "<task_id>"}
+)
+```
+
+This creates a Worker + a human_action item on the task. The user confirms
+or dismisses it on the task card.
+
+2. **Create a new task** — if the session is working on something new, create
+   a pending task package first, then adopt the session to it.
+
+3. **FYI** — if the session is exploratory / not worth a task, classify as FYI.
+
 # Managing the Task
 For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, split/merge taskItems if necessary, resolve the taskItems when you know that it's already done. You just dont assign workers for an item
 
