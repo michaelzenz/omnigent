@@ -139,7 +139,7 @@ export function SkillDocPreview({ content, onChange }: SkillDocPreviewProps) {
       <div className="flex-1 overflow-auto px-6 py-4">
         <EditorContent
           editor={editor}
-          className="prose prose-sm dark:prose-invert max-w-none outline-none tiptap-md-content [&_*::selection]:bg-blue-300/40"
+          className="max-w-none text-ui text-foreground outline-none tiptap-md-content [&_*::selection]:bg-blue-300/40 [&_*::selection]:text-foreground"
         />
       </div>
     </div>

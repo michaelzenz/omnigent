@@ -1674,6 +1674,7 @@ aside[aria-label="Workspace"][data-maximized] {
   border-radius: 3px;
 }
 .tiptap-md-content .ProseMirror pre {
+  color: var(--foreground);
   background: var(--muted);
   padding: 1em;
   border-radius: 6px;
@@ -1681,6 +1682,7 @@ aside[aria-label="Workspace"][data-maximized] {
   margin: 0.75em 0;
 }
 .tiptap-md-content .ProseMirror pre code {
+  color: inherit;
   background: none;
   padding: 0;
 }
