@@ -65,11 +65,6 @@ import {
   takeConversationScrollControl,
 } from "@/lib/conversationScrollState";
 import {
-  DEFAULT_STICKY_USER_MESSAGES,
-  readStickyUserMessagesEnabled,
-  subscribeStickyUserMessagesEnabled,
-} from "@/lib/stickyUserMessagesPreferences";
-import {
   DEFAULT_CHAT_TOP_BUTTON_MODE,
   readChatTopButtonMode,
   subscribeChatTopButtonMode,
@@ -2142,11 +2137,6 @@ export function MainAgentSurface({
   wrapperLabel,
 }: MainAgentSurfaceProps) {
   const terminalFirst = useTerminalFirst();
-  const stickyUserMessagesEnabled = useSyncExternalStore(
-    subscribeStickyUserMessagesEnabled,
-    readStickyUserMessagesEnabled,
-    () => DEFAULT_STICKY_USER_MESSAGES,
-  );
   const chatTopButtonMode = useSyncExternalStore(
     subscribeChatTopButtonMode,
     readChatTopButtonMode,
@@ -2375,47 +2365,6 @@ export function MainAgentSurface({
   // ConversationScrollRefBridge so the pinned-but-unmasked JumpToTopButton can
   // read and drive the scroll.
   const [scroller, setScroller] = useState<ConversationScroller | null>(null);
-  const [stickyUserMessageId, setStickyUserMessageId] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    const scrollEl = scroller?.el;
-    if (!scrollEl || !stickyUserMessagesEnabled) {
-      setStickyUserMessageId(null);
-      return;
-    }
-
-    let frame = 0;
-    const update = () => {
-      frame = 0;
-      const roof = userMessageRoof(scrollEl);
-      const nextId = nearestCrossedUserMessageId(
-        Array.from(scrollEl.querySelectorAll<HTMLElement>("[data-user-message-id]"), (message) => ({
-          itemId: message.dataset.userMessageId,
-          top: message.getBoundingClientRect().top,
-        })),
-        roof,
-      );
-      setStickyUserMessageId((current) => (current === nextId ? current : nextId));
-    };
-    const schedule = () => {
-      if (!frame) frame = window.requestAnimationFrame(update);
-    };
-
-    const resizeObserver = new ResizeObserver(schedule);
-    resizeObserver.observe(scrollEl);
-    for (const message of scrollEl.querySelectorAll<HTMLElement>("[data-user-message-id]")) {
-      resizeObserver.observe(message);
-    }
-    scrollEl.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    update();
-
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      resizeObserver.disconnect();
-      scrollEl.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-    };
-  }, [scroller, stickyUserMessagesEnabled, streamBubbles]);
   // While the iOS edge-swipe is driving the sidebar drawer, make the transcript
   // ignore the finger so it doesn't scroll along with the drag. On iOS the page
   // is viewport-locked, so the transcript scrolls as an inner overflow:auto
@@ -2687,10 +2636,6 @@ export function MainAgentSurface({
                       <BubbleView
                         key={bubbleKey(bubble)}
                         bubble={bubble}
-                        isStickyUser={
-                          bubble.kind === "user" && bubble.itemId === stickyUserMessageId
-                        }
-                        stickyUserMessagesEnabled={stickyUserMessagesEnabled}
                         routingNoticesEnabled={routingNoticesEnabled}
                         isLastAssistant={bubbleIndex === lastAssistantIndex}
                         showsWorking={showsWorking && bubbleIndex === lastAssistantIndex}
@@ -4054,18 +3999,6 @@ function scrollToUserTurnStart(message: HTMLElement | null, viewportRoof?: numbe
   }
 }
 
-export function nearestCrossedUserMessageId(
-  messages: readonly { itemId?: string; top: number }[],
-  roof: number,
-): string | null {
-  let activeId: string | null = null;
-  for (const message of messages) {
-    if (message.top > roof + 1) break;
-    activeId = message.itemId ?? null;
-  }
-  return activeId;
-}
-
 export function userMessageIndexNearestRoof(
   messages: readonly { top: number }[],
   roof: number,
@@ -4770,29 +4703,19 @@ function formatBubbleTimestamp(epochSeconds: number | undefined): string | null 
 export const BubbleView = memo(
   function BubbleView({
     bubble,
-    isStickyUser = false,
-    stickyUserMessagesEnabled = true,
     routingNoticesEnabled = true,
     isLastAssistant = false,
     showsWorking = false,
     turnActivityItems,
   }: {
     bubble: Bubble;
-    isStickyUser?: boolean;
-    stickyUserMessagesEnabled?: boolean;
     routingNoticesEnabled?: boolean;
     isLastAssistant?: boolean;
     showsWorking?: boolean;
     turnActivityItems?: RenderItem[];
   }) {
     if (bubble.kind === "user") {
-      return (
-        <UserBubble
-          bubble={bubble}
-          isSticky={isStickyUser && stickyUserMessagesEnabled}
-          stickyUserMessagesEnabled={stickyUserMessagesEnabled}
-        />
-      );
+      return <UserBubble bubble={bubble} />;
     }
     if (bubble.kind === "compaction_loading") {
       return <CompactionLoadingIndicator />;
@@ -4820,8 +4743,6 @@ export const BubbleView = memo(
     );
   },
   (prev, next) =>
-    (prev.isStickyUser ?? false) === (next.isStickyUser ?? false) &&
-    (prev.stickyUserMessagesEnabled ?? true) === (next.stickyUserMessagesEnabled ?? true) &&
     (prev.routingNoticesEnabled ?? true) === (next.routingNoticesEnabled ?? true) &&
     (prev.isLastAssistant ?? false) === (next.isLastAssistant ?? false) &&
     (prev.showsWorking ?? false) === (next.showsWorking ?? false) &&
@@ -4875,15 +4796,7 @@ function useCopyMessage(getText: () => string): {
   return { isCopied, handleCopy };
 }
 
-function UserBubble({
-  bubble,
-  isSticky,
-  stickyUserMessagesEnabled,
-}: {
-  bubble: Extract<Bubble, { kind: "user" }>;
-  isSticky: boolean;
-  stickyUserMessagesEnabled: boolean;
-}) {
+function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const sessionId = useChatStore((s) => s.conversationId);
   const sessionHarness = useChatStore((s) => s.sessionHarness);
   const boundAgentId = useChatStore((s) => s.boundAgentId);
@@ -5000,11 +4913,7 @@ function UserBubble({
         data-testid="message-bubble"
         data-role="user"
         data-user-message-id={bubble.itemId}
-        className={cn(
-          "max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))]",
-          isSticky &&
-            "sticky top-[calc(5rem+var(--omnigent-inset-top))] z-20 rounded-xl bg-background/95 shadow-sm backdrop-blur-md",
-        )}
+        className="max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))]"
       >
         <form
           className="ml-auto w-full rounded-xl border bg-muted p-3"
@@ -5087,7 +4996,6 @@ function UserBubble({
       }}
       className={cn(
         "max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))] rounded-xl transition-[background-color,backdrop-filter]",
-        isSticky && "sticky top-[calc(5rem+var(--omnigent-inset-top))] z-20",
         showTurnChrome && "bg-background/95 shadow-sm backdrop-blur-md",
       )}
     >
@@ -5227,10 +5135,7 @@ function UserBubble({
                   startEditing();
                 }}
               >
-                <div
-                  data-testid="user-message-text"
-                  className={cn(canEdit && stickyUserMessagesEnabled && "line-clamp-6")}
-                >
+                <div data-testid="user-message-text">
                   <FilePathAwareMessageResponse breaks>{text}</FilePathAwareMessageResponse>
                 </div>
                 {canEdit && (
@@ -7964,10 +7869,13 @@ export function readOnlyReasonForSessionLabels(
 }
 
 export function effortLevelsForConv(
-  conv: {
-    labels?: Record<string, string | null> | null;
-    agentName?: string | null;
-  } | null | undefined,
+  conv:
+    | {
+        labels?: Record<string, string | null> | null;
+        agentName?: string | null;
+      }
+    | null
+    | undefined,
   codexModelOptions: readonly NativeModelOption[] = [],
   currentModel: string | null = null,
 ): readonly string[] {
@@ -8050,10 +7958,13 @@ export function shouldShowModelPicker(
  * :returns: True only when the session supports Web UI effort controls.
  */
 export function shouldShowEffortPicker(
-  conv: {
-    labels?: Record<string, string | null> | null;
-    agentName?: string | null;
-  } | null | undefined,
+  conv:
+    | {
+        labels?: Record<string, string | null> | null;
+        agentName?: string | null;
+      }
+    | null
+    | undefined,
 ): boolean {
   return supportsEffortControl(conv);
 }

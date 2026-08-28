@@ -280,19 +280,6 @@ describe("SettingsPage", () => {
     expect(mocks.setTheme).toHaveBeenCalledWith("dark");
   });
 
-  it("toggles sticky user message presentation without disabling editing", () => {
-    renderPage("/settings/appearance");
-    const toggle = screen.getByTestId("sticky-user-messages-toggle");
-
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.getByText(/Click to edit remains available when this is off/),
-    ).toBeInTheDocument();
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(localStorage.getItem("omnigent:sticky-user-messages")).toBe("false");
-  });
-
   it("keeps automatic bottom locking on by default", () => {
     renderPage("/settings/appearance");
     const toggle = screen.getByTestId("bottom-lock-toggle");
@@ -580,7 +567,6 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByTestId("transcript-view-default-terminal"));
     fireEvent.click(screen.getByTestId("workspace-panel-default-collapsed"));
     fireEvent.click(screen.getByTestId("hide-unconfigured-harnesses-toggle"));
-    fireEvent.click(screen.getByTestId("sticky-user-messages-toggle"));
     fireEvent.click(screen.getByTestId("bottom-lock-toggle"));
     fireEvent.click(screen.getByTestId("routing-notices-toggle"));
     fireEvent.click(screen.getByTestId("chat-top-button-off"));
@@ -604,7 +590,7 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:code-font-size")).toBe("15");
     expect(localStorage.getItem("omnigent:chat-top-button")).toBe("off");
     expect(localStorage.getItem("omnigent:routing-notices")).toBe("false");
-        expect(localStorage.getItem("omnigent:code-font-weight")).toBe("500");
+    expect(localStorage.getItem("omnigent:code-font-weight")).toBe("500");
 
     // Open the confirmation dialog and confirm the reset.
     fireEvent.click(screen.getByTestId("reset-appearance-button"));
@@ -641,10 +627,6 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("hide-unconfigured-harnesses-toggle")).toHaveAttribute(
       "aria-checked",
       "false",
-    );
-    expect(screen.getByTestId("sticky-user-messages-toggle")).toHaveAttribute(
-      "aria-checked",
-      "true",
     );
     expect(screen.getByTestId("bottom-lock-toggle")).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("chat-top-button-jump-to-top")).toHaveAttribute(
