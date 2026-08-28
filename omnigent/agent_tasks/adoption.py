@@ -238,7 +238,45 @@ async def enqueue_orphan_session(
     assert conv is not None
     if find_open_orphan_event(_context.task_event_store, session_id) is not None:
         return False
+
+    # Fetch the last user message and last assistant response so the
+    # broker can triage without calling sys_session_get_history.
+    last_user_message = None
+    last_agent_response = None
+    try:
+        items = _context.conversation_store.list_items(session_id, limit=50, order="desc")
+        for item in reversed(items.data):
+            if item.type != "message":
+                continue
+            data = item.data
+            if not hasattr(data, "role"):
+                continue
+            text_parts = [
+                block.get("text", "")
+                for block in (data.content or [])
+                if isinstance(block, dict) and block.get("type") in ("input_text", "output_text", "text")
+            ]
+            text = " ".join(text_parts).strip()
+            if not text:
+                continue
+            if data.role == "user" and last_user_message is None:
+                last_user_message = text[:2000]
+            elif data.role == "assistant" and last_agent_response is None:
+                last_agent_response = text[:2000]
+            if last_user_message is not None and last_agent_response is not None:
+                break
+    except Exception:
+        pass
+
     title = f"Adopt session: {conv.title or session_id}"
+    payload = json.dumps({
+        "session_id": session_id,
+        "session_title": conv.title,
+        "host_id": conv.host_id,
+        "workspace": conv.workspace,
+        "last_user_message": last_user_message,
+        "last_agent_response": last_agent_response,
+    })
     _context.task_event_store.create_event(
         uuid.uuid4().hex,
         SESSION_ORPHAN_EVENT_TYPE,
@@ -247,6 +285,7 @@ async def enqueue_orphan_session(
         source_key=session_id,
         state="awaiting_grouping",
         owner_user_id=owner_user_id,
+        payload=payload,
     )
     return True
 
