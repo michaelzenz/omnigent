@@ -9517,6 +9517,17 @@ def create_runner_app(
                     "agent_id": agent_id,
                     "model": body.get("model", agent_id),
                 }
+                # Thread the persisted model override so the recovery turn
+                # spawns the harness with the correct model — the onih-pi spec
+                # declares no executor.model, so without this the spawn env
+                # carries no HARNESS_PI_MODEL and server-proxied Pi raises.
+                _recovery_model_override = (
+                    init_context.envelope.snapshot.model_override
+                    if init_context.envelope is not None
+                    else None
+                )
+                if _recovery_model_override is not None:
+                    msg_body["model_override"] = _recovery_model_override
                 _turn_task = asyncio.create_task(
                     _run_turn_bg(msg_body, session_id),
                     name=f"turn-recover-{session_id}",
