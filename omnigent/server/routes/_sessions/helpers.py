@@ -4024,6 +4024,14 @@ def _publish_status(
     # deduplicated, off-loop) so replicas that don't hold this session's
     # runner tunnel serve the same sidebar status.
     session_live_state.persist_live_status(session_id, status)
+    # Notify the queue status feed so non-worker roles (broker, manager)
+    # get their in-flight item completed when the session goes idle/failed.
+    # The native relay path (routes_events) calls this separately, but
+    # server-side status transitions funnel through _publish_status and
+    # would otherwise miss the feed.
+    from omnigent.server.routes._sessions.common import _queue_status_feed
+    if _queue_status_feed is not None:
+        asyncio.create_task(_queue_status_feed.notify(session_id, status))
     # Event-driven scheduled-run completion. A terminal edge (idle = the turn
     # completed; failed = it errored/disconnected) flips the conversation's
     # still-``running`` scheduled_task_run to succeeded/failed. This is the

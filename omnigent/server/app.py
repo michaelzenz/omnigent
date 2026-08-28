@@ -1439,21 +1439,18 @@ def create_app(
                 )
 
             class _CacheStatusReader(StatusReader):
-                """Reads the in-process session status cache.
+                """Reads session status from the conversation store.
 
-                A *miss* returns ``None`` (not ``"idle"``) so the gate keeps its
-                last reading rather than falsely reading a never-seen session
-                as dispatchable. ``_session_status_from_cache`` collapses a miss
-                to ``"idle"``, which would make every queue dispatchable after a
-                restart, so this reads the raw cache instead.
+                The dispatcher polls on a timer and needs an authoritative
+                reading — a cache miss for a bootstrapped session (e.g. the
+                broker) returns None, which the gate treats as "keep last
+                reading", wedging the queue. Reading live_status from the row
+                is always correct and the cost is one cheap indexed lookup.
                 """
 
                 async def status_for(self, session_id: str) -> str | None:
-                    from omnigent.server.routes.sessions import (
-                        _session_status_cache,
-                    )
-
-                    return _session_status_cache.get(session_id)
+                    conv = conversation_store.get_conversation(session_id)
+                    return conv.live_status if conv is not None else None
 
             class _PackagerCacheReader(_PackagerStatusReader):
                 """Reads session status from the conversation store.
