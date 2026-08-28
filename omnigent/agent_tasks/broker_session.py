@@ -327,7 +327,9 @@ async def ensure_broker_session(
         if conv is not None and conv.runner_id is not None:
             return session.conversation_id
         # Conversation exists but runner is gone (e.g. after restart).
-        # Re-bind a runner instead of creating a new session.
+        # Try to re-bind a runner to the existing session so the broker
+        # keeps its history. If rebind fails, return None and leave
+        # events queued — do NOT create a new session.
         if conv is not None:
             return await _rebind_broker_runner(
                 conversation_id=session.conversation_id,
@@ -336,6 +338,8 @@ async def ensure_broker_session(
                 app_state=app_state,
                 user_id=auth_user_id,
             )
+            # Rebind returned None — stay queued, try again next poll.
+            return None
 
     from omnigent.agent_tasks.bootstrap import build_role_session_request
     from omnigent.server.routes.sessions import _make_internal_request
