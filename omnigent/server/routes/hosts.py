@@ -1614,4 +1614,65 @@ def create_hosts_router(
             "auto_worktrees_supported": conn.hello.managed_worktree_leases,
         }
 
+    @router.get("/hosts/{host_id}/worktree-sizes")
+    async def get_host_worktree_sizes(
+        request: Request,
+        host_id: str,
+        path: str = Query(...),
+        force: bool = Query(default=False),
+    ) -> dict[str, Any]:
+        """Return cached on-disk sizes of each worktree in a repository.
+
+        When ``force=true``, the host recalculates immediately (refresh button).
+        Cache never expires — old data is always returned with a timestamp.
+
+        :param request: FastAPI request (for auth).
+        :param host_id: Host identifier.
+        :param path: Absolute path inside the repo on the host.
+        :param force: Force immediate recalculation.
+        :returns: ``{"object": "worktree_sizes", "data": [...],
+            "total_bytes": N, "calculated_at": T, "error": ... | null}``.
+        """
+        from omnigent.server.routes._host_worktree import (
+            WorktreeHostUnavailableError,
+            WorktreeProxyError,
+            worktree_sizes_on_host,
+        )
+
+        user_id = require_user(request, auth_provider)
+        host = await asyncio.to_thread(host_store.get_host, host_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="host not found")
+        if user_id is not None and host.user_id != user_id:
+            raise HTTPException(status_code=403, detail="not your host")
+
+        if not path.strip():
+            raise HTTPException(status_code=400, detail="path must not be empty")
+        if "\x00" in path:
+            raise HTTPException(status_code=400, detail="path must not contain NUL bytes")
+
+        conn = host_registry.get(host.host_id)
+        if conn is None:
+            raise _host_absent_error(host)
+
+        try:
+            result = await worktree_sizes_on_host(
+                host_registry=host_registry,
+                host_conn=conn,
+                repo_path=path,
+                force=force,
+            )
+        except WorktreeHostUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=exc.message) from exc
+        except WorktreeProxyError as exc:
+            raise HTTPException(status_code=400, detail=exc.message) from exc
+
+        return {
+            "object": "worktree_sizes",
+            "data": result.get("worktrees") or [],
+            "total_bytes": result.get("total_bytes", 0),
+            "calculated_at": result.get("calculated_at", 0.0),
+            "error": result.get("error"),
+        }
+
     return router

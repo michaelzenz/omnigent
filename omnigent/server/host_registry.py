@@ -303,6 +303,9 @@ class HostConnection:
     pending_renew_worktree_leases: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict,
     )
+    pending_worktree_sizes: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
     pending_create_dirs: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict,
     )
@@ -341,6 +344,7 @@ def _fail_pending_worktree_operations(conn: HostConnection) -> None:
         conn.pending_remove_worktrees,
         conn.pending_list_worktrees,
         conn.pending_renew_worktree_leases,
+        conn.pending_worktree_sizes,
     ):
         for future in pending.values():
             future.get_loop().call_soon_threadsafe(_fail, future)

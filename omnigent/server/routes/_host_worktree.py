@@ -19,6 +19,7 @@ from omnigent.host.frames import (
     HostListWorktreesFrame,
     HostRemoveWorktreeFrame,
     HostRenewWorktreeLeaseFrame,
+    HostWorktreeSizesFrame,
     encode_host_frame,
 )
 from omnigent.server.host_registry import HostConnection, HostRegistry
@@ -351,3 +352,46 @@ async def release_worktree_lease_on_host(
         lease_owner=lease_owner,
         release=True,
     )
+
+
+# Timeout for the worktree-sizes round-trip. The host's per-worktree du cap is
+# 300s; add headroom for git worktree list + tunnel round-trip.
+_WORKTREE_SIZES_TIMEOUT_S = 310.0
+
+
+async def worktree_sizes_on_host(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    repo_path: str,
+    force: bool = False,
+) -> dict[str, object]:
+    """Send a ``host.worktree_sizes`` frame and await the result.
+
+    :param force: When True, host recalculates immediately (refresh button).
+    :returns: Dict with status, worktrees, total_bytes, calculated_at, error.
+    :raises WorktreeHostUnavailableError: If the host connection drops.
+    :raises WorktreeProxyError: If the host reports a failure.
+    """
+    request_id = secrets.token_hex(8)
+    frame = encode_host_frame(
+        HostWorktreeSizesFrame(
+            request_id=request_id,
+            repo_path=repo_path,
+            force=force,
+        )
+    )
+    result = await _await_host_worktree_result(
+        host_registry=host_registry,
+        host_conn=host_conn,
+        pending=host_conn.pending_worktree_sizes,
+        request_id=request_id,
+        frame=frame,
+        op="worktree sizes",
+        timeout_s=_WORKTREE_SIZES_TIMEOUT_S,
+    )
+    if result.get("status") != "ok" and result.get("status") != "failed":
+        raise WorktreeProxyError(
+            f"worktree sizes failed: {result.get('error') or 'host reported no detail'}"
+        )
+    return result

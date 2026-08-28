@@ -48,6 +48,7 @@ from omnigent.host.frames import (
     HostStatResultFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretResultFrame,
+    HostWorktreeSizesResultFrame,
     HostWorktreeLogFrame,
     decode_host_frame,
     encode_host_frame,
@@ -795,6 +796,20 @@ async def _receive_loop(
                     {
                         "status": frame.status,
                         "renewed": frame.renewed,
+                        "error": frame.error,
+                    }
+                )
+            continue
+
+        if isinstance(frame, HostWorktreeSizesResultFrame):
+            sizes_future = conn.pending_worktree_sizes.pop(frame.request_id, None)
+            if sizes_future is not None and not sizes_future.done():
+                sizes_future.set_result(
+                    {
+                        "status": frame.status,
+                        "worktrees": frame.worktrees,
+                        "total_bytes": frame.total_bytes,
+                        "calculated_at": frame.calculated_at,
                         "error": frame.error,
                     }
                 )

@@ -24,6 +24,7 @@ import {
   ImageIcon,
   PaperclipIcon,
   PlusIcon,
+  RotateCwIcon,
   SettingsIcon,
   ShuffleIcon,
   TriangleAlertIcon,
@@ -202,6 +203,8 @@ import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { useHostFilesystem, type HostFilesystemEntry } from "@/hooks/useHostFilesystem";
 import { useHostRepository, useHostWorktrees } from "@/hooks/useHostWorktrees";
+import { useWorktreeSizes, useRefreshWorktreeSizes } from "@/hooks/useWorktreeSizes";
+import { formatBytes } from "@/lib/formatBytes";
 import { useNativeServerSwitcherForMainSurface } from "@/hooks/useNativeServerSwitcher";
 import type { WorkspaceFile } from "@/hooks/useWorkspaceChangedFiles";
 import type { Conversation } from "@/hooks/useConversations";
@@ -3860,6 +3863,16 @@ export function NewChatLandingScreen() {
     !hostRepositoryError &&
     hostRepository?.isGitRepository === true;
   const autoWorktreesSupported = hostRepository?.autoWorktreesSupported === true;
+  // Worktree size calculation — fires when the workspace is a git repo.
+  const { data: worktreeSizes, isLoading: worktreeSizesLoading } = useWorktreeSizes(
+    isGitWorkspace ? selectedHostId : null,
+    isGitWorkspace ? workspaceTrimmed : null,
+  );
+  const refreshWorktreeSizes = useRefreshWorktreeSizes(
+    isGitWorkspace ? selectedHostId : null,
+    isGitWorkspace ? workspaceTrimmed : null,
+  );
+  const [worktreeSizePopoverOpen, setWorktreeSizePopoverOpen] = useState(false);
   // Linked worktrees (exclude the main work tree — "starting in the main
   // repo" is just picking that directory, not selecting a worktree).
   const linkedWorktrees = useMemo(
@@ -5888,6 +5901,163 @@ export function NewChatLandingScreen() {
                 is shown in the hero heading instead of a tray chip; filing on
                 create still uses `selectedProject`. */}
             </div>
+            {/* Worktree sizes summary — below the workspace/auto-worktree/worktree
+                chips row. 1-line format with hover underline; click opens a popover
+                with per-worktree path + size. A refresh button forces recalculation. */}
+            {isGitWorkspace && (() => {
+              if (worktreeSizesLoading && !worktreeSizes) {
+                return (
+                  <div className="flex items-center gap-1.5 py-0.5 pl-0.5 text-xs text-muted-foreground">
+                    <Loader2Icon className="size-3 animate-spin" />
+                    <span>Calculating worktree sizes…</span>
+                  </div>
+                );
+              }
+              if (worktreeSizes?.error) {
+                return (
+                  <div className="flex items-center gap-2 py-0.5 pl-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setWorktreeSizePopoverOpen(true)}
+                      className="text-xs text-amber-500 hover:underline transition-colors"
+                      data-testid="new-chat-worktree-sizes-summary"
+                    >
+                      ⚠ Size calculation failed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => refreshWorktreeSizes.mutate()}
+                      disabled={refreshWorktreeSizes.isPending}
+                      className="flex items-center justify-center size-4 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                      title="Refresh worktree sizes"
+                      data-testid="new-chat-worktree-sizes-refresh"
+                    >
+                      {refreshWorktreeSizes.isPending ? (
+                        <Loader2Icon className="size-3 animate-spin" />
+                      ) : (
+                        <RotateCwIcon className="size-3" />
+                      )}
+                    </button>
+                    <Popover open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <span className="hidden" />
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[min(480px,calc(100vw-2rem))] p-3"
+                      >
+                        <div className="flex items-center gap-2 pb-2 border-b border-border mb-2">
+                          <span className="text-sm font-medium">Worktree Sizes</span>
+                          <span className="text-xs text-amber-500">⚠ error</span>
+                        </div>
+                        <div className="flex items-start gap-2 py-1 text-xs text-amber-500">
+                          <TriangleAlertIcon className="size-3.5 shrink-0 mt-0.5" />
+                          <span>{worktreeSizes.error}</span>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                );
+              }
+              if (worktreeSizes?.data && worktreeSizes.data.length > 0) {
+                const errorCount = worktreeSizes.data.filter((wt) => wt.error).length;
+                const succeededCount = worktreeSizes.data.length - errorCount;
+                return (
+                  <div className="flex items-center gap-2 py-0.5 pl-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setWorktreeSizePopoverOpen(true)}
+                      className="text-xs text-muted-foreground hover:underline hover:text-foreground transition-colors"
+                      data-testid="new-chat-worktree-sizes-summary"
+                    >
+                      {worktreeSizes.data.length} worktree{worktreeSizes.data.length > 1 ? "s" : ""}
+                      {" · "}
+                      {formatBytes(worktreeSizes.total_bytes)} total
+                      {errorCount > 0 && (
+                        <span className="text-amber-500"> · {errorCount} error{errorCount > 1 ? "s" : ""}</span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => refreshWorktreeSizes.mutate()}
+                      disabled={refreshWorktreeSizes.isPending}
+                      className="flex items-center justify-center size-4 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                      title="Refresh worktree sizes"
+                      data-testid="new-chat-worktree-sizes-refresh"
+                    >
+                      {refreshWorktreeSizes.isPending ? (
+                        <Loader2Icon className="size-3 animate-spin" />
+                      ) : (
+                        <RotateCwIcon className="size-3" />
+                      )}
+                    </button>
+                    <Popover open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <span className="hidden" />
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[min(480px,calc(100vw-2rem))] p-3"
+                      >
+                        <div className="flex items-center justify-between pb-2 border-b border-border mb-2">
+                          <span className="text-sm font-medium">Worktree Sizes</span>
+                          {worktreeSizes.calculated_at > 0 ? (
+                            <span className="text-xs text-muted-foreground">
+                              updated {Math.round((Date.now() / 1000 - worktreeSizes.calculated_at) / 60)} min ago
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+                          {worktreeSizes.data.map((wt) => (
+                            <div
+                              key={wt.path}
+                              className="flex items-center justify-between gap-3 text-xs"
+                            >
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                {wt.is_main ? (
+                                  <FolderIcon className="size-3 shrink-0 text-muted-foreground" />
+                                ) : (
+                                  <GitBranchIcon className="size-3 shrink-0 text-muted-foreground" />
+                                )}
+                                <span className="truncate" title={wt.path}>
+                                  {worktreePathTail(wt.path)}
+                                </span>
+                                {wt.branch && (
+                                  <span className="shrink-0 text-muted-foreground/60">({wt.branch})</span>
+                                )}
+                              </div>
+                              {wt.error ? (
+                                <span
+                                  className="shrink-0 text-amber-500"
+                                  title={wt.error}
+                                >
+                                  ⚠ error
+                                </span>
+                              ) : (
+                                <span className="shrink-0 font-medium tabular-nums">
+                                  {formatBytes(wt.size_bytes)}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between pt-2 mt-2 border-t border-border">
+                          <span className="text-xs font-medium">
+                            {errorCount > 0
+                              ? `Total (${succeededCount} of ${worktreeSizes.data.length} succeeded)`
+                              : "Total"}
+                          </span>
+                          <span className="text-xs font-medium tabular-nums">
+                            {formatBytes(worktreeSizes.total_bytes)}
+                          </span>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                );
+              }
+              return null;
+            })()}
             {/* The agent / harness picker moved out of the tray and into the
                 composer's right action cluster (next to Send) — see
                 AgentHarnessPicker above. The tray now holds only the

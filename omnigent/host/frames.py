@@ -78,6 +78,8 @@ class HostFrameKind(str, Enum):
     FS_RESULT = "host.fs_result"
     MODEL_OPTIONS = "host.model_options"
     MODEL_OPTIONS_RESULT = "host.model_options_result"
+    WORKTREE_SIZES = "host.worktree_sizes"
+    WORKTREE_SIZES_RESULT = "host.worktree_sizes_result"
 
 
 # ── Frame dataclasses ────────────────────────────────────
@@ -934,6 +936,40 @@ class HostModelOptionsResultFrame:
     routable_models: list[str] = field(default_factory=list)
 
 
+@dataclass
+class HostWorktreeSizesFrame:
+    """Server → host: request cached worktree sizes for a repository.
+
+    :param request_id: Correlates the result.
+    :param repo_path: Absolute path inside the repo.
+    :param force: When True, recalculate immediately (refresh button).
+    """
+
+    request_id: str
+    repo_path: str
+    force: bool = False
+
+
+@dataclass
+class HostWorktreeSizesResultFrame:
+    """Host → server: cached worktree sizes for a repository.
+
+    :param request_id: Correlates to the request.
+    :param status: "ok" or "failed".
+    :param worktrees: List of {path, branch, is_main, size_bytes, error} dicts.
+    :param total_bytes: Sum of non-failed worktree sizes.
+    :param calculated_at: Monotonic seconds of the last calculation (0 when unknown).
+    :param error: Overall error message, or None.
+    """
+
+    request_id: str
+    status: str
+    worktrees: list[_JsonObject] | None = None
+    total_bytes: int = 0
+    calculated_at: float = 0.0
+    error: str | None = None
+
+
 HostFrame = (
     HostHelloFrame
     | HostConnectionErrorFrame
@@ -971,6 +1007,8 @@ HostFrame = (
     | HostFsResultFrame
     | HostModelOptionsFrame
     | HostModelOptionsResultFrame
+    | HostWorktreeSizesFrame
+    | HostWorktreeSizesResultFrame
 )
 
 
@@ -1384,6 +1422,27 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "routable_models": frame.routable_models,
             }
         )
+    if isinstance(frame, HostWorktreeSizesFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.WORKTREE_SIZES.value,
+                "request_id": frame.request_id,
+                "repo_path": frame.repo_path,
+                **({"force": True} if frame.force else {}),
+            }
+        )
+    if isinstance(frame, HostWorktreeSizesResultFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.WORKTREE_SIZES_RESULT.value,
+                "request_id": frame.request_id,
+                "status": frame.status,
+                "worktrees": frame.worktrees,
+                "total_bytes": frame.total_bytes,
+                "calculated_at": frame.calculated_at,
+                "error": frame.error,
+            }
+        )
     raise TypeError(f"unknown host frame type: {type(frame).__name__}")
 
 
@@ -1520,6 +1579,10 @@ def _decode_known_host_frame(
             return _decode_model_options(msg)
         case HostFrameKind.MODEL_OPTIONS_RESULT:
             return _decode_model_options_result(msg)
+        case HostFrameKind.WORKTREE_SIZES:
+            return _decode_worktree_sizes(msg)
+        case HostFrameKind.WORKTREE_SIZES_RESULT:
+            return _decode_worktree_sizes_result(msg)
     raise ValueError(f"unhandled host frame kind: {kind.value!r}")  # pragma: no cover
 
 
@@ -2261,3 +2324,40 @@ def _optional_nullable_str(msg: _JsonObject, key: str) -> str | None:
     if not isinstance(val, str):
         raise ValueError(f"frame field must be a string or null: {key!r}")
     return val
+
+
+def _decode_worktree_sizes(msg: _JsonObject) -> HostWorktreeSizesFrame:
+    """Decode a host.worktree_sizes request frame."""
+    force = msg.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("frame field must be a bool: 'force'")
+    return HostWorktreeSizesFrame(
+        request_id=_required_str(msg, "request_id"),
+        repo_path=_required_str(msg, "repo_path"),
+        force=force,
+    )
+
+
+def _decode_worktree_sizes_result(msg: _JsonObject) -> HostWorktreeSizesResultFrame:
+    """Decode a host.worktree_sizes_result frame."""
+    raw = msg.get("worktrees")
+    if raw is not None:
+        if not isinstance(raw, list):
+            raise ValueError("frame field must be a list or null: 'worktrees'")
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise ValueError("each entry in 'worktrees' must be a JSON object")
+    total_bytes = msg.get("total_bytes", 0)
+    if not isinstance(total_bytes, int) or isinstance(total_bytes, bool):
+        raise ValueError("frame field must be an int: 'total_bytes'")
+    calculated_at = msg.get("calculated_at", 0.0)
+    if not isinstance(calculated_at, (int, float)) or isinstance(calculated_at, bool):
+        raise ValueError("frame field must be a number: 'calculated_at'")
+    return HostWorktreeSizesResultFrame(
+        request_id=_required_str(msg, "request_id"),
+        status=_required_str(msg, "status"),
+        worktrees=raw,
+        total_bytes=total_bytes,
+        calculated_at=float(calculated_at),
+        error=_optional_nullable_str(msg, "error"),
+    )
