@@ -16,12 +16,27 @@ import threading
 import time
 from dataclasses import dataclass
 
-from omnigent.host.git_worktree import WorktreeError, _worktree_is_clean, list_worktrees
+from omnigent.host.git_worktree import WorktreeError, _run_git, list_worktrees
 
 _logger = logging.getLogger(__name__)
 
 _RECALC_INTERVAL_S = 600.0  # 10 minutes
 _DU_TIMEOUT_S = 300.0  # 5 minutes per worktree
+
+
+def _worktree_has_dirty_files(path: str) -> bool:
+    """Check if a worktree has modified or staged tracked files.
+
+    Untracked files don't count — a fresh worktree with no commits
+    would otherwise always look dirty.
+    """
+    result = _run_git(
+        ["status", "--porcelain=v1", "--untracked-files=no"],
+        cwd=path,
+    )
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() != ""
 
 
 @dataclass
@@ -156,7 +171,7 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
         size, err = _dir_size_bytes(wt.path)
         dirty = False
         if err is None:
-            dirty = not _worktree_is_clean(wt.path)
+            dirty = _worktree_has_dirty_files(wt.path)
         entries.append(
             WorktreeSizeEntry(
                 path=wt.path,
