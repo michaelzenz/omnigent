@@ -16,7 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from omnigent.host.git_worktree import WorktreeError, list_worktrees
+from omnigent.host.git_worktree import WorktreeError, _worktree_is_clean, list_worktrees
 
 _logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class WorktreeSizeEntry:
     :param branch: Checked-out branch, or None for detached HEAD.
     :param is_main: True for the repository's main work tree.
     :param size_bytes: Total bytes on disk (0 when du failed).
+    :param dirty: True when the worktree has uncommitted changes.
     :param error: Per-worktree error message, or None on success.
     """
 
@@ -39,6 +40,7 @@ class WorktreeSizeEntry:
     branch: str | None
     is_main: bool
     size_bytes: int
+    dirty: bool = False
     error: str | None = None
 
 
@@ -152,12 +154,16 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
     total_bytes = 0
     for wt in worktrees:
         size, err = _dir_size_bytes(wt.path)
+        dirty = False
+        if err is None:
+            dirty = not _worktree_is_clean(wt.path)
         entries.append(
             WorktreeSizeEntry(
                 path=wt.path,
                 branch=wt.branch,
                 is_main=wt.is_main,
                 size_bytes=size,
+                dirty=dirty,
                 error=err,
             )
         )

@@ -6037,9 +6037,17 @@ export function NewChatLandingScreen() {
                                 ⚠ error
                               </span>
                             ) : (
-                              <span className="shrink-0 font-medium tabular-nums">
-                                {formatBytes(wt.size_bytes)}
-                              </span>
+                              <>
+                                <span
+                                  className={`shrink-0 text-xs ${wt.dirty ? "text-amber-500" : "text-muted-foreground/50"}`}
+                                  title={wt.dirty ? "Has uncommitted changes" : "Clean"}
+                                >
+                                  {wt.dirty ? "dirty" : "clean"}
+                                </span>
+                                <span className="shrink-0 font-medium tabular-nums">
+                                  {formatBytes(wt.size_bytes)}
+                                </span>
+                              </>
                             )}
                           </div>
                         ))}

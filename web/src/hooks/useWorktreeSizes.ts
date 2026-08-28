@@ -7,6 +7,7 @@ export interface WorktreeSize {
   branch: string | null;
   is_main: boolean;
   size_bytes: number;
+  dirty: boolean;
   error: string | null;
 }
 
