@@ -32,6 +32,8 @@ export interface TaskItemSummary {
   internal_note: string | null;
   state: string;
   worker_id: string | null;
+  /** "work" (default) dispatches to a worker; "human_action" is completed by the user. */
+  kind?: "work" | "human_action";
   /** Present when the server knows which agent-queue row backs this item. */
   queue_item_id?: string | null;
   created_at: number;
@@ -291,6 +293,7 @@ export interface CreateTaskItemRequest {
   instructions?: string | null;
   worker_id?: string | null;
   state?: string;
+  kind?: "work" | "human_action";
   submit_for_user_ack?: boolean;
 }
 
@@ -544,7 +547,7 @@ export async function resetBrokerSession(): Promise<SecretarySession> {
   return resetAgentRoleSession(TASK_BROKER_ROLE);
 }
 
-export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item";
+export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item" | "mark_done";
 
 export async function resolveTaskItem(
   taskItemId: string,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ from omnigent.agent_tasks.bootstrap import (
     resolve_bootstrap_params,
 )
 from omnigent.agent_tasks.dispatch import dispatch_worker_for_item, resolve_dispatch_params
+from omnigent.agent_tasks.event_types import HUMAN_ACTION_DONE_EVENT_TYPE
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
 from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.utils import now_epoch
@@ -26,7 +28,9 @@ from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
-ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item"]
+_logger = logging.getLogger(__name__)
+
+ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
 _INBOX_STATES = frozenset({"pending"})
 # Editable while the work is waiting: before it is handed over, and after it is
 # parked. A parked item is stopped precisely so its instructions can be fixed
@@ -64,10 +68,28 @@ def create_task_item(
     internal_note: str | None = None,
     worker_id: str | None = None,
     created_by: str = "manager",
+    kind: str = "work",
     event_ids: list[str] | None = None,
     task_event_store: TaskEventStore | None = None,
 ) -> TaskItem:
     """Create a task item and optionally link contributing events."""
+    if kind == "human_action":
+        if worker_id is not None:
+            raise OmnigentError(
+                "Human action items are completed by the user; worker_id must be empty",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        if instructions is not None:
+            raise OmnigentError(
+                "Human action items carry only title and description; "
+                "put the steps in description",
+                code=ErrorCode.INVALID_INPUT,
+            )
+    elif kind != "work":
+        raise OmnigentError(
+            f"Unknown task item kind {kind!r}",
+            code=ErrorCode.INVALID_INPUT,
+        )
     item = task_item_store.create_item(
         _generate_item_id(),
         task.id,
@@ -77,6 +99,7 @@ def create_task_item(
         instructions=instructions,
         internal_note=internal_note,
         created_by=created_by,
+        kind=kind,
     )
     if worker_id is not None:
         worker = worker_store.get_worker(worker_id)
@@ -165,6 +188,50 @@ def reject_task_item(*, item: TaskItem, task_item_store: TaskItemStore) -> TaskI
     return updated
 
 
+def complete_human_action(
+    *,
+    item: TaskItem,
+    task: Task,
+    task_item_store: TaskItemStore,
+    task_event_store: TaskEventStore,
+) -> TaskItem:
+    """Mark a human action item done and wake the manager with a routed event."""
+    if item.kind != "human_action":
+        raise OmnigentError(
+            "Only human action items can be marked done",
+            code=ErrorCode.CONFLICT,
+        )
+    if item.state != "pending":
+        raise OmnigentError(
+            f"Cannot mark done item in state {item.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+    updated = task_item_store.update_item(item.id, state="done")
+    if updated is None:
+        raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+    try:
+        event = task_event_store.create_event(
+            uuid.uuid4().hex,
+            HUMAN_ACTION_DONE_EVENT_TYPE,
+            f"Human action done: {item.title}",
+            task_id=task.id,
+            source="user",
+            source_key=item.id,
+            state="routed",
+            payload=json.dumps({"item_id": item.id, "item_title": item.title, "kind": item.kind}),
+            owner_user_id=task.owner_user_id or "__anonymous__",
+        )
+        task_event_store.update_event(event.id, routed_at=now_epoch())
+    except Exception:
+        _logger.exception(
+            "failed to emit %s event for item %s on task %s",
+            HUMAN_ACTION_DONE_EVENT_TYPE,
+            item.id,
+            task.id,
+        )
+    return updated
+
+
 async def resolve_task_item(
     *,
     item: TaskItem,
@@ -197,6 +264,14 @@ async def resolve_task_item(
             f"Cannot resolve item in state {item.state!r}",
             code=ErrorCode.CONFLICT,
         )
+    if resolution == "mark_done":
+        updated = complete_human_action(
+            item=item,
+            task=task,
+            task_item_store=task_item_store,
+            task_event_store=task_event_store,
+        )
+        return updated, None
     if resolution == "reject_item":
         updated = await asyncio.to_thread(
             reject_task_item,
@@ -204,6 +279,11 @@ async def resolve_task_item(
             task_item_store=task_item_store,
         )
         return updated, None
+    if item.kind == "human_action":
+        raise OmnigentError(
+            "Human action items can only be marked done or dismissed",
+            code=ErrorCode.CONFLICT,
+        )
 
     payload = _merge_payload(item_dispatch_payload(item), edited_payload)
     task = await ensure_task_manager_for_dispatch(
@@ -343,6 +423,11 @@ def patch_task_item(
     if item.state not in _EDITABLE_WORK_ITEM_STATES:
         raise OmnigentError(
             f"Cannot edit task item in state {item.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+    if item.kind == "human_action" and (instructions is not None or worker_id is not None):
+        raise OmnigentError(
+            "Human action items carry only title and description",
             code=ErrorCode.CONFLICT,
         )
     if title is not None and not title.strip():

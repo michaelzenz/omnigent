@@ -208,6 +208,8 @@ class TaskItem:
     :param internal_note: Agent-facing context to avoid re-querying sources.
     :param worker_id: Assigned worker slot, or ``None`` while still in the inbox.
     :param created_by: ``"manager"``, ``"broker"``, or ``"user"``.
+    :param kind: ``"work"`` for worker-dispatched items, ``"human_action"`` for
+        items the user completes by hand (no worker, marked done from the card).
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
@@ -222,6 +224,7 @@ class TaskItem:
     internal_note: str | None = None
     worker_id: str | None = None
     created_by: str = "manager"
+    kind: str = "work"
     updated_at: int | None = None
 
 

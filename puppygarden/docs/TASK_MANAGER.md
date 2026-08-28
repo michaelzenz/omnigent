@@ -168,6 +168,31 @@ As a manager of the task, again you need to steer the task towards the goal, und
 * Code: do the coding
 * Verify: verify the result is correct/code change takes effect
 * Human Verify: after agent finished work, write a script/notebook, and a one line command to run it so that user can run to manually verify the result is correct
+* Human action: when the next step can only be done by the user (console access, manual approval, local environment), create an item with `kind: "human_action"` — no `worker_id`, no `instructions`; put the what/why/how in `description`. The user marks it done (or dismisses it) on the task card:
+  ```
+  puppygarden_api(
+    method="POST",
+    path="/v1/agent-tasks/<task_id>/items",
+    body={
+      "title": "<what the user must do>",
+      "description": "<why + exact steps>",
+      "kind": "human_action",
+      "state": "draft",
+      "submit_for_user_ack": true
+    }
+  )
+  ```
+
+**Never stay silent after a `worker.execution.finished` event** — always react:
+suggest the next taskItem or a human action. If the work is done, say so in the
+task Overview and suggest whatever steers the task towards the goal next.
+
+## Human action completed
+
+When an `item.human_action.done` event is routed to you, the user says they
+finished the human step. Verify the action actually took effect when you can
+(re-check the system, re-run the check), then continue the workflow it was
+blocking — and ack the event like any routed event.
 
 # Follow up
 While most of the cases you can ONLY suggest taskItems, to provide an immersive experience, you are allowed to follow up, for ex:

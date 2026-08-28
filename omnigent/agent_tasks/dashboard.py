@@ -296,6 +296,7 @@ def _item_summary(item: TaskItem) -> dict[str, Any]:
         "internal_note": item.internal_note,
         "state": item.state,
         "worker_id": item.worker_id,
+        "kind": item.kind,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }

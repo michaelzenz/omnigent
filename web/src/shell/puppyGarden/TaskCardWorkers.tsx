@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  PlusIcon,
+  UserIcon,
+  XIcon,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useAssignTaskItemWorker, useCreateTaskItem } from "@/hooks/useAgentTasks";
+import {
+  useAssignTaskItemWorker,
+  useCreateTaskItem,
+  useResolveTaskItem,
+} from "@/hooks/useAgentTasks";
 import { useWorkerProviders } from "@/hooks/useWorkerProviders";
 import {
   acquireTaskItemEditLease,
@@ -148,7 +160,8 @@ function WorkerPicker({ taskId, item, workers }: WorkerPickerProps) {
       <div className="space-y-1.5" onClick={(event) => event.stopPropagation()}>
         <p className="text-xs text-muted-foreground">
           {item.worker_id
-            ? workers.find((worker) => worker.worker_id === item.worker_id)?.provider_name ?? "Assigned"
+            ? (workers.find((worker) => worker.worker_id === item.worker_id)?.provider_name ??
+              "Assigned")
             : "No worker specified"}
         </p>
         <Button type="button" size="sm" variant="outline" onClick={() => void openPicker()}>
@@ -292,6 +305,55 @@ function NewTaskItem({ taskId, onClose }: { taskId: string; onClose: () => void 
   );
 }
 
+function HumanActionItemRow({ taskId, item }: { taskId: string; item: TaskItemSummary }) {
+  const resolveItem = useResolveTaskItem(taskId);
+  const done = item.state === "done";
+  return (
+    <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">{item.title}</h4>
+        <Badge
+          variant="outline"
+          className="shrink-0 gap-1 border-sky-200 bg-sky-50 text-[10px] text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
+        >
+          <UserIcon className="text-sky-400" aria-hidden />
+          human action
+        </Badge>
+      </div>
+      {item.description ? (
+        <p className="text-xs whitespace-pre-wrap text-muted-foreground">{item.description}</p>
+      ) : null}
+      {!done ? (
+        <div className="flex justify-end gap-1.5 pt-0.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={resolveItem.isPending}
+            aria-label="Dismiss human action"
+            onClick={() =>
+              void resolveItem.mutateAsync({ taskItemId: item.id, resolution: "reject_item" })
+            }
+          >
+            <XIcon aria-hidden /> Dismiss
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={resolveItem.isPending}
+            aria-label="Mark human action done"
+            onClick={() =>
+              void resolveItem.mutateAsync({ taskItemId: item.id, resolution: "mark_done" })
+            }
+          >
+            <CheckIcon aria-hidden /> Done
+          </Button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 function ItemRow({
   taskId,
   item,
@@ -301,6 +363,9 @@ function ItemRow({
   item: TaskItemSummary;
   workers: TaskWorkerLane[];
 }) {
+  if (item.kind === "human_action") {
+    return <HumanActionItemRow taskId={taskId} item={item} />;
+  }
   const worker = workers.find((lane) => lane.worker_id === item.worker_id);
   const editable = isEditableItemState(item.state);
   return (

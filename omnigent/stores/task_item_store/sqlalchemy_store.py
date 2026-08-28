@@ -38,6 +38,7 @@ def _item_to_entity(row: SqlTaskItem) -> TaskItem:
         internal_note=row.internal_note,
         worker_id=row.worker_id,
         created_by=row.created_by,
+        kind=row.kind,
         updated_at=row.updated_at,
     )
 
@@ -83,6 +84,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         internal_note: str | None = None,
         worker_id: str | None = None,
         created_by: str = "manager",
+        kind: str = "work",
     ) -> TaskItem:
         row = SqlTaskItem(
             id=item_id,
@@ -94,6 +96,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             internal_note=internal_note,
             worker_id=worker_id,
             created_by=created_by,
+            kind=kind,
             created_at=now_epoch(),
             updated_at=None,
         )

@@ -29,6 +29,7 @@ class TaskItemStore(ABC):
         internal_note: str | None = None,
         worker_id: str | None = None,
         created_by: str = "manager",
+        kind: str = "work",
     ) -> TaskItem:
         """Insert a new task item."""
 
