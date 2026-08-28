@@ -19,7 +19,15 @@ from typing import Any
 
 import yaml
 
-PLUGIN_DIR = Path(os.environ.get("OMNIGENT_PLUGIN_DIR", os.path.expanduser("~/.omnigent/poll_plugins/external_session_watcher")))
+# When run by the poller infra, OMNIGENT_PLUGIN_DIR points to the per-plugin
+# directory (<data_dir>/poll_plugins/<name>). When run standalone, fall back to
+# deriving it from the data dir + plugin name.
+_env_plugin_dir = os.environ.get("OMNIGENT_PLUGIN_DIR")
+_plugin_name = os.environ.get("OMNIGENT_PLUGIN_NAME", "external_session_watcher")
+if _env_plugin_dir:
+    PLUGIN_DIR = Path(_env_plugin_dir)
+else:
+    PLUGIN_DIR = Path(os.path.expanduser("~/.omnigent/poll_plugins")) / _plugin_name
 STATE_PATH = PLUGIN_DIR / "state.yaml"
 CONFIG_PATH = PLUGIN_DIR / "config.yaml"
 
