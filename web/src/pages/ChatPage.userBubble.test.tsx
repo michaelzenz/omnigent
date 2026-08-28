@@ -3,12 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { useChatStore } from "@/store/chatStore";
-import {
-  BubbleView,
-  nearestCrossedUserMessageId,
-  SessionRewindContext,
-  userMessageIndexNearestRoof,
-} from "./ChatPage";
+import { BubbleView, SessionRewindContext, userMessageIndexNearestRoof } from "./ChatPage";
 
 // UserBubble renders its text through the same markdown renderer as the
 // assistant bubble (FilePathAwareMessageResponse → Streamdown). These tests
@@ -56,19 +51,11 @@ function renderBubble(bubble: Bubble) {
   );
 }
 
-function renderEditableBubble(
-  bubble: Bubble,
-  isStickyUser = false,
-  stickyUserMessagesEnabled = true,
-) {
+function renderEditableBubble(bubble: Bubble) {
   return render(
     <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
       <SessionRewindContext.Provider value>
-        <BubbleView
-          bubble={bubble}
-          isStickyUser={isStickyUser}
-          stickyUserMessagesEnabled={stickyUserMessagesEnabled}
-        />
+        <BubbleView bubble={bubble} />
       </SessionRewindContext.Provider>
     </FileViewerContext.Provider>,
   );
@@ -438,7 +425,7 @@ describe("UserBubble rewind editor", () => {
     expect(screen.getByText("edit me")).toBeInTheDocument();
   });
 
-  it("clamps a sent message outside sticky mode and expands it into a large editor", () => {
+  it("renders a sent message full-length and expands it into a large editor", () => {
     useChatStore.setState({
       conversationId: "conv_1",
       sessionHarness: "openai-agents",
@@ -448,7 +435,7 @@ describe("UserBubble rewind editor", () => {
     renderEditableBubble(userBubble("line one\nline two\nline three\nline four"));
 
     const message = screen.getByTestId("editable-user-message");
-    expect(screen.getByTestId("user-message-text")).toHaveClass("line-clamp-6");
+    expect(screen.getByTestId("user-message-text")).not.toHaveClass("line-clamp-6");
     expect(screen.getByTestId("sent-message-edit-icon")).toBeInTheDocument();
     expect(screen.getByTestId("message-bubble")).not.toHaveClass("sticky");
     fireEvent.click(message);
@@ -460,48 +447,6 @@ describe("UserBubble rewind editor", () => {
     expect(editor.closest("form")).not.toHaveClass("max-w-[640px]");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
-  });
-
-  it("keeps the selected sent message pinned while collapsed", () => {
-    useChatStore.setState({
-      conversationId: "conv_1",
-      sessionHarness: "openai-agents",
-      boundAgentId: "agent_1",
-      rewindAndSend: vi.fn(),
-    });
-    renderEditableBubble(userBubble("sticky text"), true);
-
-    expect(screen.getByTestId("message-bubble")).toHaveClass("sticky");
-    expect(screen.getByTestId("user-message-text")).toHaveClass("line-clamp-6");
-  });
-
-  it("keeps click-to-edit but disables clamping and pinning with the preference off", () => {
-    useChatStore.setState({
-      conversationId: "conv_1",
-      sessionHarness: "openai-agents",
-      boundAgentId: "agent_1",
-      rewindAndSend: vi.fn(),
-    });
-    renderEditableBubble(userBubble("full message"), true, false);
-
-    expect(screen.getByTestId("message-bubble")).not.toHaveClass("sticky");
-    expect(screen.getByTestId("user-message-text")).not.toHaveClass("line-clamp-6");
-    expect(screen.getByTestId("sent-message-edit-icon")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit sent message" }));
-    expect(screen.getByTestId("rewind-message-editor")).toHaveValue("full message");
-  });
-});
-
-describe("sticky user turn selection", () => {
-  it("keeps the nearest crossed turn pinned until the next reaches the roof", () => {
-    const messages = [
-      { itemId: "first", top: 40 },
-      { itemId: "second", top: 120 },
-      { itemId: "third", top: 220 },
-    ];
-
-    expect(nearestCrossedUserMessageId(messages, 80)).toBe("first");
-    expect(nearestCrossedUserMessageId(messages, 120)).toBe("second");
   });
 });
 
