@@ -29,9 +29,21 @@ limit: 200
 # message (created between ticks) is not missed. Set 0 to start strictly "now".
 backfill_s: 180
 
-# Skip messages from bots (those carrying a `bot_id`). Set false to ingest
-# bot/app notifications too.
-ignore_bots: true
+# Skip messages older than this many seconds. Prevents re-ingesting stale
+# history when watermarks are very old (e.g. after downtime). 2 weeks = 1209600.
+max_age_s: 1209600
+
+# Channels where ALL messages are emitted (not just mentions). All other
+# public/private channels are "mentions_only" — only messages @mentioning
+# the authenticated user and their thread replies are emitted. IMs and
+# MPIMs always emit all messages. Channel names (with or without #) or IDs.
+all_events_channels: []
+  # - general
+  # - eng-misc
+
+# Whether to skip messages from bots (those carrying a `bot_id`). When false,
+# bot/app notifications are ingested alongside human messages.
+ignore_bots: false
 
 # Skip messages whose Slack `subtype` is in this list (noisy non-human events).
 ignore_subtypes:
