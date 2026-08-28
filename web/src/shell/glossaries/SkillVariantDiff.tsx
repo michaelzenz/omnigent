@@ -7,7 +7,9 @@ import {
   readCodeFontSizePx,
 } from "@/lib/codeFontPreferences";
 import { detectLang } from "../codeViewerHelpers";
-import { ensureLanguage, ensureMonacoReady, monacoLanguageId } from "../monacoSetup";
+import { ensureLanguage, ensureMonacoReady, monacoLanguageId, resolvedThemeToMonaco } from "../monacoSetup";
+import { useTheme } from "next-themes";
+import { normalizeResolvedTheme } from "@/components/theme/themeMode";
 import "../monacoCodeEditor.css";
 
 interface SkillVariantDiffProps {
@@ -27,6 +29,8 @@ export function SkillVariantDiff({
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const language = detectLang("SKILL.md");
+  const { resolvedTheme } = useTheme();
+  const monacoTheme = resolvedThemeToMonaco(normalizeResolvedTheme(resolvedTheme));
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +68,7 @@ export function SkillVariantDiff({
   );
 
   return (
-    <div className="flex h-[32rem] flex-none flex-col bg-white text-slate-950">
+    <div className="flex h-[32rem] flex-none flex-col bg-background text-foreground">
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2 text-xs">
         <span className="font-medium">
           {originalLabel} → {modifiedLabel}
@@ -110,7 +114,7 @@ export function SkillVariantDiff({
             original={original}
             modified={modified}
             language={monacoLanguageId(language)}
-            theme="github-light"
+            theme={monacoTheme}
             options={options}
           />
         )}
