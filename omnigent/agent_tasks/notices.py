@@ -171,23 +171,24 @@ def _format_broker_stall_notice(
         is_discovered = events and events[0].event_type == EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
         if is_discovered:
             prompt = (
-                "[System: an external session was discovered by the watcher]\n"
+                "[System: an external session was discovered by the watcher] "
                 "Read the transcript_snippet in the event payload to understand what "
                 "the session is working on. Decide one of three outcomes:\n"
-                "1. Adopt to an existing task — write routing tags, call propose-adoption "
-                "with the matched task ID.\n"
-                "2. Adopt to a new task — create a new pending task, then call "
-                "propose-adoption against it.\n"
-                "3. FYI cluster — call create-fyi-cluster to classify as informational "
-                "(ad hoc work, not worth a task).\n"
+                "1. Adopt to an existing task — call "
+                "POST /v1/agent-tasks/sessions/{session_id}/adopt "
+                "with {\"task_id\": \"<id>\"}.\n"
+                "2. Adopt to a new task — create a new pending task via "
+                "POST /v1/agent-tasks/packages, then call adopt.\n"
+                "3. FYI cluster — call POST /v1/task-events/fyi-clusters.\n"
                 "User must accept the adoption before it takes effect."
             )
         else:
             prompt = (
-                "[System: please triage and route these events]\n"
-                "Read each orphan session, write omnigent.task.routing_repo (and "
-                "optional omnigent.task.routing_intent), then call propose-adoption. "
-                "User must accept before adopt."
+                "[System: orphan session needs triage] "
+                "The event payload includes the session title, the user's "
+                "last message, and the agent's last response. Read them to "
+                "understand what the session is working on, then follow the "
+                "orphan session adoption section in your manual."
             )
         payload: dict[str, object] = {
             "prompt": prompt,
