@@ -26,7 +26,7 @@ _TASK_API_PREFIXES: tuple[str, ...] = (
     "/v1/agent-queues",
     "/v1/agent-queue-items",
     "/v1/fyi-clusters",
-    "/v1/session-watcher",
+    "/v1/external-session-watcher",
     "/v1/task-events",
     "/v1/task-items",
     "/v1/task-workers",

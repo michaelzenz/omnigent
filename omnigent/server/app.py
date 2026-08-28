@@ -2903,10 +2903,10 @@ def create_app(
             prefix="/v1",
             tags=["script_plugin_health"],
         )
-        from omnigent.server.routes.session_watcher import create_session_watcher_router
+        from omnigent.server.routes.external_session_watcher import create_external_session_watcher_router
 
         app.include_router(
-            create_session_watcher_router(
+            create_external_session_watcher_router(
                 task_store,
                 task_event_store,
                 worker_store,
@@ -2916,7 +2916,7 @@ def create_app(
                 session_creator=_session_creator,
             ),
             prefix="/v1",
-            tags=["session_watcher"],
+            tags=["external_session_watcher"],
         )
         if agent_queue_store is not None:
             from omnigent.server.routes.agent_queues import create_agent_queues_router

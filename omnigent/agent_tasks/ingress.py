@@ -101,7 +101,7 @@ async def ingress_event(
     if event.state in {ROUTED_EVENT_STATE, "reconciled", "broadcast"}:
         return event
 
-    # Pre-bound events: only internal lanes (e.g. the session watcher) create
+    # Pre-bound events: only internal lanes (e.g. the external session watcher) create
     # events with task_id set; the public ingress API cannot.
     if event.task_id is not None:
         bound_task = task_store.get(event.task_id)

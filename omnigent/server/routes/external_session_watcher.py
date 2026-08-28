@@ -1,4 +1,4 @@
-"""Routes for the session watcher (``/v1/session-watcher``).
+"""Routes for the external session watcher (``/v1/external-session-watcher``).
 
 The update endpoint is separate from the generic ``/v1/task-events`` path so
 the server can respond with a ``track`` flag — telling the watcher plugin
@@ -30,8 +30,8 @@ from omnigent.stores.worker_store import WorkerStore
 _logger = logging.getLogger(__name__)
 
 
-class SessionWatcherUpdateRequest(BaseModel):
-    """Request body for ``POST /v1/session-watcher/update``."""
+class ExternalSessionWatcherUpdateRequest(BaseModel):
+    """Request body for ``POST /v1/external-session-watcher/update``."""
 
     session_hint: str
     history_hash: str | None = None
@@ -45,7 +45,7 @@ class SessionWatcherUpdateRequest(BaseModel):
     failure_reason: str | None = None
 
 
-def create_session_watcher_router(
+def create_external_session_watcher_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
@@ -54,7 +54,7 @@ def create_session_watcher_router(
     auth_provider: Any | None = None,
     session_creator: Any | None = None,
 ) -> APIRouter:
-    """Build the session-watcher router."""
+    """Build the external-session-watcher router."""
     router = APIRouter()
 
     def _effective_user_id(user_id: str | None) -> str:
@@ -67,10 +67,10 @@ def create_session_watcher_router(
 
         return await asyncio.to_thread(task_role_profile_store.get, TASK_BROKER_ROLE)
 
-    @router.post("/session-watcher/update")
-    async def session_watcher_update(
+    @router.post("/external-session-watcher/update")
+    async def external_session_watcher_update(
         request: Request,
-        body: SessionWatcherUpdateRequest,
+        body: ExternalSessionWatcherUpdateRequest,
     ) -> dict[str, Any]:
         """Accept a transcript update from a watcher plugin.
 
@@ -143,7 +143,7 @@ def create_session_watcher_router(
                 EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
                 title,
                 payload=json.dumps(event_payload),
-                source="session_watcher",
+                source="external_session_watcher",
                 source_key=body.session_hint,
                 source_offset=None,
                 task_id=task_id,

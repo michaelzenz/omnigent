@@ -1776,7 +1776,7 @@ function PuppyGardenSection() {
             Adopt external sessions
           </span>
           <span className="text-sm text-muted-foreground">
-            When on, sessions discovered by the session watcher are offered for adoption into tasks.
+            When on, sessions discovered by the external session watcher are offered for adoption into tasks.
             Off by default — turn it on to surface adoption cards in the board.
           </span>
         </div>

@@ -1,4 +1,4 @@
-"""Tests for session watcher Phase 1 — event types, worker hint lookup,
+"""Tests for external session watcher Phase 1 — event types, worker hint lookup,
 ingress auto-routing, purge with event_type filter, and the update endpoint.
 """
 
@@ -254,7 +254,7 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
         EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
         "External session update",
         payload=payload,
-        source="session_watcher",
+        source="external_session_watcher",
         source_key=hint,
         state="received",
     )
@@ -293,7 +293,7 @@ async def test_ingress_stalls_external_session_updated_unknown_hint(
         EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
         "External session update",
         payload=payload,
-        source="session_watcher",
+        source="external_session_watcher",
         source_key=hint,
         state="received",
     )
@@ -389,7 +389,7 @@ def test_propose_external_session_adoption_reconciles_discovered_event(
         EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
         "Discovered",
         payload=json.dumps({"session_hint": hint}),
-        source="session_watcher",
+        source="external_session_watcher",
         source_key=hint,
         state="awaiting_grouping",
     )

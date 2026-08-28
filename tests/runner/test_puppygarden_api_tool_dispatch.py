@@ -145,7 +145,7 @@ async def test_put_passes_body() -> None:
         "/v1/agent-queues",
         "/v1/agent-queue-items/item-1",
         "/v1/fyi-clusters/cluster-1/resolve",
-        "/v1/session-watcher/update",
+        "/v1/external-session-watcher/update",
         "/v1/task-events",
         "/v1/task-items/item-1",
         "/v1/task-workers/worker-1/initialize",

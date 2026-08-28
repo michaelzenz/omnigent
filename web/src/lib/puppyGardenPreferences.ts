@@ -1,7 +1,7 @@
 // Per-device preference for the Puppy Garden task board.
 //
 // Currently a single toggle: whether external sessions discovered by the
-// session watcher should be offered for adoption into tasks. Off by default
+// external session watcher should be offered for adoption into tasks. Off by default
 // so the adoption flow is opt-in — the broker won't surface adoption cards
 // until the user enables it here. Device-local like the other
 // `*Preferences` helpers; no account or host state is changed.

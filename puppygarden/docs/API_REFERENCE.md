@@ -210,7 +210,7 @@ does not route the user's response back to the external application.
 
 | Method | Path |
 |--------|------|
-| POST | `/v1/session-watcher/update` |
+| POST | `/v1/external-session-watcher/update` |
 | GET | `/v1/agent-tasks/script-plugins/health` |
 | POST | `/v1/agent-tasks/script-plugins/health` |
 | PUT | `/v1/agent-tasks/script-plugins/hosts/{host_id}/{plugin_name}` |
