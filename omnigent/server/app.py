@@ -1438,10 +1438,10 @@ def create_app(
                     app_state=app_inst.state,
                 )
 
-            class _CacheStatusReader(StatusReader):
+            class _StoreStatusReader(StatusReader):
                 """Reads session status from the conversation store.
 
-                The dispatcher polls on a timer and needs an authoritative
+                Both the dispatcher and packager need an authoritative
                 reading — a cache miss for a bootstrapped session (e.g. the
                 broker) returns None, which the gate treats as "keep last
                 reading", wedging the queue. Reading live_status from the row
@@ -1452,15 +1452,8 @@ def create_app(
                     conv = conversation_store.get_conversation(session_id)
                     return conv.live_status if conv is not None else None
 
-            class _PackagerCacheReader(_PackagerStatusReader):
-                """Reads session status from the conversation store.
-
-                The packager polls on a timer and already does several DB
-                reads per cycle, so reading live_status from the row is both
-                simpler and more correct than consulting the in-memory
-                _session_status_cache (which misses sessions bootstrapped
-                outside a turn, e.g. the broker session).
-                """
+            class _PackagerStatusReaderSync(_PackagerStatusReader):
+                """Sync version of _StoreStatusReader for the packager."""
 
                 def status_for(self, session_id: str) -> str | None:
                     conv = conversation_store.get_conversation(session_id)
@@ -1474,7 +1467,7 @@ def create_app(
                         **({"manager": manager_handler} if manager_handler is not None else {}),
                         **({"worker": worker_handler} if worker_handler is not None else {}),
                     },
-                    read_status=_CacheStatusReader(),
+                    read_status=_StoreStatusReader(),
                 )
             )
             _status_feed = QueueStatusFeed(
@@ -1490,7 +1483,7 @@ def create_app(
                 task_role_profile_store=task_role_profile_store,
                 user_role_session_store=user_role_session_store,
                 task_store=task_store,
-                status_reader=_PackagerCacheReader(),
+                status_reader=_PackagerStatusReaderSync(),
                 conversation_store=conversation_store,
                 agent_store=agent_store,
                 host_store=host_store,
@@ -1503,7 +1496,7 @@ def create_app(
                     store=agent_queue_store,
                     task_event_store=task_event_store,
                     task_store=task_store,
-                    status_reader=_PackagerCacheReader(),
+                    status_reader=_PackagerStatusReaderSync(),
                 )
             await _broker_packager.start()
             if _manager_packager is not None:
