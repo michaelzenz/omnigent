@@ -138,6 +138,7 @@ def post_discovery(
             "title": f"External session discovered: {session_hint}",
             "source": "external_session_watcher",
             "source_key": session_hint,
+            "source_offset": f"host:{host_id}" if host_id else "",
             "payload": {
                 "session_hint": session_hint,
                 "path": path,
