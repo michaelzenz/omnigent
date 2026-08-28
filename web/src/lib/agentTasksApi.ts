@@ -487,6 +487,21 @@ export async function patchAgentTask(
   return readJsonOrApiError<AgentTaskSummary>(res);
 }
 
+export async function archiveAgentTask(taskId: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
+export async function permanentlyDeleteAgentTask(taskId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/${encodeURIComponent(taskId)}/permanent`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
 export async function acceptAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
   const res = await authenticatedFetch(
     `/v1/agent-tasks/${encodeURIComponent(taskId)}/accept-package`,

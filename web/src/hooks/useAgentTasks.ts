@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   acceptAgentTaskPackage,
+  archiveAgentTask,
   assignTaskItemWorker,
   createTaskItem,
   initializeWorker,
@@ -15,6 +16,7 @@ import {
   fetchTaskDashboard,
   interruptAgentQueueItem,
   moveTaskToQueueEnd,
+  permanentlyDeleteAgentTask,
   reassignWorker,
   rejectAgentTaskPackage,
   resetBrokerSession,
@@ -429,6 +431,26 @@ export function useReassignWorker() {
       reassignWorker(workerId, taskId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["task-dashboard"] });
+    },
+  });
+}
+
+export function useArchiveAgentTask(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => archiveAgentTask(taskId),
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+export function usePermanentlyDeleteAgentTask(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => permanentlyDeleteAgentTask(taskId),
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
     },
   });
 }

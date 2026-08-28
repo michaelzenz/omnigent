@@ -1572,6 +1572,21 @@ def create_agent_tasks_router(
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         return {"id": task_id, "object": "agent.task", "deleted": True, "state": task.state}
 
+    @router.delete("/agent-tasks/{task_id}/permanent")
+    async def permanently_delete_task(request: Request, task_id: str) -> dict[str, Any]:
+        """Permanently delete a managed task and its related data."""
+        user_id = require_user(request, auth_provider)
+        task = await _get_task_or_404(task_id, user_id)
+        if task.state != "archived":
+            raise OmnigentError(
+                "Task must be archived before permanent deletion",
+                code=ErrorCode.CONFLICT,
+            )
+        deleted = await asyncio.to_thread(task_store.delete, task_id)
+        if not deleted:
+            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+        return {"id": task_id, "object": "agent.task", "deleted": True, "permanent": True}
+
     @router.put("/agent-tasks/{task_id}/tags")
     async def put_task_tags(
         request: Request,
