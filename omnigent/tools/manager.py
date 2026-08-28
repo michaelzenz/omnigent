@@ -361,6 +361,7 @@ class ToolManager:
         """Register the portable builtins available to every agent."""
         for name in (
             "upload_file",
+            "serve_html",
             "list_files",
             "download_file",
             "search_conversations",
@@ -391,6 +392,10 @@ class ToolManager:
             from omnigent.tools.builtins.upload_file import UploadFileTool
 
             return UploadFileTool()
+        if name == "serve_html":
+            from omnigent.tools.builtins.serve_html import ServeHtmlTool
+
+            return ServeHtmlTool()
         return get_builtin_tool(name, config=config)
 
     def _create_web_search(self, config: dict[str, str] | None) -> Tool:

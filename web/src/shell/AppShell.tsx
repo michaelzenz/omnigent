@@ -126,6 +126,7 @@ import {
 import { AgentTextCommentsSurface } from "./AgentTextCommentsSurface";
 import { SessionRail } from "./SessionRail";
 import type { RightRailTab } from "./railTabs";
+import { HtmlPreviewView } from "./HtmlPreviewView";
 
 /**
  * Top-level layout. The sidebar and right panels are responsive:
@@ -421,6 +422,10 @@ export function AppShell() {
   // Agent tools & policies dialog — the mobile counterpart of the desktop
   // AgentInfoButton popover, opened from the header's three-dot menu.
   const [agentInfoOpen, setAgentInfoOpen] = useState(false);
+  // When set, the HTML preview replaces the chat column. Cleared by the
+  // preview's X button or Esc. The URL is a relative API path returned by
+  // the `serve_html` tool and included in the agent's chat response.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   // Single source of truth for "terminal view on" — toggle and rail
   // both route through setPanelInitialKey so they can't disagree.
   const panelOpen = panelInitialKey !== null;
@@ -794,6 +799,28 @@ export function AppShell() {
     if (next) setRightRailTab(next);
   }, [railTabsAvailable, rightRailTab]);
 
+  // Intercept clicks on serve_html preview URLs in agent chat messages.
+  // The agent includes a relative API path like
+  // `/v1/sessions/.../resources/files/.../preview` in its response. The
+  // markdown renderer turns it into an <a> tag; this capture-phase click
+  // handler detects the pattern, prevents navigation, and opens the
+  // in-app preview instead.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented) return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest("a");
+      if (!anchor) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href.includes("/resources/files/") || !href.endsWith("/preview")) return;
+      e.preventDefault();
+      setPreviewUrl(href);
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
+
   // Mount the relay at the always-present shell level (not BrowserPane, which
   // only mounts while its tab is selected) so it's listening before the first
   // browser_navigate. No-op outside Electron / with no conversation.
@@ -967,6 +994,7 @@ export function AppShell() {
     setFilesPanelOpen(false);
     setSubagentsPanelOpen(false);
     setShellsPanelOpen(false);
+    setPreviewUrl(null);
     setFilesPanelShowHidden(true);
     // Drop shell interaction state carried from the outgoing session: a
     // still-armed create ref would otherwise auto-focus an unrelated shell in
@@ -1949,6 +1977,7 @@ export function AppShell() {
                   } as CSSProperties
                 }
               >
+                {!previewUrl && (
                 <ChatHeader
                   // Real docked state — deliberately NOT `|| sidebarPeek`. Peek
                   // is a transient card floating over the collapsed layout (the
@@ -2017,10 +2046,15 @@ export function AppShell() {
                     onOpenMainExecutionLog: openMainExecutionLog,
                   }}
                 />
+                )}
                 <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-                  <AgentTextCommentsProvider value={agentTextCommentsUI}>
-                    <Outlet />
-                  </AgentTextCommentsProvider>
+                  {previewUrl ? (
+                    <HtmlPreviewView url={previewUrl} onClose={() => setPreviewUrl(null)} />
+                  ) : (
+                    <AgentTextCommentsProvider value={agentTextCommentsUI}>
+                      <Outlet />
+                    </AgentTextCommentsProvider>
+                  )}
                 </main>
 
                 {/* Debug-mode execution-logs rail — desktop only, hidden when a

@@ -56,6 +56,7 @@ from omnigent.tools.builtins.scheduled_tasks import (
     SysScheduledTaskListTool,
     SysScheduledTaskUpdateTool,
 )
+from omnigent.tools.builtins.serve_html import ServeHtmlTool
 from omnigent.tools.builtins.session_project import (
     SysProjectCreateTool,
     SysProjectListTool,
@@ -89,6 +90,7 @@ __all__ = [
     "NimbleResearchTool",
     "PuppyGardenApiTool",
     "ReadSkillFileTool",
+    "ServeHtmlTool",
     "SysAdviseModelsTool",
     "SysAgentDownloadTool",
     "SysAgentGetTool",
@@ -147,6 +149,13 @@ def _create_upload_file(config: dict[str, str]) -> Tool:
     from omnigent.tools.builtins.upload_file import UploadFileTool
 
     return UploadFileTool()
+
+
+def _create_serve_html(config: dict[str, str]) -> Tool:
+    """Lazy factory for ServeHtmlTool."""
+    from omnigent.tools.builtins.serve_html import ServeHtmlTool
+
+    return ServeHtmlTool()
 
 
 def _create_search_conversations(config: dict[str, str]) -> Tool:
@@ -268,6 +277,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "nimble_research": lambda config: NimbleResearchTool(config=config),
     "nimble_extract": lambda config: NimbleExtractTool(config=config),
     "upload_file": _create_upload_file,
+    "serve_html": _create_serve_html,
     "list_files": _create_list_files,
     "download_file": _create_download_file,
     "search_conversations": _create_search_conversations,
