@@ -65,7 +65,7 @@ async def _inject_notice(
         _ensure_runner_relay,
         ensure_runner_connected,
     )
-    from omnigent.server.routes.sessions.common import SessionEventInput
+    from omnigent.server.schemas import SessionEventInput
     from omnigent.usage_ledger import TASK_EVENT_ROUTING_PURPOSE
 
     if not item.payload:
