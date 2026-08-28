@@ -267,6 +267,7 @@ _FILE_TOOLS = frozenset(
         UploadFileTool.name(),
         DownloadFileTool.name(),
         "list_files",  # from builtins registry; no standalone class
+        "serve_html",  # from builtins registry; stores HTML for in-app preview
     }
 )
 
@@ -7020,6 +7021,46 @@ async def _execute_file_tool(
             return f"Error: list_files returned {resp.status_code}"
         except Exception as exc:  # noqa: BLE001
             return f"Error: list_files failed: {exc}"
+
+    if tool_name == "serve_html":
+        html_content = args.get("html", "")
+        rel_path = args.get("path", "")
+        if html_content and isinstance(html_content, str):
+            data = html_content.encode("utf-8")
+        elif rel_path and isinstance(rel_path, str):
+            os_spec = _effective_runner_os_env_spec(
+                agent_spec, conversation_id, runner_workspace
+            )
+            assert os_spec.cwd is not None
+            workspace = Path(os_spec.cwd)
+            try:
+                resolved = safe_resolve(rel_path, workspace)
+            except ValueError as exc:
+                return f"Error: serve_html failed: {exc}"
+            if not resolved.is_file():
+                return f"Error: file not found: {rel_path}"
+            data = resolved.read_bytes()
+        else:
+            return "Error: serve_html requires either 'html' or 'path'"
+        try:
+            resp = await server_client.post(
+                files_path,
+                files={"file": ("preview.html", data, "text/html")},
+                timeout=60.0,
+            )
+            if resp.status_code in (200, 201):
+                file_id = resp.json().get("id")
+                preview_url = f"{files_path}/{file_id}/preview"
+                return json.dumps(
+                    {
+                        "preview_url": preview_url,
+                        "file_id": file_id,
+                        "bytes": len(data),
+                    }
+                )
+            return f"Error: serve_html upload returned {resp.status_code}"
+        except Exception as exc:  # noqa: BLE001
+            return f"Error: serve_html failed: {exc}"
 
     return f"Error: {tool_name} not implemented in file dispatch"
 
