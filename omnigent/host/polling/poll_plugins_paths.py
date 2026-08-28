@@ -32,8 +32,8 @@ def resolve_puppygarden_root(config_path: Path = CONFIG_PATH) -> Path | None:
     """Read ``host.puppygarden.root`` from the host config, if set.
 
     Points the poller at a version-controlled ``puppygarden/`` directory (a
-    cloned repo's ``puppygarden/``) so its ``poll_plugins/`` and
-    ``timer_plugins/`` are scanned alongside the runtime data dir.
+    cloned repo's ``puppygarden/``) so its ``poll_plugins/`` are scanned
+    alongside the runtime data dir.
     """
     if not config_path.exists():
         return None

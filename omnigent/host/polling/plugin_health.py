@@ -30,7 +30,7 @@ _HEARTBEAT_S = 180.0
 _MAX_ERROR_LEN = 500
 _HEALTH_PATH = "/v1/agent-tasks/script-plugins/health"
 
-PluginKind = Literal["poll", "timer"]
+PluginKind = Literal["poll"]
 # outcome strings — the board maps these to a status.
 Outcome = Literal[
     "ok",
@@ -40,9 +40,6 @@ Outcome = Literal[
     "skipped_singleton",
     "skipped_config",
     "disabled",
-    # timer-only, non-firing states (no failure accounting):
-    "scheduled",
-    "already_fired",
 ]
 
 
@@ -64,9 +61,6 @@ class PluginHealthRecord:
     warning: str | None = None
     # poll
     interval_s: float | None = None
-    # timer
-    fire_at: float | None = None
-    fired_at: float | None = None
 
 
 def _truncate(error: str | None) -> str | None:
@@ -109,8 +103,6 @@ class PluginHealthTracker:
         outcome: Outcome,
         error: str | None = None,
         interval_s: float | None = None,
-        fire_at: float | None = None,
-        fired_at: float | None = None,
     ) -> None:
         """Record the outcome of an actual run (success or failure)."""
         now = time.time()
@@ -136,8 +128,6 @@ class PluginHealthTracker:
             singleton_skipped=False,
             warning=self._warnings.get(name),
             interval_s=interval_s,
-            fire_at=fire_at,
-            fired_at=fired_at,
         )
 
     def record_singleton_skip(
@@ -145,7 +135,6 @@ class PluginHealthTracker:
         name: str,
         *,
         interval_s: float | None = None,
-        fire_at: float | None = None,
     ) -> None:
         """Record that this host skipped a singleton plugin (not the pinned host)."""
         prev = self._records.get(name)
@@ -161,8 +150,6 @@ class PluginHealthTracker:
             singleton_skipped=True,
             warning=self._warnings.get(name),
             interval_s=interval_s,
-            fire_at=fire_at,
-            fired_at=prev.fired_at if prev else None,
         )
 
     def record_disabled(
@@ -204,36 +191,6 @@ class PluginHealthTracker:
             consecutive_failures=prev.consecutive_failures if prev else 0,
             singleton_skipped=False,
             warning=self._warnings.get(name),
-        )
-
-    def record_timer_state(
-        self,
-        name: str,
-        *,
-        fire_at: float,
-        fired_at: float | None,
-        scheduled: bool,
-    ) -> None:
-        """Record a timer plugin's non-firing state (scheduled or already fired).
-
-        Carries ``fire_at``/``fired_at`` so the board can render the timer
-        schedule without a run having happened this tick.
-        """
-        prev = self._records.get(name)
-        outcome: Outcome = "scheduled" if scheduled else "already_fired"
-        self._records[name] = PluginHealthRecord(
-            name=name,
-            kind=self.kind,
-            outcome=outcome,
-            last_run_at=prev.last_run_at if prev else None,
-            last_success_at=prev.last_success_at if prev else None,
-            last_failure_at=prev.last_failure_at if prev else None,
-            last_error=None,
-            consecutive_failures=prev.consecutive_failures if prev else 0,
-            singleton_skipped=False,
-            warning=self._warnings.get(name),
-            fire_at=fire_at,
-            fired_at=fired_at,
         )
 
     def snapshot(self) -> list[PluginHealthRecord]:
