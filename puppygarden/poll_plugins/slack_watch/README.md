@@ -60,7 +60,9 @@ solution. Latency = the poll `interval_s` (no sub-second push).
 | `types` | `public_channel,private_channel,im,mpim` | `conversations.list` types filter |
 | `limit` | 200 | page size for list/history/replies |
 | `backfill_s` | 180 | on first discovery, ingest the last N seconds (must be ≥ `interval_s`) |
-| `ignore_bots` | true | skip messages carrying a `bot_id` |
+| `ignore_bots` | false | skip messages carrying a `bot_id` |
+| `max_age_s` | 1209600 | skip messages older than N seconds (2 weeks) |
+| `all_events_channels` | `[]` | channels where ALL messages are emitted (not just mentions); names or IDs |
 | `ignore_subtypes` | join/leave/topic/… | skip noisy non-human `subtype`s |
 | `seen_bound` | 2000 | cap on the in-memory dedup set |
 
@@ -92,8 +94,16 @@ seen:                     # bounded list of "{channel}:{ts}" dedup keys
 3. **History**: for each conversation where `updated > watermark`, call
    `conversations.history(oldest=watermark)`. Dormant conversations
    (`updated <= watermark`) are skipped — zero API cost. Filter out self,
-   bots, and noisy subtypes; emit one event per remaining message; advance
-   `watermark` to the newest ts.
+   messages older than `max_age_s`, bots (if `ignore_bots`), and noisy
+   subtypes. Then:
+   - **all-events channels** (IMs, MPIMs, and channels in `all_events_channels`):
+     emit every remaining message; thread fan-out for roots with new replies.
+   - **mentions_only channels** (all other channels): only emit messages
+     containing `<@self_user_id>`. For mention messages that are part of a
+     thread, fetch `conversations.replies` and emit all new replies in that
+     thread. Non-mention messages advance the watermark but are not emitted.
+   Advance `watermark` only on successful event POST (HTTP 200) — on failure,
+   stop processing this conversation and retry next tick.
 4. **Threads**: for a parent whose `latest_reply > thread_watermark`, call
    `conversations.replies(oldest=thread_watermark)` and emit new replies.
 5. Save state. The MCP subprocess is torn down at end of tick.
@@ -127,6 +137,9 @@ double-emitted. Watermarks are also advanced past the newest ts.
   bot-joined ones.
 - **Edits/deletes**: edits re-emit the same `ts` (dedup suppresses); deletes
   are not surfaced.
+- **Event POST failure**: if the Omnigent server returns non-200, the
+  watermark does not advance past that message. Processing stops for the
+  conversation and resumes next tick, retrying the failed message.
 
 ## Editing this plugin
 
@@ -141,7 +154,14 @@ contract is subtle and easy to break:
   `threads` map exactly; renaming the key scheme orphans thread watermarks.
 - **`seen` is dedup, not state of record** — watermarks are. Do not rely on
   `seen` for correctness across restarts (it's bounded and in-memory).
-- The filter order in `run.py` (self → bots → subtypes) determines what's
-  emitted; changing it changes the event stream retroactively for new messages.
+- **Watermark advances only on successful POST** — `emit_message` returns
+  `False` on HTTP failure; the loop breaks and the watermark stays at the
+  last successfully emitted message. Do not change this without ensuring
+  events are not silently lost.
+- **`max_age_s` drops stale messages** — messages older than `max_age_s`
+  are skipped and the watermark advances past them. They are not retried.
+- The filter order in `run.py` (max_age → self → bots → subtypes → mentions)
+  determines what's emitted; changing it changes the event stream
+  retroactively for new messages.
 - **Do not hardcode a Slack token or launch command in `run.py`.** All transport
   config lives in `config.yaml` under `mcp:` so the code stays org-agnostic.

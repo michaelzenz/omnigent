@@ -23,7 +23,6 @@ import os
 import sys
 import time
 import urllib.request
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +99,7 @@ class SlackMcp:
 # ── Task event emit ────────────────────────────────────────────────
 
 
-def post_task_event(**fields: object) -> None:
+def post_task_event(**fields: object) -> bool:
     base = os.environ["OMNIGENT_SERVER_URL"].rstrip("/")
     host_id = os.environ["OMNIGENT_HOST_ID"]
     body = json.dumps(fields).encode()
@@ -113,7 +112,11 @@ def post_task_event(**fields: object) -> None:
         },
         method="POST",
     )
-    urllib.request.urlopen(req, timeout=30)
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        return True
+    except OSError:
+        return False
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -149,7 +152,7 @@ def emit_message(
     kind: str,
     message: dict[str, Any],
     partner: str | None,
-) -> None:
+) -> bool:
     ts = message.get("ts", "")
     text = message.get("text", "") or ""
     user = message.get("user")
@@ -171,7 +174,7 @@ def emit_message(
         payload["thread_ts"] = thread_ts
     if partner:
         payload["partner"] = partner
-    post_task_event(
+    return post_task_event(
         event_type="slack.message.received",
         title=title,
         summary=f"slack:{kind}:{channel_id} ts:{ts}",
@@ -201,6 +204,8 @@ async def _fetch_thread_replies(
     kind: str,
     partner: str | None,
     threads: dict[str, Any],
+    max_age_s: float,
+    now: float,
 ) -> None:
     resp = await slack.get(
         "conversations.replies",
@@ -212,6 +217,11 @@ async def _fetch_thread_replies(
         rts = ts_to_float(message.get("ts", "0"))
         key = f"{channel_id}:{message.get('ts')}"
         if key in seen_set:
+            if rts > newest:
+                newest = rts
+            continue
+        if max_age_s and rts and rts < now - max_age_s:
+            seen_set.add(key)
             if rts > newest:
                 newest = rts
             continue
@@ -230,15 +240,15 @@ async def _fetch_thread_replies(
             if rts > newest:
                 newest = rts
             continue
-        with suppress(OSError):
-            emit_message(
-                plugin_name=plugin_name,
-                channel_id=channel_id,
-                channel_name=channel_name,
-                kind=kind,
-                message=message,
-                partner=partner,
-            )
+        if not emit_message(
+            plugin_name=plugin_name,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            kind=kind,
+            message=message,
+            partner=partner,
+        ):
+            break
         seen_set.add(key)
         if rts > newest:
             newest = rts
@@ -251,9 +261,11 @@ async def _amain() -> int:
     types = cfg.get("types", "public_channel,private_channel,im,mpim")
     limit = int(cfg.get("limit", 200))
     backfill_s = float(cfg.get("backfill_s", 180))
-    ignore_bots = bool(cfg.get("ignore_bots", True))
+    ignore_bots = bool(cfg.get("ignore_bots", False))
     ignore_subtypes = set(cfg.get("ignore_subtypes") or [])
     seen_bound = int(cfg.get("seen_bound", 2000))
+    max_age_s = float(cfg.get("max_age_s", 1209600))
+    all_events_set = {e.lstrip("#") for e in (cfg.get("all_events_channels") or [])}
     plugin_name = os.environ.get("OMNIGENT_PLUGIN_NAME", PLUGIN_DIR.name)
 
     mcfg = cfg.get("mcp")
@@ -307,6 +319,10 @@ async def _amain() -> int:
             # Skip dormant conversations: no activity since our watermark.
             if ch_updated and ch_updated <= watermark:
                 continue
+            # IMs/MPIMs always emit all messages. Channels are mentions_only
+            # unless listed in all_events_channels (by ID or name).
+            kind = meta.get("kind", "channel")
+            mentions_only = kind not in ("im", "mpim") and cid not in all_events_set and meta.get("name", "") not in all_events_set
             history = await slack.get(
                 "conversations.history",
                 {"channel": cid, "oldest": f"{watermark:.6f}", "limit": limit},
@@ -319,6 +335,11 @@ async def _amain() -> int:
                 mts = ts_to_float(message.get("ts", "0"))
                 key = f"{cid}:{message.get('ts')}"
                 if key in seen_set:
+                    if mts > newest:
+                        newest = mts
+                    continue
+                if max_age_s and mts and mts < now - max_age_s:
+                    seen_set.add(key)
                     if mts > newest:
                         newest = mts
                     continue
@@ -337,47 +358,80 @@ async def _amain() -> int:
                     if mts > newest:
                         newest = mts
                     continue
-                with suppress(OSError):
-                    emit_message(
-                        plugin_name=plugin_name,
-                        channel_id=cid,
-                        channel_name=meta.get("name", ""),
-                        kind=meta.get("kind", "channel"),
-                        message=message,
-                        partner=meta.get("partner"),
-                    )
+                if mentions_only:
+                    text = message.get("text", "") or ""
+                    if f"<@{self_user_id}>" not in text:
+                        seen_set.add(key)
+                        if mts > newest:
+                            newest = mts
+                        continue
+                if not emit_message(
+                    plugin_name=plugin_name,
+                    channel_id=cid,
+                    channel_name=meta.get("name", ""),
+                    kind=meta.get("kind", "channel"),
+                    message=message,
+                    partner=meta.get("partner"),
+                ):
+                    break
                 seen_set.add(key)
                 if mts > newest:
                     newest = mts
 
-                # Thread fan-out: only when this message is a thread root with a
-                # newer reply (root has thread_ts == ts). Broadcast replies
-                # (thread_ts != ts) are already surfaced as top-level history
-                # entries, so we don't re-fetch their thread here.
+                # Thread fan-out.
                 thread_ts = message.get("thread_ts")
-                latest_reply = message.get("latest_reply")
-                if thread_ts and latest_reply:
+                if thread_ts:
                     tkey = f"{cid}:{thread_ts}"
                     t_watermark = threads.get(tkey, {}).get("watermark", 0.0)
-                    if ts_to_float(latest_reply) > t_watermark and ts_to_float(
-                        thread_ts
-                    ) == ts_to_float(message.get("ts", "")):
-                        await _fetch_thread_replies(
-                            slack=slack,
-                            channel_id=cid,
-                            thread_ts=thread_ts,
-                            oldest=t_watermark,
-                            limit=limit,
-                            self_user_id=self_user_id,
-                            ignore_bots=ignore_bots,
-                            ignore_subtypes=ignore_subtypes,
-                            seen_set=seen_set,
-                            plugin_name=plugin_name,
-                            channel_name=meta.get("name", ""),
-                            kind=meta.get("kind", "channel"),
-                            partner=meta.get("partner"),
-                            threads=threads,
-                        )
+                    if mentions_only:
+                        # In mentions_only mode, fetch thread replies for any
+                        # mention message that's part of a thread. Dedup via
+                        # thread watermark — if we already fetched past this
+                        # message's ts, skip.
+                        if mts > t_watermark:
+                            await _fetch_thread_replies(
+                                slack=slack,
+                                channel_id=cid,
+                                thread_ts=thread_ts,
+                                oldest=t_watermark,
+                                limit=limit,
+                                self_user_id=self_user_id,
+                                ignore_bots=ignore_bots,
+                                ignore_subtypes=ignore_subtypes,
+                                seen_set=seen_set,
+                                plugin_name=plugin_name,
+                                channel_name=meta.get("name", ""),
+                                kind=meta.get("kind", "channel"),
+                                partner=meta.get("partner"),
+                                threads=threads,
+                                max_age_s=max_age_s,
+                                now=now,
+                            )
+                    else:
+                        # In all-events mode, only fan out for thread roots
+                        # with a newer reply (root has thread_ts == ts).
+                        latest_reply = message.get("latest_reply")
+                        if latest_reply and ts_to_float(latest_reply) > t_watermark and ts_to_float(
+                            thread_ts
+                        ) == ts_to_float(message.get("ts", "")):
+                            await _fetch_thread_replies(
+                                slack=slack,
+                                channel_id=cid,
+                                thread_ts=thread_ts,
+                                oldest=t_watermark,
+                                limit=limit,
+                                self_user_id=self_user_id,
+                                ignore_bots=ignore_bots,
+                                ignore_subtypes=ignore_subtypes,
+                                seen_set=seen_set,
+                                plugin_name=plugin_name,
+                                channel_name=meta.get("name", ""),
+                                kind=meta.get("kind", "channel"),
+                                partner=meta.get("partner"),
+                                threads=threads,
+                                max_age_s=max_age_s,
+                                now=now,
+                            )
             if newest > watermark:
                 meta["watermark"] = newest
             meta["updated"] = ch_updated or newest
