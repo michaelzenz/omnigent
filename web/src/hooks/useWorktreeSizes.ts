@@ -8,6 +8,8 @@ export interface WorktreeSize {
   is_main: boolean;
   size_bytes: number;
   dirty: boolean;
+  managed: boolean;
+  reusable: boolean;
   error: string | null;
 }
 

@@ -16,7 +16,12 @@ import threading
 import time
 from dataclasses import dataclass
 
-from omnigent.host.git_worktree import WorktreeError, _run_git, list_worktrees
+from omnigent.host.git_worktree import (
+    WorktreeError,
+    _locked_auto_cache,
+    _run_git,
+    list_worktrees,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -39,6 +44,26 @@ def _worktree_has_dirty_files(path: str) -> bool:
     return result.stdout.strip() != ""
 
 
+def _auto_managed_info(repo_root: str) -> dict[str, dict[str, object]]:
+    """Lease info for Omnigent-managed auto worktrees belonging to ``repo_root``.
+
+    Returns a dict mapping worktree path to its registry entry, which
+    contains ``lease_owner``, ``lease_expires_at``, and ``health``.
+    """
+    try:
+        with _locked_auto_cache() as entries:
+            return {
+                path: raw
+                for path, raw in entries.items()
+                if isinstance(path, str)
+                and isinstance(raw, dict)
+                and raw.get("repo_root") == repo_root
+            }
+    except Exception:
+        _logger.warning("failed to read auto worktree cache", exc_info=True)
+        return {}
+
+
 @dataclass
 class WorktreeSizeEntry:
     """One worktree's size result.
@@ -47,7 +72,10 @@ class WorktreeSizeEntry:
     :param branch: Checked-out branch, or None for detached HEAD.
     :param is_main: True for the repository's main work tree.
     :param size_bytes: Total bytes on disk (0 when du failed).
-    :param dirty: True when the worktree has uncommitted changes.
+    :param dirty: True when the worktree has modified/staged tracked files.
+    :param managed: True when the worktree is an Omnigent-managed auto worktree.
+    :param reusable: True when auto-new-worktree can reuse this worktree
+        (managed, not the main worktree, and clean).
     :param error: Per-worktree error message, or None on success.
     """
 
@@ -56,6 +84,8 @@ class WorktreeSizeEntry:
     is_main: bool
     size_bytes: int
     dirty: bool = False
+    managed: bool = False
+    reusable: bool = False
     error: str | None = None
 
 
@@ -167,11 +197,25 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
 
     entries: list[WorktreeSizeEntry] = []
     total_bytes = 0
+    repo_root = worktrees[0].path if worktrees else repo_path
+    managed_info = _auto_managed_info(repo_root)
+    now = int(time.time())
     for wt in worktrees:
         size, err = _dir_size_bytes(wt.path)
         dirty = False
-        if err is None:
+        info = managed_info.get(wt.path)
+        managed = info is not None
+        # A worktree is reusable when: managed, not main, clean, and the
+        # lease is free (no owner or lease expired).
+        lease_free = False
+        if managed and not wt.is_main and err is None:
             dirty = _worktree_has_dirty_files(wt.path)
+            if not dirty:
+                owner = info.get("lease_owner") if isinstance(info, dict) else None
+                expires_at = info.get("lease_expires_at") if isinstance(info, dict) else None
+                lease_free = owner is None or (
+                    isinstance(expires_at, int) and expires_at <= now
+                )
         entries.append(
             WorktreeSizeEntry(
                 path=wt.path,
@@ -179,6 +223,8 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
                 is_main=wt.is_main,
                 size_bytes=size,
                 dirty=dirty,
+                managed=managed,
+                reusable=managed and not wt.is_main and not dirty and err is None and lease_free,
                 error=err,
             )
         )
@@ -186,7 +232,7 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
             total_bytes += size
 
     return WorktreeSizeResult(
-        repo_root=worktrees[0].path if worktrees else repo_path,
+        repo_root=repo_root,
         entries=entries,
         total_bytes=total_bytes,
         calculated_at=time.monotonic(),
