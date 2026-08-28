@@ -4044,8 +4044,10 @@ _SCHEDULED_TASK_CREATE_FIELDS = (
     "model_override",
     "reasoning_effort",
     "permission_mode",
+    "max_cost_usd",
     "workspace",
     "host_id",
+    "catch_up",
 )
 # Fields the update tool forwards to PATCH /v1/scheduled-tasks/{id}.
 _SCHEDULED_TASK_UPDATE_FIELDS = (
@@ -4056,9 +4058,11 @@ _SCHEDULED_TASK_UPDATE_FIELDS = (
     "model_override",
     "reasoning_effort",
     "permission_mode",
+    "max_cost_usd",
     "workspace",
     "host_id",
     "state",
+    "catch_up",
 )
 _SCHEDULED_TASK_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
