@@ -481,7 +481,7 @@ export function SkillsTab() {
 
   return (
     <div
-      className="grid min-h-[38rem] grid-cols-1 overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[22rem_minmax(0,1fr)]"
+      className="grid h-[calc(100vh-12rem)] min-h-[24rem] grid-cols-1 overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[22rem_minmax(0,1fr)]"
       data-testid="glossaries-skills-tab"
     >
       <section className="flex min-h-0 flex-col border-b border-border lg:border-r lg:border-b-0">
