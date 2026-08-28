@@ -136,7 +136,6 @@ from omnigent.server.routes._sessions.common import (
     _interrupt_fenced_sessions,
     _logger,
     _pushed_model_options_cache,
-    _queue_status_feed,
     _session_mcp_startup_cache,
     _session_sandbox_status_cache,
     _session_worktree_status_cache,
@@ -1592,8 +1591,7 @@ def register_events_routes(
                     status,
                     output=output_text,
                 )
-            if _queue_status_feed is not None:
-                await _queue_status_feed.notify(session_id, status)
+            # _publish_status already notifies _queue_status_feed.
             # Emit a turn-end telemetry event for native harnesses. "idle"
             # means the turn completed normally; "failed" means it errored.
             # No latency or token deltas are available on this path.
