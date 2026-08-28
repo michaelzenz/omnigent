@@ -41,6 +41,7 @@ class PluginHealthInput(BaseModel):
     kind: PluginKind
     outcome: str
     enabled: bool = True
+    builtin: bool = False
     last_run_at: float | None = None
     last_success_at: float | None = None
     last_failure_at: float | None = None
@@ -170,6 +171,7 @@ def create_script_plugin_health_router(
                     "kind": r.plugin.kind,
                     "outcome": r.plugin.outcome,
                     "enabled": r.plugin.enabled,
+                    "builtin": r.plugin.builtin,
                     "last_run_at": r.plugin.last_run_at,
                     "last_success_at": r.plugin.last_success_at,
                     "last_failure_at": r.plugin.last_failure_at,

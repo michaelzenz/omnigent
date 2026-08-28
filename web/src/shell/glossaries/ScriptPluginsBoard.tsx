@@ -17,6 +17,7 @@ interface BoardRow {
   host_id: string;
   name: string;
   enabled: boolean;
+  builtin: boolean;
   status: HealthStatus;
   last_run_at: number | null;
   last_failure_at: number | null;
@@ -102,6 +103,11 @@ function PluginRow({ row, nowMs }: { row: BoardRow; nowMs: number }) {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="truncate font-medium">{row.name}</span>
+            {row.builtin && (
+              <Badge variant="outline" className="shrink-0 border-blue-200 bg-blue-50 text-[10px] text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                builtin
+              </Badge>
+            )}
             {hasWarning && (
               <span
                 title={row.warning ?? ""}
@@ -205,6 +211,7 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
       host_id: r.host_id,
       name: r.name,
       enabled: r.enabled,
+      builtin: r.builtin ?? false,
       status: deriveStatus(r, nowMs),
       last_run_at: r.last_run_at,
       last_failure_at: r.last_failure_at,

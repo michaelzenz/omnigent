@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-PLUGIN_DIR = Path(os.environ["OMNIGENT_PLUGIN_DIR"])
+PLUGIN_DIR = Path(os.environ.get("OMNIGENT_PLUGIN_DIR", os.path.expanduser("~/.omnigent/poll_plugins/external_session_watcher")))
 STATE_PATH = PLUGIN_DIR / "state.yaml"
 CONFIG_PATH = PLUGIN_DIR / "config.yaml"
 

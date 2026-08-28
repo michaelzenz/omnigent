@@ -51,6 +51,7 @@ class PluginHealthRecord:
     kind: PluginKind
     outcome: Outcome
     enabled: bool = True
+    builtin: bool = False
     last_run_at: float | None = None
     last_success_at: float | None = None
     last_failure_at: float | None = None
@@ -103,6 +104,7 @@ class PluginHealthTracker:
         outcome: Outcome,
         error: str | None = None,
         interval_s: float | None = None,
+        builtin: bool = False,
     ) -> None:
         """Record the outcome of an actual run (success or failure)."""
         now = time.time()
@@ -120,6 +122,7 @@ class PluginHealthTracker:
             name=name,
             kind=self.kind,
             outcome=outcome,
+            builtin=builtin or (prev.builtin if prev else False),
             last_run_at=now,
             last_success_at=last_success,
             last_failure_at=last_failure,
@@ -135,6 +138,7 @@ class PluginHealthTracker:
         name: str,
         *,
         interval_s: float | None = None,
+        builtin: bool = False,
     ) -> None:
         """Record that this host skipped a singleton plugin (not the pinned host)."""
         prev = self._records.get(name)
@@ -142,6 +146,7 @@ class PluginHealthTracker:
             name=name,
             kind=self.kind,
             outcome="skipped_singleton",
+            builtin=builtin or (prev.builtin if prev else False),
             last_run_at=prev.last_run_at if prev else None,
             last_success_at=prev.last_success_at if prev else None,
             last_failure_at=prev.last_failure_at if prev else None,
@@ -157,6 +162,7 @@ class PluginHealthTracker:
         name: str,
         *,
         interval_s: float,
+        builtin: bool = False,
     ) -> None:
         """Record that this poll plugin is disabled in its own config."""
         prev = self._records.get(name)
@@ -165,6 +171,7 @@ class PluginHealthTracker:
             kind=self.kind,
             outcome="disabled",
             enabled=False,
+            builtin=builtin or (prev.builtin if prev else False),
             last_run_at=prev.last_run_at if prev else None,
             last_success_at=prev.last_success_at if prev else None,
             last_failure_at=prev.last_failure_at if prev else None,

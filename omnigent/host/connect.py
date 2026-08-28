@@ -2501,27 +2501,44 @@ class HostProcess:
                 )
         if frame.op == "poll_plugin.settings":
             try:
+                from omnigent.host.polling.builtin_plugins.registry import (
+                    get_builtin_plugin,
+                )
                 from omnigent.host.polling.poll_plugins_paths import iter_plugin_dirs
                 from omnigent.host.polling.pollers.script_plugins_config import (
                     write_plugin_poll_enabled,
                 )
+                from omnigent.process_logging import data_dir
 
                 params = frame.params or {}
                 name = params.get("name")
                 enabled = params.get("enabled")
                 if not isinstance(name, str) or not isinstance(enabled, bool):
                     raise ValueError("poll plugin settings require name and enabled")
-                plugin_dir = next(
-                    (
-                        path
-                        for path in iter_plugin_dirs(config_path=CONFIG_PATH)
-                        if path.name == name
-                    ),
-                    None,
-                )
-                if plugin_dir is None:
-                    raise FileNotFoundError(f"poll plugin {name!r} was not found")
-                write_plugin_poll_enabled(plugin_dir, enabled)
+
+                # Check built-in registry first.
+                builtin = get_builtin_plugin(name)
+                if builtin is not None:
+                    plugin_dir = data_dir() / "poll_plugins" / name
+                    plugin_dir.mkdir(parents=True, exist_ok=True)
+                    config_path = plugin_dir / "config.yaml"
+                    if not config_path.exists():
+                        import yaml
+                        config_path.write_text(yaml.safe_dump(builtin.default_config, sort_keys=False))
+                    write_plugin_poll_enabled(plugin_dir, enabled)
+                else:
+                    # Directory-discovered plugin.
+                    plugin_dir = next(
+                        (
+                            path
+                            for path in iter_plugin_dirs(config_path=CONFIG_PATH)
+                            if path.name == name
+                        ),
+                        None,
+                    )
+                    if plugin_dir is None:
+                        raise FileNotFoundError(f"poll plugin {name!r} was not found")
+                    write_plugin_poll_enabled(plugin_dir, enabled)
                 return HostFsResultFrame(
                     request_id=frame.request_id,
                     status="ok",

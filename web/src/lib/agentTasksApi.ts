@@ -691,6 +691,7 @@ export interface ScriptPluginHealthRow {
   kind: ScriptPluginKind;
   outcome: string;
   enabled: boolean;
+  builtin?: boolean;
   last_run_at: number | null;
   last_success_at: number | null;
   last_failure_at: number | null;
