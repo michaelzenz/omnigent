@@ -62,8 +62,7 @@ def _register_all() -> None:
             default_config={
                 "enabled": True,
                 "interval_s": 60,
-                "singleton": True,
-                "bound_role": "secretary",
+                "singleton": False,
                 "scan_dirs": ["~/.codex/sessions", "~/.cursor/projects"],
                 "snippet_lines": 50,
                 "recency_window_s": 86400,
@@ -79,8 +78,7 @@ def _register_all() -> None:
             default_config={
                 "enabled": True,
                 "interval_s": 300,
-                "singleton": True,
-                "bound_role": "secretary",
+                "singleton": False,
             },
             description="Internal session watcher — auto-adopts omnigent sessions and emits turn-finish events",
         )
