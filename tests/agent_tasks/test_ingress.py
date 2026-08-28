@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE, TASK_MANAGER_AGENT_NAME
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
@@ -19,6 +19,10 @@ from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEven
 from omnigent.stores.task_role_profile_store.sqlalchemy_store import SqlAlchemyTaskRoleProfileStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+
+# The roles redesign removed the shared constant; the manager agent name is
+# only a lookup key for the fixture's self-registered agent.
+_MANAGER_AGENT_NAME = "task-manager"
 
 
 def _uid(seed: str) -> str:
@@ -37,7 +41,7 @@ def _ensure_agent(agent_store: SqlAlchemyAgentStore, agent_id: str, name: str) -
 def manager_agent_id(db_uri: str) -> str:
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    return _ensure_agent(agent_store, agent_id, TASK_MANAGER_AGENT_NAME)
+    return _ensure_agent(agent_store, agent_id, _MANAGER_AGENT_NAME)
 
 
 def _role_profile(agent_profile_id: str, *, host_seed: str, workspace: str) -> TaskRoleProfile:
@@ -204,3 +208,157 @@ async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) ->
     attempts = event_store.list_routing_attempts(event_id)
     assert len(attempts) == 1
     assert attempts[0].reason == "explicit-task"
+
+
+@pytest.mark.asyncio
+async def test_ingress_fans_out_to_subscribers(db_uri: str, stores: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = stores["event_store"]
+    task_store: SqlAlchemyTaskStore = stores["task_store"]
+    other_task_id = _uid("ingress_task_other")
+    task_store.create(
+        other_task_id,
+        "Review queue",
+        "reviews stay current",
+    )
+    for task_id in (stores["task_id"], other_task_id):
+        event_store.create_subscription(
+            _uid(f"sub_{task_id}"),
+            task_id,
+            source="poll_plugin:github_pr",
+            source_key="org/repo#456",
+        )
+
+    event_id = _uid("broadcast_event")
+    event = event_store.create_event(
+        event_id,
+        "github.pr.merged",
+        "Blocker PR merged",
+        source="poll_plugin:github_pr",
+        source_key="org/repo#456",
+        source_offset=1,
+        state="received",
+    )
+    profile = _role_profile(
+        stores["agent_profile_id"],
+        host_seed="host_broadcast",
+        workspace="/tmp/ingress-broadcast",
+    )
+    updated = await ingress_event(
+        event=event,
+        task_store=task_store,
+        task_event_store=event_store,
+        worker_store=stores["worker_store"],
+        conversation_store=stores["conversation_store"],
+        role_profile=profile,
+        session_creator=_mock_session_creator(stores["conversation_store"]),
+        app_state=SimpleNamespace(),
+    )
+    assert updated.state == "broadcast"
+    deliveries = event_store.list_deliveries_for_event(event_id)
+    assert {delivery.task_id for delivery in deliveries} == {stores["task_id"], other_task_id}
+    assert all(delivery.state == "routed" for delivery in deliveries)
+    assert all(delivery.parent_event_id == event_id for delivery in deliveries)
+    # The canonical row stays task-less; dedup must ignore the fan-out copies.
+    canonical = event_store.get_event_by_source(
+        source="poll_plugin:github_pr",
+        source_key="org/repo#456",
+        source_offset=1,
+        event_type="github.pr.merged",
+    )
+    assert canonical is not None
+    assert canonical.id == event_id
+
+
+@pytest.mark.asyncio
+async def test_ingress_skips_subscriptions_without_live_task(db_uri: str, stores: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = stores["event_store"]
+    task_store: SqlAlchemyTaskStore = stores["task_store"]
+    archived_task_id = _uid("ingress_task_archived")
+    task_store.create(
+        archived_task_id,
+        "Old task",
+        "done",
+        state="archived",
+    )
+    event_store.create_subscription(
+        _uid("sub_archived"),
+        archived_task_id,
+        source="ci",
+        source_key="build-x",
+    )
+    event = event_store.create_event(
+        _uid("no_live_sub_event"),
+        "build.finished",
+        "Nobody listening",
+        source="ci",
+        source_key="build-x",
+        state="received",
+    )
+    updated = await ingress_event(
+        event=event,
+        task_store=task_store,
+        task_event_store=event_store,
+        worker_store=stores["worker_store"],
+        conversation_store=stores["conversation_store"],
+        owner_user_id="__anonymous__",
+    )
+    assert updated.state == "awaiting_grouping"
+    assert event_store.list_deliveries_for_event(event.id) == []
+
+
+@pytest.mark.asyncio
+async def test_ingress_fanout_continues_past_failed_subscriber(db_uri: str, stores: dict) -> None:
+    event_store: SqlAlchemyTaskEventStore = stores["event_store"]
+    task_store: SqlAlchemyTaskStore = stores["task_store"]
+    # Broken subscriber: its manager conversation id points nowhere, so
+    # bootstrap raises CONFLICT when the fan-out tries to route to it.
+    broken_task_id = _uid("ingress_task_broken")
+    task_store.create(
+        broken_task_id,
+        "Broken task",
+        "unreachable",
+        manager_conversation_id=_uid("missing_conversation"),
+    )
+    event_store.create_subscription(
+        _uid("sub_broken"),
+        broken_task_id,
+        source="poll_plugin:github_pr",
+        source_key="org/repo#999",
+    )
+    event_store.create_subscription(
+        _uid("sub_good"),
+        stores["task_id"],
+        source="poll_plugin:github_pr",
+        source_key="org/repo#999",
+    )
+
+    event_id = _uid("partial_broadcast_event")
+    event = event_store.create_event(
+        event_id,
+        "github.pr.merged",
+        "PR merged",
+        source="poll_plugin:github_pr",
+        source_key="org/repo#999",
+        source_offset=1,
+        state="received",
+    )
+    profile = _role_profile(
+        stores["agent_profile_id"],
+        host_seed="host_partial",
+        workspace="/tmp/ingress-partial",
+    )
+    updated = await ingress_event(
+        event=event,
+        task_store=task_store,
+        task_event_store=event_store,
+        worker_store=stores["worker_store"],
+        conversation_store=stores["conversation_store"],
+        role_profile=profile,
+        session_creator=_mock_session_creator(stores["conversation_store"]),
+        app_state=SimpleNamespace(),
+    )
+    assert updated.state == "broadcast"
+    deliveries = event_store.list_deliveries_for_event(event_id)
+    by_task = {delivery.task_id: delivery for delivery in deliveries}
+    assert by_task[stores["task_id"]].state == "routed"
+    assert by_task[broken_task_id].state == "failed"

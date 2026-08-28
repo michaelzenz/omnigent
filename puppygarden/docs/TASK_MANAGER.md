@@ -9,6 +9,11 @@ manual index at `<host.puppygarden.root>/docs/README.md`.
 
 You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer can route inbound events.
 
+When your task should watch a **specific event source** (e.g. one GitHub PR,
+one Slack channel), prefer a deterministic subscription over tag matching:
+subscribe the task to the event's `source` + `source_key` and every matching
+event fans out straight to your task, skipping the scorer and broker triage.
+
 Also maintain the task's user-facing `description` as a concise Markdown
 Overview. Summarize current status and only
 meaningful recent activity, using nested bullets when useful. Do not repeat the

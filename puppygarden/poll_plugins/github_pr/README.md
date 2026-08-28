@@ -16,14 +16,18 @@ Poll plugin that watches GitHub PR status and emits task events on transitions
 ```json
 {
   "auto_discover": ["authored", "review_requested"],
-  "explicit": [{"repo": "owner/name", "pr": 1234, "context": {"task_id": "..."}}]
+  "explicit": [{"repo": "owner/name", "pr": 1234, "context": {}}]
 }
 ```
 
 - `auto_discover` — `gh search prs` queries run each tick: `author:@me` and/or
   `review-requested:@me`.
-- `explicit` — fixed list of `{repo, pr, context}`. `context.task_id` binds emitted
-  events to a task.
+- `explicit` — fixed list of `{repo, pr, context}`. `context` is echoed into
+  the event payload verbatim.
+
+Events never name a task. To route a PR's events to a specific managed task,
+subscribe the task server-side to (`poll_plugin:github_pr`, `<repo>#<pr>`) via
+`POST /v1/agent-tasks/{id}/event-subscriptions`.
 
 ## Emitted events
 

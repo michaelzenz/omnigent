@@ -37,7 +37,6 @@ def is_session_internal_event(event_type: str) -> bool:
     return event_type.startswith(SESSION_EVENT_PREFIX)
 
 
-def is_ingress_candidate(*, event_type: str, task_id: str | None) -> bool:
-    """Return whether an event should enter the ingress scorer."""
-    _ = task_id
+def is_ingress_candidate(event_type: str) -> bool:
+    """Return whether an event should enter the ingress router."""
     return not is_session_internal_event(event_type)

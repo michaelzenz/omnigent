@@ -93,6 +93,7 @@ from omnigent.entities import (
     Task,
     TaskAsset,
     TaskEventExecution,
+    TaskEventSubscription,
     TaskItem,
     TaskTag,
     Worker,
@@ -367,6 +368,13 @@ class CreateWorkerRequest(BaseModel):
     provider_id: str = Field(min_length=1)
     host_id: str = Field(min_length=1)
     workspace: str = Field(min_length=1)
+
+
+class CreateEventSubscriptionRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/{task_id}/event-subscriptions``."""
+
+    source: str = Field(min_length=1)
+    source_key: str = Field(min_length=1)
 
 
 class QueueHoldRequest(BaseModel):
@@ -810,6 +818,18 @@ def _agent_role_session_to_response(
         "role": role,
         "conversation_id": conversation_id,
         "created": created,
+    }
+
+
+def _subscription_to_response(subscription: TaskEventSubscription) -> dict[str, Any]:
+    return {
+        "id": subscription.id,
+        "object": "agent.task.event_subscription",
+        "task_id": subscription.task_id,
+        "source": subscription.source,
+        "source_key": subscription.source_key,
+        "owner_user_id": subscription.owner_user_id,
+        "created_at": subscription.created_at,
     }
 
 
@@ -1581,6 +1601,55 @@ def create_agent_tasks_router(
             "object": "list",
             "data": [_execution_to_response(execution) for execution in executions],
         }
+
+    @router.post("/agent-tasks/{task_id}/event-subscriptions", status_code=201)
+    async def create_event_subscription(
+        request: Request,
+        task_id: str,
+        body: CreateEventSubscriptionRequest,
+    ) -> dict[str, Any]:
+        """Subscribe a task to an event ``(source, source_key)`` pair."""
+        user_id = require_user(request, auth_provider)
+        await _get_task_or_404(task_id, user_id)
+        subscription = await asyncio.to_thread(
+            task_event_store.create_subscription,
+            uuid.uuid4().hex,
+            task_id,
+            source=body.source.strip(),
+            source_key=body.source_key.strip(),
+            owner_user_id=user_id,
+        )
+        return _subscription_to_response(subscription)
+
+    @router.get("/agent-tasks/{task_id}/event-subscriptions")
+    async def list_event_subscriptions(request: Request, task_id: str) -> dict[str, Any]:
+        """List a task's event subscriptions."""
+        user_id = get_user_id(request, auth_provider)
+        await _get_task_or_404(task_id, user_id)
+        subscriptions = await asyncio.to_thread(
+            task_event_store.list_subscriptions_for_task, task_id
+        )
+        return {
+            "object": "list",
+            "data": [_subscription_to_response(sub) for sub in subscriptions],
+        }
+
+    @router.delete("/agent-tasks/{task_id}/event-subscriptions/{subscription_id}")
+    async def delete_event_subscription(
+        request: Request,
+        task_id: str,
+        subscription_id: str,
+    ) -> dict[str, Any]:
+        """Remove one of a task's event subscriptions."""
+        user_id = require_user(request, auth_provider)
+        await _get_task_or_404(task_id, user_id)
+        subscription = await asyncio.to_thread(
+            task_event_store.get_subscription, subscription_id
+        )
+        if subscription is None or subscription.task_id != task_id:
+            raise OmnigentError("Event subscription not found", code=ErrorCode.NOT_FOUND)
+        await asyncio.to_thread(task_event_store.delete_subscription, subscription_id)
+        return {"id": subscription_id, "object": "agent.task.event_subscription", "deleted": True}
 
     if conversation_store is not None:
 

@@ -80,6 +80,8 @@ class TaskEvent:
     :param source_offset: Ingress cursor (e.g. byte offset), or ``None``.
     :param source_internal_session_id: Originating PuppyGarden conversation when
         the event was emitted from an internal session. ``None`` when unset.
+    :param parent_event_id: Canonical ingress event this row was fanned out from
+        for a subscription delivery. ``None`` on canonical (ingress) rows.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     :param routed_at: Unix epoch seconds when routing completed, or ``None``.
     :param processed_at: Unix epoch seconds when the manager finished handling,
@@ -99,6 +101,7 @@ class TaskEvent:
     source_key: str | None = None
     source_offset: int | None = None
     source_internal_session_id: str | None = None
+    parent_event_id: str | None = None
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None
@@ -137,6 +140,30 @@ class TaskEventRoutingAttempt:
     proposed_at: int
     score: float | None = None
     reason: str | None = None
+
+
+@dataclass
+class TaskEventSubscription:
+    """
+    A task's subscription to an event ``(source, source_key)`` pair.
+
+    When an ingress event matches a live subscription, the server fans out a
+    per-task event copy routed to that task.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param task_id: Subscriber task.
+    :param source: Event source to match, e.g. ``"poll_plugin:github_pr"``.
+    :param source_key: Stable key within ``source`` to match, e.g. ``"org/repo#1"``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param owner_user_id: User who created the subscription, or ``None``.
+    """
+
+    id: str
+    task_id: str
+    source: str
+    source_key: str
+    created_at: int
+    owner_user_id: str | None = None
 
 
 @dataclass

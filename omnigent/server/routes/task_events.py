@@ -15,7 +15,6 @@ from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
 from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
-from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import EventTag, Task, TaskEvent, TaskEventRoutingAttempt
@@ -51,7 +50,11 @@ class EventTagInput(BaseModel):
 
 
 class CreateIngressTaskEventRequest(BaseModel):
-    """Request body for ``POST /v1/task-events`` ingress."""
+    """Request body for ``POST /v1/task-events`` ingress.
+
+    Producers describe the event (source identity + tags); routing to tasks is
+    owned by the server via subscriptions, session bindings, and tag scoring.
+    """
 
     event_type: str
     title: str
@@ -60,7 +63,6 @@ class CreateIngressTaskEventRequest(BaseModel):
     source_key: str | None = None
     source_offset: int = 0
     source_internal_session_id: str | None = None
-    task_id: str | None = None
     tags: list[EventTagInput] = Field(default_factory=list)
 
     @field_validator("event_type", "title")
@@ -82,14 +84,6 @@ class CreateIngressTaskEventRequest(BaseModel):
     @field_validator("source_key")
     @classmethod
     def _source_key_non_empty(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        stripped = value.strip()
-        return stripped or None
-
-    @field_validator("task_id")
-    @classmethod
-    def _task_id_non_empty(cls, value: str | None) -> str | None:
         if value is None:
             return None
         stripped = value.strip()
@@ -135,6 +129,7 @@ def _event_to_response(event: TaskEvent) -> dict[str, Any]:
         "source_key": event.source_key,
         "source_offset": event.source_offset,
         "source_internal_session_id": event.source_internal_session_id,
+        "parent_event_id": event.parent_event_id,
         "tags": tags_to_payload(event.tags or []),
         "state": event.state,
         "task_id": event.task_id,
@@ -204,28 +199,30 @@ def create_task_events_router(
             return require_user(request, auth_provider)
         return user_id
 
+    async def _ingress_response(event: TaskEvent) -> dict[str, Any]:
+        response = _event_to_response(event)
+        if event.state == "broadcast":
+            deliveries = await asyncio.to_thread(
+                task_event_store.list_deliveries_for_event, event.id
+            )
+            response["deliveries"] = [
+                {"event_id": delivery.id, "task_id": delivery.task_id}
+                for delivery in deliveries
+            ]
+        return response
+
     @router.post("/task-events")
     async def create_task_event_ingress(
         request: Request,
         body: CreateIngressTaskEventRequest,
     ) -> dict[str, Any]:
-        """Ingest an external task event and run the ingress scorer."""
+        """Ingest an external task event and run the ingress router."""
         user_id = _require_ingress_auth(request)
         if is_session_internal_event(body.event_type):
             raise OmnigentError(
                 "session-internal event types cannot be ingressed",
                 code=ErrorCode.INVALID_INPUT,
             )
-
-        if body.task_id is not None:
-            task = await asyncio.to_thread(task_store.get, body.task_id)
-            if task is None:
-                raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-            if task.state not in _LIVE_TASK_STATES:
-                raise OmnigentError(
-                    "Task is not accepting events",
-                    code=ErrorCode.INVALID_INPUT,
-                )
 
         if body.source is not None and body.source_key is not None:
             existing = await asyncio.to_thread(
@@ -236,7 +233,7 @@ def create_task_events_router(
                 event_type=body.event_type,
             )
             if existing is not None:
-                return _event_to_response(existing)
+                return await _ingress_response(existing)
 
         profile = await _load_broker_profile()
         event_id = uuid.uuid4().hex
@@ -252,7 +249,6 @@ def create_task_events_router(
                 source_key=body.source_key,
                 source_offset=body.source_offset,
                 source_internal_session_id=body.source_internal_session_id,
-                task_id=body.task_id,
                 state="received",
                 tags=tags,
                 owner_user_id=_effective_user_id(user_id),
@@ -272,7 +268,7 @@ def create_task_events_router(
             app_state=request.app.state,
             user_id=user_id,
         )
-        return _event_to_response(distributed)
+        return await _ingress_response(distributed)
 
     @router.get("/task-events")
     async def list_task_events(
