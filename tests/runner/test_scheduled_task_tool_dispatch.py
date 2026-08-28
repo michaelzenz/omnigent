@@ -84,6 +84,7 @@ async def test_create_posts_payload() -> None:
                 "workspace": "/repo",
                 "host_id": "host_1",
                 "base_branch": "main",
+                "catch_up": False,
                 "unexpected": "dropped",
             }
         ),
@@ -98,6 +99,7 @@ async def test_create_posts_payload() -> None:
         "agent_id": "ag_1",
         "workspace": "/repo",
         "host_id": "host_1",
+        "catch_up": False,
     }  # unknown fields filtered out
     assert json.loads(out)["id"] == "t1"
 
@@ -121,6 +123,7 @@ async def test_update_patches_by_id() -> None:
                 "state": "paused",
                 "workspace": "/repo2",
                 "host_id": "fedcba9876543210fedcba9876543210",
+                "catch_up": False,
             }
         ),
         server_client=client,
@@ -131,6 +134,7 @@ async def test_update_patches_by_id() -> None:
         "state": "paused",
         "workspace": "/repo2",
         "host_id": "fedcba9876543210fedcba9876543210",
+        "catch_up": False,
     }
 
 

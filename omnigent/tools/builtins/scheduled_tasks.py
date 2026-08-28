@@ -129,6 +129,14 @@ class SysScheduledTaskCreateTool(Tool):
                                 "is online."
                             ),
                         },
+                        "catch_up": {
+                            "type": "boolean",
+                            "description": (
+                                "Fire once on server restart if a scheduled occurrence "
+                                "was missed (default true). When false, missed runs "
+                                "are silently skipped."
+                            ),
+                        },
                     },
                     "required": ["name", "prompt", "rrule", "agent_id"],
                     "additionalProperties": False,
@@ -228,6 +236,13 @@ class SysScheduledTaskUpdateTool(Tool):
                         "host_id": {
                             "type": "string",
                             "description": "New connected host to run on.",
+                        },
+                        "catch_up": {
+                            "type": "boolean",
+                            "description": (
+                                "Fire once on server restart if a scheduled occurrence "
+                                "was missed. Omit to leave unchanged."
+                            ),
                         },
                         "state": {
                             "type": "string",
