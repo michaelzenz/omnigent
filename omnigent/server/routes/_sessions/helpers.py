@@ -614,8 +614,14 @@ async def _maybe_adopt_session(session_id: str) -> None:
                 status="idle",
             )
             return
-        # No worker — trigger adoption.
-        await notify_new_session(session_id, source="internal")
+        # No worker — trigger adoption. Pass the conversation's host_id so
+        # the owner resolves to the host's user (e.g. "local") instead of
+        # "__anonymous__".
+        await notify_new_session(
+            session_id,
+            source="internal",
+            host_id=conv.host_id,
+        )
     except Exception:
         _logger.warning("session adoption check failed for %s", session_id, exc_info=True)
 
