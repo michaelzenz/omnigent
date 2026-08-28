@@ -158,7 +158,6 @@ import {
   EMPTY_OMNIHARNESS_MODEL_OPTIONS,
   isOnihPiTargetName,
   isOnihTargetName,
-  LEGACY_OMNIHARNESS_TARGET,
   ONIH_OPENAI_AGENTS_TARGET,
   ONIH_PI_TARGET,
   OMNIHARNESS_AGENT_NAME,
@@ -254,7 +253,6 @@ const NEW_SESSION_HIDDEN_AGENTS = new Set([
   "nessie",
   "kimi",
   "kimi-code",
-  LEGACY_OMNIHARNESS_TARGET,
 ]);
 
 // Short picker-row blurbs — the spec descriptions are long paragraphs that

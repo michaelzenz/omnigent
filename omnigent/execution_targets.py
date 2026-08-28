@@ -15,8 +15,6 @@ ONIH_OPENAI_AGENTS_TARGET = "onih-openai-agents"
 ONIH_PI_TARGET = "onih-pi"
 ONIH_TARGET_NAMES = frozenset({ONIH_OPENAI_AGENTS_TARGET, ONIH_PI_TARGET})
 ONIH_DISPLAY_NAME = "Onih"
-LEGACY_OMNIHARNESS_TARGET = "omniharness"
-
 # Settings and telemetry keep their existing namespace. This alias is retained
 # while call sites are migrated away from treating the settings key as a target.
 OMNIHARNESS_AGENT_NAME = ONIH_SETTINGS_KEY
@@ -51,8 +49,7 @@ def conversation_uses_onih(
     return is_onih_agent(agent_store.get(conversation.agent_id))
 
 
-# Compatibility names for internal callers. They intentionally do not recognize
-# the legacy target: the old database row is hidden during the manual rollout.
+# Compatibility names for internal callers.
 def is_omniharness_agent(agent: Agent | None) -> bool:
     return is_onih_agent(agent)
 

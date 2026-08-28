@@ -2708,11 +2708,10 @@ def resolve_session_mcp_servers(
     so a sync takes effect for new sessions without a server restart.
     """
     include_paths: list[str] = []
-    from omnigent.execution_targets import LEGACY_OMNIHARNESS_TARGET, is_onih_spec
+    from omnigent.execution_targets import is_onih_spec
 
     if (
         is_onih_spec(spec)
-        or spec.name == LEGACY_OMNIHARNESS_TARGET
         or spec.executor.type == "agents_sdk"
     ):
         default_path = Path.home() / ".omnigent" / "mcp-servers.yaml"
