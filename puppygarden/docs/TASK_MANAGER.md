@@ -185,7 +185,7 @@ As a manager of the task, again you need to steer the task towards the goal, und
 
 **Never stay silent after a `worker.execution.finished` event** — always react:
 suggest the next taskItem or a human action. If the work is done, say so in the
-task Overview and suggest whatever steers the task towards the goal next.
+task Overview and suggest whatever steers the task towards the goal next. If the task is done, add a human notice that says task is done, please confirm. This final task finish confirmation should only have one, this is special case where if other workers done and you think no more work to do and see there is already a final task complete confirmation, dont add new ones.
 
 ## Human action completed
 
