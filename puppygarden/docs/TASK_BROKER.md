@@ -24,9 +24,9 @@ Use `puppygarden_api` for every endpoint below. See
 ## Triggers
 
 - **Route batch** — events the ingress scorer could not auto-route. One notice per
-  poll holds packed cluster-by-cluster events. Within a batch,
-  `candidate_task_ids` are ranked suggestions by tag similarity search in
-  (active + pending tasks) for the whole batch — only for reference.
+poll holds packed cluster-by-cluster events. Within a batch,
+`candidate_task_ids` are ranked suggestions by tag similarity search in
+(active + pending tasks) for the whole batch — only for reference.
 
 The notice already carries `candidate_task_ids` — ranked suggestions by
 tag similarity against all active/idle/pending tasks. You do not need to
@@ -44,11 +44,11 @@ Each task returns `internal_note` (agent-facing context from prior
 routing), `tags`, and `state`. Read these to decide whether an event is a
 confident match for an existing task or needs a new one.
 
-### 1. Route to an existing task
+### 1. Route to an existing task with a manager
 
 When a candidate task is a confident match for an event, route it there.
 
-**Active task match** → route to that task's manager:
+route to that task's manager, broker do **nothing**, and you can skip all the rest.
 
 ```
 puppygarden_api(
@@ -58,24 +58,26 @@ puppygarden_api(
 )
 ```
 
-**Pending package match** → no manager yet, still broker managed:
+### 2. Route to an existing task without a manager
+
+**Pending package match** → no manager yet, still **broker managed**:
 
 `POST /v1/agent-tasks/<task_id>/reconcile-events` reconciles events onto a
 pending task the broker owns. The `items` array is the broker's full set of
 intended taskItems for this call — each entry is one of:
 
 - **Create** a new taskItem — omit `item_id`. A new item is created from the
-  given `title`/`description`/`instructions`/`internal_note`, linked to the
-  listed `event_ids`.
+given `title`/`description`/`instructions`/`internal_note`, linked to the
+listed `event_ids`.
 - **Update** an existing taskItem — pass its `item_id`. The fields
-  (`title`/`description`/`instructions`/`internal_note`) overwrite the item,
-  and the listed `event_ids` are appended to it. Use this when new evidence
-  refines an item the broker already drafted.
+(`title`/`description`/`instructions`/`internal_note`) overwrite the item,
+and the listed `event_ids` are appended to it. Use this when new evidence
+refines an item the broker already drafted.
 - **Split** an existing taskItem — pass its `item_id` on one entry (to narrow
-  it to the remaining scope) and add further entries without `item_id` for the
-  split-off pieces. Each split-off entry carries its own `event_ids` and
-  fields. This lets the broker decompose an over-broad item into focused ones
-  in a single call.
+it to the remaining scope) and add further entries without `item_id` for the
+split-off pieces. Each split-off entry carries its own `event_ids` and
+fields. This lets the broker decompose an over-broad item into focused ones
+in a single call.
 
 ```
 puppygarden_api(
@@ -98,9 +100,9 @@ puppygarden_api(
 ```
 
 - `task_internal_note` updates the task-level routing context so the broker
-  can judge future events without re-reading sources.
+can judge future events without re-reading sources.
 - Use `description` for the user-facing why; update `internal_note` for routing
-  rationale so broker have context to reconcile events into taskItem.
+rationale so broker have context to reconcile events into taskItem.
 
 The broker may also **resolve** a taskItem when an event indicates it is no
 longer needed (e.g. a monitored PR was merged, making the follow-up item
@@ -108,7 +110,7 @@ moot). Use `POST /v1/task-items/<id>/resolve` with `action: "reject"` to
 cancel it. The broker resolves taskItems only — it does not resolve the task
 itself; that stays with the user/manager.
 
-### 2. Create a new task and reconcile
+### 3. Create a new task and reconcile
 
 When no candidate task is a confident match, create a pending task package
 and reconcile the event into a taskItem:
@@ -134,9 +136,11 @@ puppygarden_api(
 ```
 
 - Creates a **pending** task with `pending` items. Tags are inferred
-  from event tags when omitted.
+from event tags when omitted.
 
-### 3. Classify as FYI
+
+
+### 4. Classify as FYI
 
 When events are not related to any task and not actionable, put them in an
 FYI cluster.
@@ -158,22 +162,29 @@ puppygarden_api(
 ```
 
 - Omit `cluster_id` to create a new card; the response `id` is the cluster id
-  for later extends.
+for later extends.
 - Pass `cluster_id` to attach more events to an open FYI card.
 - Linked events move to `classified_fyi`; user dismisses on the board.
 
+
+
 # Managing the Task
+
 For task that does not have a manager, you will need to manage them, just like a real manager, you will track the current status of the task and taskItem, split/merge taskItems if necessary, resolve the taskItems when you know that it's already done. You just dont assign workers for an item
 
 # Follow up
+
 While most of the cases you can ONLY suggest taskItems, to provide an immersive experience, you are allowed to follow up, for ex:
-* user sent a message, set a timmer runs 2d later, which check if there is reply or reaction, if not create a taskItem saying: `follow up with XXX with message "Gentle bump <message composed based on context>"`
-* user told a worker to set automerge label on the pr, then use poller to monitor the pr status every 2min. In poller script, issue an event for either pr merged or CI failure, this will later be routed to you, so that you can suggest "CI failed, investigate the issue" or "pr merged, verify the code works in staging"
+
+- user sent a message, set a timmer runs 2d later, which check if there is reply or reaction, if not create a taskItem saying: `follow up with XXX with message "Gentle bump <message composed based on context>"`
+- user told a worker to set automerge label on the pr, then use poller to monitor the pr status every 2min. In poller script, issue an event for either pr merged or CI failure, this will later be routed to you, so that you can suggest "CI failed, investigate the issue" or "pr merged, verify the code works in staging"
 
 To reduce token cost, use the special infra below, for EX add the code that directly call the slack mcp to get the new messages.
 
 # Special Infra
-There are two infra in this system that you can use, you dont need to know the details, just generate corresponding instruction
 
-* Poller infra: polls the source(pr, slack reply thread, google doc) with an interval. so that you can generate instructions like "monitor this pr/slack reply thread/google doc" in the taskItem. the manager will take care of it
-* Timer infra: do something at a scheduled time. With this, you can generate instructions like "Check if pr is merged 10min later/Follow up to XXX 1h later/check the status of deployment tomorrow". again, just generate the instructions, manager will handle it.
+There are two infra in this system that you can use
+
+- Poller infra: See `<host.puppygarden.root>/docs/POLL_PLUGINS.md`, you can create arbitrary poller, program it such that when it sees status change, send an event with taskId so that the event will fast route to you. Look at the folder to find out what you can use, if nothing useful, create new one.
+- Timer infra: do something at a scheduled time. With this, you can generate instructions like "Check if pr is merged 10min later/Follow up to XXX 1h later/check the status of deployment tomorrow". again, just generate the instructions, manager will handle it.
+
