@@ -3208,6 +3208,8 @@ class HostProcess:
                 "is_main": e.is_main,
                 "size_bytes": e.size_bytes,
                 "dirty": e.dirty,
+                "managed": e.managed,
+                "reusable": e.reusable,
                 "error": e.error,
             }
             for e in result.entries
