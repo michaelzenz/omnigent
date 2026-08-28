@@ -181,6 +181,110 @@ def _broker_labels_for_profile(profile: TaskRoleProfile) -> dict[str, str]:
     return labels
 
 
+async def _rebind_broker_runner(
+    *,
+    conversation_id: str,
+    conversation_store: ConversationStore,
+    host_store: HostStore,
+    app_state: Any,
+    user_id: str | None,
+) -> str | None:
+    """Re-launch a runner sidecar for an existing broker session.
+
+    After a server restart the runner sidecar is killed (runner_id becomes
+    None). Instead of creating a new conversation, re-bind a runner to the
+    existing one so the broker keeps its history.
+    """
+    import asyncio
+    import secrets
+
+    from omnigent.runner.identity import token_bound_runner_id
+    from omnigent.server.routes._host_launch import resolve_host_launch
+
+    host_registry = getattr(app_state, "host_registry", None)
+    if host_registry is None or host_store is None:
+        return None
+
+    conv = conversation_store.get_conversation(conversation_id)
+    if conv is None or conv.host_id is None:
+        return None
+
+    try:
+        target = await asyncio.to_thread(
+            resolve_host_launch,
+            user_id=user_id,
+            host_id=conv.host_id,
+            session_id=conversation_id,
+            host_store=host_store,
+            host_registry=host_registry,
+            conversation_store=conversation_store,
+            permission_store=None,
+        )
+    except Exception:
+        _logger.warning(
+            "broker rebind: host launch resolve failed for session %s",
+            conversation_id,
+            exc_info=True,
+        )
+        return None
+
+    binding_token = secrets.token_urlsafe(32)
+    runner_id = token_bound_runner_id(binding_token)
+    bound = await asyncio.to_thread(
+        conversation_store.set_runner_id,
+        conversation_id,
+        runner_id,
+    )
+    if not bound:
+        _logger.warning("broker rebind: session %s already has a runner", conversation_id)
+        return conversation_id
+
+    request_id = secrets.token_hex(8)
+    future: asyncio.Future[dict[str, str | None]] = (
+        asyncio.get_running_loop().create_future()
+    )
+    conn = target.conn
+    conn.pending_launches[request_id] = future
+
+    from omnigent.host.frames import HostLaunchRunnerFrame, encode_host_frame
+    from omnigent.server.routes._host_launch import use_server_inference_proxy
+
+    harness = None
+    inference_proxy = False
+    try:
+        inference_proxy = use_server_inference_proxy(conn, harness)
+    except Exception:
+        pass
+    frame = HostLaunchRunnerFrame(
+        request_id=request_id,
+        binding_token=binding_token,
+        workspace=conv.workspace or DEFAULT_TASK_WORKSPACE,
+        session_id=conversation_id,
+        harness=harness,
+        inference_proxy=inference_proxy,
+    )
+    try:
+        host_registry.send_text(conn, encode_host_frame(frame))
+    except Exception:
+        _logger.warning("broker rebind: host frame send failed for session %s", conversation_id, exc_info=True)
+        conn.pending_launches.pop(request_id, None)
+        return None
+
+    try:
+        result = await asyncio.wait_for(future, timeout=30.0)
+    except (asyncio.TimeoutError, Exception):
+        _logger.warning("broker rebind: runner launch timed out for session %s", conversation_id)
+        conn.pending_launches.pop(request_id, None)
+        return None
+
+    if not result.get("runner_id"):
+        _logger.warning("broker rebind: runner launch failed for session %s: %s", conversation_id, result)
+        return None
+
+    _logger.info("broker rebind: runner %s re-attached to session %s", result["runner_id"], conversation_id)
+    return conversation_id
+
+
 async def ensure_broker_session(
     *,
     owner_user_id: str,
@@ -222,6 +326,16 @@ async def ensure_broker_session(
         conv = conversation_store.get_conversation(session.conversation_id)
         if conv is not None and conv.runner_id is not None:
             return session.conversation_id
+        # Conversation exists but runner is gone (e.g. after restart).
+        # Re-bind a runner instead of creating a new session.
+        if conv is not None:
+            return await _rebind_broker_runner(
+                conversation_id=session.conversation_id,
+                conversation_store=conversation_store,
+                host_store=host_store,
+                app_state=app_state,
+                user_id=auth_user_id,
+            )
 
     from omnigent.agent_tasks.bootstrap import build_role_session_request
     from omnigent.server.routes.sessions import _make_internal_request
