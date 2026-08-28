@@ -66,23 +66,14 @@ async def test_warning_round_trips(client: httpx.AsyncClient) -> None:
     assert rows[0]["warning"] == "duplicate plugin name exists in both roots"
 
 
-async def test_kind_filter_excludes_other_kind(client: httpx.AsyncClient) -> None:
+async def test_kind_filter_only_poll(client: httpx.AsyncClient) -> None:
     await client.post(
         "/v1/agent-tasks/script-plugins/health",
         headers={HOST_ID_HEADER: "host-A"},
-        json={
-            "plugins": [
-                {"name": "p1", "kind": "poll", "outcome": "ok"},
-                {"name": "t1", "kind": "timer", "outcome": "scheduled", "fire_at": 9999.0},
-            ]
-        },
+        json={"plugins": [{"name": "p1", "kind": "poll", "outcome": "ok"}]},
     )
     polls = (await client.get("/v1/agent-tasks/script-plugins/health?kind=poll")).json()["plugins"]
-    timers = (await client.get("/v1/agent-tasks/script-plugins/health?kind=timer")).json()[
-        "plugins"
-    ]
     assert {p["name"] for p in polls} == {"p1"}
-    assert {t["name"] for t in timers} == {"t1"}
 
 
 async def test_multiple_hosts_grouped_and_sorted(client: httpx.AsyncClient) -> None:

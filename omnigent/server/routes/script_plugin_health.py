@@ -1,7 +1,7 @@
 """In-memory store + REST routes for host-reported script plugin health.
 
-Hosts POST a snapshot of their poll/timer plugin run outcomes here; the
-glossaries board reads it back. Health is a *current* snapshot keyed by
+Hosts POST a snapshot of their poll plugin run outcomes here; the glossaries
+board reads it back. Health is a *current* snapshot keyed by
 ``(host_id, plugin_name)`` — there is no history. Records expire after
 ``_TTL_S`` (3x the host heartbeat) so a dead host's stale rows vanish on
 their own without a tombstone POST.
@@ -27,7 +27,7 @@ from omnigent.server.routes._host_filesystem import (
 )
 from omnigent.stores.host_store import HostStore
 
-PluginKind = Literal["poll", "timer"]
+PluginKind = Literal["poll"]
 
 # Hosts heartbeat ~every 3 min; drop rows that haven't been refreshed in 3x
 # that, so a crashed host's board entries fade without a tombstone.
@@ -49,8 +49,6 @@ class PluginHealthInput(BaseModel):
     singleton_skipped: bool = False
     warning: str | None = None
     interval_s: float | None = None
-    fire_at: float | None = None
-    fired_at: float | None = None
 
 
 class PluginHealthSnapshot(BaseModel):
@@ -180,8 +178,6 @@ def create_script_plugin_health_router(
                     "singleton_skipped": r.plugin.singleton_skipped,
                     "warning": r.plugin.warning,
                     "interval_s": r.plugin.interval_s,
-                    "fire_at": r.plugin.fire_at,
-                    "fired_at": r.plugin.fired_at,
                     "updated_at": r.updated_at,
                 }
                 for r in rows

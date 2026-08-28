@@ -7,7 +7,7 @@ import { SkillsTab } from "./glossaries/SkillsTab";
 import { MemoryTab } from "./glossaries/MemoryTab";
 import { ToolsTab } from "./glossaries/ToolsTab";
 
-const TAB_IDS = ["roles", "pollers", "timers", "skills", "memory", "tools"] as const;
+const TAB_IDS = ["roles", "pollers", "skills", "memory", "tools"] as const;
 type GlossariesTabId = (typeof TAB_IDS)[number];
 
 function parseTab(raw: string | null): GlossariesTabId {
@@ -40,7 +40,6 @@ export function GlossariesShell() {
           <TabsList>
             <TabsTrigger value="roles">Roles</TabsTrigger>
             <TabsTrigger value="pollers">Pollers</TabsTrigger>
-            <TabsTrigger value="timers">Timers</TabsTrigger>
             <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="memory">Memory</TabsTrigger>
             <TabsTrigger value="tools">Tools</TabsTrigger>
@@ -50,9 +49,6 @@ export function GlossariesShell() {
           </TabsContent>
           <TabsContent value="pollers" className="mt-4">
             <ScriptPluginsBoard kind="poll" testId="glossaries-tab-pollers" />
-          </TabsContent>
-          <TabsContent value="timers" className="mt-4">
-            <ScriptPluginsBoard kind="timer" testId="glossaries-tab-timers" />
           </TabsContent>
           <TabsContent value="skills" className="mt-4">
             <SkillsTab />
