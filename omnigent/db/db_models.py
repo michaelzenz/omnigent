@@ -2205,7 +2205,7 @@ class SqlTaskEvent(OmnigentBase):
     payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     source: Mapped[str | None] = mapped_column(String(256), nullable=True)
     source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
+    source_offset: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_internal_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     parent_event_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

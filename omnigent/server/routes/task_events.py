@@ -61,7 +61,7 @@ class CreateIngressTaskEventRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     source: str | None = None
     source_key: str | None = None
-    source_offset: int = 0
+    source_offset: str = ""
     source_internal_session_id: str | None = None
     tags: list[EventTagInput] = Field(default_factory=list)
 

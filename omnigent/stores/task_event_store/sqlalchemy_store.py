@@ -116,7 +116,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         payload: str | None = None,
         source: str | None = None,
         source_key: str | None = None,
-        source_offset: int | None = None,
+        source_offset: str | None = None,
         source_internal_session_id: str | None = None,
         parent_event_id: str | None = None,
         state: str = "received",
@@ -171,7 +171,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         source: str,
         source_key: str,
-        source_offset: int,
+        source_offset: str,
         event_type: str,
     ) -> TaskEvent | None:
         with self._session() as session:

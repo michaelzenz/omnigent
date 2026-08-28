@@ -46,7 +46,7 @@ X-Omnigent-Host-Id: HOST_ID
   "summary": "repo:databricks-eng/universe pr:2248509 Failed to parse USM generated schema json: Please report this to #usm-help channel and add the label: bypass-usm-ci-checks to bypass the USM CI checks.",
   "source": "github",
   "source_key": "databricks-eng/universe#2248509",
-  "source_offset": 1,
+  "source_offset": "1",
   "tags": [
     {"tag_type": "repo", "tag": "databricks-eng/universe"},
     {"tag_type": "pr", "tag": "2248509"}
@@ -71,7 +71,7 @@ X-Omnigent-Host-Id: HOST_ID
   "summary": "repo:databricks-eng/universe slack:C04LQT17RKM Veeresh says the fix PR is ready and waiting for merge approval",
   "source": "slack",
   "source_key": "slack:C04LQT17RKM:1784710613514779",
-  "source_offset": 2,
+  "source_offset": "2",
   "tags": [
     {"tag_type": "repo", "tag": "databricks-eng/universe"},
     {"tag_type": "slack_channel", "tag": "C04LQT17RKM"}

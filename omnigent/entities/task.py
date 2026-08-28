@@ -77,7 +77,7 @@ class TaskEvent:
     :param source: Event source, e.g. ``"github"`` or ``"ci"``. ``None`` when unset.
     :param source_key: Stable dedupe key within ``source`` (external ingress id or
         adopted session id for secretary/adoption events). ``None`` when unset.
-    :param source_offset: Ingress cursor (e.g. byte offset), or ``None``.
+    :param source_offset: Per-source_key dedup cursor string, or ``None``.
     :param source_internal_session_id: Originating PuppyGarden conversation when
         the event was emitted from an internal session. ``None`` when unset.
     :param parent_event_id: Canonical ingress event this row was fanned out from
@@ -99,7 +99,7 @@ class TaskEvent:
     payload: str | None = None
     source: str | None = None
     source_key: str | None = None
-    source_offset: int | None = None
+    source_offset: str | None = None
     source_internal_session_id: str | None = None
     parent_event_id: str | None = None
     updated_at: int | None = None

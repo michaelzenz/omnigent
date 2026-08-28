@@ -180,7 +180,7 @@ def emit_message(
         summary=f"slack:{kind}:{channel_id} ts:{ts}",
         source=f"poll_plugin:{plugin_name}",
         source_key=f"{channel_id}:{ts}",
-        source_offset=1,
+        source_offset="1",
         payload=payload,
     )
 

@@ -35,7 +35,7 @@ class TaskEventStore(ABC):
         payload: str | None = None,
         source: str | None = None,
         source_key: str | None = None,
-        source_offset: int | None = None,
+        source_offset: str | None = None,
         source_internal_session_id: str | None = None,
         parent_event_id: str | None = None,
         state: str = "received",
@@ -58,7 +58,7 @@ class TaskEventStore(ABC):
         *,
         source: str,
         source_key: str,
-        source_offset: int,
+        source_offset: str,
         event_type: str,
     ) -> TaskEvent | None:
         """Return an ingress-deduped canonical event, if one already exists.

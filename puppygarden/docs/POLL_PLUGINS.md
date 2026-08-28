@@ -175,7 +175,7 @@ Example body:
   "summary": "repo:org/repo pr:456 unblocks:pr:123",
   "source": "poll_plugin:github_pr",
   "source_key": "org/repo#456",
-  "source_offset": 1,
+  "source_offset": "1",
   "tags": [
     {"tag_type": "repo", "tag": "org/repo"},
     {"tag_type": "pr", "tag": "456"}
@@ -204,10 +204,10 @@ Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server 
 `source`. It scopes dedup so the same logical thing (one PR, one Slack
 channel, one DM) is one key. Two different plugins may reuse the same
 key string safely because dedup also includes `source`.
-- `source_offset` — a monotonically increasing per-`source_key` sequence
-number the plugin maintains (typically a counter it persists in its own
-`state.json`). It disambiguates successive state changes of the *same* thing:
-For ex monitor the doc update status, offset can be version number, agent creating the plugin can invent.
+- `source_offset` — a per-`source_key` dedup cursor string the plugin
+  maintains (any opaque string; often a counter it persists in its own
+  `state.json`). It disambiguates successive state changes of the *same* thing:
+  For ex monitor the doc update status, offset can be version number, agent creating the plugin can invent.
 Dedup is `source` + `source_key` + `source_offset` + `event_type`, so
 re-posting the same offset for the same event_type is a no-op (idempotent
 retries), while a new offset for a new event_type lands as a fresh event.

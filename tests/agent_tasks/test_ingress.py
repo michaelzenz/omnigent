@@ -235,7 +235,7 @@ async def test_ingress_fans_out_to_subscribers(db_uri: str, stores: dict) -> Non
         "Blocker PR merged",
         source="poll_plugin:github_pr",
         source_key="org/repo#456",
-        source_offset=1,
+        source_offset="1",
         state="received",
     )
     profile = _role_profile(
@@ -262,7 +262,7 @@ async def test_ingress_fans_out_to_subscribers(db_uri: str, stores: dict) -> Non
     canonical = event_store.get_event_by_source(
         source="poll_plugin:github_pr",
         source_key="org/repo#456",
-        source_offset=1,
+        source_offset="1",
         event_type="github.pr.merged",
     )
     assert canonical is not None
@@ -339,7 +339,7 @@ async def test_ingress_fanout_continues_past_failed_subscriber(db_uri: str, stor
         "PR merged",
         source="poll_plugin:github_pr",
         source_key="org/repo#999",
-        source_offset=1,
+        source_offset="1",
         state="received",
     )
     profile = _role_profile(

@@ -116,7 +116,7 @@ async def test_ingress_broadcasts_to_subscribers(
             "title": "Blocker PR merged",
             "source": "poll_plugin:github_pr",
             "source_key": "org/repo#456",
-            "source_offset": 1,
+            "source_offset": "1",
         },
     )
     assert ingress.status_code == 200, ingress.text
@@ -135,7 +135,7 @@ async def test_ingress_broadcasts_to_subscribers(
             "title": "Blocker PR merged",
             "source": "poll_plugin:github_pr",
             "source_key": "org/repo#456",
-            "source_offset": 1,
+            "source_offset": "1",
         },
     )
     assert replay.status_code == 200, replay.text
@@ -159,7 +159,7 @@ async def test_ingress_ignores_producer_task_id(
             "task_id": "missing-task-id",
             "source": "poll_plugin:github_pr",
             "source_key": "org/repo#789",
-            "source_offset": 1,
+            "source_offset": "1",
         },
     )
     assert ingress.status_code == 200, ingress.text

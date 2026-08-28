@@ -33,9 +33,9 @@ subscribe the task server-side to (`poll_plugin:github_pr`, `<repo>#<pr>`) via
 
 | event_type | source_offset | trigger |
 |---|---|---|
-| `github.pr.merged` | 1 | `mergedAt` newly present |
-| `github.pr.checks_failed` | 2 | checks rollup becomes `FAILURE` |
-| `github.pr.checks_passed` | 3 | checks rollup becomes `SUCCESS` |
+| `github.pr.merged` | `"1"` | `mergedAt` newly present |
+| `github.pr.checks_failed` | `"2"` | checks rollup becomes `FAILURE` |
+| `github.pr.checks_passed` | `"3"` | checks rollup becomes `SUCCESS` |
 
 `source = poll_plugin:github_pr`, `source_key = "<repo>#<pr>"`.
 

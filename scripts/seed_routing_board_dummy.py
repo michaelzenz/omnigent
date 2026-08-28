@@ -100,7 +100,7 @@ def _create_events(
     *,
     repo: str,
     pr: int,
-    offset_base: int,
+    offset_base: str,
 ) -> list[str]:
     specs = [
         {
@@ -117,7 +117,7 @@ def _create_events(
             "title": f"New comment on PR #{pr}",
             "source": "seed:dummy",
             "source_key": f"{repo}#{pr}",
-            "source_offset": offset_base + 1,
+            "source_offset": f"{offset_base}:2",
             "tags": [{"tag_type": "repo", "tag": repo}, {"tag_type": "pr", "tag": str(pr)}],
             "payload": {"repo": repo, "pr_number": pr},
         },
@@ -532,7 +532,7 @@ def _dispatch_item_with(dispatch: dict, item_id: str) -> None:
 
 def main() -> int:
     host_header = {"X-Omnigent-Host-Id": HOST_ID}
-    offset_base = int(time.time()) % 1_000_000
+    offset_base = str(int(time.time()) % 1_000_000)
     worker_role_key, worker2_role_key = _resolve_worker_roles()
     global DISPATCH, DISPATCH_WORKER2
     DISPATCH = {"worker_role_key": worker_role_key, **BOOTSTRAP}
@@ -587,7 +587,7 @@ def main() -> int:
         instructions="Refresh TASK_BROKER.md and API_REFERENCE after routing cards shipped.",
         internal_note="See PR #902 and puppygarden/docs/ for current API shapes.",
         event_ids=_create_events(
-            host_header, repo="omnigent-fork", pr=902, offset_base=offset_base + 10
+            host_header, repo="omnigent-fork", pr=902, offset_base=f"{offset_base}:10"
         ),
         asset_urls=[
             (
@@ -604,7 +604,7 @@ def main() -> int:
         instructions="Investigate intermittent false-positive PR state in poll plugin watcher.",
         internal_note="Repro linked from PR #915 comments; watcher host poll_plugins.",
         event_ids=_create_events(
-            host_header, repo="omnigent-fork", pr=915, offset_base=offset_base + 20
+            host_header, repo="omnigent-fork", pr=915, offset_base=f"{offset_base}:20"
         ),
         asset_urls=[
             ("PR #915", "https://github.com/databricks/omnigent-fork/pull/915"),
@@ -621,7 +621,7 @@ def main() -> int:
         instructions="Triage the alert and decide whether omnigent-fork needs changes.",
         internal_note="other-repo PR #12; no omnigent-fork code touched yet.",
         event_ids=_create_events(
-            host_header, repo="other-repo", pr=12, offset_base=offset_base + 30
+            host_header, repo="other-repo", pr=12, offset_base=f"{offset_base}:30"
         ),
         asset_urls=[
             ("other-repo PR #12", "https://github.com/example/other-repo/pull/12"),
@@ -631,7 +631,7 @@ def main() -> int:
 
     print("Creating FYI clusters…")
     fyi_events = _create_events(
-        host_header, repo="dependabot-fork", pr=44, offset_base=offset_base + 40
+        host_header, repo="dependabot-fork", pr=44, offset_base=f"{offset_base}:40"
     )
     _create_fyi_cluster(
         headline="Dependabot PR checks passed (unrelated repo)",

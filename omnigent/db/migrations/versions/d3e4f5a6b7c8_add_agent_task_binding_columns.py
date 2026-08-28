@@ -32,7 +32,7 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column("manager_agent_id", Uuid16(), nullable=True))
         batch_op.add_column(sa.Column("manager_conversation_id", Uuid16(), nullable=True))
         batch_op.add_column(sa.Column("source_key", sa.String(512), nullable=True))
-        batch_op.add_column(sa.Column("source_offset", sa.BigInteger(), nullable=True))
+        batch_op.add_column(sa.Column("source_offset", sa.String(512), nullable=True))
         batch_op.add_column(sa.Column("source_session_id", Uuid16(), nullable=True))
 
     op.create_index(

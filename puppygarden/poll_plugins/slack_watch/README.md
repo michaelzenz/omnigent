@@ -119,7 +119,7 @@ double-emitted. Watermarks are also advanced past the newest ts.
 - `slack.message.received` — one per new inbound message.
   - `source = poll_plugin:slack_watch`
   - `source_key = "<channel_id>:<ts>"` (dedup key)
-  - `source_offset: 1`
+  - `source_offset: "1"`
   - `payload`: `channel_id`, `channel`, `kind`, `user`, `text`, `ts`, optional
     `thread_ts`, optional `partner`.
 

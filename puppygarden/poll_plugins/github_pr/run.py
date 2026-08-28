@@ -109,7 +109,7 @@ def emit_transition(
     pr_number: int,
     event_type: str,
     title: str,
-    source_offset: int,
+    source_offset: str,
     payload: dict[str, Any],
 ) -> None:
     fields: dict[str, object] = {
@@ -163,7 +163,7 @@ def main() -> int:
                 pr_number=int(pr_number),
                 event_type="github.pr.merged",
                 title=f"PR #{pr_number} merged in {repo}",
-                source_offset=1,
+                source_offset="1",
                 payload={
                     "repo": repo,
                     "pr_number": pr_number,
@@ -178,7 +178,7 @@ def main() -> int:
                 pr_number=int(pr_number),
                 event_type="github.pr.checks_failed",
                 title=f"PR #{pr_number} checks failed in {repo}",
-                source_offset=2,
+                source_offset="2",
                 payload={"repo": repo, "pr_number": pr_number, "context": context},
             )
         elif checks == "SUCCESS" and previous.get("checks") != "SUCCESS":
@@ -188,7 +188,7 @@ def main() -> int:
                 pr_number=int(pr_number),
                 event_type="github.pr.checks_passed",
                 title=f"PR #{pr_number} checks passed in {repo}",
-                source_offset=3,
+                source_offset="3",
                 payload={"repo": repo, "pr_number": pr_number, "context": context},
             )
 

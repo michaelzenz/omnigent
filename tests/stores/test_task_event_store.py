@@ -27,15 +27,15 @@ def test_create_event_and_get_by_source_dedupes(store: SqlAlchemyTaskEventStore)
         title="Build passed",
         source="ci",
         source_key="build-42",
-        source_offset=100,
+        source_offset="100",
         tags=[EventTag(tag_type="domain", tag="ci")],
     )
     assert created.source_key == "build-42"
-    assert created.source_offset == 100
+    assert created.source_offset == "100"
     loaded = store.get_event_by_source(
         source="ci",
         source_key="build-42",
-        source_offset=100,
+        source_offset="100",
         event_type="build.finished",
     )
     assert loaded is not None
@@ -141,7 +141,7 @@ def test_fanout_copies_do_not_dedup_canonical(store: SqlAlchemyTaskEventStore) -
         "PR merged",
         source="poll_plugin:github_pr",
         source_key="org/repo#456",
-        source_offset=1,
+        source_offset="1",
     )
     child = store.create_event(
         _uid("event_child"),
@@ -150,7 +150,7 @@ def test_fanout_copies_do_not_dedup_canonical(store: SqlAlchemyTaskEventStore) -
         task_id=_uid("task_1"),
         source="poll_plugin:github_pr",
         source_key="org/repo#456",
-        source_offset=1,
+        source_offset="1",
         parent_event_id=canonical.id,
         state="routed",
     )
@@ -159,7 +159,7 @@ def test_fanout_copies_do_not_dedup_canonical(store: SqlAlchemyTaskEventStore) -
     deduped = store.get_event_by_source(
         source="poll_plugin:github_pr",
         source_key="org/repo#456",
-        source_offset=1,
+        source_offset="1",
         event_type="github.pr.merged",
     )
     assert deduped is not None
