@@ -852,6 +852,10 @@ class SshHostInstallationManager:
                 if not changed:
                     raise _ReconciliationSuperseded
                 return
+            # Heartbeat: host is already ready and online — just renew the
+            # lease. retry_now (user clicks refresh) flips phase to "queued"
+            # and bumps generation, so it bypasses this short-circuit and
+            # goes through the full kill-restart flow.
             if row.phase == "ready" and await asyncio.to_thread(
                 self.host_store.is_online,
                 row.host_id,

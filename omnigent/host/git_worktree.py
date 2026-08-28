@@ -133,6 +133,8 @@ def _run_git(
             check=False,
         )
     except FileNotFoundError as exc:
+        if not Path(cwd).is_dir():
+            raise WorktreeError(f"worktree directory does not exist: {cwd}") from exc
         raise WorktreeError("git is not installed on the host") from exc
     except subprocess.TimeoutExpired as exc:
         raise WorktreeError("git command timed out") from exc
@@ -384,16 +386,20 @@ def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
 
 
 def _worktree_is_clean(path: str) -> bool:
-    result = _run_git(
-        [
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-            "--ignored=matching",
-            "--ignore-submodules=none",
-        ],
-        cwd=path,
-    )
+    try:
+        result = _run_git(
+            [
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored=matching",
+                "--ignore-submodules=none",
+            ],
+            cwd=path,
+        )
+    except WorktreeError:
+        # cwd doesn't exist (prunable worktree) — not clean
+        return False
     if result.returncode != 0:
         return False
     return result.stdout.strip() == ""
@@ -746,6 +752,8 @@ def _run_git_streaming(
                 _emit(line.rstrip("\r\n"))
             proc.wait(timeout=_GIT_TIMEOUT_S)
     except FileNotFoundError as exc:
+        if not Path(cwd).is_dir():
+            raise WorktreeError(f"worktree directory does not exist: {cwd}") from exc
         raise WorktreeError("git is not installed on the host") from exc
 
     output = "".join(stdout_parts)
