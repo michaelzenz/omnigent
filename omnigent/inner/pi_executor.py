@@ -119,6 +119,7 @@ def _is_transient_error(message: str) -> bool:
     """
     return bool(_TRANSIENT_STATUS_RE.search(message))
 
+
 # Each line of Pi's JSONL output; the event schema is owned by the Pi CLI
 # not us, and varies across subcommands (response ack, message_update,
 # tool_execution_start/end, agent_end, message_end, etc.).
@@ -146,7 +147,10 @@ def _fetch_shell_command_token(command: str) -> str | None:
 
 
 # Tool-server callback provided by ``Session._wire_sdk_executor``. Invoked
-# with a tool name and argument dict; may return the result dict directly
+# with a tool name, argument dict, and optional ``tool_call_id`` (Pi's
+# ``toolCallId`` from the tool-execution event, threaded through the TCP tool
+# server so the adapter can correlate the dispatch with the observed event
+# without relying on a racy FIFO queue); may return the result dict directly
 # or a coroutine/future yielding one.
 ToolExecutor: TypeAlias = Callable[  # type: ignore[explicit-any]
     [str, dict[str, Any]],
@@ -313,11 +317,17 @@ class _ToolServer:
                     break
                 raw_req_id = request.get("id")
                 raw_tool_name = request.get("tool")
+                raw_tool_call_id = request.get("toolCallId")
                 # The Pi extension always supplies ``id`` and ``tool``
                 # on a tool request. Drop malformed frames rather than
                 # executing under an empty-string tool name.
                 if not isinstance(raw_req_id, str) or not isinstance(raw_tool_name, str):
                     continue
+                tool_call_id = (
+                    raw_tool_call_id
+                    if isinstance(raw_tool_call_id, str) and raw_tool_call_id
+                    else None
+                )
                 tool_args = request.get("args", {})
                 if request.get("kind") == "policy_eval":
                     # The ``tool_call`` extension hook asks for a TOOL_CALL
@@ -326,7 +336,9 @@ class _ToolServer:
                     verdict = await self._evaluate_policy(raw_tool_name, tool_args)
                     response = {"id": raw_req_id, "verdict": verdict}
                 else:
-                    response = await self._execute(raw_tool_name, tool_args)
+                    response = await self._execute(
+                        raw_tool_name, tool_args, tool_call_id=tool_call_id
+                    )
                     response["id"] = raw_req_id
                 # Serialize defensively: a tool result may carry a value
                 # ``json.dumps`` can't encode (e.g. ``datetime``/``set``).
@@ -359,11 +371,13 @@ class _ToolServer:
         self,
         name: str,
         args: dict[str, Any],
+        *,
+        tool_call_id: str | None = None,
     ) -> dict[str, Any]:
         if self._tool_executor is None:
             return {"error": f"No tool executor for '{name}'"}
         try:
-            raw = self._tool_executor(name, args)
+            raw = self._tool_executor(name, args, tool_call_id=tool_call_id)
             resolved = await raw if asyncio.iscoroutine(raw) or asyncio.isfuture(raw) else raw
             if not isinstance(resolved, dict):
                 resolved = {"result": resolved}
@@ -500,7 +514,7 @@ const TOKEN = {token_json};
 const CONTEXT_FILE = {context_file_json};
 
 /** Send a tool call request over TCP and return the result. */
-function callTool(toolName, args) {{
+function callTool(toolName, args, toolCallId) {{
   return new Promise((resolve) => {{
     // Idempotent settle: a tool call must resolve exactly once. Route every
     // resolve through finish() so a late "close" after a real "data" response
@@ -514,7 +528,8 @@ function callTool(toolName, args) {{
     }});
     const client = net.createConnection({{ port: PORT, host: "127.0.0.1" }}, () => {{
       const id = Math.random().toString(36).slice(2);
-      const req = JSON.stringify({{ id, token: TOKEN, tool: toolName, args }}) + "\\n";
+      const body = {{ id, token: TOKEN, tool: toolName, args, toolCallId: toolCallId || "" }};
+      const req = JSON.stringify(body) + "\\n";
       let buf = "";
       client.on("data", (chunk) => {{
         buf += chunk.toString();
@@ -644,8 +659,8 @@ module.exports = function(pi) {{
       description: tool.description,
       promptSnippet: tool.promptSnippet || tool.description,
       parameters: tool.parameters || {{ type: "object", properties: {{}} }},
-      async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {{
-        return callTool(tool.name, _params);
+      async execute(toolCallId, params, _signal, _onUpdate, _ctx) {{
+        return callTool(tool.name, params, toolCallId);
       }},
     }});
   }}

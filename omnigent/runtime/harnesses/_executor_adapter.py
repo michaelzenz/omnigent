@@ -143,6 +143,12 @@ class ExecutorAdapter(HarnessApp):
         # dispatch_tool emits the function_call_output, so ToolCallComplete for these ids
         # must be suppressed in _translate_event to avoid duplicates.
         self._dispatched_call_ids: set[str] = set()
+        # Observed tool calls from ToolCallRequest events this turn, keyed by call_id.
+        # Stores name + serialized args so _translate_event can emit a durable
+        # function_call(completed) for non-dispatched ToolCallComplete events (native
+        # Pi tools whose function_call was emitted as in_progress — not persisted —
+        # leaving their function_call_output unpaired).
+        self._observed_tool_calls: dict[str, dict[str, Any]] = {}
 
     async def _handle_compact_event(self) -> Response:
         if self._active_turn_ctx is not None:
@@ -221,6 +227,7 @@ class ExecutorAdapter(HarnessApp):
         # bounded interrupt only on abnormal exits (CancelledError, ExecutorError, etc.).
         clean_exit = False
         self._dispatched_call_ids.clear()
+        self._observed_tool_calls.clear()
 
         tracing = is_tracing_enabled()
         if tracing and self._tracing_ctx is None:
@@ -519,10 +526,17 @@ class ExecutorAdapter(HarnessApp):
         self,
         tool_name: str,
         args: dict[str, Any],
+        *,
+        tool_call_id: str | None = None,
     ) -> dict[str, Any]:
         """Bridge installed once on the executor; dispatches tool calls into the current turn ctx.
 
         Reads ``_current_ctx`` at call time. Returns a structured error for orphaned callbacks.
+        When ``tool_call_id`` is provided (Pi threads Pi's ``toolCallId`` through
+        the TCP tool server), it is used directly as the dispatch ``call_id`` —
+        bypassing the racy ``_pending_mcp_call_ids`` FIFO queue so the dispatch
+        always pairs with the observed ``ToolCallRequest`` event regardless of
+        the relative ordering of the RPC stream and the HTTP tool callback.
         """
         ctx = self._current_ctx
         agent = self._current_agent
@@ -545,11 +559,15 @@ class ExecutorAdapter(HarnessApp):
                 "error": "no active turn context for tool dispatch",
                 "code": "runner_turn_context_desync",
             }
-        # Pop the queued tool_use_id so the dispatch reuses the observed event's call_id.
-        # The callback receives bare names (MCP wrapper strips the prefix), so we pop
-        # unconditionally — non-MCP paths don't populate the queue.
+        # When the inner executor threads a tool_call_id (Pi), use it directly
+        # so the dispatch call_id matches the observed ToolCallRequest's call_id.
+        # This eliminates the FIFO-queue race where the HTTP callback fires before
+        # the RPC ToolCallRequest is processed, leaving the queue empty and
+        # producing an unpaired function_call_output.
         correlated_call_id: str | None = None
-        if self._pending_mcp_call_ids:
+        if tool_call_id:
+            correlated_call_id = tool_call_id
+        elif self._pending_mcp_call_ids:
             correlated_call_id = self._pending_mcp_call_ids.popleft()
         # Allocate id here to record in _dispatched_call_ids; matching ToolCallComplete
         # is suppressed in _translate_event (dispatch_tool already emits its output).
@@ -749,6 +767,14 @@ class ExecutorAdapter(HarnessApp):
                 self._pending_mcp_call_ids.append(tool_use_id)
             call_id = tool_use_id or f"call_{uuid.uuid4().hex[:12]}"
             bare_name = _strip_mcp_tool_prefix(event.name)
+            # Track the observed call so ToolCallComplete can emit a durable
+            # function_call(completed) for non-dispatched tools (native Pi tools
+            # whose in_progress function_call isn't persisted, leaving the
+            # function_call_output unpaired).
+            self._observed_tool_calls[call_id] = {
+                "name": bare_name,
+                "arguments": _serialize_args(event.args),
+            }
             ctx.emit(
                 OutputItemDoneEvent(
                     type="response.output_item.done",
@@ -770,6 +796,27 @@ class ExecutorAdapter(HarnessApp):
             call_id = _call_id_from_metadata(getattr(event, "metadata", None)) or ""
             if not call_id or call_id in self._dispatched_call_ids:
                 return
+            # Non-dispatched call (native Pi tool, or an internal tool whose
+            # ToolCallRequest emitted only an in_progress function_call — not
+            # persisted by the relay). Emit a durable function_call(completed)
+            # so the function_call_output below has a persisted pair and the
+            # session reconstruction doesn't see an unpaired tool result.
+            observed = self._observed_tool_calls.get(call_id)
+            if observed is not None:
+                ctx.emit(
+                    OutputItemDoneEvent(
+                        type="response.output_item.done",
+                        item={
+                            "id": f"fc_{uuid.uuid4().hex[:12]}",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": observed.get("name", event.name),
+                            "arguments": observed.get("arguments", ""),
+                            "call_id": call_id,
+                            "agent": ctx.response_id,
+                        },
+                    )
+                )
             item: dict[str, Any] = {
                 "id": f"fco_{uuid.uuid4().hex[:12]}",
                 "type": "function_call_output",

@@ -2028,6 +2028,141 @@ def test_idless_tool_complete_is_suppressed() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_stable_tool_executor_uses_tool_call_id_directly() -> None:
+    """When ``tool_call_id`` is provided, it is used as the dispatch call_id directly.
+
+    Pi threads ``toolCallId`` through the TCP tool server so the dispatch can
+    correlate with the observed ``ToolCallRequest`` without relying on the
+    racy ``_pending_mcp_call_ids`` FIFO queue. This test verifies the
+    ``tool_call_id`` kwarg takes precedence over the queue: even when the
+    queue is empty (the race condition), the dispatch uses the threaded id.
+    """
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _StubExecutor())
+    # Queue is EMPTY — simulates the race where the HTTP callback fires
+    # before the RPC ToolCallRequest is processed.
+    assert list(adapter._pending_mcp_call_ids) == []
+
+    captured_call_ids: list[str] = []
+
+    class _CapturingCtx:
+        def __init__(self) -> None:
+            self.response_id = "resp_tool"
+
+        async def dispatch_tool(
+            self, *, call_id: str, name: str, arguments: str, agent: str
+        ) -> str:
+            del name, arguments, agent
+            captured_call_ids.append(call_id)
+            return "{}"
+
+    adapter._current_ctx = _CapturingCtx()  # type: ignore[assignment]
+    adapter._current_agent = "test_agent"
+
+    pi_tool_call_id = "call_pi_threaded_abc123"
+    await adapter._stable_tool_executor("bash", {"command": "ls"}, tool_call_id=pi_tool_call_id)
+
+    assert captured_call_ids == [pi_tool_call_id], (
+        f"tool_call_id must be used directly as dispatch_call_id even when the "
+        f"queue is empty. Got {captured_call_ids!r}."
+    )
+    assert pi_tool_call_id in adapter._dispatched_call_ids
+
+
+@pytest.mark.asyncio
+async def test_stable_tool_executor_falls_back_to_queue_without_tool_call_id() -> None:
+    """Without ``tool_call_id``, the FIFO queue is still used (Claude SDK path).
+
+    Ensures backward compatibility: executors that don't thread ``tool_call_id``
+    (Claude SDK, openai-agents) still pop from the queue as before.
+    """
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _StubExecutor())
+    queued_id = "toolu_queue_xyz"
+    adapter._pending_mcp_call_ids.append(queued_id)
+
+    captured_call_ids: list[str] = []
+
+    class _CapturingCtx:
+        def __init__(self) -> None:
+            self.response_id = "resp_fallback"
+
+        async def dispatch_tool(
+            self, *, call_id: str, name: str, arguments: str, agent: str
+        ) -> str:
+            del name, arguments, agent
+            captured_call_ids.append(call_id)
+            return "{}"
+
+    adapter._current_ctx = _CapturingCtx()  # type: ignore[assignment]
+    adapter._current_agent = "test_agent"
+
+    # No tool_call_id kwarg — falls back to the queue.
+    await adapter._stable_tool_executor("sys_terminal_launch", {"x": 1})
+
+    assert captured_call_ids == [queued_id]
+    assert list(adapter._pending_mcp_call_ids) == []
+
+
+def test_tool_complete_emits_completed_function_call_for_observed_call() -> None:
+    """A non-dispatched ToolCallComplete for an observed call emits a completed function_call.
+
+    Native Pi tools (e.g. ``read``) run in-process: ``ToolCallRequest`` emits
+    a ``function_call`` with ``status: "in_progress"`` (not persisted by the
+    relay — only ``completed`` is durable), and ``ToolCallComplete`` emits
+    the ``function_call_output``. Without a matching ``function_call(completed)``,
+    the output is unpaired and session reconstruction fails. This test verifies
+    the adapter emits a ``function_call(completed)`` before the output when the
+    call_id was observed via ``ToolCallRequest``.
+    """
+    from omnigent.inner.executor import ToolCallComplete, ToolCallRequest, ToolCallStatus
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _StubExecutor())
+    ctx = _RecordingTurnContext()
+    call_id = "call_native_pi_read"
+
+    # Step 1: ToolCallRequest — observed but NOT dispatched (native tool).
+    adapter._translate_event(
+        ToolCallRequest(
+            name="read",
+            args={"path": "/etc/hosts"},
+            metadata={"call_id": call_id},
+        ),
+        ctx,  # type: ignore[arg-type]
+    )
+    # The observed function_call is in_progress (not persisted by relay).
+    fc_events = [e for e in ctx.emitted if e.item.get("type") == "function_call"]
+    assert len(fc_events) == 1
+    assert fc_events[0].item.get("status") == "in_progress"
+
+    # Step 2: ToolCallComplete — not in _dispatched_call_ids (no dispatch round-trip).
+    adapter._translate_event(
+        ToolCallComplete(
+            name="read",
+            status=ToolCallStatus.SUCCESS,
+            result="file contents",
+            metadata={"call_id": call_id},
+        ),
+        ctx,  # type: ignore[arg-type]
+    )
+
+    # Must emit a function_call(completed) AND a function_call_output, in that order.
+    fc_after = [e for e in ctx.emitted if e.item.get("type") == "function_call"]
+    fco_items = [e for e in ctx.emitted if e.item.get("type") == "function_call_output"]
+    assert len(fc_after) == 2, f"expected 2 function_call events; got {len(fc_after)}"
+    assert fc_after[1].item.get("status") == "completed", (
+        f"the second function_call must be completed (durable); got "
+        f"{fc_after[1].item.get('status')!r}"
+    )
+    assert fc_after[1].item.get("call_id") == call_id
+    assert len(fco_items) == 1
+    assert fco_items[0].item.get("call_id") == call_id
+
+
 async def test_policy_evaluator_no_active_turn_context_is_phase_aware() -> None:
     """With no active turn context (turn-context desync) the policy
     evaluator must not blanket-ALLOW. PHASE_TOOL_CALL fails closed (this adapter
