@@ -178,7 +178,7 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
                 Cancel
               </Button>
               <Button
-n                variant="outline"
+                variant="outline"
                 size="sm"
                 className="border-red-300 text-red-600 hover:bg-red-50"
                 disabled={untrack.isPending}
