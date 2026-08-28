@@ -2204,6 +2204,7 @@ class SqlTaskEvent(OmnigentBase):
     source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_offset: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)
     source_internal_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    parent_event_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tags: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
@@ -2214,7 +2215,7 @@ class SqlTaskEvent(OmnigentBase):
 
     __table_args__ = (
         CheckConstraint(
-            "state IN (1, 4, 6, 7, 8, 9, 12)",
+            "state IN (1, 4, 6, 7, 8, 9, 12, 13)",
             name="ck_task_events_state",
         ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
@@ -2226,6 +2227,42 @@ class SqlTaskEvent(OmnigentBase):
             "state",
             "updated_at",
             "id",
+        ),
+    )
+
+
+class SqlTaskEventSubscription(OmnigentBase):
+    """SQLAlchemy model for the ``task_event_subscriptions`` table."""
+
+    __tablename__ = "task_event_subscriptions"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    source: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "task_id",
+            "source",
+            "source_key",
+            name="uq_task_event_subscriptions_task_source",
+        ),
+        Index(
+            "ix_task_event_subscriptions_source",
+            "workspace_id",
+            "source",
+            "source_key",
         ),
     )
 

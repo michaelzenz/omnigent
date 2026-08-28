@@ -145,6 +145,8 @@ TASK_EVENT_STATE: dict[str, int] = {
     "failed": 9,
     # Classified as informational by the secretary; shown in the FYI bucket.
     "classified_fyi": 12,
+    # Canonical ingress event fanned out to subscription deliveries.
+    "broadcast": 13,
 }
 
 FYI_CLUSTER_STATE: dict[str, int] = {

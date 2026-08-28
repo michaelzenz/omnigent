@@ -180,13 +180,15 @@ Example body:
     "repo": "org/repo",
     "pr_number": 456,
     "blocked_pr": 123
-  },
-  "task_id": "<managed-task-id>"
+  }
 }
 ```
 
-When a watch is tied to a specific managed task, include `task_id` on the
-ingress body. The ingress scorer routes directly to that task and skips scoring.
+Plugins never name a task. To route a watch's events to a specific managed
+task, create a server-side subscription for the task on the watch's
+`source` + `source_key` (`POST /v1/agent-tasks/{id}/event-subscriptions`);
+matching events are then fanned out to every subscriber. Without a
+subscription, events fall through to tag-overlap scoring and broker triage.
 
 Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server returns existing event.
 
@@ -215,8 +217,6 @@ Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server 
   flat and JSON-serializable. The server stores it verbatim and surfaces it to
   the task dashboard, so include the fields your consumer reads (e.g.
   `repo`, `pr_number`, `blocked_pr`) but avoid giant blobs — link out instead.
-- **`task_id`** *(optional)* — when a watch is bound to a specific managed task,
-  set this to route straight to that task and skip the ingress scorer.
 
 ### `event_type` prefixes
 
@@ -240,8 +240,10 @@ See `puppygarden/poll_plugins/github_pr/run.py` in the repository.
 ## Example: blocked PR scenario
 
 1. `github_pr` plugin auto-discovers your open PR #123.
-2. CI fails → `run.py` posts `github.pr.checks_failed` with `task_id`
-3. Ingress fast-paths to that task → manager suggest "investigate the CI failure" as taskItem.
+2. A task subscribed to (`poll_plugin:github_pr`, `org/repo#123`) exists; CI
+   fails → `run.py` posts `github.pr.checks_failed`.
+3. Ingress fans out a routed copy to each subscriber task → its manager
+   suggests "investigate the CI failure" as a task item.
 
 ## Do not
 

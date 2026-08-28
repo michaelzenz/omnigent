@@ -44,6 +44,11 @@ Each task returns `internal_note` (agent-facing context from prior
 routing), `tags`, and `state`. Read these to decide whether an event is a
 confident match for an existing task or needs a new one.
 
+Tip: if the same `(source, source_key)` keeps landing in your inbox for the
+same task, that task should subscribe instead — `POST
+/v1/agent-tasks/<task_id>/event-subscriptions` with `{"source", "source_key"}`
+makes future matching events fan out directly to the task and skip triage.
+
 ### 1. Route to an existing task
 
 When a candidate task is a confident match for an event, route it there.

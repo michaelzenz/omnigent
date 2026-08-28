@@ -102,14 +102,6 @@ def discover_auto_watches(auto_discover: list[str]) -> list[dict[str, Any]]:
     return watches
 
 
-def bound_task_id(context: dict[str, Any]) -> str | None:
-    raw = context.get("task_id")
-    if raw is None:
-        return None
-    task_id = str(raw).strip()
-    return task_id or None
-
-
 def emit_transition(
     *,
     plugin_name: str,
@@ -119,7 +111,6 @@ def emit_transition(
     title: str,
     source_offset: int,
     payload: dict[str, Any],
-    task_id: str | None = None,
 ) -> None:
     fields: dict[str, object] = {
         "event_type": event_type,
@@ -133,8 +124,6 @@ def emit_transition(
         ],
         "payload": payload,
     }
-    if task_id is not None:
-        fields["task_id"] = task_id
     post_task_event(**fields)
 
 
@@ -166,7 +155,6 @@ def main() -> int:
         merged_at = snapshot.get("mergedAt")
         checks = checks_conclusion(snapshot)
         context = target.get("context") if isinstance(target.get("context"), dict) else {}
-        task_id = bound_task_id(context)
 
         if merged_at and not previous.get("mergedAt"):
             emit_transition(
@@ -182,7 +170,6 @@ def main() -> int:
                     "merged_at": merged_at,
                     "context": context,
                 },
-                task_id=task_id,
             )
         elif checks == "FAILURE" and previous.get("checks") != "FAILURE":
             emit_transition(
@@ -193,7 +180,6 @@ def main() -> int:
                 title=f"PR #{pr_number} checks failed in {repo}",
                 source_offset=2,
                 payload={"repo": repo, "pr_number": pr_number, "context": context},
-                task_id=task_id,
             )
         elif checks == "SUCCESS" and previous.get("checks") != "SUCCESS":
             emit_transition(
@@ -204,7 +190,6 @@ def main() -> int:
                 title=f"PR #{pr_number} checks passed in {repo}",
                 source_offset=3,
                 payload={"repo": repo, "pr_number": pr_number, "context": context},
-                task_id=task_id,
             )
 
         state[key] = {

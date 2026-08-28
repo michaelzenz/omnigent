@@ -8,15 +8,16 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import (
-    TASK_BROKER_ROLE,
-    TASK_MANAGER_AGENT_NAME,
-    resolve_task_agent_id,
-)
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
+from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.host_store import HostStore
 from tests.server.routes.agent_task_api import patch_host_session_launch, put_agent_role_profile
+
+# The roles redesign removed the shared constant/resolver; the manager agent
+# name is only a lookup key for the fixture's self-registered agent.
+_MANAGER_AGENT_NAME = "task-manager"
 
 
 def _uid(seed: str) -> str:
@@ -36,7 +37,13 @@ async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
         "host_ingress",
         RESERVED_USER_LOCAL,
     )
-    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    existing = agent_store.get_by_name(_MANAGER_AGENT_NAME)
+    if existing is not None:
+        return existing.id
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name=_MANAGER_AGENT_NAME, bundle_location="test:///bundle")
+    return agent_id
 
 
 async def _broker_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
@@ -83,29 +90,30 @@ async def test_ingress_auto_routes_matching_task(
     assert body["task_id"] == task_id
 
 
-async def test_ingress_fast_paths_explicit_task_id(
+async def test_ingress_broadcasts_to_subscribers(
     client: httpx.AsyncClient,
     manager_agent_id: str,
 ) -> None:
     await _broker_profile(client, manager_agent_id)
-    created = await client.post(
-        "/v1/agent-tasks",
-        json={
-            "title": "Land PR #123",
-            "goal": "PR #123 lands on main",
-            "state": "active",
-            "internal_note": "land pr 123 after blocker merges",
-        },
-    )
-    task_id = created.json()["id"]
+    task_ids: list[str] = []
+    for title in ("Land PR #123", "Follow-up work"):
+        created = await client.post(
+            "/v1/agent-tasks",
+            json={"title": title, "goal": f"{title} goal", "state": "active"},
+        )
+        task_ids.append(created.json()["id"])
+    for task_id in task_ids:
+        subscribed = await client.post(
+            f"/v1/agent-tasks/{task_id}/event-subscriptions",
+            json={"source": "poll_plugin:github_pr", "source_key": "org/repo#456"},
+        )
+        assert subscribed.status_code == 201, subscribed.text
 
     ingress = await client.post(
         "/v1/task-events",
         json={
             "event_type": "github.pr.merged",
             "title": "Blocker PR merged",
-            "summary": "repo:org/repo pr:456 merged unblocks:pr:123",
-            "task_id": task_id,
             "source": "poll_plugin:github_pr",
             "source_key": "org/repo#456",
             "source_offset": 1,
@@ -113,23 +121,51 @@ async def test_ingress_fast_paths_explicit_task_id(
     )
     assert ingress.status_code == 200, ingress.text
     body = ingress.json()
-    assert body["state"] == "routed"
-    assert body["task_id"] == task_id
+    assert body["state"] == "broadcast"
+    assert body["task_id"] is None
+    deliveries = body["deliveries"]
+    assert {delivery["task_id"] for delivery in deliveries} == set(task_ids)
+
+    # Dedup: re-posting the same source tuple returns the canonical event with
+    # its recorded deliveries instead of fanning out again.
+    replay = await client.post(
+        "/v1/task-events",
+        json={
+            "event_type": "github.pr.merged",
+            "title": "Blocker PR merged",
+            "source": "poll_plugin:github_pr",
+            "source_key": "org/repo#456",
+            "source_offset": 1,
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    replay_body = replay.json()
+    assert replay_body["id"] == body["id"]
+    assert {delivery["event_id"] for delivery in replay_body["deliveries"]} == {
+        delivery["event_id"] for delivery in deliveries
+    }
 
 
-async def test_ingress_rejects_unknown_task_id(client: httpx.AsyncClient) -> None:
-    resp = await client.post(
+async def test_ingress_ignores_producer_task_id(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+) -> None:
+    await _broker_profile(client, manager_agent_id)
+    ingress = await client.post(
         "/v1/task-events",
         json={
             "event_type": "github.pr.merged",
             "title": "Blocker PR merged",
             "task_id": "missing-task-id",
             "source": "poll_plugin:github_pr",
-            "source_key": "org/repo#456",
+            "source_key": "org/repo#789",
             "source_offset": 1,
         },
     )
-    assert resp.status_code == 404
+    assert ingress.status_code == 200, ingress.text
+    body = ingress.json()
+    assert body["task_id"] is None
+    assert body["state"] == "awaiting_grouping"
 
 
 async def test_ingress_dedupes_by_source(

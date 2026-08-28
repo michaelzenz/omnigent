@@ -7,7 +7,17 @@ All paths are under `/v1`. Auth: logged-in user unless noted.
 `POST /v1/task-events` — ingest an external event. Auth: logged-in user or host
 poller (`X-Omnigent-Host-Id`).
 
-Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
+Producers describe the event only (`source`, `source_key`, `event_type`, `tags`,
+`payload`); they never name a task. The server routes it: task event
+subscriptions are matched on `source` + `source_key` first, then session
+bindings, then tag-overlap scoring, then the broker.
+
+Dedup key: `source` + `source_key` + `source_offset` + `event_type` (applies to
+the canonical event; subscription fan-out copies do not re-dedup).
+
+When one or more subscriptions match, the canonical event settles in the
+`broadcast` state and each subscriber task gets its own routed copy; the
+response then carries `deliveries: [{event_id, task_id}]`.
 
 ## Task events
 
@@ -39,6 +49,9 @@ Dedup key: `source` + `source_key` + `source_offset` + `event_type`.
 | DELETE | `/v1/agent-tasks/{id}` |
 | PUT | `/v1/agent-tasks/{id}/tags` |
 | GET | `/v1/agent-tasks/{id}/executions` |
+| POST | `/v1/agent-tasks/{id}/event-subscriptions` |
+| GET | `/v1/agent-tasks/{id}/event-subscriptions` |
+| DELETE | `/v1/agent-tasks/{id}/event-subscriptions/{subscription_id}` |
 | POST | `/v1/agent-tasks/{id}/bootstrap` |
 | GET | `/v1/agent-tasks/{id}/dashboard` |
 | GET | `/v1/agent-tasks/{id}/items` |
@@ -73,6 +86,26 @@ both hold types while the relevant control remains open.
 Task assets retain their format `kind` and add a grouping `category`: `code`,
 `tests`, `documents`, `logs`, or `other` (the default). Asset create and all
 asset/dashboard responses round-trip both fields.
+
+## Event subscriptions
+
+A task's subscription to an event `(source, source_key)` pair. When an ingress
+event matches, the server fans out a routed copy to every subscriber task and
+the canonical event settles in the `broadcast` state with `deliveries` in the
+ingress response. Matching is exact; subscriptions only affect events ingested
+after they exist (no replay).
+
+```
+POST   /v1/agent-tasks/{id}/event-subscriptions
+       body: {"source": "poll_plugin:github_pr", "source_key": "org/repo#456"}
+       → 201 {"id", "object": "agent.task.event_subscription", "task_id",
+               "source", "source_key", "owner_user_id", "created_at"}
+       (idempotent: re-posting the same pair returns the existing row)
+GET    /v1/agent-tasks/{id}/event-subscriptions
+       → {"object": "list", "data": [<subscription>, ...]}
+DELETE /v1/agent-tasks/{id}/event-subscriptions/{subscription_id}
+       → {"id", "object": "agent.task.event_subscription", "deleted": true}
+```
 
 ## Task items
 

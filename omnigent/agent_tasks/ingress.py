@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from omnigent.agent_tasks.bootstrap import BootstrapParams, resolve_bootstrap_params
@@ -19,6 +20,7 @@ from omnigent.agent_tasks.scoring import (
 )
 from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.task_match import _LIVE_TASK_STATES, live_tasks
+from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -94,11 +96,13 @@ async def ingress_event(
 
     Idempotent when the event is already routed or awaiting manager triage.
     """
-    if not is_ingress_candidate(event_type=event.event_type, task_id=event.task_id):
+    if not is_ingress_candidate(event.event_type):
         return event
-    if event.state in {ROUTED_EVENT_STATE, "reconciled"}:
+    if event.state in {ROUTED_EVENT_STATE, "reconciled", "broadcast"}:
         return event
 
+    # Pre-bound events: only internal lanes (e.g. the session watcher) create
+    # events with task_id set; the public ingress API cannot.
     if event.task_id is not None:
         bound_task = task_store.get(event.task_id)
         if bound_task is not None and bound_task.state in _LIVE_TASK_STATES:
@@ -176,6 +180,25 @@ async def ingress_event(
                 user_id=user_id,
             )
 
+    subscription_deliveries = await _fan_out_subscriptions(
+        event=event,
+        task_store=task_store,
+        task_event_store=task_event_store,
+        conversation_store=conversation_store,
+        task_role_profile_store=task_role_profile_store,
+        role_profile=role_profile,
+        session_creator=session_creator,
+        app_state=app_state,
+        user_id=user_id,
+    )
+    if subscription_deliveries:
+        updated = task_event_store.update_event(
+            event.id,
+            state="broadcast",
+            processed_at=now_epoch(),
+        )
+        return updated if updated is not None else event
+
     active_tasks = live_tasks(task_store)
     if not active_tasks:
         return await _stall(
@@ -238,6 +261,84 @@ async def ingress_event(
         task_event_store=task_event_store,
         owner_user_id=owner_user_id,
     )
+
+
+async def _fan_out_subscriptions(
+    *,
+    event: TaskEvent,
+    task_store: TaskStore,
+    task_event_store: TaskEventStore,
+    conversation_store: ConversationStore,
+    task_role_profile_store: TaskRoleProfileStore | None,
+    role_profile: TaskRoleProfile | None,
+    session_creator: Any | None,
+    app_state: Any | None,
+    user_id: str | None,
+) -> list[TaskEvent]:
+    """Route per-task copies of ``event`` to every live matching subscriber."""
+    if event.source is None or event.source_key is None:
+        return []
+    subscriptions = task_event_store.list_subscriptions(
+        source=event.source,
+        source_key=event.source_key,
+    )
+    deliveries: list[TaskEvent] = []
+    for subscription in subscriptions:
+        task = task_store.get(subscription.task_id)
+        if task is None or task.state not in _LIVE_TASK_STATES:
+            continue
+        child = task_event_store.create_event(
+            uuid.uuid4().hex,
+            event.event_type,
+            event.title,
+            # Born bound to the subscriber task so a routing failure still
+            # leaves the copy attributable to it.
+            task_id=task.id,
+            payload=event.payload,
+            source=event.source,
+            source_key=event.source_key,
+            source_offset=event.source_offset,
+            source_internal_session_id=event.source_internal_session_id,
+            parent_event_id=event.id,
+            state="received",
+            tags=list(event.tags or []),
+            # The copy belongs to the subscriber task's lane: prefer the task's
+            # owner so the manager queue groups it with the task's other events.
+            owner_user_id=task.owner_user_id or subscription.owner_user_id or event.owner_user_id,
+        )
+        try:
+            params = _bootstrap_params(
+                task,
+                task_role_profile_store=task_role_profile_store,
+                role_profile=role_profile,
+            )
+            delivered = await route_event_to_task(
+                event=child,
+                task=task,
+                task_store=task_store,
+                task_event_store=task_event_store,
+                conversation_store=conversation_store,
+                params=params,
+                routing_reason="subscription",
+                session_creator=session_creator,
+                app_state=app_state,
+                user_id=user_id,
+            )
+        except OmnigentError as exc:
+            # A subscriber that fails to route must not block the rest of the
+            # fan-out; its copy settles failed and the canonical can still
+            # broadcast on the remaining deliveries.
+            _logger.warning(
+                "subscription fan-out failed for event %s task %s (code %s): %s",
+                event.id,
+                task.id,
+                exc.code,
+                exc,
+            )
+            task_event_store.update_event(child.id, state="failed")
+            continue
+        deliveries.append(delivered)
+    return deliveries
 
 
 async def _finish_route(

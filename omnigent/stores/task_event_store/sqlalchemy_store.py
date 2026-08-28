@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import asc, desc, select
+from sqlalchemy.exc import IntegrityError
 
 from omnigent.db.db_models import (
     SqlTaskEvent,
     SqlTaskEventExecution,
     SqlTaskEventRoutingAttempt,
+    SqlTaskEventSubscription,
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import (
@@ -24,6 +26,7 @@ from omnigent.entities import (
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
+    TaskEventSubscription,
 )
 from omnigent.stores.agent_task.tags import decode_event_tags, encode_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
@@ -45,10 +48,22 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         source_key=row.source_key,
         source_offset=row.source_offset,
         source_internal_session_id=row.source_internal_session_id,
+        parent_event_id=row.parent_event_id,
         owner_user_id=row.owner_user_id,
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
+    )
+
+
+def _subscription_to_entity(row: SqlTaskEventSubscription) -> TaskEventSubscription:
+    return TaskEventSubscription(
+        id=row.id,
+        task_id=row.task_id,
+        source=row.source,
+        source_key=row.source_key,
+        created_at=row.created_at,
+        owner_user_id=row.owner_user_id,
     )
 
 
@@ -103,6 +118,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         source_key: str | None = None,
         source_offset: int | None = None,
         source_internal_session_id: str | None = None,
+        parent_event_id: str | None = None,
         state: str = "received",
         tags: list[EventTag] | None = None,
         owner_user_id: str | None = None,
@@ -117,6 +133,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             source_key=source_key,
             source_offset=source_offset,
             source_internal_session_id=source_internal_session_id,
+            parent_event_id=parent_event_id,
             owner_user_id=owner_user_id,
             tags=encode_event_tags(tags or []),
             state=encode_task_event_state(state),
@@ -165,6 +182,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 .where(SqlTaskEvent.source_key == source_key)
                 .where(SqlTaskEvent.source_offset == source_offset)
                 .where(SqlTaskEvent.event_type == event_type)
+                .where(SqlTaskEvent.parent_event_id.is_(None))
                 .order_by(desc(SqlTaskEvent.created_at), desc(SqlTaskEvent.id))
                 .limit(1)
             )
@@ -234,6 +252,109 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         if event is None:
             return []
         return list(event.tags or [])
+
+    def create_subscription(
+        self,
+        subscription_id: str,
+        task_id: str,
+        *,
+        source: str,
+        source_key: str,
+        owner_user_id: str | None = None,
+    ) -> TaskEventSubscription:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEventSubscription)
+                .where(SqlTaskEventSubscription.workspace_id == current_workspace_id())
+                .where(SqlTaskEventSubscription.task_id == task_id)
+                .where(SqlTaskEventSubscription.source == source)
+                .where(SqlTaskEventSubscription.source_key == source_key)
+                .limit(1)
+            )
+            existing = session.execute(stmt).scalars().first()
+            if existing is not None:
+                return _subscription_to_entity(existing)
+            row = SqlTaskEventSubscription(
+                id=subscription_id,
+                task_id=task_id,
+                source=source,
+                source_key=source_key,
+                owner_user_id=owner_user_id,
+                created_at=now_epoch(),
+            )
+            session.add(row)
+            try:
+                session.flush()
+            except IntegrityError:
+                # Lost a concurrent subscribe race for the same unique tuple;
+                # return the winner to keep subscribe idempotent.
+                session.rollback()
+                existing = session.execute(stmt).scalars().first()
+                if existing is None:
+                    raise
+                return _subscription_to_entity(existing)
+            return _subscription_to_entity(row)
+
+    def get_subscription(self, subscription_id: str) -> TaskEventSubscription | None:
+        with self._session() as session:
+            row = session.get(SqlTaskEventSubscription, (current_workspace_id(), subscription_id))
+            if row is None:
+                return None
+            return _subscription_to_entity(row)
+
+    def list_subscriptions(
+        self,
+        *,
+        source: str,
+        source_key: str,
+    ) -> list[TaskEventSubscription]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEventSubscription)
+                .where(SqlTaskEventSubscription.workspace_id == current_workspace_id())
+                .where(SqlTaskEventSubscription.source == source)
+                .where(SqlTaskEventSubscription.source_key == source_key)
+                .order_by(
+                    asc(SqlTaskEventSubscription.created_at),
+                    asc(SqlTaskEventSubscription.id),
+                )
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_subscription_to_entity(row) for row in rows]
+
+    def list_subscriptions_for_task(self, task_id: str) -> list[TaskEventSubscription]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEventSubscription)
+                .where(SqlTaskEventSubscription.workspace_id == current_workspace_id())
+                .where(SqlTaskEventSubscription.task_id == task_id)
+                .order_by(
+                    asc(SqlTaskEventSubscription.created_at),
+                    asc(SqlTaskEventSubscription.id),
+                )
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_subscription_to_entity(row) for row in rows]
+
+    def delete_subscription(self, subscription_id: str) -> bool:
+        with self._session() as session:
+            row = session.get(SqlTaskEventSubscription, (current_workspace_id(), subscription_id))
+            if row is None:
+                return False
+            session.delete(row)
+            session.flush()
+            return True
+
+    def list_deliveries_for_event(self, parent_event_id: str) -> list[TaskEvent]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEvent)
+                .where(SqlTaskEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskEvent.parent_event_id == parent_event_id)
+                .order_by(asc(SqlTaskEvent.created_at), asc(SqlTaskEvent.id))
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_event_to_entity(row) for row in rows]
 
     def create_routing_attempt(
         self,

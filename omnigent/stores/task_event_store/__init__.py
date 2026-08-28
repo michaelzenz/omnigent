@@ -10,6 +10,7 @@ from omnigent.entities import (
     TaskEvent,
     TaskEventExecution,
     TaskEventRoutingAttempt,
+    TaskEventSubscription,
 )
 
 _UNSET: Any = object()
@@ -36,6 +37,7 @@ class TaskEventStore(ABC):
         source_key: str | None = None,
         source_offset: int | None = None,
         source_internal_session_id: str | None = None,
+        parent_event_id: str | None = None,
         state: str = "received",
         tags: list[EventTag] | None = None,
         owner_user_id: str | None = None,
@@ -59,7 +61,11 @@ class TaskEventStore(ABC):
         source_offset: int,
         event_type: str,
     ) -> TaskEvent | None:
-        """Return an ingress-deduped event, if one already exists."""
+        """Return an ingress-deduped canonical event, if one already exists.
+
+        Only canonical rows (``parent_event_id`` NULL) participate in dedup;
+        subscription fan-out copies share the source tuple but are ignored.
+        """
 
     @abstractmethod
     def list_events(
@@ -87,6 +93,48 @@ class TaskEventStore(ABC):
     @abstractmethod
     def get_event_tags(self, event_id: str) -> list[EventTag]:
         """Return immutable ingress tags for an event."""
+
+    # ── Subscriptions ────────────────────────────────────────────
+
+    @abstractmethod
+    def create_subscription(
+        self,
+        subscription_id: str,
+        task_id: str,
+        *,
+        source: str,
+        source_key: str,
+        owner_user_id: str | None = None,
+    ) -> TaskEventSubscription:
+        """Subscribe a task to an event ``(source, source_key)`` pair.
+
+        Idempotent: an existing subscription for the same tuple is returned.
+        """
+
+    @abstractmethod
+    def get_subscription(self, subscription_id: str) -> TaskEventSubscription | None:
+        """Return a subscription by id, or ``None`` if not found."""
+
+    @abstractmethod
+    def list_subscriptions(
+        self,
+        *,
+        source: str,
+        source_key: str,
+    ) -> list[TaskEventSubscription]:
+        """List subscriptions matching an event ``(source, source_key)`` pair."""
+
+    @abstractmethod
+    def list_subscriptions_for_task(self, task_id: str) -> list[TaskEventSubscription]:
+        """List a task's subscriptions ordered by ``created_at ASC, id ASC``."""
+
+    @abstractmethod
+    def delete_subscription(self, subscription_id: str) -> bool:
+        """Delete a subscription. Returns whether a row was removed."""
+
+    @abstractmethod
+    def list_deliveries_for_event(self, parent_event_id: str) -> list[TaskEvent]:
+        """List subscription fan-out copies of a canonical event, ``created_at ASC``."""
 
     # ── Routing ──────────────────────────────────────────────────
 

@@ -120,7 +120,15 @@ async def run_event_gc(
             now = _now()
             n_reconciled = task_event_store.purge_old_events(
                 before_ts=now - int(config.reconciled_retention_s),
-                states=["reconciled", "dismissed"],
+                states=["reconciled", "dismissed", "failed"],
+            )
+            # A broadcast canonical must outlive its fan-out copies; purging it
+            # earlier would let a replay dedup-miss and re-deliver. Use the
+            # longest window any child can live under.
+            n_broadcast = task_event_store.purge_old_events(
+                before_ts=now
+                - int(max(config.reconciled_retention_s, config.stale_routed_retention_s)),
+                states=["broadcast"],
             )
             n_stale = task_event_store.purge_old_events(
                 before_ts=now - int(config.stale_routed_retention_s),
@@ -135,11 +143,12 @@ async def run_event_gc(
                 before_ts=now - int(config.queue_retention_s),
                 states=["done", "cancelled"],
             )
-            if n_reconciled or n_stale or n_proposals or n_items:
+            if n_reconciled or n_broadcast or n_stale or n_proposals or n_items:
                 _logger.info(
-                    "event GC: purged %d reconciled/dismissed events, "
+                    "event GC: purged %d reconciled/dismissed events, %d broadcast events, "
                     "%d stale routed events, %d adoption proposals, %d queue items",
                     n_reconciled,
+                    n_broadcast,
                     n_stale,
                     n_proposals,
                     n_items,

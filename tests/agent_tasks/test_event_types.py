@@ -9,10 +9,9 @@ from omnigent.agent_tasks.event_types import (
 
 
 def test_ingress_candidate_filter() -> None:
-    assert is_ingress_candidate(event_type="build.finished", task_id=None) is True
-    assert is_ingress_candidate(event_type="build.finished", task_id="abc") is True
-    assert is_ingress_candidate(event_type="session.adoption", task_id=None) is False
-    assert is_ingress_candidate(event_type="session.adopted", task_id="abc") is False
+    assert is_ingress_candidate("build.finished") is True
+    assert is_ingress_candidate("session.adoption") is False
+    assert is_ingress_candidate("session.adopted") is False
 
 
 def test_session_internal_event_detection() -> None:
