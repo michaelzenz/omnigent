@@ -20,7 +20,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -415,6 +415,19 @@ def acquire_auto_worktree_streaming(
     validate_branch_name(branch_name)
     repo_root = _main_work_tree(repo_path)
     if base_branch is not None and auto_fetch_base:
+        # Always sync from remote so reused cached worktrees start from the
+        # latest state of the base branch, not a stale local ref.  A fetch
+        # failure (offline) is tolerated — _ensure_base_resolvable_streaming
+        # still verifies the ref resolves and raises a proper error if not.
+        if on_log is not None:
+            on_log("Syncing from remote…")
+        with suppress(WorktreeError):
+            _run_git_streaming(
+                ["fetch"],
+                cwd=repo_root,
+                on_log=on_log,
+                label="git fetch failed",
+            )
         _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
     base_ref = branch_name if reuse_existing_branch else (base_branch or "HEAD")
     # Follow the selected linked worktree's HEAD rather than the main work

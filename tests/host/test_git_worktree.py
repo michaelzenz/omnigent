@@ -215,6 +215,76 @@ def test_auto_worktree_quarantines_expired_dirty_entry(git_repo: Path) -> None:
     )
 
 
+def test_auto_worktree_syncs_from_remote_before_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reusing a cached worktree with ``auto_fetch_base`` fetches first.
+
+    A repo with a bare remote is created, a managed worktree is cached,
+    then a new commit is pushed to the remote.  The next acquire must
+    fetch before resolving the base so the reused worktree starts from
+    the latest remote commit, not the stale local ``origin/main``.
+    """
+    import os
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # Bare remote + clone so ``origin/main`` is a remote-tracking ref.
+    remote = (tmp_path / "remote.git").resolve()
+    remote.mkdir()
+    _git(remote, "init", "-q", "--bare", "-b", "main")
+    local = (tmp_path / "myrepo").resolve()
+    subprocess.run(
+        ["git", "clone", "-q", str(remote), str(local)],
+        env={**os.environ, **_GIT_ENV},
+        check=True,
+    )
+    (local / "README.md").write_text("v1")
+    _git(local, "add", ".")
+    _git(local, "commit", "-q", "-m", "v1")
+    _git(local, "push", "-q", "origin", "main")
+    v1_commit = _rev_parse(local, "origin/main")
+
+    logs: list[str] = []
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(local),
+        branch_name="agent/first-aaaaaa",
+        lease_owner="session-1",
+        base_branch="origin/main",
+        auto_fetch_base=True,
+        on_log=logs.append,
+    )
+
+    # Expire the lease so the worktree becomes a reuse candidate.
+    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
+    entries = json.loads(registry.read_text())
+    entries[first.worktree_path]["lease_expires_at"] = 0
+    registry.write_text(json.dumps(entries))
+
+    # Push a new commit to the remote.
+    (local / "README.md").write_text("v2")
+    _git(local, "add", ".")
+    _git(local, "commit", "-q", "-m", "v2")
+    _git(local, "push", "-q", "origin", "main")
+    v2_commit = _rev_parse(local, "origin/main")
+    assert v1_commit != v2_commit, "remote should have moved"
+
+    logs.clear()
+    reused = acquire_auto_worktree_streaming(
+        repo_path=str(local),
+        branch_name="agent/second-bbbbbb",
+        lease_owner="session-2",
+        base_branch="origin/main",
+        auto_fetch_base=True,
+        on_log=logs.append,
+    )
+    assert reused.worktree_path == first.worktree_path
+    # The reused worktree must be based on the fetched v2 commit.
+    assert _rev_parse(Path(reused.worktree_path)) == v2_commit
+    assert any("Syncing from remote" in line for line in logs)
+
+
 def test_auto_worktree_without_base_uses_linked_worktree_head(git_repo: Path) -> None:
     """A fork from a linked worktree follows that worktree's commit."""
     source = create_worktree(repo_path=str(git_repo), branch_name="feature/source")
