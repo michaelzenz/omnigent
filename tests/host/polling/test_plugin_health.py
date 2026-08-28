@@ -76,15 +76,6 @@ def test_set_warnings_applies_to_existing_records() -> None:
     assert t.snapshot()[0].warning == "duplicate plugin name"
 
 
-def test_timer_state_records_scheduled_then_fired() -> None:
-    t = PluginHealthTracker(kind="timer")
-    t.record_timer_state("r", fire_at=100.0, fired_at=None, scheduled=True)
-    assert t.snapshot()[0].outcome == "scheduled"
-    t.record_timer_state("r", fire_at=100.0, fired_at=100.0, scheduled=False)
-    assert t.snapshot()[0].outcome == "already_fired"
-    assert t.snapshot()[0].fired_at == 100.0
-
-
 def test_error_truncated() -> None:
     t = PluginHealthTracker(kind="poll")
     t.record_run("p", outcome="exit_nonzero", error="x" * 1000)

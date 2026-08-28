@@ -3256,7 +3256,6 @@ class HostProcess:
             from omnigent.host.polling import (
                 PollScheduler,
                 ScriptPollPluginsPoller,
-                ScriptTimerPluginsPoller,
             )
 
             self._poll_scheduler = PollScheduler(
@@ -3264,7 +3263,6 @@ class HostProcess:
                 host_id=self._identity.host_id,
             )
             self._poll_scheduler.register(ScriptPollPluginsPoller())
-            self._poll_scheduler.register(ScriptTimerPluginsPoller())
             await self._poll_scheduler.start()
             backoff = _RECONNECT_BASE_S
             while True:
