@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE
+from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE, SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
@@ -18,10 +18,12 @@ from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.task_match import live_tasks
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent
+from omnigent.entities import Task, TaskEvent, Worker
 from omnigent.entities.conversation import Conversation
+from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
+from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
@@ -62,6 +64,7 @@ class SessionAdoptionContext:
     task_role_profile_store: TaskRoleProfileStore | None = None
     host_store: HostStore | None = None
     runner_router: RunnerRouter | None = None
+    agent_queue_store: AgentQueueStore | None = None
 
 
 _context: SessionAdoptionContext | None = None
@@ -410,3 +413,91 @@ def reject_external_session_adoption(
     if proposal_event is None:
         return None
     return task_event_store.update_event(proposal_event.id, state="dismissed")
+
+
+# ── Turn-finish event for adopted internal sessions ────────────────
+
+
+def emit_turn_finished_event(
+    *,
+    session_id: str,
+    worker: Worker,
+    status: str = "idle",
+) -> None:
+    """Emit a ``session.turn.finished`` event and directly enqueue a
+    standalone manager notice.
+
+    Bypasses packager batching — each turn is its own notice so the manager
+    handles them independently. The event is born ``routed``, immediately
+    enqueued onto the manager queue, then marked ``reconciled`` so the
+    packager never picks it up.
+    """
+    if _context is None:
+        return
+    task = _context.task_store.get(worker.task_id)
+    if task is None:
+        return
+    conv = _context.conversation_store.get_conversation(session_id)
+    session_title = conv.title if conv is not None else session_id
+    owner = task.owner_user_id or "__anonymous__"
+    payload = json.dumps({
+        "session_id": session_id,
+        "session_title": session_title,
+        "worker_id": worker.id,
+        "status": status,
+    })
+    title = f"Session turn finished: {session_title}"
+    try:
+        event = _context.task_event_store.create_event(
+            uuid.uuid4().hex,
+            SESSION_TURN_FINISHED_EVENT_TYPE,
+            title,
+            task_id=task.id,
+            source="adoption",
+            source_key=session_id,
+            state="routed",
+            payload=payload,
+            owner_user_id=owner,
+        )
+        _context.task_event_store.update_event(event.id, routed_at=now_epoch())
+    except Exception:
+        _logger.exception(
+            "failed to emit %s event for session %s on task %s",
+            SESSION_TURN_FINISHED_EVENT_TYPE,
+            session_id,
+            task.id,
+        )
+        return
+
+    if _context.agent_queue_store is not None:
+        notice = (
+            f"[System: Adopted session turn finished]\n"
+            f"Session: {session_title}\n"
+            f"Session ID: {session_id}\n"
+            f"Read the session transcript to see what was done. "
+            f"Reconcile into task items if relevant."
+        )
+        try:
+            _context.agent_queue_store.enqueue(
+                uuid.uuid4().hex,
+                AgentQueueKey(
+                    role="manager",
+                    owner_user_id=owner,
+                    scope_id=task.id,
+                ),
+                "notice",
+                source_ids=[event.id],
+                payload=notice,
+            )
+            _context.task_event_store.update_event(
+                event.id,
+                state="reconciled",
+                processed_at=now_epoch(),
+            )
+        except Exception:  # noqa: BLE001
+            _logger.warning(
+                "failed to enqueue manager notice for turn-finish event %s; "
+                "packager will pick it up on next poll",
+                event.id,
+                exc_info=True,
+            )

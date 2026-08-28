@@ -35,6 +35,11 @@ EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE = "external.session.discovered"
 # the session (via ``target_id`` on the Worker row).
 EXTERNAL_SESSION_UPDATED_EVENT_TYPE = "external.session.updated"
 
+# An adopted internal session finished a turn. Bypasses packager batching —
+# enqueued directly as a standalone manager notice so each turn is handled
+# independently, never clustered with other events.
+SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
+
 
 def is_session_internal_event(event_type: str) -> bool:
     """Return whether an event belongs to the session adoption lane."""

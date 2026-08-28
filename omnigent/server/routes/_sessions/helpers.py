@@ -572,13 +572,15 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
 
 
 async def _maybe_adopt_session(session_id: str) -> None:
-    """Check if a finished-turn session needs PuppyGarden adoption.
+    """Check if a finished-turn session needs adoption or turn-finish routing.
 
-    Skips sessions that already have a worker binding or are sub-agents.
-    The actual adoption logic lives in ``adoption.notify_new_session``.
+    If the session has no worker binding, trigger adoption.
+    If the session already has a worker binding, emit a turn-finished event
+    directly to the task's manager queue (bypasses packager batching).
     """
     try:
         from omnigent.agent_tasks.adoption import (
+            emit_turn_finished_event,
             get_session_adoption_context,
             notify_new_session,
         )
@@ -586,13 +588,19 @@ async def _maybe_adopt_session(session_id: str) -> None:
         ctx = get_session_adoption_context()
         if ctx is None:
             return
-        # Skip if already has a worker — session is already adopted.
-        worker = ctx.worker_store.get_by_target_id(session_id)
-        if worker is not None:
-            return
         conv = ctx.conversation_store.get_conversation(session_id)
         if conv is None or conv.kind == "sub_agent":
             return
+        worker = ctx.worker_store.get_by_target_id(session_id)
+        if worker is not None:
+            # Already adopted — emit a turn-finished event to the manager.
+            emit_turn_finished_event(
+                session_id=session_id,
+                worker=worker,
+                status="idle",
+            )
+            return
+        # No worker — trigger adoption.
         await notify_new_session(session_id, source="internal")
     except Exception:
         _logger.warning("session adoption check failed for %s", session_id, exc_info=True)

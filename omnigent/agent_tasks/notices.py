@@ -14,6 +14,7 @@ import logging
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+    SESSION_TURN_FINISHED_EVENT_TYPE,
     WORKER_EXECUTION_FINISHED_EVENT_TYPE,
 )
 
@@ -38,6 +39,8 @@ def _format_manager_notice(events: list) -> str:
             lines.append(f"- {event.event_type}: {detail}")
         elif event.event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
             lines.append(_format_external_update_notice(event))
+        elif event.event_type == SESSION_TURN_FINISHED_EVENT_TYPE:
+            lines.append(_format_turn_finished_notice(event))
         else:
             lines.append(f"- {event.event_type}: {event.title!r} (routed)")
     return "\n".join(lines)
@@ -71,6 +74,24 @@ def _format_external_update_notice(event) -> str:
         "If follow-up is needed, suggest a new taskItem (Copy button)."
     )
     return "\n".join(parts)
+
+
+def _format_turn_finished_notice(event) -> str:
+    """Render a session.turn.finished event as a manager prompt."""
+    payload: dict = {}
+    if event.payload:
+        try:
+            payload = json.loads(event.payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    session_title = payload.get("session_title", "?")
+    session_id = payload.get("session_id", "?")
+    return (
+        f"- {event.event_type}: Session '{session_title}' finished a turn\n"
+        f"  Session ID: {session_id}\n"
+        f"  Read the session transcript to see what was done. "
+        f"Reconcile into task items if relevant."
+    )
 
 
 def _format_execution_detail(event) -> str:

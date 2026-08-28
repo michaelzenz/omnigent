@@ -2959,6 +2959,7 @@ def create_app(
                 task_role_profile_store=task_role_profile_store,
                 host_store=host_store,
                 runner_router=runner_router,
+                agent_queue_store=agent_queue_store,
             )
         )
     if policy_store is not None:
