@@ -37,7 +37,8 @@ class LoadSkillTool(Tool):
 
     Looks up the skill from bundled skills (in the agent spec)
     and host-scope skills (``.claude/skills/``, ``.agents/skills/``,
-    ``~/.claude/skills/``, ``~/.agents/skills/``). Returns the
+    ``.codex/skills/``, ``~/.claude/skills/``, ``~/.agents/skills/``,
+    ``~/.codex/skills/``). Returns the
     skill content with an optional resource file listing appended.
 
     :param skills: The agent's bundled skill list.
