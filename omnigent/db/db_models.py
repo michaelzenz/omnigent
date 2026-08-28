@@ -2006,7 +2006,9 @@ class SqlScheduledTask(OmnigentBase):
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     # When True (default), boot-time catch-up fires once if a missed
     # occurrence exists. When False, missed occurrences are skipped on boot.
-    catch_up: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1", default=True)
+    catch_up: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="1", default=True
+    )
     last_run_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Relates to conversations.id. No DB foreign key (Rule R032); the
     # application nulls this out when the referenced conversation is deleted.
@@ -2291,6 +2293,7 @@ class SqlTaskItem(OmnigentBase):
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     worker_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     created_by: Mapped[str] = mapped_column(String(32), nullable=False, server_default="manager")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, server_default="work")
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

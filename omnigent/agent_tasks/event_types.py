@@ -23,6 +23,10 @@ SESSION_ADOPTED = "session.adopted"
 # of being woken directly.
 WORKER_EXECUTION_FINISHED_EVENT_TYPE = "worker.execution.finished"
 
+# A human action item was marked done by the user. Born ``routed`` to the task so
+# the manager packager polls it like any other routed event.
+HUMAN_ACTION_DONE_EVENT_TYPE = "item.human_action.done"
+
 # An external session was discovered by a host-side watcher poll plugin.
 # Born ``awaiting_grouping`` so the broker triages it (adopt or FYI).
 EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE = "external.session.discovered"

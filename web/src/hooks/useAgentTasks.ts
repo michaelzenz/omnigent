@@ -180,8 +180,8 @@ export function useResolveTaskItem(taskId: string) {
       edited_payload?: DispatchPayload & { description?: string };
     }) => {
       if (fixtureEnabled) {
-        if (resolution === "reject_item") {
-          fixtureResolveInboxItem(taskId, taskItemId, "reject_item");
+        if (resolution === "reject_item" || resolution === "mark_done") {
+          fixtureResolveInboxItem(taskId, taskItemId, resolution);
           return;
         }
         if (edited_payload) {

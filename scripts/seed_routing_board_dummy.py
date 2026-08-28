@@ -209,6 +209,21 @@ def _create_unassigned_inbox_item(task_id: str, title: str, instructions: str) -
     return item["id"]
 
 
+def _create_human_action_item(task_id: str, title: str, description: str) -> str:
+    item = _request(
+        "POST",
+        f"/v1/agent-tasks/{task_id}/items",
+        body={
+            "title": title,
+            "description": description,
+            "kind": "human_action",
+            "submit_for_user_ack": True,
+        },
+    )
+    print(f"  human action {title!r} → {item['id'][:8]}…")
+    return item["id"]
+
+
 def _create_assigned_inbox_item(
     task_id: str,
     title: str,
@@ -256,6 +271,12 @@ def _seed_rich_ci_task(ci_task: str, *, worker_role_key: str, worker2_role_key: 
         ci_task,
         "Review dependabot bump",
         "Decide whether to route to CI or docs after scanning the diff.",
+    )
+    _create_human_action_item(
+        ci_task,
+        "Rotate the CI deploy token",
+        "Only you have console access. Create a new deploy token in the CI settings "
+        "page, update the repo secret, then mark this done.",
     )
 
     _create_assigned_inbox_item(

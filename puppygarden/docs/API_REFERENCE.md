@@ -119,6 +119,18 @@ DELETE /v1/agent-tasks/{id}/event-subscriptions/{subscription_id}
 | POST | `/v1/task-items/{id}/edit-lease` |
 | DELETE | `/v1/task-items/{id}/edit-lease/{token}` |
 
+Task items carry a `kind`: `work` (default) dispatches to a worker lane;
+`human_action` is completed by the user by hand. Human action items carry only
+`title` + `description` (what/why/how) — `worker_id` and `instructions` are
+rejected at creation, and worker assignment is refused. The user settles one
+from the task card: `POST /v1/task-items/{id}/resolve` with
+`{"resolution": "mark_done"}` moves it to `done` and emits an
+`item.human_action.done` event born `routed` to the task (payload:
+`{"item_id", "item_title", "kind"}`), so the manager packager wakes the
+manager; `reject_item` cancels it without an event. Create one via
+`POST /v1/agent-tasks/{id}/items` with `kind: "human_action"`, no `worker_id`,
+and `submit_for_user_ack: true`.
+
 ## Agent queues
 
 | Method | Path |

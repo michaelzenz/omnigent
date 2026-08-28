@@ -48,6 +48,7 @@ from omnigent.agent_tasks.fyi_clusters import (
 )
 from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import (
+    complete_human_action,
     create_task_item,
     item_dispatch_payload,
     patch_task_item,
@@ -302,6 +303,7 @@ class CreateTaskItemRequest(BaseModel):
     internal_note: str | None = None
     worker_id: str | None = None
     state: str = "draft"
+    kind: Literal["work", "human_action"] = "work"
     event_ids: list[str] = Field(default_factory=list)
     submit_for_user_ack: bool = False
 
@@ -358,7 +360,7 @@ class DispatchTaskItemRequest(BaseModel):
 class ResolveTaskItemRequest(BaseModel):
     """Request body for ``POST /v1/task-items/{item_id}/resolve``."""
 
-    resolution: Literal["accept_item", "edit_and_dispatch", "reject_item"]
+    resolution: Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
     edited_payload: dict[str, Any] | None = None
 
 
@@ -879,6 +881,7 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
         "internal_note": item.internal_note,
         "worker_id": item.worker_id,
         "created_by": item.created_by,
+        "kind": item.kind,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -1643,9 +1646,7 @@ def create_agent_tasks_router(
         """Remove one of a task's event subscriptions."""
         user_id = require_user(request, auth_provider)
         await _get_task_or_404(task_id, user_id)
-        subscription = await asyncio.to_thread(
-            task_event_store.get_subscription, subscription_id
-        )
+        subscription = await asyncio.to_thread(task_event_store.get_subscription, subscription_id)
         if subscription is None or subscription.task_id != task_id:
             raise OmnigentError("Event subscription not found", code=ErrorCode.NOT_FOUND)
         await asyncio.to_thread(task_event_store.delete_subscription, subscription_id)
@@ -1788,6 +1789,11 @@ def create_agent_tasks_router(
                     item = task_item_store.get_item(assignment.item_id)
                     if item is None or item.task_id != task_id:
                         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+                    if item.kind == "human_action":
+                        raise OmnigentError(
+                            "Human action items are completed by the user, not a worker",
+                            code=ErrorCode.CONFLICT,
+                        )
                     worker = (
                         worker_store.get_worker(assignment.worker_id)
                         if assignment.worker_id
@@ -2047,6 +2053,7 @@ def create_agent_tasks_router(
                     instructions=body.instructions,
                     internal_note=body.internal_note,
                     worker_id=body.worker_id,
+                    kind=body.kind,
                     event_ids=body.event_ids or None,
                 )
                 if body.submit_for_user_ack and item.state == "draft":
@@ -2117,8 +2124,27 @@ def create_agent_tasks_router(
                     task_item_store=task_item_store,
                 )
                 return _item_to_response(updated)
+            # mark_done settles a human action without dispatch — short-circuit
+            # before worker lookup/initialization like reject_item.
+            if body.resolution == "mark_done":
+                task = await _get_task_or_404(item.task_id, user_id)
+                updated = await asyncio.to_thread(
+                    complete_human_action,
+                    item=item,
+                    task=task,
+                    task_item_store=task_item_store,
+                    task_event_store=task_event_store,
+                )
+                return _item_to_response(updated)
             if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
                 raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
+            # Accept/edit dispatch to a worker — refuse human actions here too so
+            # the error names the kind instead of the missing worker lane.
+            if item.kind == "human_action":
+                raise OmnigentError(
+                    "Human action items can only be marked done or dismissed",
+                    code=ErrorCode.CONFLICT,
+                )
             task = await _get_task_or_404(item.task_id, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
             if worker is None:

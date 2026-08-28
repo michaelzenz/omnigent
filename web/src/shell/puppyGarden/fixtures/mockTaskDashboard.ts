@@ -66,7 +66,22 @@ export function buildFixtureDashboard(taskId: string): TaskDashboard | null {
       manager_conversation_id: "fixture-mgr-session",
     },
     derived: { has_running_workers: true },
-    inbox_items: [],
+    inbox_items: [
+      {
+        id: "fixture-item-human-action",
+        title: "Rotate the CI deploy token",
+        description:
+          "Only you have console access. Create a new deploy token in the CI settings page, " +
+          "update the repo secret, then mark this done — I'll re-run the deploy afterwards.",
+        instructions: null,
+        internal_note: null,
+        state: "pending",
+        worker_id: null,
+        kind: "human_action",
+        created_at: NOW - 60,
+        updated_at: null,
+      },
+    ],
     reconcile_queue_count: 0,
     assets: [
       {
