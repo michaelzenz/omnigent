@@ -176,4 +176,4 @@ To reduce token cost, use the special infra below, for EX add the code that dire
 There are two infra in this system that you can use, you dont need to know the details, just generate corresponding instruction
 
 * Poller infra: polls the source(pr, slack reply thread, google doc) with an interval. so that you can generate instructions like "monitor this pr/slack reply thread/google doc" in the taskItem. the manager will take care of it
-* Timer infra: do something at a scheduled time. With this, you can generate instructions like "Check if pr is merged 10min later/Follow up to XXX 1h later/check the status of deployment tomorrow". again, just generate the instructions, manager will handle it.
+* Automation infra: schedule a recurring agent session on an RRULE schedule. With this, you can generate instructions like "Check this PR every hour", "Remind me tomorrow at 9am", or "Follow up to XXX 1h later". Automations run full agent sessions with MCP tools and have a catch-up toggle for missed runs. Use `sys_scheduled_task_create` / `sys_scheduled_task_list` / `sys_scheduled_task_update` / `sys_scheduled_task_delete`.

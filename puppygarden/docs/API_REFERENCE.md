@@ -169,3 +169,19 @@ does not route the user's response back to the external application.
 | GET | `/v1/agent-tasks/script-plugins/health` |
 | POST | `/v1/agent-tasks/script-plugins/health` |
 | PUT | `/v1/agent-tasks/script-plugins/hosts/{host_id}/{plugin_name}` |
+
+## Automations (scheduled tasks)
+
+| Method | Path |
+|--------|------|
+| POST | `/v1/scheduled-tasks` |
+| GET | `/v1/scheduled-tasks` |
+| GET | `/v1/scheduled-tasks/{id}` |
+| PATCH | `/v1/scheduled-tasks/{id}` |
+| DELETE | `/v1/scheduled-tasks/{id}` |
+| POST | `/v1/scheduled-tasks/{id}/run` |
+| GET | `/v1/scheduled-tasks/{id}/runs` |
+
+Create fields: `name`, `prompt`, `rrule`, `agent_id`, `timezone`,
+`model_override`, `reasoning_effort`, `permission_mode`, `max_cost_usd`,
+`workspace`, `host_id`, `catch_up`.

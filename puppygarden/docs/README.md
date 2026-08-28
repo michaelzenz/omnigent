@@ -17,6 +17,15 @@ host:
 
 All manuals are inside <host.puppygarden.root>/docs/
 
+## Manuals
+
+* `POLL_PLUGINS.md` — host-side scripts that watch external signals on an interval and emit task events
+* `API_REFERENCE.md` — REST API reference for the task system
+* `TASK_BROKER.md` — broker role and task routing
+* `TASK_MANAGER.md` — manager role and task item reconciliation
+* `TASK_SECRETARY.md` — secretary role and plugin writing
+* Automations — use `sys_scheduled_task_create` for recurring agent sessions (RRULE schedule, catch-up toggle, cost control)
+
 ## Roles/Components
 * Router: a score based routing program, if there is clear winner, route the event to the corresponding task and let manager handle it
 * Manager: Manager and task is 1:1 mapping, manager receives events, reconcile into taskItems and select a worker to assign it, make it a proposal for user to review
