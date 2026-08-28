@@ -310,6 +310,36 @@ describe("SkillsTab", () => {
     });
   });
 
+  it("toggles between raw edit and WYSIWYG edit for markdown files", async () => {
+    render(<SkillsTab />);
+    await waitFor(() => expect(screen.getAllByText("demo")).toHaveLength(2));
+
+    // Toggle buttons exist for .md files only.
+    expect(screen.getByRole("button", { name: "Preview skill.md" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview references/a.md" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Preview assets\/image/ })).toBeNull();
+    expect(document.querySelectorAll("textarea")).toHaveLength(2);
+
+    // Switch skill.md to rich-text mode.
+    fireEvent.click(screen.getByRole("button", { name: "Preview skill.md" }));
+
+    // Textarea count drops by one (skill.md now has a TipTap editor).
+    expect(document.querySelectorAll("textarea")).toHaveLength(1);
+    // Frontmatter is rendered as metadata.
+    expect(screen.getByText("name")).toBeInTheDocument();
+    // TipTap editor content area is present.
+    expect(document.querySelector(".tiptap-md-content")).toBeInTheDocument();
+    // Button label flips to Edit.
+    expect(screen.getByRole("button", { name: "Edit skill.md" })).toBeInTheDocument();
+    // references/a.md still in raw mode.
+    expect(screen.getByRole("button", { name: "Preview references/a.md" })).toBeInTheDocument();
+
+    // Switch back to raw edit mode.
+    fireEvent.click(screen.getByRole("button", { name: "Edit skill.md" }));
+    expect(document.querySelectorAll("textarea")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Preview skill.md" })).toBeInTheDocument();
+  });
+
   it("escapes YAML-sensitive skill descriptions", async () => {
     createSkill.mockResolvedValue(undefined);
     render(<SkillsTab />);
