@@ -183,6 +183,7 @@ import { codexEffortLevelsForModel, findNativeModelOption } from "@/lib/codexNat
 import {
   composerAttachmentKey,
   peekPendingInitialPrompt,
+  isInitialPromptDispatched,
   deletePendingInitialPrompt,
   type PendingInitialPrompt,
   type PendingUserMessage,
@@ -1161,8 +1162,12 @@ export function ChatPage() {
     // (triggered by session_worktree_status SSE when the worktree becomes
     // ready) may have already dispatched this prompt while the user was
     // viewing another conversation. The pending map is the single source
-    // of truth — if the prompt is gone, it was sent.
-    if (peekPendingInitialPrompt(urlConvId) === null) {
+    // of truth — if the prompt is gone or the dispatched marker is set,
+    // it was sent.
+    if (
+      peekPendingInitialPrompt(urlConvId) === null ||
+      isInitialPromptDispatched(urlConvId)
+    ) {
       initialPromptSentForConvRef.current = urlConvId;
       return;
     }

@@ -2361,6 +2361,7 @@ function projectMarkerState(conversations: Conversation[]): SessionState | null 
   let awaiting = 0;
   let unseen = false;
   let running = false;
+  let starting = false;
   for (const c of conversations) {
     const pending = c.pending_elicitations_count ?? 0;
     if (pending > 0) {
@@ -2369,11 +2370,14 @@ function projectMarkerState(conversations: Conversation[]): SessionState | null 
       unseen = true;
     } else if (c.status === "running") {
       running = true;
+    } else if (c.worktree_status && c.worktree_status.stage !== "failed") {
+      starting = true;
     }
   }
   if (awaiting > 0) return { kind: "awaiting", count: awaiting };
   if (unseen) return { kind: "unseen" };
   if (running) return { kind: "running" };
+  if (starting) return { kind: "starting" };
   return null;
 }
 

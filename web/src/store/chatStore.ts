@@ -1449,6 +1449,34 @@ export function peekPendingInitialPrompt(conversationId: string): PendingInitial
   return pendingInitialPrompts.get(conversationId)?.prompt ?? null;
 }
 
+// Sessions whose initial prompt has been auto-sent but the server hasn't yet
+// confirmed `running`. The unseen exemption must stay active through this gap
+// (prompt deleted → send bumps updated_at → server still "idle" for a beat),
+// otherwise the sidebar lights a blue dot for the setup noise the auto-send
+// itself created.
+const dispatchedInitialPrompts = new Set<string>();
+
+/**
+ * True when the initial prompt for this session has been auto-sent (background
+ * path) but the server hasn't confirmed `running` yet. Used by ChatPage's
+ * auto-send effect to skip a duplicate dispatch, and by useIdleNotifications
+ * to suppress the first-turn notification (the user didn't initiate this
+ * turn — it was auto-sent from the worktree-ready event).
+ */
+export function isInitialPromptDispatched(conversationId: string): boolean {
+  return dispatchedInitialPrompts.has(conversationId);
+}
+
+/**
+ * Consume the dispatched-initial-prompt marker, returning `true` if the
+ * session had one. Called when the server confirms `running` (the gap is
+ * over) or when the first turn's idle transition fires (to suppress its
+ * notification). Idempotent — a second call returns `false`.
+ */
+export function consumeInitialPromptDispatch(conversationId: string): boolean {
+  return dispatchedInitialPrompts.delete(conversationId);
+}
+
 /**
  * Remove a pending first message after it has been dispatched (or is no
  * longer needed, e.g. a failed worktree). Paired with
@@ -1459,13 +1487,16 @@ export function peekPendingInitialPrompt(conversationId: string): PendingInitial
  */
 export function deletePendingInitialPrompt(conversationId: string): void {
   pendingInitialPrompts.delete(conversationId);
+  dispatchedInitialPrompts.delete(conversationId);
 }
 
-// A session with a parked initial prompt is mid-startup: its updated_at
-// bumps (worktree progress, workspace patch, runner launch) are setup noise
-// that must not light the sidebar unread dot — nothing is readable until
-// the prompt dispatches and the first turn produces content.
-registerUnseenExemption((id) => peekPendingInitialPrompt(id) !== null);
+// A session with a parked or just-dispatched initial prompt is mid-startup:
+// its updated_at bumps (worktree progress, workspace patch, runner launch,
+// auto-send) are setup noise that must not light the sidebar unread dot —
+// nothing is readable until the first turn produces content.
+registerUnseenExemption(
+  (id) => peekPendingInitialPrompt(id) !== null || dispatchedInitialPrompts.has(id),
+);
 
 /**
  * Auto-send a pending initial prompt for a conversation whose worktree just
@@ -1481,12 +1512,16 @@ registerUnseenExemption((id) => peekPendingInitialPrompt(id) !== null);
 function maybeAutoSendInitialPrompt(conversationId: string): void {
   const prompt = peekPendingInitialPrompt(conversationId);
   if (prompt === null) return;
+  if (dispatchedInitialPrompts.has(conversationId)) return;
   const state = setterForState(conversationId);
   if (state === null || state.boundAgentId === null) return;
-  // Delete before dispatching so a concurrent ChatPage auto-send effect
-  // (e.g. the user switches back at the same instant) sees the prompt is
-  // gone and skips — the pending map is the single source of truth.
-  deletePendingInitialPrompt(conversationId);
+  // Mark as dispatched and delete the pending prompt. The dispatched marker
+  // keeps the unseen exemption active until the server confirms `running`,
+  // bridging the gap where the auto-send's updated_at bump would otherwise
+  // light the blue dot while the session is still "idle". ChatPage's
+  // auto-send effect also checks isInitialPromptDispatched and skips.
+  dispatchedInitialPrompts.add(conversationId);
+  pendingInitialPrompts.delete(conversationId);
   const { send, sendSlashCommand } = useChatStore.getState();
   const opts: SendOptions = { pinnedConversationId: conversationId };
   if (prompt.skill) {
@@ -6139,6 +6174,13 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       // claude-native session (chat clears/sets working instantly while
       // the sidebar dot stays stale).
       patchConversationStatusInCache(event.conversationId, event.status);
+      // The server confirmed `running` — the auto-send gap is over. Clear
+      // the dispatched marker so the unseen exemption lifts (the session
+      // is now genuinely working) and the first-turn notification is
+      // suppressed separately in useIdleNotifications.
+      if (event.status === "running") {
+        consumeInitialPromptDispatch(event.conversationId);
+      }
       // On turn completion, refresh the Agents-rail preview for this
       // conversation. A child (added agent) finishing a turn leaves a stale
       // last_message_preview in its parent's child-sessions list (the runner

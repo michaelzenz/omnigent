@@ -929,6 +929,7 @@ def _build_session_list_item(
         search_snippet=conv.search_snippet,
         parent_session_id=conv.parent_conversation_id,
         project_id=conv.project_id,
+        worktree_status=_session_worktree_status_cache.get(conv.id),
     )
 
 

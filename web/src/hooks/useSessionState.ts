@@ -12,6 +12,7 @@
 // `_session_status_cache["failed"]` would mask a fresh elicitation.
 
 import type { Conversation } from "@/hooks/useConversations";
+import type { WorktreeStatus } from "@/lib/types";
 
 export type SessionState =
   | { kind: "awaiting"; count: number }
@@ -24,10 +25,17 @@ export type SessionState =
   | { kind: "starting" };
 
 export function getSessionState(
-  conversation: Pick<Conversation, "status" | "pending_elicitations_count"> | undefined | null,
+  conversation: Pick<Conversation, "status" | "pending_elicitations_count" | "worktree_status"> | undefined | null,
 ): SessionState | null {
   const pending = conversation?.pending_elicitations_count ?? 0;
   if (pending > 0) return { kind: "awaiting", count: pending };
   if (conversation?.status === "running") return { kind: "running" };
+  // A background session whose worktree is still being created (or whose
+  // runner is launching after worktree creation) shows the same spinner as
+  // a starting session — the server-side status is still "idle" during
+  // this phase, so without this the sidebar shows nothing.
+  if (conversation?.worktree_status && conversation.worktree_status.stage !== "failed") {
+    return { kind: "starting" };
+  }
   return null;
 }

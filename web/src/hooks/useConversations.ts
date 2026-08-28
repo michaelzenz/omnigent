@@ -25,6 +25,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
+import type { WorktreeStatus } from "@/lib/types";
 import {
   filtersFromConversationQueryKey,
   mergeItemsIntoPages,
@@ -232,6 +233,13 @@ export interface Conversation {
    * id OR the label during the dual-read transition.
    */
   project_id?: string | null;
+  /**
+   * Worktree creation status for the session, present while a git worktree
+   * is being created or the runner is launching. `null` when no worktree
+   * is in flight or the worktree is ready. Drives the sidebar spinner for
+   * background sessions mid-worktree-creation.
+   */
+  worktree_status?: WorktreeStatus | null;
 }
 
 export interface ConversationsPage {
@@ -342,6 +350,7 @@ export async function fetchConversationById(id: string): Promise<Conversation | 
     host_online: wire.host_online ?? undefined,
     git_branch: wire.git_branch ?? null,
     archived: wire.archived ?? false,
+    worktree_status: (wire as { worktree_status?: WorktreeStatus | null }).worktree_status ?? null,
   };
 }
 

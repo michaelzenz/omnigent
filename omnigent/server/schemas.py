@@ -2768,6 +2768,10 @@ class SessionListItem(BaseModel):
     # unfiled. Lets the sidebar group sessions by project without a follow-up
     # GET. Distinct from the legacy ``omni_project`` label in ``labels``.
     project_id: str | None = None
+    # Replay worktree creation status so the sidebar can show a spinner for
+    # background sessions whose worktree is still being created. ``None``
+    # when the session has no worktree in flight or the worktree is ready.
+    worktree_status: WorktreeStatus | None = None
 
 
 class SessionList(BaseModel):

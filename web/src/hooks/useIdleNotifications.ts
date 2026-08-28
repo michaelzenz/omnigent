@@ -60,6 +60,7 @@ import {
   detectNewElicitations,
 } from "@/lib/idleTransitions";
 import { isConversationUnseen, useUnseenTick } from "@/hooks/useUnseenConversations";
+import { consumeInitialPromptDispatch } from "@/store/chatStore";
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 
 const IDLE_BODY = "Agent finished and is ready for your input.";
@@ -334,6 +335,16 @@ export function useIdleNotifications(activeConversationId?: string): void {
         // over-suppress a genuine completion.
         if (conversation.runner_online === false) continue;
         const id = conversation.id;
+        // Suppress the first-turn notification for sessions whose initial
+        // prompt was auto-sent from the worktree-ready event — the user
+        // didn't initiate this turn and hasn't seen the session yet, so
+        // bouncing the dock icon is noise, not signal. The dispatched
+        // marker is also consumed here so a later turn (the user's own
+        // follow-up) notifies normally.
+        if (consumeInitialPromptDispatch(id)) {
+          notifiedSessions.current.add(id);
+          continue;
+        }
         // Already beeped for this session and the user hasn't viewed it since —
         // don't beep again for another finish (no new banner increments). This
         // is what collapses an async task's multiple turn-ends into one beep.
