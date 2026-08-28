@@ -102,7 +102,11 @@ def _entry_for(params: dict[str, Any], home: Path) -> SkillSyncEntry:
     skill_dir = _safe_skill_dir(rel, home, must_exist=True)
     spec = _parse_skill(skill_dir / "SKILL.md")
     if isinstance(name, str) and spec.name != name:
-        raise FileNotFoundError("reported skill no longer matches path")
+        # Plugin skills are namespaced ``<plugin>:<skill>`` in the inventory
+        # but their SKILL.md frontmatter carries only the bare ``<skill>`` name.
+        bare_name = name.rsplit(":", 1)[-1] if ":" in name else name
+        if spec.name != bare_name:
+            raise FileNotFoundError("reported skill no longer matches path")
     return SkillSyncEntry(
         name=spec.name,
         description=spec.description,
