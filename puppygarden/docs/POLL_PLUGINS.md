@@ -1,7 +1,7 @@
 # Poll plugins
 
 Host-side scripts that watch external signals and emit task events.
-Each plugin is one folder; the host only executes **`run.py`**.
+Each plugin is one folder; the host only executes `run.py`.
 
 ## Layout
 
@@ -20,19 +20,13 @@ The host scans two roots inclusively and merges the results:
 
 1. `~/.omnigent/poll_plugins` (or `$OMNIGENT_DATA_DIR/poll_plugins`)
 2. `<puppygarden_root>/poll_plugins` —
-    when `host.puppygarden.root` is set in
+  when `host.puppygarden.root` is set in
    `$OMNIGENT_DATA_DIR/config.yaml` (or `~/.omnigent/config.yaml` when unset):
-
-   ```yaml
-   host:
-     puppygarden:
-       root: /path/to/your/omnigent/clone/puppygarden
-   ```
 
 The host scans these directories directly, so edits take effect on
 the next tick with no copy/sync.
 
-Each plugin folder must include **`config.yaml`** with at least:
+Each plugin folder must include `config.yaml` with at least:
 
 ```yaml
 interval_s: 60
@@ -51,6 +45,8 @@ interval_s: 120
 timeout_s: 90
 ```
 
+
+
 ### Singleton plugins (run on exactly one host)
 
 ```yaml
@@ -59,10 +55,10 @@ bound_role: secretary
 ```
 
 - `singleton` is **required** (true or false). `singleton: true` requires
-  `bound_role` (a role key, e.g. `secretary`); without it the plugin is
-  rejected at load. `singleton: false` runs on every host.
+`bound_role` (a role key, e.g. `secretary`); without it the plugin is
+rejected at load. `singleton: false` runs on every host.
 - On any fetch failure (server unreachable, HTTP error), the host skips the
-  plugin that tick (safe — no duplicate runs across hosts).
+plugin that tick (safe — no duplicate runs across hosts).
 
 > **Note:** host-side singleton gating is a temporary solution. The durable
 > answer is to support creating custom plugins on the server (lifecycle,
@@ -70,12 +66,14 @@ bound_role: secretary
 > connected). We should design that server-side plugin model later and
 > retire this host-side gating.
 
+
+
 ### `--healthcheck`
 
 Plugins SHOULD support `python3 run.py --healthcheck`:
 
 - Exit `0` + JSON on stdout `{"ok": true, "detail": "..."}` when the plugin
-  can reach its backing service (e.g. spawn the MCP and call `auth.test`).
+can reach its backing service (e.g. spawn the MCP and call `auth.test`).
 - Exit non-zero + `{"ok": false, "detail": "..."}` otherwise.
 - Cheap, side-effect-free.
 
@@ -97,14 +95,16 @@ when its own `interval_s` has elapsed.
 Rules:
 
 - **One folder per plugin** — stable name (`github_pr`, `slack_watch`, …).
-- **Only `run.py` is executed** — the host runs it with the same Python
-  interpreter that is running the Omnigent host daemon.
-- **`README.md` is required** — the host skips any plugin folder missing it.
-  **An agent updating a poll plugin
-  MUST read that plugin's `README.md` first** — it is the source of truth for
-  the plugin's state shape and contracts.
+- **Only** `run.py` **is executed** — the host runs it with the same Python
+interpreter that is running the Omnigent host daemon.
+- `README.md` **is required** — the host skips any plugin folder missing it.
+**An agent updating a poll plugin
+MUST read that plugin's** `README.md` **first** — it is the source of truth for
+the plugin's state shape and contracts.
 - **All other files are plugin-private** — watches, cursors, snapshots; agents design the plugin schema or other metadata file as they want.
 - Do not edit Omnigent host code to add behavior — add or update a plugin folder.
+
+
 
 ## Host contract
 
@@ -113,6 +113,8 @@ The host `ScriptPollPluginsPoller` invokes each plugin on a schedule:
 ```bash
 <omnigent-host-python> $OMNIGENT_DATA_DIR/poll_plugins/<plugin_name>/run.py
 ```
+
+
 
 ### Python runtime
 
@@ -135,18 +137,20 @@ that the plugin needs.
 
 Environment (set by host):
 
-| Variable | Meaning |
-|----------|---------|
-| `OMNIGENT_SERVER_URL` | Base URL, e.g. `http://127.0.0.1:8123` |
-| `OMNIGENT_HOST_ID` | This machine's host id |
-| `OMNIGENT_PLUGIN_DIR` | Absolute path to this plugin's folder |
-| `OMNIGENT_PLUGIN_NAME` | Folder name (`github_pr`) |
-| `OMNIGENT_DATA_DIR` | Data root (`~/.omnigent` or override) |
+
+| Variable               | Meaning                                |
+| ---------------------- | -------------------------------------- |
+| `OMNIGENT_SERVER_URL`  | Base URL, e.g. `http://127.0.0.1:8123` |
+| `OMNIGENT_HOST_ID`     | This machine's host id                 |
+| `OMNIGENT_PLUGIN_DIR`  | Absolute path to this plugin's folder  |
+| `OMNIGENT_PLUGIN_NAME` | Folder name (`github_pr`)              |
+| `OMNIGENT_DATA_DIR`    | Data root (`~/.omnigent` or override)  |
+
 
 `run.py` should:
 
 1. Be **idempotent** — safe to run every tick.
-2. **Read/write state only under `OMNIGENT_PLUGIN_DIR`** (or subpaths).
+2. **Read/write state only under** `OMNIGENT_PLUGIN_DIR` (or subpaths).
 3. **Exit 0** on success (including “nothing to do”).
 4. **Exit non-zero** on failure; host logs stderr and continues other plugins.
 5. **Post task events** when something meaningful changes (see below).
@@ -194,29 +198,31 @@ Dedup: same `source` + `source_key` + `source_offset` + `event_type` → server 
 
 ### Event field reference
 
-- **`source`** — who emitted this event. For a poll plugin, always
-  `poll_plugin:<plugin_name>` (e.g. `poll_plugin:github_pr`). 
-- **`source_key`** — a stable, unique-per-watched-thing identifier within this
-  `source`. It scopes dedup so the same logical thing (one PR, one Slack
-  channel, one DM) is one key. Two different plugins may reuse the same
-  key string safely because dedup also includes `source`.
-- **`source_offset`** — a monotonically increasing per-`source_key` sequence
-  number the plugin maintains (typically a counter it persists in its own
-  `state.json`). It disambiguates successive state changes of the *same* thing:
-  For ex monitor the doc update status, offset can be version number, agent creating the plugin can invent.
-  Dedup is `source` + `source_key` + `source_offset` + `event_type`, so
-  re-posting the same offset for the same event_type is a no-op (idempotent
-  retries), while a new offset for a new event_type lands as a fresh event.
-- **`tags`** — structured facets the server indexes for routing/filtering. Each
-  entry is `{"tag_type": "...", "tag": "..."}`. Use stable, low-cardinality
-  type names (`repo`, `pr`, `channel`, `author`) so the secretary/manager can
-  group by them. Tags are how a watch is matched back to a managed task and
-  how the board groups events; pick them to answer "what is this about?".
-- **`payload`** — the free-form event body: whatever structured detail the
-  downstream agent/manager needs to act on it. There is no fixed schema; keep it
-  flat and JSON-serializable. The server stores it verbatim and surfaces it to
-  the task dashboard, so include the fields your consumer reads (e.g.
-  `repo`, `pr_number`, `blocked_pr`) but avoid giant blobs — link out instead.
+- `source` — who emitted this event. For a poll plugin, always
+`poll_plugin:<plugin_name>` (e.g. `poll_plugin:github_pr`). 
+- `source_key` — a stable, unique-per-watched-thing identifier within this
+`source`. It scopes dedup so the same logical thing (one PR, one Slack
+channel, one DM) is one key. Two different plugins may reuse the same
+key string safely because dedup also includes `source`.
+- `source_offset` — a monotonically increasing per-`source_key` sequence
+number the plugin maintains (typically a counter it persists in its own
+`state.json`). It disambiguates successive state changes of the *same* thing:
+For ex monitor the doc update status, offset can be version number, agent creating the plugin can invent.
+Dedup is `source` + `source_key` + `source_offset` + `event_type`, so
+re-posting the same offset for the same event_type is a no-op (idempotent
+retries), while a new offset for a new event_type lands as a fresh event.
+- `tags` — structured facets the server indexes for routing/filtering. Each
+entry is `{"tag_type": "...", "tag": "..."}`. Use stable, low-cardinality
+type names (`repo`, `pr`, `channel`, `author`) so the secretary/manager can
+group by them. Tags are how a watch is matched back to a managed task and
+how the board groups events; pick them to answer "what is this about?".
+- `payload` — the free-form event body: whatever structured detail the
+downstream agent/manager needs to act on it. There is no fixed schema; keep it
+flat and JSON-serializable. The server stores it verbatim and surfaces it to
+the task dashboard, so include the fields your consumer reads (e.g.
+`repo`, `pr_number`, `blocked_pr`) but avoid giant blobs — link out instead.
+
+
 
 ### `event_type` prefixes
 
@@ -226,10 +232,12 @@ Plugins may define other prefixes.
 
 The server does **not** store poll cursors or watch lists. Plugins keep their own files, e.g.:
 
-| File | Typical use |
-|------|-------------|
-| `watches.json` | What to poll (agent/manager edits) |
-| `state.json` | Last-seen snapshot per key (script maintains) |
+
+| File           | Typical use                                   |
+| -------------- | --------------------------------------------- |
+| `watches.json` | What to poll (agent/manager edits)            |
+| `state.json`   | Last-seen snapshot per key (script maintains) |
+
 
 Agents may invent other filenames; only `run.py` is invoked by the host.
 
@@ -241,16 +249,23 @@ See `puppygarden/poll_plugins/github_pr/run.py` in the repository.
 
 1. `github_pr` plugin auto-discovers your open PR #123.
 2. A task subscribed to (`poll_plugin:github_pr`, `org/repo#123`) exists; CI
-   fails → `run.py` posts `github.pr.checks_failed`.
+  fails → `run.py` posts `github.pr.checks_failed`.
 3. Ingress fans out a routed copy to each subscriber task → its manager
-   suggests "investigate the CI failure" as a task item.
+  suggests "investigate the CI failure" as a task item.
+
+
 
 ## Do not
 
 - Rename `run.py` or expect the host to run other files.
 - Edit `omnigent/host/` for plugin behavior — use this folder instead.
 
+# After you finish
+
+test to make sure it works
+
 # Hint
+
 Look at how existing plugin works, in additional to regular scripts, there are ones directly calling mcps, for ex slack_watch.
 
-Try to write new plugins at host.puppygarden.root, it's inside the code dir so have richer tools
+If server did not response 200, make sure the event stays unfired, and the next tick try to fire again
