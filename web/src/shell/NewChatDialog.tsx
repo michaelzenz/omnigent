@@ -5901,69 +5901,68 @@ export function NewChatLandingScreen() {
                 is shown in the hero heading instead of a tray chip; filing on
                 create still uses `selectedProject`. */}
             </div>
-            {/* Worktree sizes summary — below the workspace/auto-worktree/worktree
-                chips row. 1-line format with hover underline; click opens a popover
-                with per-worktree path + size. A refresh button forces recalculation. */}
-            {isGitWorkspace && (() => {
-              if (worktreeSizesLoading && !worktreeSizes) {
-                return (
-                  <div className="flex items-center gap-1.5 py-0.5 pl-0.5 text-xs text-muted-foreground">
-                    <Loader2Icon className="size-3 animate-spin" />
-                    <span>Calculating worktree sizes…</span>
-                  </div>
-                );
-              }
-              if (worktreeSizes?.error) {
-                return (
-                  <div className="flex items-center gap-2 py-0.5 pl-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setWorktreeSizePopoverOpen(true)}
-                      className="text-xs text-amber-500 hover:underline transition-colors"
-                      data-testid="new-chat-worktree-sizes-summary"
-                    >
-                      ⚠ Size calculation failed
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => refreshWorktreeSizes.mutate()}
-                      disabled={refreshWorktreeSizes.isPending}
-                      className="flex items-center justify-center size-4 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-                      title="Refresh worktree sizes"
-                      data-testid="new-chat-worktree-sizes-refresh"
-                    >
-                      {refreshWorktreeSizes.isPending ? (
-                        <Loader2Icon className="size-3 animate-spin" />
-                      ) : (
-                        <RotateCwIcon className="size-3" />
-                      )}
-                    </button>
-                    <Popover open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <span className="hidden" />
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        className="w-[min(480px,calc(100vw-2rem))] p-3"
-                      >
-                        <div className="flex items-center gap-2 pb-2 border-b border-border mb-2">
-                          <span className="text-sm font-medium">Worktree Sizes</span>
-                          <span className="text-xs text-amber-500">⚠ error</span>
-                        </div>
-                        <div className="flex items-start gap-2 py-1 text-xs text-amber-500">
-                          <TriangleAlertIcon className="size-3.5 shrink-0 mt-0.5" />
-                          <span>{worktreeSizes.error}</span>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                );
-              }
-              if (worktreeSizes?.data && worktreeSizes.data.length > 0) {
-                const errorCount = worktreeSizes.data.filter((wt) => wt.error).length;
-                const succeededCount = worktreeSizes.data.length - errorCount;
-                return (
-                  <div className="flex items-center gap-2 py-0.5 pl-0.5">
+            {/* The agent / harness picker moved out of the tray and into the
+                composer's right action cluster (next to Send) — see
+                AgentHarnessPicker above. The tray now holds only the
+                host / working-directory / worktree / project chips. */}
+          </div>
+          {/* Worktree sizes summary — new row below the footer tray. 1-line
+              format with hover underline; click opens a centered Dialog with
+              per-worktree path + size. A refresh button forces recalculation. */}
+          {isGitWorkspace && (() => {
+            if (worktreeSizesLoading && !worktreeSizes) {
+              return (
+                <div className="flex items-center gap-1.5 px-2 pb-1 text-xs text-muted-foreground">
+                  <Loader2Icon className="size-3 animate-spin" />
+                  <span>Calculating worktree sizes…</span>
+                </div>
+              );
+            }
+            if (worktreeSizes?.error) {
+              return (
+                <div className="flex items-center gap-2 px-2 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setWorktreeSizePopoverOpen(true)}
+                    className="text-xs text-amber-500 hover:underline transition-colors"
+                    data-testid="new-chat-worktree-sizes-summary"
+                  >
+                    ⚠ Size calculation failed
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => refreshWorktreeSizes.mutate()}
+                    disabled={refreshWorktreeSizes.isPending}
+                    className="flex items-center justify-center size-4 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                    title="Refresh worktree sizes"
+                    data-testid="new-chat-worktree-sizes-refresh"
+                  >
+                    {refreshWorktreeSizes.isPending ? (
+                      <Loader2Icon className="size-3 animate-spin" />
+                    ) : (
+                      <RotateCwIcon className="size-3" />
+                    )}
+                  </button>
+                  <Dialog open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
+                    <DialogContent className="sm:max-w-2xl">
+                      <DialogHeader>
+                        <DialogTitle>Worktree Sizes</DialogTitle>
+                      </DialogHeader>
+                      <div className="flex items-start gap-2 py-2 text-sm text-amber-500">
+                        <TriangleAlertIcon className="size-4 shrink-0 mt-0.5" />
+                        <span>{worktreeSizes.error}</span>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              );
+            }
+            if (worktreeSizes?.data && worktreeSizes.data.length > 0) {
+              const errorCount = worktreeSizes.data.filter((wt) => wt.error).length;
+              const succeededCount = worktreeSizes.data.length - errorCount;
+              return (
+                <>
+                  <div className="flex items-center gap-2 px-2 pb-1">
                     <button
                       type="button"
                       onClick={() => setWorktreeSizePopoverOpen(true)}
@@ -5991,78 +5990,65 @@ export function NewChatLandingScreen() {
                         <RotateCwIcon className="size-3" />
                       )}
                     </button>
-                    <Popover open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <span className="hidden" />
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        className="w-[min(480px,calc(100vw-2rem))] p-3"
-                      >
-                        <div className="flex items-center justify-between pb-2 border-b border-border mb-2">
-                          <span className="text-sm font-medium">Worktree Sizes</span>
-                          {worktreeSizes.calculated_at > 0 ? (
-                            <span className="text-xs text-muted-foreground">
-                              updated {Math.round((Date.now() / 1000 - worktreeSizes.calculated_at) / 60)} min ago
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-                          {worktreeSizes.data.map((wt) => (
-                            <div
-                              key={wt.path}
-                              className="flex items-center justify-between gap-3 text-xs"
-                            >
-                              <div className="flex min-w-0 items-center gap-1.5">
-                                {wt.is_main ? (
-                                  <FolderIcon className="size-3 shrink-0 text-muted-foreground" />
-                                ) : (
-                                  <GitBranchIcon className="size-3 shrink-0 text-muted-foreground" />
-                                )}
-                                <span className="truncate" title={wt.path}>
-                                  {worktreePathTail(wt.path)}
-                                </span>
-                                {wt.branch && (
-                                  <span className="shrink-0 text-muted-foreground/60">({wt.branch})</span>
-                                )}
-                              </div>
-                              {wt.error ? (
-                                <span
-                                  className="shrink-0 text-amber-500"
-                                  title={wt.error}
-                                >
-                                  ⚠ error
-                                </span>
+                  </div>
+                  <Dialog open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
+                    <DialogContent className="sm:max-w-2xl">
+                      <DialogHeader>
+                        <DialogTitle>Worktree Sizes</DialogTitle>
+                        {worktreeSizes.calculated_at > 0 && (
+                          <DialogDescription>
+                            Updated {Math.round((Date.now() / 1000 - worktreeSizes.calculated_at) / 60)} min ago
+                          </DialogDescription>
+                        )}
+                      </DialogHeader>
+                      <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+                        {worktreeSizes.data.map((wt) => (
+                          <div
+                            key={wt.path}
+                            className="flex items-center justify-between gap-4 text-sm"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              {wt.is_main ? (
+                                <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                               ) : (
-                                <span className="shrink-0 font-medium tabular-nums">
-                                  {formatBytes(wt.size_bytes)}
-                                </span>
+                                <GitBranchIcon className="size-4 shrink-0 text-muted-foreground" />
+                              )}
+                              <span className="truncate" title={wt.path}>
+                                {worktreePathTail(wt.path)}
+                              </span>
+                              {wt.branch && (
+                                <span className="shrink-0 text-muted-foreground/60">({wt.branch})</span>
                               )}
                             </div>
-                          ))}
-                        </div>
-                        <div className="flex items-center justify-between pt-2 mt-2 border-t border-border">
-                          <span className="text-xs font-medium">
-                            {errorCount > 0
-                              ? `Total (${succeededCount} of ${worktreeSizes.data.length} succeeded)`
-                              : "Total"}
-                          </span>
-                          <span className="text-xs font-medium tabular-nums">
-                            {formatBytes(worktreeSizes.total_bytes)}
-                          </span>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                );
-              }
-              return null;
-            })()}
-            {/* The agent / harness picker moved out of the tray and into the
-                composer's right action cluster (next to Send) — see
-                AgentHarnessPicker above. The tray now holds only the
-                host / working-directory / worktree / project chips. */}
-          </div>
+                            {wt.error ? (
+                              <span className="shrink-0 text-amber-500" title={wt.error}>
+                                ⚠ error
+                              </span>
+                            ) : (
+                              <span className="shrink-0 font-medium tabular-nums">
+                                {formatBytes(wt.size_bytes)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between pt-3 mt-2 border-t border-border">
+                        <span className="text-sm font-medium">
+                          {errorCount > 0
+                            ? `Total (${succeededCount} of ${worktreeSizes.data.length} succeeded)`
+                            : "Total"}
+                        </span>
+                        <span className="text-sm font-medium tabular-nums">
+                          {formatBytes(worktreeSizes.total_bytes)}
+                        </span>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              );
+            }
+            return null;
+          })()}
 
           {/* Warn (don't block) when the selected agent's harness isn't
               configured on the selected host — the host re-checks at
