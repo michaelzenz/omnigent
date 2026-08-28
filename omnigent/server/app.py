@@ -1456,22 +1456,16 @@ def create_app(
                     return _session_status_cache.get(session_id)
 
             class _PackagerCacheReader(_PackagerStatusReader):
-                """Sync raw-cache reader for the packager's idle check.
+                """Reads session status from the conversation store.
 
-                Falls back to the persisted ``live_status`` on a cache miss
-                so a session bootstrapped outside a turn (e.g. the broker
-                session created on demand by ``ensure_broker_session``) is
-                readable as idle before its first status transition.
+                The packager polls on a timer and already does several DB
+                reads per cycle, so reading live_status from the row is both
+                simpler and more correct than consulting the in-memory
+                _session_status_cache (which misses sessions bootstrapped
+                outside a turn, e.g. the broker session).
                 """
 
                 def status_for(self, session_id: str) -> str | None:
-                    from omnigent.server.routes.sessions import (
-                        _session_status_cache,
-                    )
-
-                    cached = _session_status_cache.get(session_id)
-                    if cached is not None:
-                        return cached
                     conv = conversation_store.get_conversation(session_id)
                     return conv.live_status if conv is not None else None
 
