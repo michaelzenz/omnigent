@@ -564,7 +564,13 @@ class SshHostOperations:
             'pid="$(cat "$runtime/host.pid" 2>/dev/null || true)"; '
             'if [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null '
             '| grep -F "$root/current/venv/bin/omnigent host" >/dev/null; '
-            'then kill "$pid" 2>/dev/null || true; fi; fi; '
+            'then kill "$pid" 2>/dev/null || true; '
+            # Wait for the old daemon to exit so the server marks it
+            # offline before the new one connects — otherwise the
+            # reconciler sees the stale connection as "online" and
+            # short-circuits before the new daemon is ready.
+            'for i in 1 2 3 4 5; do '
+            'if ! kill -0 "$pid" 2>/dev/null; then break; fi; sleep 0.5; done; fi; fi; '
             f'nohup env PATH="$pi_path:$PATH" {env} "$root/current/venv/bin/omnigent" host '
             f"--server http://localhost --server-unix-socket {shlex.quote(socket_path)} "
             '--non-interactive >"$runtime/host.log" 2>&1 < /dev/null & '
@@ -897,8 +903,14 @@ class SshHostInstallationManager:
                 row, "waiting_for_host", message="Waiting for remote host to come online..."
             )
             deadline = asyncio.get_running_loop().time() + _HOST_READY_TIMEOUT_SECONDS
+            # If the old daemon was killed, wait for the server to see it
+            # go offline before accepting "online" as the new daemon.
+            saw_offline = not await asyncio.to_thread(self.host_store.is_online, row.host_id)
             while asyncio.get_running_loop().time() < deadline:
-                if await asyncio.to_thread(self.host_store.is_online, row.host_id):
+                online = await asyncio.to_thread(self.host_store.is_online, row.host_id)
+                if not online:
+                    saw_offline = True
+                if online and saw_offline:
                     changed = await asyncio.to_thread(
                         self.store.set_phase,
                         row.connection_id,
