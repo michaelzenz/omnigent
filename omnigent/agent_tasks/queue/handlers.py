@@ -49,14 +49,23 @@ async def _inject_notice(
     *,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    app_state: Any | None = None,
 ) -> None:
     """Inject ``item.payload`` into the target session as a synthetic user message.
 
-    Shared by every role whose payload is a ``[System: …]`` notice — broker and
-    manager today. Raises :class:`DispatchFailed` when the payload is empty, the
+    Uses the same runner resolution path as ``POST /v1/sessions/{id}/events`` —
+    ``_get_runner_client`` with an ``ensure_runner_connected`` fallback — so the
+    target session (broker, manager) is treated as a first-class session, not
+    a sub-agent. Raises :class:`DispatchFailed` when the payload is empty, the
     conversation is gone, or the runner refuses the injection.
     """
-    from omnigent.server.routes.sessions import _wake_parent_for_blocked_child
+    from omnigent.server.routes._sessions.helpers import _get_runner_client
+    from omnigent.server.routes._sessions.orchestration import (
+        _dispatch_session_event_to_runner,
+        _ensure_runner_relay,
+        ensure_runner_connected,
+    )
+    from omnigent.server.routes.sessions.common import SessionEventInput
     from omnigent.usage_ledger import TASK_EVENT_ROUTING_PURPOSE
 
     if not item.payload:
@@ -69,16 +78,51 @@ async def _inject_notice(
     )
     if conv is None:
         raise DispatchFailed(f"target conversation {target.session_id} missing at deliver time")
-    ok = await _wake_parent_for_blocked_child(
+
+    # Resolve the runner client, with the same ensure_runner_connected
+    # fallback that POST /v1/sessions/{id}/events uses.
+    runner_client = await _get_runner_client(target.session_id, runner_router, conversation=conv)
+    if runner_client is None and app_state is not None:
+        runner_client, conv = await ensure_runner_connected(
+            session_id=target.session_id,
+            conv=conv,
+            app_state=app_state,
+            conversation_store=conversation_store,
+            runner_router=runner_router,
+        )
+    if runner_client is None:
+        raise DispatchFailed(f"no runner bound for session {target.session_id}")
+
+    # Ensure the SSE relay is live so the turn's output is persisted.
+    _ensure_runner_relay(
         target.session_id,
-        conv,
-        item.payload,
-        conversation_store=conversation_store,
-        runner_router=runner_router,
-        usage_purpose=TASK_EVENT_ROUTING_PURPOSE,
+        conv.runner_id,
+        runner_client,
+        conversation_store,
     )
-    if not ok:
-        raise DispatchFailed(f"notice delivery to {target.session_id} returned false")
+
+    body = SessionEventInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": [{"type": "input_text", "text": item.payload}],
+        },
+    )
+    try:
+        await _dispatch_session_event_to_runner(
+            target.session_id,
+            conv,
+            body,
+            conversation_store,
+            runner_client,
+            agent_name=None,
+            file_store=None,
+            artifact_store=None,
+            runner_router=runner_router,
+            usage_purpose=TASK_EVENT_ROUTING_PURPOSE,
+        )
+    except Exception as exc:
+        raise DispatchFailed(f"notice delivery to {target.session_id} failed: {exc}") from exc
 
 
 class BrokerDispatchHandler(RoleDispatchHandler):
@@ -96,11 +140,14 @@ class BrokerDispatchHandler(RoleDispatchHandler):
         user_role_session_store: UserRoleSessionStore,
         conversation_store: ConversationStore,
         runner_router: RunnerRouter | None,
+        *,
+        app_state: Any | None = None,
     ) -> None:
         self._store = store
         self._user_role_session_store = user_role_session_store
         self._conversation_store = conversation_store
         self._runner_router = runner_router
+        self._app_state = app_state
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         session = self._user_role_session_store.get(
@@ -131,6 +178,7 @@ class BrokerDispatchHandler(RoleDispatchHandler):
             target,
             conversation_store=self._conversation_store,
             runner_router=self._runner_router,
+            app_state=self._app_state,
         )
 
 
@@ -149,11 +197,14 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         task_store: TaskStore,
         conversation_store: ConversationStore,
         runner_router: RunnerRouter | None,
+        *,
+        app_state: Any | None = None,
     ) -> None:
         self._store = store
         self._task_store = task_store
         self._conversation_store = conversation_store
         self._runner_router = runner_router
+        self._app_state = app_state
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         if item.key.scope_id is None:
@@ -182,6 +233,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
             target,
             conversation_store=self._conversation_store,
             runner_router=self._runner_router,
+            app_state=self._app_state,
         )
 
 

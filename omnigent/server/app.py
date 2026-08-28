@@ -1407,6 +1407,7 @@ def create_app(
                 user_role_session_store=user_role_session_store,
                 conversation_store=conversation_store,
                 runner_router=runner_router,
+                app_state=app_inst.state,
             )
             manager_handler: ManagerDispatchHandler | None = None
             if task_store is not None:
@@ -1415,6 +1416,7 @@ def create_app(
                     task_store=task_store,
                     conversation_store=conversation_store,
                     runner_router=runner_router,
+                    app_state=app_inst.state,
                 )
             worker_handler: WorkerDispatchHandler | None = None
             if task_store is not None and task_item_store is not None and worker_store is not None:
