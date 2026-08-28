@@ -7,7 +7,7 @@ import {
   updateScriptPollPlugin,
 } from "@/lib/agentTasksApi";
 
-/** Polls the script-plugin health board for the given kind (poll | timer). */
+/** Polls the script-plugin health board for the given kind (poll). */
 export function useScriptPluginHealth(kind: ScriptPluginKind) {
   return useQuery<ScriptPluginHealthRow[]>({
     queryKey: ["script-plugin-health", kind],

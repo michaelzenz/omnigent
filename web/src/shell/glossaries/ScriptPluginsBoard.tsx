@@ -5,10 +5,10 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useScriptPluginHealth, useUpdateScriptPollPlugin } from "@/hooks/useScriptPluginHealth";
-import type { ScriptPluginHealthRow, ScriptPluginKind } from "@/lib/agentTasksApi";
+import type { ScriptPluginHealthRow } from "@/lib/agentTasksApi";
 
 interface ScriptPluginsBoardProps {
-  kind: ScriptPluginKind;
+  kind: "poll";
   testId: string;
 }
 
@@ -25,22 +25,10 @@ interface BoardRow {
   singleton_skipped: boolean;
   warning: string | null;
   interval_s: number | null;
-  fire_at: number | null;
-  fired_at: number | null;
   updated_at: number;
 }
 
-type HealthStatus =
-  | "ok"
-  | "failing"
-  | "stale"
-  | "unknown"
-  | "skipped"
-  | "disabled"
-  // timer-only:
-  | "fired"
-  | "past_due"
-  | "scheduled";
+type HealthStatus = "ok" | "failing" | "stale" | "unknown" | "skipped" | "disabled";
 
 const POLL_STATUS: Record<string, HealthStatus> = {
   ok: "ok",
@@ -51,27 +39,14 @@ const POLL_STATUS: Record<string, HealthStatus> = {
   skipped_config: "failing",
 };
 
-const TIMER_FAIL = new Set(["exit_nonzero", "timeout", "start_failed", "skipped_config"]);
-
 function deriveStatus(row: ScriptPluginHealthRow, nowMs: number): HealthStatus {
   if (row.outcome === "skipped_config") return "failing";
-  if (row.kind === "poll" && !row.enabled) return "disabled";
+  if (!row.enabled) return "disabled";
   if (row.singleton_skipped) return "skipped";
   if (row.outcome === "skipped_singleton") return "skipped";
-  if (row.kind === "timer") {
-    if (TIMER_FAIL.has(row.outcome)) return "failing";
-    const fireAt = row.fire_at ? row.fire_at * 1000 : null;
-    const firedAt = row.fired_at ? row.fired_at * 1000 : null;
-    if (fireAt !== null && firedAt !== null && firedAt >= fireAt) return "fired";
-    if (fireAt !== null && nowMs < fireAt) return "scheduled";
-    if (fireAt !== null && nowMs >= fireAt) return "past_due";
-    return "unknown";
-  }
-  // poll
   const status = POLL_STATUS[row.outcome];
   if (status === undefined) return "unknown";
   if (status === "ok") {
-    // healthy unless we haven't heard from this host in > 3x heartbeat.
     const updatedMs = row.updated_at * 1000;
     if (nowMs - updatedMs > 9 * 60 * 1000) return "stale";
     return "ok";
@@ -86,9 +61,6 @@ const STATUS_META: Record<HealthStatus, { label: string; className: string }> = 
   unknown: { label: "unknown", className: "bg-muted text-muted-foreground" },
   skipped: { label: "skipped", className: "bg-muted text-muted-foreground" },
   disabled: { label: "off", className: "bg-muted text-muted-foreground" },
-  fired: { label: "fired", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
-  past_due: { label: "past due", className: "bg-destructive/15 text-destructive" },
-  scheduled: { label: "scheduled", className: "bg-sky-500/15 text-sky-600 dark:text-sky-400" },
 };
 
 function StatusPill({ status }: { status: HealthStatus }) {
@@ -115,7 +87,7 @@ function humanize(secs: number): string {
   return `${Math.floor(secs / 3600)}h`;
 }
 
-function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: ScriptPluginKind }) {
+function PluginRow({ row, nowMs }: { row: BoardRow; nowMs: number }) {
   const [open, setOpen] = useState(false);
   const update = useUpdateScriptPollPlugin();
   const hasError = Boolean(row.last_error);
@@ -125,10 +97,7 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
         className="grid items-center gap-2 px-3 py-2 text-sm odd:bg-muted/30"
-        style={{
-          gridTemplateColumns:
-            kind === "poll" ? "minmax(0,1fr) auto auto auto auto" : "minmax(0,1fr) auto auto auto",
-        }}
+        style={{ gridTemplateColumns: "minmax(0,1fr) auto auto auto auto" }}
       >
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -148,29 +117,21 @@ function PluginRow({ row, nowMs, kind }: { row: BoardRow; nowMs: number; kind: S
           </div>
         </div>
         <div className="text-xs text-muted-foreground tabular-nums">
-          {kind === "poll"
-            ? row.interval_s
-              ? `${Math.round(row.interval_s)}s`
-              : "—"
-            : row.fire_at
-              ? formatTime(row.fire_at)
-              : "—"}
+          {row.interval_s ? `${Math.round(row.interval_s)}s` : "—"}
         </div>
         <div className="text-xs text-muted-foreground tabular-nums">
-          {kind === "timer" ? formatTime(row.fired_at) : relative(row.last_failure_at, nowMs)}
+          {relative(row.last_failure_at, nowMs)}
         </div>
-        {kind === "poll" && (
-          <div className="flex justify-center">
-            <Switch
-              checked={row.enabled}
-              disabled={update.isPending}
-              aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name} on ${row.host_id}`}
-              onCheckedChange={(enabled) =>
-                update.mutate({ hostId: row.host_id, name: row.name, enabled })
-              }
-            />
-          </div>
-        )}
+        <div className="flex justify-center">
+          <Switch
+            checked={row.enabled}
+            disabled={update.isPending}
+            aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name} on ${row.host_id}`}
+            onCheckedChange={(enabled) =>
+              update.mutate({ hostId: row.host_id, name: row.name, enabled })
+            }
+          />
+        </div>
         <div className="flex items-center gap-2">
           {row.consecutive_failures > 0 && (
             <span className="text-xs text-destructive tabular-nums">
@@ -213,12 +174,10 @@ function HostGroup({
   hostId,
   rows,
   nowMs,
-  kind,
 }: {
   hostId: string;
   rows: BoardRow[];
   nowMs: number;
-  kind: ScriptPluginKind;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -230,7 +189,7 @@ function HostGroup({
       </div>
       <div>
         {rows.map((row) => (
-          <PluginRow key={`${row.host_id}:${row.name}`} row={row} nowMs={nowMs} kind={kind} />
+          <PluginRow key={`${row.host_id}:${row.name}`} row={row} nowMs={nowMs} />
         ))}
       </div>
     </Card>
@@ -254,8 +213,6 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
       singleton_skipped: r.singleton_skipped,
       warning: r.warning,
       interval_s: r.interval_s,
-      fire_at: r.fire_at,
-      fired_at: r.fired_at,
       updated_at: r.updated_at,
     }));
     const byHost = new Map<string, BoardRow[]>();
@@ -267,19 +224,13 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
     return Array.from(byHost.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [query.data, nowMs]);
 
-  const headerColumns =
-    kind === "poll"
-      ? ["plugin", "interval", "last fail", "enabled", "status"]
-      : ["plugin", "fire at", "fired at", "status"];
+  const headerColumns = ["plugin", "interval", "last fail", "enabled", "status"];
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-3" data-testid={testId}>
       <div
         className="grid gap-2 px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-        style={{
-          gridTemplateColumns:
-            kind === "poll" ? "minmax(0,1fr) auto auto auto auto" : "minmax(0,1fr) auto auto auto",
-        }}
+        style={{ gridTemplateColumns: "minmax(0,1fr) auto auto auto auto" }}
       >
         {headerColumns.map((c) => (
           <span key={c} className={c === "status" ? "text-right" : ""}>
@@ -293,12 +244,12 @@ export function ScriptPluginsBoard({ kind, testId }: ScriptPluginsBoardProps) {
         </div>
       ) : grouped.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-          No {kind === "poll" ? "poll" : "timer"} plugins reporting yet. Hosts post a snapshot on
-          change and roughly every 3 minutes.
+          No poll plugins reporting yet. Hosts post a snapshot on change and roughly every 3
+          minutes.
         </div>
       ) : (
         grouped.map(([hostId, rows]) => (
-          <HostGroup key={hostId} hostId={hostId} rows={rows} nowMs={nowMs} kind={kind} />
+          <HostGroup key={hostId} hostId={hostId} rows={rows} nowMs={nowMs} />
         ))
       )}
     </div>
