@@ -3,7 +3,6 @@ import { useMemo } from "react";
 import { authenticatedFetch } from "@/lib/identity";
 import { agentRootName } from "@/lib/forkHarness";
 import { capitalizeAgentName, useAcpHarnessIds, useHarnessLabels } from "@/lib/agentLabels";
-import { LEGACY_OMNIHARNESS_TARGET } from "@/lib/omniharnessModels";
 import {
   nativeCodingAgentForAvailableAgent,
   nativeCodingAgentForAgentName,
@@ -148,7 +147,6 @@ async function fetchBuiltinAgents(): Promise<AvailableAgent[]> {
   /* oxlint-enable no-await-in-loop */
 
   return rows
-    .filter((a) => a.name !== LEGACY_OMNIHARNESS_TARGET)
     .map((a) => ({
       id: a.id,
       name: a.name,
@@ -369,7 +367,7 @@ async function fetchAvailableAgents(): Promise<AvailableAgent[]> {
     // `"<name> (fork ag_a) (fork ag_b)"`, and a single-layer strip would
     // leave a non-matching name that slips the seeded-shadow check.
     const base = agentRootName(agent.agentName);
-    if (base === LEGACY_OMNIHARNESS_TARGET || base !== agent.agentName) continue;
+    if (base !== agent.agentName) continue;
     // Bound a catalog agent directly (seeded built-in OR user template):
     // already represented (verbatim, or as a candidate above).
     if (catalogIds.has(agent.agentId)) continue;
