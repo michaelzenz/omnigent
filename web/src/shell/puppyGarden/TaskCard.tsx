@@ -18,6 +18,7 @@ import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardManagerRolePicker } from "./TaskCardManagerRolePicker";
 import { TaskCardSidebar } from "./TaskCardAssets";
 import { TaskItemsPanel } from "./TaskCardWorkers";
+import { TaskActionsMenu } from "./TaskActionsMenu";
 
 interface TaskCardProps {
   taskId: string;
@@ -179,26 +180,31 @@ export function TaskCard({
             </div>
           </div>
           {!isPending ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isLast || moveToEnd.isPending}
-              title={isLast ? "This task is already last" : "Move task to queue end"}
-              onClick={async (event) => {
-                event.stopPropagation();
-                event.currentTarget.blur();
-                const cancelExplicitMove = onMovedToEnd?.(taskId);
-                try {
-                  await moveToEnd.mutateAsync();
-                } catch {
-                  cancelExplicitMove?.();
-                }
-              }}
-            >
-              {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
-            </Button>
-          ) : null}
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isLast || moveToEnd.isPending}
+                title={isLast ? "This task is already last" : "Move task to queue end"}
+                onClick={async (event) => {
+                  event.stopPropagation();
+                  event.currentTarget.blur();
+                  const cancelExplicitMove = onMovedToEnd?.(taskId);
+                  try {
+                    await moveToEnd.mutateAsync();
+                  } catch {
+                    cancelExplicitMove?.();
+                  }
+                }}
+              >
+                {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
+              </Button>
+              <TaskActionsMenu taskId={taskId} taskState={state} />
+            </div>
+          ) : (
+            <TaskActionsMenu taskId={taskId} taskState={state} />
+          )}
         </div>
         {!isPending ? <EditableGoal taskId={taskId} goal={effectiveGoal} /> : null}
       </header>
