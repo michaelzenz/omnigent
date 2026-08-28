@@ -175,7 +175,7 @@ Example body:
   "summary": "repo:org/repo pr:456 unblocks:pr:123",
   "source": "poll_plugin:github_pr",
   "source_key": "org/repo#456",
-  "source_offset": "1",
+  "source_offset": "merged",
   "tags": [
     {"tag_type": "repo", "tag": "org/repo"},
     {"tag_type": "pr", "tag": "456"}
