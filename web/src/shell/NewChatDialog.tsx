@@ -3873,6 +3873,7 @@ export function NewChatLandingScreen() {
     isGitWorkspace ? workspaceTrimmed : null,
   );
   const [worktreeSizePopoverOpen, setWorktreeSizePopoverOpen] = useState(false);
+  const [copiedWorktreePath, setCopiedWorktreePath] = useState<string | null>(null);
   // Linked worktrees (exclude the main work tree — "starting in the main
   // repo" is just picking that directory, not selecting a worktree).
   const linkedWorktrees = useMemo(
@@ -6013,9 +6014,20 @@ export function NewChatLandingScreen() {
                               ) : (
                                 <GitBranchIcon className="size-4 shrink-0 text-muted-foreground" />
                               )}
-                              <span className="truncate" title={wt.path}>
-                                {worktreePathTail(wt.path)}
-                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(wt.path);
+                                  setCopiedWorktreePath(wt.path);
+                                  setTimeout(() => setCopiedWorktreePath(null), 1500);
+                                }}
+                                className="truncate text-sm text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                                title={`Click to copy: ${wt.path}`}
+                              >
+                                {copiedWorktreePath === wt.path
+                                  ? "Copied!"
+                                  : worktreePathTail(wt.path)}
+                              </button>
                               {wt.branch && (
                                 <span className="shrink-0 text-muted-foreground/60">({wt.branch})</span>
                               )}
