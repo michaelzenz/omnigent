@@ -786,7 +786,7 @@ export function StatisticsPage() {
           <BreakdownSection
             id="purpose"
             title="Cost by Purpose"
-            description="Why each request was made. Consolidated calls keep their combined purposes together."
+            description="Why each request was made. Combined calls split cost equally across purposes."
             rows={data.byPurpose}
           />
           <BreakdownSection

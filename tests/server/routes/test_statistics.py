@@ -499,3 +499,51 @@ def test_future_ledger_rows_use_custom_pricing_without_changing_history(
     assert new_row["pricing_source"] == "custom"
     assert new_row["input_price_per_token"] == 0.000002
     assert new_row["cost_usd"] == pytest.approx(0.00004)
+
+
+def test_record_omniharness_usage_splits_combined_purposes(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    store.get_session_owner = lambda _sid: "alice"  # type: ignore[method-assign]
+
+    record_omniharness_usage(
+        store,
+        session_id="1" * 32,
+        turn_id="turn1",
+        purpose="profile_selection+smart_routing+workload_classification",
+        model=None,
+        workload="development",
+        usage={"input_tokens": 300, "output_tokens": 30, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+    )
+
+    month = store.list_usage_ledger_months("alice")[0]
+    rows = store.list_usage_ledger_month("alice", month)
+    assert len(rows) == 3
+    purposes = {r["purpose"] for r in rows}
+    assert purposes == {"profile_selection", "smart_routing", "workload_classification"}
+    # Each row gets 1/3 of tokens
+    for r in rows:
+        assert r["input_tokens"] == 100
+        assert r["output_tokens"] == 10
+
+
+def test_record_omniharness_usage_splits_cost_equally(db_uri: str) -> None:
+    store = SqlAlchemyConversationStore(db_uri)
+    store.get_session_owner = lambda _sid: "alice"  # type: ignore[method-assign]
+
+    record_omniharness_usage(
+        store,
+        session_id="1" * 32,
+        turn_id="turn1",
+        purpose="profile_selection+workload_classification",
+        model=None,
+        workload="development",
+        usage={"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        provider_cost=1.0,
+    )
+
+    month = store.list_usage_ledger_months("alice")[0]
+    rows = store.list_usage_ledger_month("alice", month)
+    assert len(rows) == 2
+    assert {r["purpose"] for r in rows} == {"profile_selection", "workload_classification"}
+    for r in rows:
+        assert r["cost_usd"] == pytest.approx(0.5)

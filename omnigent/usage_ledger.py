@@ -67,6 +67,12 @@ def _price_snapshot(pricing: ModelPricing | None) -> dict[str, float | None]:
     }
 
 
+def _split_int(value: int, n: int) -> list[int]:
+    """Split an integer into n parts, distributing remainder to first parts."""
+    base, remainder = divmod(value, n)
+    return [base + (1 if i < remainder else 0) for i in range(n)]
+
+
 def record_omniharness_usage(
     conversation_store: ConversationStore,
     *,
@@ -78,7 +84,7 @@ def record_omniharness_usage(
     usage: dict[str, Any],
     provider_cost: float | None = None,
 ) -> None:
-    """Append one ledger row without modifying legacy usage rollups."""
+    """Append ledger row(s), splitting combined purposes with equal cost."""
     try:
         owner = conversation_store.get_session_owner(session_id) or RESERVED_USER_LOCAL
         metadata = get_omniharness_model_metadata(model) if model else None
@@ -112,24 +118,38 @@ def record_omniharness_usage(
                 "provider" if use_provider_cost else metadata.pricing_source if metadata else None
             )
         )
-        conversation_store.record_usage_ledger(
-            {
-                "user_id": owner,
-                "session_id": session_id,
-                "turn_id": turn_id,
-                "purpose": purpose,
-                "model": model,
-                "workload": workload,
-                "input_tokens": int(usage.get("input_tokens") or 0),
-                "output_tokens": int(usage.get("output_tokens") or 0),
-                "cache_read_input_tokens": int(usage.get("cache_read_input_tokens") or 0),
-                "cache_creation_input_tokens": int(usage.get("cache_creation_input_tokens") or 0),
-                **_price_snapshot(pricing),
-                "pricing_source": pricing_source,
-                "cost_usd": cost,
-                "priced": priced,
-            }
-        )
+        purposes = purpose.split("+")
+        n = len(purposes)
+        cost_per = cost / n if cost is not None else None
+        token_splits = {
+            field: _split_int(int(usage.get(field) or 0), n)
+            for field in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            )
+        }
+        snapshot = _price_snapshot(pricing)
+        for i, individual_purpose in enumerate(purposes):
+            conversation_store.record_usage_ledger(
+                {
+                    "user_id": owner,
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "purpose": individual_purpose,
+                    "model": model,
+                    "workload": workload,
+                    "input_tokens": token_splits["input_tokens"][i],
+                    "output_tokens": token_splits["output_tokens"][i],
+                    "cache_read_input_tokens": token_splits["cache_read_input_tokens"][i],
+                    "cache_creation_input_tokens": token_splits["cache_creation_input_tokens"][i],
+                    **snapshot,
+                    "pricing_source": pricing_source,
+                    "cost_usd": cost_per,
+                    "priced": priced,
+                }
+            )
     except (OSError, RuntimeError, ValueError, NotImplementedError):
         _logger.warning(
             "OmniHarness usage ledger write failed for session=%s purpose=%s",
