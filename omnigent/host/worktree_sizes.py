@@ -1,0 +1,172 @@
+"""Async worktree size calculation with CPU/IO throttling.
+
+Calculates on-disk size of each git worktree belonging to a repository,
+using ``du`` with ``nice``/``ionice`` to limit CPU and IO impact. Results
+are cached per repo root and never expire — the 10-minute interval only
+controls when a background recalculation is triggered, not whether
+cached data is returned. See designs/ASYNC_WORKTREE_SIZES.md.
+"""
+
+from __future__ import annotations
+
+import logging
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+
+from omnigent.host.git_worktree import WorktreeError, list_worktrees
+
+_logger = logging.getLogger(__name__)
+
+_RECALC_INTERVAL_S = 600.0  # 10 minutes
+_DU_TIMEOUT_S = 300.0  # 5 minutes per worktree
+
+
+@dataclass
+class WorktreeSizeEntry:
+    """One worktree's size result.
+
+    :param path: Absolute worktree directory.
+    :param branch: Checked-out branch, or None for detached HEAD.
+    :param is_main: True for the repository's main work tree.
+    :param size_bytes: Total bytes on disk (0 when du failed).
+    :param error: Per-worktree error message, or None on success.
+    """
+
+    path: str
+    branch: str | None
+    is_main: bool
+    size_bytes: int
+    error: str | None = None
+
+
+@dataclass
+class WorktreeSizeResult:
+    """Cached size calculation result for a repository.
+
+    :param repo_root: Absolute path of the main work tree.
+    :param entries: One per worktree, main first.
+    :param total_bytes: Sum of non-failed worktree sizes.
+    :param calculated_at: Monotonic timestamp of the calculation.
+    :param error: Overall error (e.g. "not a git repo"), or None.
+    """
+
+    repo_root: str
+    entries: list[WorktreeSizeEntry]
+    total_bytes: int
+    calculated_at: float
+    error: str | None = None
+
+
+class WorktreeSizeCache:
+    """Thread-safe in-memory cache keyed by repo root. Never expires.
+
+    Cached data is always returned regardless of age. The 10-minute
+    ``recalc_interval_s`` only controls when a background recalculation
+    is triggered — it does not invalidate the cache.
+    """
+
+    def __init__(self, recalc_interval_s: float = _RECALC_INTERVAL_S) -> None:
+        self._lock = threading.Lock()
+        self._cache: dict[str, WorktreeSizeResult] = {}
+        self._recalc_interval_s = recalc_interval_s
+        self._in_flight: set[str] = set()
+
+    def get(self, repo_root: str) -> WorktreeSizeResult | None:
+        with self._lock:
+            return self._cache.get(repo_root)
+
+    def put(self, repo_root: str, result: WorktreeSizeResult) -> None:
+        with self._lock:
+            self._cache[repo_root] = result
+
+    def needs_recalc(self, repo_root: str) -> bool:
+        with self._lock:
+            entry = self._cache.get(repo_root)
+            if entry is None:
+                return True
+            return (time.monotonic() - entry.calculated_at) >= self._recalc_interval_s
+
+    def mark_in_flight(self, repo_root: str) -> bool:
+        with self._lock:
+            if repo_root in self._in_flight:
+                return False
+            self._in_flight.add(repo_root)
+            return True
+
+    def clear_in_flight(self, repo_root: str) -> None:
+        with self._lock:
+            self._in_flight.discard(repo_root)
+
+
+def _dir_size_bytes(path: str) -> tuple[int, str | None]:
+    """Calculate directory size with CPU/IO throttling.
+
+    Returns (size_bytes, error). Uses nice/ionice to limit impact.
+    """
+    cmd: list[str] = ["du", "-sb", path]
+    if sys.platform == "linux":
+        cmd = ["nice", "-n", "19", "ionice", "-c", "3"] + cmd
+    elif sys.platform == "darwin":
+        cmd = ["nice", "-n", "19", "du", "-sk", path]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_DU_TIMEOUT_S, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return 0, f"du timed out after {_DU_TIMEOUT_S:.0f}s"
+    except FileNotFoundError:
+        return 0, "du not found on host"
+    if result.returncode != 0:
+        detail = result.stderr.strip()[:200]
+        return 0, f"du failed (exit {result.returncode}){f': {detail}' if detail else ''}"
+    try:
+        size_str = result.stdout.split("\t")[0].strip()
+        if sys.platform == "darwin":
+            return int(size_str) * 1024, None
+        return int(size_str), None
+    except (ValueError, IndexError):
+        return 0, "du output could not be parsed"
+
+
+def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
+    """List worktrees and calculate each one's on-disk size.
+
+    :param repo_path: Absolute path inside a git repository.
+    :returns: WorktreeSizeResult with per-worktree sizes.
+    """
+    try:
+        worktrees = list_worktrees(repo_path=repo_path)
+    except WorktreeError as exc:
+        return WorktreeSizeResult(
+            repo_root=repo_path,
+            entries=[],
+            total_bytes=0,
+            calculated_at=time.monotonic(),
+            error=exc.message,
+        )
+
+    entries: list[WorktreeSizeEntry] = []
+    total_bytes = 0
+    for wt in worktrees:
+        size, err = _dir_size_bytes(wt.path)
+        entries.append(
+            WorktreeSizeEntry(
+                path=wt.path,
+                branch=wt.branch,
+                is_main=wt.is_main,
+                size_bytes=size,
+                error=err,
+            )
+        )
+        if err is None:
+            total_bytes += size
+
+    return WorktreeSizeResult(
+        repo_root=worktrees[0].path if worktrees else repo_path,
+        entries=entries,
+        total_bytes=total_bytes,
+        calculated_at=time.monotonic(),
+    )

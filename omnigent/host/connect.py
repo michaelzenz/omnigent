@@ -78,6 +78,8 @@ from omnigent.host.frames import (
     HostStoreSecretFrame,
     HostStoreSecretResultFrame,
     HostWorktreeLogFrame,
+    HostWorktreeSizesFrame,
+    HostWorktreeSizesResultFrame,
     decode_host_frame,
     encode_host_frame,
 )
@@ -88,6 +90,11 @@ from omnigent.host.git_worktree import (
     list_worktrees,
     remove_worktree,
     renew_auto_worktree_lease,
+)
+from omnigent.host.worktree_sizes import (
+    WorktreeSizeCache,
+    WorktreeSizeResult,
+    calculate_worktree_sizes,
 )
 from omnigent.host.identity import CONFIG_PATH, HostIdentity, load_or_create_host_identity
 from omnigent.host.inference_relay import HostInferenceRelay
@@ -951,6 +958,7 @@ class HostProcess:
         self._instance_id = os.urandom(16).hex()
         self._runners: dict[str, _RunnerHandle] = {}
         self._inference_relay = HostInferenceRelay(self._server_url)
+        self._worktree_size_cache = WorktreeSizeCache()
         # Retain the host's refreshable auth context after the first tunnel
         # handshake so runner launches can reuse its warm bearer. Failed or
         # unavailable resolution is not latched, allowing a later reconnect
@@ -3140,6 +3148,78 @@ class HostProcess:
         self._gateway_inference = gateway
         self._capabilities_initialized = True
 
+    async def _handle_worktree_sizes(
+        self,
+        frame: HostWorktreeSizesFrame,
+    ) -> HostWorktreeSizesResultFrame:
+        """Return cached worktree sizes, triggering a background recalc when stale."""
+        import asyncio as _asyncio
+
+        cache = self._worktree_size_cache
+        cached = cache.get(frame.repo_path)
+
+        if cached is not None and not frame.force:
+            # Return cached data immediately; kick off background recalc if stale.
+            if cache.needs_recalc(frame.repo_path) and cache.mark_in_flight(frame.repo_path):
+                _asyncio.create_task(
+                    self._background_worktree_recalc(frame.repo_path)
+                )
+            return self._result_from_cache(frame.request_id, cached)
+
+        # No cache (first request) or force=True: block until calculation completes.
+        if not cache.mark_in_flight(frame.repo_path):
+            # Another request is already calculating — wait for it.
+            for _ in range(310):
+                await _asyncio.sleep(1.0)
+                cached = cache.get(frame.repo_path)
+                if cached is not None:
+                    return self._result_from_cache(frame.request_id, cached)
+            return HostWorktreeSizesResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error="size calculation timed out",
+            )
+        try:
+            result = await _asyncio.to_thread(calculate_worktree_sizes, frame.repo_path)
+            cache.put(frame.repo_path, result)
+            return self._result_from_cache(frame.request_id, result)
+        finally:
+            cache.clear_in_flight(frame.repo_path)
+
+    async def _background_worktree_recalc(self, repo_path: str) -> None:
+        """Background recalc — updates cache without blocking any request."""
+        cache = self._worktree_size_cache
+        try:
+            result = await asyncio.to_thread(calculate_worktree_sizes, repo_path)
+            cache.put(repo_path, result)
+        except Exception:
+            _logger.warning("Background worktree size recalc failed for %s", repo_path, exc_info=True)
+        finally:
+            cache.clear_in_flight(repo_path)
+
+    @staticmethod
+    def _result_from_cache(
+        request_id: str, result: WorktreeSizeResult
+    ) -> HostWorktreeSizesResultFrame:
+        worktrees = [
+            {
+                "path": e.path,
+                "branch": e.branch,
+                "is_main": e.is_main,
+                "size_bytes": e.size_bytes,
+                "error": e.error,
+            }
+            for e in result.entries
+        ]
+        return HostWorktreeSizesResultFrame(
+            request_id=request_id,
+            status="ok" if result.error is None else "failed",
+            worktrees=worktrees,
+            total_bytes=result.total_bytes,
+            calculated_at=result.calculated_at,
+            error=result.error,
+        )
+
     async def _handle_renew_worktree_lease(
         self,
         frame: HostRenewWorktreeLeaseFrame,
@@ -4071,6 +4151,9 @@ class HostProcess:
             await ws.send(encode_host_frame(await self._handle_list_worktrees(frame)))
         elif isinstance(frame, HostRenewWorktreeLeaseFrame):
             await ws.send(encode_host_frame(await self._handle_renew_worktree_lease(frame)))
+        elif isinstance(frame, HostWorktreeSizesFrame):
+            result = await self._handle_worktree_sizes(frame)
+            await ws.send(encode_host_frame(result))
         elif isinstance(frame, HostFsRequestFrame):
             # Git status and directory walks can block, so run the read
             # off the event loop and reply when it completes.
