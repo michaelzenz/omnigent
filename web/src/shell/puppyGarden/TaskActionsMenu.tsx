@@ -144,11 +144,6 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
             <DialogDescription>
               This action cannot be undone. All task data — items, workers,
               events, and assets — will be permanently removed.
-              {!isArchived && (
-                <span className="mt-2 block font-medium text-destructive">
-                  The task must be archived first before it can be permanently deleted.
-                </span>
-              )}
             </DialogDescription>
           </DialogHeader>
           {deleteError ? (
@@ -163,7 +158,7 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
             <Button
               type="button"
               variant="destructive"
-              disabled={deleteTask.isPending || !isArchived}
+              disabled={deleteTask.isPending}
               onClick={() => void handleDelete()}
             >
               {deleteTask.isPending ? (

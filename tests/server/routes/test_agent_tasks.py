@@ -343,6 +343,21 @@ async def test_delete_archives_task(client: httpx.AsyncClient) -> None:
     assert get_resp.json()["state"] == "archived"
 
 
+async def test_permanent_delete_without_archive(client: httpx.AsyncClient) -> None:
+    """Permanent delete works on a pending task without archiving first."""
+    created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
+    task_id = created["id"]
+    assert created["state"] == "pending"
+
+    perm_resp = await client.delete(f"/v1/agent-tasks/{task_id}/permanent")
+    assert perm_resp.status_code == 200
+    assert perm_resp.json()["deleted"] is True
+    assert perm_resp.json()["permanent"] is True
+
+    get_resp = await client.get(f"/v1/agent-tasks/{task_id}")
+    assert get_resp.status_code == 404
+
+
 async def test_unknown_task_agent_role_returns_404(client: httpx.AsyncClient) -> None:
     profile_resp = await client.get(agent_role_profile_url("manager"))
     assert profile_resp.status_code == 404
