@@ -55,6 +55,10 @@ from omnigent.agent_tasks.items import (
     resolve_task_item,
     submit_item_for_user_ack,
 )
+from omnigent.agent_tasks.manager_discovery import (
+    list_active_managers,
+    manager_role_profile_response,
+)
 from omnigent.agent_tasks.manager_role_profile import (
     get_or_create_manager_role_profile,
 )
@@ -160,7 +164,7 @@ class CreateAgentTaskRequest(BaseModel):
     goal: str
     description: str | None = None
     internal_note: str | None = None
-    state: str = "pending"
+    state: str = "active"
     priority: int = Field(default=2, ge=0, le=3)
     tags: list[TaskTagInput] = Field(default_factory=list)
 
@@ -497,6 +501,9 @@ class CreateTaskPackageRequest(BaseModel):
     internal_note: str | None = None
     tags: list[TaskTagInput] = Field(default_factory=list)
     items: list[PackageItemInput] = Field(min_length=1)
+    # Manager session to attach the task to at birth. Omitted by the user;
+    # managers pass their own session id so the task is born attached.
+    manager_conversation_id: str | None = None
 
     @field_validator("title", "goal")
     @classmethod
@@ -1443,6 +1450,52 @@ def create_agent_tasks_router(
                     conversation_id=conversation_id,
                     created=True,
                 )
+
+    @router.get("/agent-tasks/managers")
+    async def list_managers(request: Request) -> dict[str, Any]:
+        """List the caller's active managers with task portfolios and capacity.
+
+        The broker distributor picks a manager from this list (or spins up a
+        new one from the returned role profiles when none fits).
+        """
+        user_id = require_user(request, auth_provider)
+        owner = _effective_user_id(user_id)
+        if conversation_store is None:
+            return {"object": "list", "managers": [], "role_profiles": []}
+        managers = await asyncio.to_thread(
+            list_active_managers,
+            owner_user_id=owner,
+            task_store=task_store,
+            conversation_store=conversation_store,
+        )
+        role_profiles: list = []
+        if task_role_profile_store is not None:
+            profiles = await asyncio.to_thread(
+                task_role_profile_store.list_roles, kind="manager"
+            )
+            role_profiles = manager_role_profile_response(profiles)
+        return {
+            "object": "list",
+            "managers": [
+                {
+                    "conversation_id": manager.conversation_id,
+                    "title": manager.title,
+                    "host_id": manager.host_id,
+                    "workspace": manager.workspace,
+                    "task_count": manager.task_count,
+                    "tasks": [
+                        {
+                            "task_id": task.id,
+                            "title": task.title,
+                            "state": task.state,
+                        }
+                        for task in manager.tasks
+                    ],
+                }
+                for manager in managers
+            ],
+            "role_profiles": role_profiles,
+        }
 
     @router.get("/agent-tasks/search")
     async def search_agent_tasks(
@@ -2803,35 +2856,34 @@ def create_agent_tasks_router(
                 task_event_store=task_event_store,
             )
 
-            def _create() -> Task:
-                return create_task_package(
-                    task_id=task_id,
-                    owner_user_id=_effective_user_id(user_id),
-                    title=body.title,
-                    goal=body.goal,
-                    description=body.description,
-                    internal_note=body.internal_note,
-                    tags=tags or task_tags_from_event_tags(task_id, event_tags),
-                    event_tags=event_tags,
-                    items=[
-                        PackageItemSpec(
-                            title=item.title,
-                            event_ids=item.event_ids,
-                            description=item.description,
-                            instructions=item.instructions,
-                            internal_note=item.internal_note,
-                            item_id=item.item_id,
-                            worker_id=item.worker_id,
-                        )
-                        for item in body.items
-                    ],
-                    task_store=task_store,
-                    task_item_store=task_item_store,
-                    task_event_store=task_event_store,
-                    worker_store=worker_store,
-                )
-
-            task = await asyncio.to_thread(_create)
+            task = await asyncio.to_thread(
+                create_task_package,
+                task_id=task_id,
+                owner_user_id=_effective_user_id(user_id),
+                title=body.title,
+                goal=body.goal,
+                description=body.description,
+                internal_note=body.internal_note,
+                tags=tags or task_tags_from_event_tags(task_id, event_tags),
+                event_tags=event_tags,
+                manager_conversation_id=body.manager_conversation_id,
+                items=[
+                    PackageItemSpec(
+                        title=item.title,
+                        event_ids=item.event_ids,
+                        description=item.description,
+                        instructions=item.instructions,
+                        internal_note=item.internal_note,
+                        item_id=item.item_id,
+                        worker_id=item.worker_id,
+                    )
+                    for item in body.items
+                ],
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+            )
             saved_tags = await asyncio.to_thread(task_store.get_tags, task.id)
             return _task_to_response(task, tags=saved_tags)
 
