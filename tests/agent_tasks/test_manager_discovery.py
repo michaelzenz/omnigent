@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -322,3 +323,64 @@ async def test_bootstrap_reattaches_when_manager_gone(discovery_setup: dict) -> 
         user_id="user-1",
     )
     assert updated.manager_conversation_id == live_conv_id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_bootstraps_spawn_one_manager(discovery_setup: dict) -> None:
+    """Cold-start race: two simultaneous bootstraps yield exactly one manager.
+
+    Without the per-owner lock both coroutines read an empty roster while the
+    first is still mid-spawn, and both spawn a manager session.
+    """
+    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
+    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
+    task_a = _create_task(task_store, "t_race_a", title="First", goal="first goal")
+    task_b = _create_task(task_store, "t_race_b", title="Second", goal="second goal")
+    params = resolve_bootstrap_params(
+        host_id=_uid("host_a"),
+        workspace="~/",
+        harness=None,
+        model=None,
+        role_profile=_role_profile(discovery_setup["manager_agent_id"]),
+    )
+    spawns: list[str] = []
+
+    async def _spawn(*, body, request, user_id, **kwargs):
+        conv = conversation_store.create_conversation(
+            title=body.title,
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+        )
+        # Yield like the real create_session_internal does, so the second
+        # bootstrap gets a chance to run while the first is mid-spawn.
+        await asyncio.sleep(0)
+        spawns.append(conv.id)
+        return conv
+
+    class _State:
+        pass
+
+    updated_a, updated_b = await asyncio.gather(
+        bootstrap_task_manager(
+            task=task_a,
+            task_store=task_store,
+            conversation_store=conversation_store,
+            params=params,
+            session_creator=_spawn,
+            app_state=_State(),
+            user_id="user-1",
+        ),
+        bootstrap_task_manager(
+            task=task_b,
+            task_store=task_store,
+            conversation_store=conversation_store,
+            params=params,
+            session_creator=_spawn,
+            app_state=_State(),
+            user_id="user-1",
+        ),
+    )
+    assert len(spawns) == 1
+    assert updated_a.manager_conversation_id == spawns[0]
+    assert updated_b.manager_conversation_id == spawns[0]

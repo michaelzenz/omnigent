@@ -25,6 +25,16 @@ from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
 
+# Bootstraps for one owner serialize here so two concurrent attach-or-create
+# runs can't both see an empty roster and spawn duplicate manager sessions.
+# Process-local: fine for the single-server deployment; multi-replica would
+# need a database-level lock.
+_OWNER_BOOTSTRAP_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _owner_bootstrap_lock(owner: str) -> asyncio.Lock:
+    return _OWNER_BOOTSTRAP_LOCKS.setdefault(owner, asyncio.Lock())
+
 
 @dataclass(frozen=True)
 class BootstrapParams:
@@ -161,6 +171,11 @@ async def bootstrap_task_manager(
     The session is created through ``create_session_internal`` (the same path
     as ``POST /v1/sessions``) so workspace validation, runner launch,
     permissions, and adoption all apply.
+
+    Concurrent bootstraps for the same owner serialize on a per-owner lock,
+    so a cold-start burst (two rapid creates, two package accepts) can never
+    spawn duplicate managers — the loser re-reads the roster and attaches to
+    the winner's session.
     """
     if task.manager_conversation_id is not None:
         existing = await asyncio.to_thread(
@@ -179,10 +194,34 @@ async def bootstrap_task_manager(
             task.id,
         )
 
-    # Attach to an existing manager when one fits (host + capacity + scope).
-    # Concurrent bootstraps can both spawn here (no per-owner lock) — accepted
-    # at this stage; the broker reconciles duplicate managers.
+    # Attach-or-create runs under the per-owner lock: the first cold-start
+    # bootstrap spawns, later ones re-read the roster and attach to it.
     owner = user_id or task.owner_user_id or "__anonymous__"
+    async with _owner_bootstrap_lock(owner):
+        return await _attach_or_create_manager(
+            task=task,
+            task_store=task_store,
+            conversation_store=conversation_store,
+            params=params,
+            session_creator=session_creator,
+            app_state=app_state,
+            user_id=user_id,
+            owner=owner,
+        )
+
+
+async def _attach_or_create_manager(
+    *,
+    task: Task,
+    task_store: TaskStore,
+    conversation_store: ConversationStore,
+    params: BootstrapParams,
+    session_creator: Any,
+    app_state: Any,
+    user_id: str | None,
+    owner: str,
+) -> Task:
+    """The unlocked attach-or-create body — caller holds the owner lock."""
     managers = await asyncio.to_thread(
         list_active_managers,
         owner_user_id=owner,
