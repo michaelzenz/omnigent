@@ -1152,6 +1152,22 @@ def agent_def_to_agent_spec(
         if isinstance(raw_include, str) and raw_include.strip():
             mcp_include_path = os.path.expanduser(raw_include.strip())
 
+    # ``allowed_tools`` has no AgentDef counterpart; read from raw YAML.
+    # Normalize empty list to ``None`` so ``allowed_tools: []`` in YAML
+    # means "all tools" (same as omitting the field), matching the
+    # omnigent parser's behavior.
+    _raw_allowed = raw_yaml.get("allowed_tools") if raw_yaml else None
+    if _raw_allowed is not None and not isinstance(_raw_allowed, list):
+        raise OmnigentError(
+            "top-level 'allowed_tools' must be a list of tool names",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    allowed_tools = (
+        [str(t) for t in _raw_allowed]
+        if isinstance(_raw_allowed, list) and _raw_allowed
+        else None
+    )
+
     return AgentSpec(
         spec_version=_SYNTHETIC_SPEC_VERSION,
         name=name,
@@ -1173,6 +1189,7 @@ def agent_def_to_agent_spec(
         # AgentSpec expects.
         agent_session_sharing=SharePolicy(agent_def.agent_session_sharing),
         skills_filter=skills_filter,
+        allowed_tools=allowed_tools,
     )
 
 

@@ -38,6 +38,7 @@ import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
 import { agentRootName, forkTargetCarriesHistory } from "@/lib/forkHarness";
+import { NEW_SESSION_HIDDEN_AGENTS } from "@/shell/NewChatDialog";
 import { checkHostDirectory } from "@/hooks/useHostFilesystem";
 import { useHostRepository } from "@/hooks/useHostWorktrees";
 import { getCliServerUrl } from "@/lib/host";
@@ -311,6 +312,7 @@ export function ForkSessionForm({
       a.id !== sourceAgent?.id &&
       a.name !== sourceAgentName &&
       a.name !== sourceAgentBaseName &&
+      !NEW_SESSION_HIDDEN_AGENTS.has(a.name) &&
       forkTargetCarriesHistory(a.harness, a.name, a.history_switch),
   );
   // Group the switch targets like the new-session picker: built-ins first,

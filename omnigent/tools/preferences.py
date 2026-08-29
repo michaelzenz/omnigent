@@ -81,6 +81,28 @@ def filter_tool_schemas(
     return result
 
 
+def filter_tool_schemas_by_allowlist(
+    schemas: list[dict[str, Any]],
+    allowed: list[str] | None,
+) -> list[dict[str, Any]]:
+    """Keep only schemas whose tool name is in the agent-level allowlist.
+
+    ``None`` (no allowlist configured) returns schemas unchanged.
+    A tool not in the allowlist is dropped — the global disabled set
+    is applied separately and still blocks listed tools.
+    """
+    if not allowed:
+        return schemas
+    allowed_set = set(allowed)
+    result: list[dict[str, Any]] = []
+    for schema in schemas:
+        name = _extract_tool_name(schema)
+        if name is not None and name not in allowed_set:
+            continue
+        result.append(schema)
+    return result
+
+
 def _extract_tool_name(schema: dict[str, Any]) -> str | None:
     """Extract the tool name from an OpenAI-format schema dict."""
     name = schema.get("name")

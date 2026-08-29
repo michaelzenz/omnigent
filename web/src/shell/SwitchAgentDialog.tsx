@@ -21,6 +21,7 @@ import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { agentRootName, harnessFamily, switchTargetCarriesHistory } from "@/lib/forkHarness";
 import { isOnihTargetName } from "@/lib/omniharnessModels";
+import { NEW_SESSION_HIDDEN_AGENTS } from "@/shell/NewChatDialog";
 
 // "" means no target chosen yet. It must be empty (not a sentinel like
 // "__none__"): Radix only renders the trigger placeholder when the controlled
@@ -98,6 +99,7 @@ export function SwitchAgentDialog({
       a.id !== currentAgent?.id &&
       a.name !== currentAgentName &&
       a.name !== currentAgentRootName &&
+      !NEW_SESSION_HIDDEN_AGENTS.has(a.name) &&
       switchTargetCarriesHistory(a.harness, a.name, a.history_switch),
   );
 

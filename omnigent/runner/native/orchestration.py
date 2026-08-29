@@ -2125,9 +2125,20 @@ async def _auto_create_pi_terminal(
     pi_tools: list[_JsonObject] = []
     try:
         from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
+        from omnigent.tools.preferences import (
+            filter_tool_schemas,
+            filter_tool_schemas_by_allowlist,
+            get_disabled_tools_sync,
+        )
 
         spec_for_tools = _unwrap_resolved_spec(agent_spec)
         pi_tools = build_native_relay_tool_schemas(spec_for_tools)
+        _pi_disabled = get_disabled_tools_sync()
+        if _pi_disabled:
+            pi_tools = filter_tool_schemas(pi_tools, _pi_disabled)
+        _pi_allowed = spec_for_tools.allowed_tools if spec_for_tools is not None else None
+        if _pi_allowed:
+            pi_tools = filter_tool_schemas_by_allowlist(pi_tools, _pi_allowed)
     except Exception:  # noqa: BLE001 — tool registration is additive
         _logger.warning(
             "Failed to build pi-native tool schemas for session %s; "

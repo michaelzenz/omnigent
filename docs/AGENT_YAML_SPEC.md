@@ -52,6 +52,7 @@ of the agent YAML.
 | `timers` | Optional | Whether timer tools are exposed. Defaults to `true`. |
 | `spawn` | Optional | Whether arbitrary child-session tools are exposed. Defaults to `true`. |
 | `agent_session_sharing` | Optional | Session-sharing authority. Defaults to `non-public`; `none` disables it. |
+| `allowed_tools` | Optional | Agent-level tool allowlist. When set, only the listed tools are available to the agent. Defaults to all globally-enabled tools. See [Allowed tools](#allowed-tools). |
 
 ## Executor
 
@@ -378,6 +379,36 @@ tools:
 
 Use `tools.<name>: inherit` to inherit a tool from a parent agent, or
 `tools.<name>: self` / `spec: self` for a sub-agent that clones the parent spec.
+
+### Allowed tools
+
+`allowed_tools` is an agent-level tool allowlist. When set, only the listed
+tools are exposed to the model — all others are filtered out at schema
+assembly and rejected at dispatch. When omitted (default), all
+globally-enabled tools are available.
+
+The allowlist can only **narrow** the tool surface: globally disabled tools
+(the admin tool-preferences panel) remain blocked even if listed in
+`allowed_tools`. A tool is available iff:
+
+```
+(allowed_tools is None OR tool in allowed_tools) AND (tool not in global_disabled_set)
+```
+
+Tool names match the schema names sent to the model. This includes both
+built-in/framework tools (e.g. `load_skill`, `sys_os_read`) and MCP tools
+with their namespaced prefix (e.g. `github__list_issues`).
+
+```yaml
+name: restricted_agent
+allowed_tools:
+  - load_skill
+  - read_skill_file
+  - sys_os_read
+  - sys_os_write
+  - github__list_issues
+  - github__create_pr
+```
 
 ## Policies
 

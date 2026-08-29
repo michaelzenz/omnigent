@@ -275,6 +275,18 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     # Named-user sharing is enabled by default. ``none`` disables the tool;
     # ``public`` additionally allows ``__public__`` anonymous read.
     agent_session_sharing = _parse_share_policy(raw.get("agent_session_sharing", "non-public"))
+    # Top-level ``allowed_tools:`` is an agent-level tool allowlist.
+    # When set, only the named tools are exposed; others are filtered
+    # at schema assembly and rejected at dispatch. ``None`` (default)
+    # exposes all globally-enabled tools. The allowlist can only
+    # narrow — globally disabled tools remain blocked even if listed.
+    raw_allowed = raw.get("allowed_tools")
+    if raw_allowed is not None and not isinstance(raw_allowed, list):
+        raise OmnigentError(
+            "top-level 'allowed_tools' must be a list of tool names",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    allowed_tools = [str(t) for t in raw_allowed] if raw_allowed else None
 
     # Honor ``prompt:`` as the legacy alias for ``instructions:`` (per
     # ``_OMNIGENT_SYSTEM_PROMPT_KEYS``); ``instructions:`` wins if both set.
@@ -322,6 +334,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         timers=timers,
         spawn=spawn,
         agent_session_sharing=agent_session_sharing,
+        allowed_tools=allowed_tools,
     )
 
 

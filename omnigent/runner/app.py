@@ -12207,14 +12207,22 @@ def create_runner_app(
             return
 
         from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
-        from omnigent.tools.preferences import filter_tool_schemas, get_disabled_tools
+        from omnigent.tools.preferences import (
+            filter_tool_schemas,
+            filter_tool_schemas_by_allowlist,
+            get_disabled_tools,
+        )
 
+        _relay_spec = _unwrap_spec_entry(spec_entry)
         relay_schemas: list[_JsonObject] = build_native_relay_tool_schemas(
-            _unwrap_spec_entry(spec_entry)
+            _relay_spec
         )
         _relay_disabled = await get_disabled_tools(server_client)
         if _relay_disabled:
             relay_schemas = filter_tool_schemas(relay_schemas, _relay_disabled)
+        _relay_allowed = _relay_spec.allowed_tools if _relay_spec is not None else None
+        if _relay_allowed:
+            relay_schemas = filter_tool_schemas_by_allowlist(relay_schemas, _relay_allowed)
 
         _captured_session_id = session_id
 
@@ -12739,12 +12747,20 @@ def create_runner_app(
             # builtins eager, but replace the potentially large MCP surface with
             # two small discovery/dispatch tools before building the request.
             merged_tools = openai_agents_lazy_tool_schemas(merged_tools)
-        # Filter out globally disabled tools (admin tool-preferences panel).
-        from omnigent.tools.preferences import filter_tool_schemas, get_disabled_tools
+        # Filter out globally disabled tools (admin tool-preferences panel)
+        # and apply the agent-level allowlist (``allowed_tools:`` in YAML).
+        from omnigent.tools.preferences import (
+            filter_tool_schemas,
+            filter_tool_schemas_by_allowlist,
+            get_disabled_tools,
+        )
 
         _disabled = await get_disabled_tools(server_client)
         if _disabled:
             merged_tools = filter_tool_schemas(merged_tools, _disabled)
+        _allowed = cached_spec.allowed_tools if cached_spec is not None else None
+        if _allowed:
+            merged_tools = filter_tool_schemas_by_allowlist(merged_tools, _allowed)
         if merged_tools:
             harness_body["tools"] = merged_tools
         _spec_names = {

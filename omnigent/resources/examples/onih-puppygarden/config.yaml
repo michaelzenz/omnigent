@@ -1,0 +1,28 @@
+spec_version: 1
+name: onih-puppygarden
+description: Onih for PuppyGarden broker and manager roles — read-only profile restricted to file read, search, MCP access, and PuppyGarden APIs.
+
+executor:
+  type: omnigent
+  config:
+    harness: openai-agents
+
+allowed_tools:
+  # File read
+  - read
+  # Search
+  - grep
+  - find
+  - ls
+  - search_conversations
+  # session history
+  - sys_session_get_history
+  - sys_session_list
+  - sys_session_get_info
+  # MCP access (lazy discovery + dispatch for openai-agents harness)
+  - mcp_tool_search
+  - mcp_tool_call
+  # PuppyGarden
+  - puppygarden_api
+
+prompt: ""

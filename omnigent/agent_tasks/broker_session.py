@@ -20,7 +20,7 @@ from omnigent.agent_tasks.session_labels import BROKER_ROLE_VALUE, ROLE_LABEL
 from omnigent.db.utils import now_epoch
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.execution_targets import ONIH_OPENAI_AGENTS_TARGET
+from omnigent.execution_targets import execution_target_for_role
 from omnigent.native_coding_agents import native_coding_agent_for_harness
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store import AgentStore
@@ -117,7 +117,10 @@ def ensure_role_profile(
             resolve_host_owner_user_id(auth_user_id),
         )
 
-    omniharness = agent_store.get_by_name(ONIH_OPENAI_AGENTS_TARGET)
+    # Map role to execution target — broker and manager roles use the
+    # restricted read-only profile; secretary and others use the full agent.
+    target_name = execution_target_for_role(role)
+    omniharness = agent_store.get_by_name(target_name)
     if omniharness is None:
         raise OmnigentError(
             "OmniHarness execution target is unavailable", code=ErrorCode.NOT_FOUND

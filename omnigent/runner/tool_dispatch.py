@@ -6020,6 +6020,10 @@ async def execute_tool(
     _disabled = get_disabled_tools_sync()
     if tool_name in _disabled:
         return json.dumps({"error": f"Tool '{tool_name}' is unavailable."})
+    # Dispatch guard: reject tools not in the agent-level allowlist.
+    _allowed = agent_spec.allowed_tools if agent_spec is not None else None
+    if _allowed and tool_name not in _allowed:
+        return json.dumps({"error": f"Tool '{tool_name}' is not in the allowed_tools list for this agent."})
 
     if not arguments.strip():
         return json.dumps({"error": "malformed JSON arguments"})

@@ -33,6 +33,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.execution_targets import (
     ONIH_OPENAI_AGENTS_TARGET,
     ONIH_PI_TARGET,
+    ONIH_PUPPYGARDEN_TARGET,
 )
 from omnigent.harness_plugins import (
     NativeHarnessProvider,
@@ -263,6 +264,9 @@ _ONIH_BUNDLE_SOURCES = {
     ),
     ONIH_PI_TARGET: resolve_repo_symlink(
         Path(_examples_resources.__file__).parent / ONIH_PI_TARGET
+    ),
+    ONIH_PUPPYGARDEN_TARGET: resolve_repo_symlink(
+        Path(_examples_resources.__file__).parent / ONIH_PUPPYGARDEN_TARGET
     ),
 }
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")

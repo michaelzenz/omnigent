@@ -252,10 +252,11 @@ const OMNIHARNESS_DEFAULT_MODEL_LABEL = "Default";
 // Hidden from the new-session picker only. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent / `run
 // --harness kimi` use) — the picker offers only the native TUI (`kimi-native-ui`).
-const NEW_SESSION_HIDDEN_AGENTS = new Set([
+export const NEW_SESSION_HIDDEN_AGENTS = new Set([
   "nessie",
   "kimi",
   "kimi-code",
+  "onih-puppygarden",
 ]);
 
 // Short picker-row blurbs — the spec descriptions are long paragraphs that
