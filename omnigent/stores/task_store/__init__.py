@@ -51,6 +51,11 @@ class TaskStore(ABC):
         """List tasks ordered by ``queue_rank DESC, id DESC``."""
 
     @abstractmethod
+    def list_recent(self, limit: int) -> list[Task]:
+        """List the most recently touched tasks (``updated_at``, falling back to
+        ``created_at``), newest first. No state filter — recency only."""
+
+    @abstractmethod
     def update(
         self,
         task_id: str,

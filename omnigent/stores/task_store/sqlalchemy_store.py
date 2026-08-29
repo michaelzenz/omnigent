@@ -133,6 +133,21 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
+    def list_recent(self, limit: int) -> list[Task]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .order_by(
+                    desc(SqlTask.updated_at),
+                    desc(SqlTask.created_at),
+                    desc(SqlTask.id),
+                )
+                .limit(limit)
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_to_entity(row) for row in rows]
+
     def update(
         self,
         task_id: str,

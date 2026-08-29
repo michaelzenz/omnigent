@@ -106,3 +106,28 @@ def test_delete_removes_tags_and_workers(store: SqlAlchemyTaskStore) -> None:
     assert store.get(task_id) is None
     assert store.get_tags(task_id) == []
     assert worker_store.get_by_session_id(session_id) is None
+
+
+def test_list_recent_orders_by_last_touch(store: SqlAlchemyTaskStore) -> None:
+    old = _uid("task_old")
+    bumped = _uid("task_bumped")
+    store.create(task_id=old, title="Old", goal="old goal")
+    store.create(task_id=bumped, title="Bumped", goal="bumped goal")
+    store.update(bumped, title="Bumped!")
+    recent = store.list_recent(5)
+    assert recent[0].id == bumped
+    assert {task.id for task in recent} == {old, bumped}
+
+
+def test_list_recent_has_no_state_filter(store: SqlAlchemyTaskStore) -> None:
+    archived = _uid("task_archived")
+    store.create(task_id=archived, title="Archived", goal="gone")
+    store.update(archived, state="archived")
+    recent = store.list_recent(5)
+    assert any(task.id == archived for task in recent)
+
+
+def test_list_recent_respects_limit(store: SqlAlchemyTaskStore) -> None:
+    for i in range(5):
+        store.create(task_id=_uid(f"task_lim_{i}"), title=f"T{i}", goal="g")
+    assert len(store.list_recent(3)) == 3
