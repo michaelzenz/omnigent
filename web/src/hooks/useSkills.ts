@@ -92,6 +92,144 @@ function mapOccurrence(raw: WireOccurrence): SkillOccurrence {
   };
 }
 
+
+
+/** Strip a plugin namespace prefix (`<plugin>:<skill>`) to get the bare skill name. */
+function bareSkillName(name: string): string {
+  const colon = name.lastIndexOf(":");
+  return colon === -1 ? name : name.slice(colon + 1);
+}
+
+/**
+ * Deduplicate skills that share a variant content hash. Plugin skills are
+ * namespaced as `<plugin>:<skill>` but their file trees are identical to
+ * the non-namespaced copy. Union-find groups skills by shared
+ * contentSha256, then each group is merged into a single entry using the
+ * bare name as the title.
+ */
+function dedupSkills(skills: AggregatedSkill[]): AggregatedSkill[] {
+  const parent = skills.map((_, i) => i);
+  function find(x: number): number {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  }
+  function union(a: number, b: number): void {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  const hashToIndex = new Map<string, number>();
+  for (let i = 0; i < skills.length; i++) {
+    for (const variant of skills[i].variants) {
+      const prev = hashToIndex.get(variant.contentSha256);
+      if (prev !== undefined) union(prev, i);
+      else hashToIndex.set(variant.contentSha256, i);
+    }
+  }
+
+  const groups = new Map<number, AggregatedSkill[]>();
+  for (let i = 0; i < skills.length; i++) {
+    const root = find(i);
+    const group = groups.get(root) ?? [];
+    group.push(skills[i]);
+    groups.set(root, group);
+  }
+
+  return Array.from(groups.values(), (group) => mergeSkillGroup(group));
+}
+
+function mergeSkillGroup(group: AggregatedSkill[]): AggregatedSkill {
+  if (group.length === 1) return group[0];
+
+  const bareNamed = group.find((s) => !s.name.includes(":"));
+  const name =
+    bareNamed?.name ??
+    group.map((s) => s.name).sort((a, b) => a.length - b.length)[0];
+
+  const variantMap = new Map<string, SkillVariant>();
+  for (const skill of group) {
+    for (const variant of skill.variants) {
+      const existing = variantMap.get(variant.contentSha256);
+      if (existing) {
+        const seen = new Set<string>();
+        const merged = [...existing.occurrences, ...variant.occurrences].filter((o) => {
+          const key = `${o.hostId}\0${o.harness}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        variantMap.set(variant.contentSha256, {
+          contentSha256: variant.contentSha256,
+          activeCount: Math.max(existing.activeCount, variant.activeCount),
+          occurrences: merged,
+        });
+      } else {
+        variantMap.set(variant.contentSha256, variant);
+      }
+    }
+  }
+  const variants = Array.from(variantMap.values()).sort(
+    (a, b) => b.activeCount - a.activeCount,
+  );
+
+  const hostMap = new Map<string, SkillHost>();
+  for (const skill of group) {
+    for (const host of skill.hosts) {
+      const existing = hostMap.get(host.hostId);
+      if (existing) {
+        const harnessMap = new Map<string, SkillHarnessState>();
+        for (const h of [...existing.harnesses, ...host.harnesses]) {
+          const prev = harnessMap.get(h.harness);
+          if (!prev || (prev.state !== "present" && h.state === "present")) {
+            harnessMap.set(h.harness, h);
+          }
+        }
+        hostMap.set(host.hostId, {
+          ...existing,
+          online: existing.online || host.online,
+          reported: existing.reported || host.reported,
+          harnesses: Array.from(harnessMap.values()),
+        });
+      } else {
+        hostMap.set(host.hostId, host);
+      }
+    }
+  }
+  const hosts = Array.from(hostMap.values());
+
+  const hashSet = new Set(variants.map((v) => v.contentSha256));
+  const hasUnavailable = hosts.some((h) =>
+    h.harnesses.some((hr) => hr.state === "unavailable"),
+  );
+  const hasFailure =
+    hosts.some((h) =>
+      h.harnesses.some(
+        (hr) =>
+          hr.state === "missing" ||
+          hr.state === "offline" ||
+          hr.state === "not_reported",
+      ),
+    ) || hashSet.size > 1;
+  const syncStatus: AggregatedSkill["syncStatus"] = hasFailure
+    ? "not_synced"
+    : hasUnavailable
+      ? "partial"
+      : "synced";
+
+  return {
+    name,
+    description: group[0].description,
+    synced: syncStatus === "synced",
+    syncStatus,
+    variants,
+    hosts,
+  };
+}
+
 async function fetchSkills(): Promise<AggregatedSkill[]> {
   const response = await authenticatedFetch("/v1/skills");
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -128,7 +266,7 @@ async function fetchSkills(): Promise<AggregatedSkill[]> {
       }[];
     }[];
   };
-  return body.data.map((skill) => ({
+  return dedupSkills(body.data.map((skill) => ({
     name: skill.name,
     description: skill.description,
     synced: skill.synced,
@@ -151,7 +289,7 @@ async function fetchSkills(): Promise<AggregatedSkill[]> {
         occurrence: harness.occurrence ? mapOccurrence(harness.occurrence) : null,
       })),
     })),
-  }));
+  })));
 }
 
 async function fetchSkillRoots(): Promise<HostSkillRoots[]> {
