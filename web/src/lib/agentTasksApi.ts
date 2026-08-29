@@ -411,10 +411,9 @@ export interface WorkerLaneSummary {
 
 /** Initialize a Worker asynchronously. */
 export async function untrackWorker(workerId: string): Promise<void> {
-  const res = await authenticatedFetch(
-    `/v1/task-workers/${encodeURIComponent(workerId)}/untrack`,
-    { method: "POST" },
-  );
+  const res = await authenticatedFetch(`/v1/task-workers/${encodeURIComponent(workerId)}/untrack`, {
+    method: "POST",
+  });
   if (!res.ok) await readJsonOrApiError(res);
 }
 
@@ -495,10 +494,9 @@ export async function archiveAgentTask(taskId: string): Promise<void> {
 }
 
 export async function permanentlyDeleteAgentTask(taskId: string): Promise<void> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/permanent`,
-    { method: "DELETE" },
-  );
+  const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}/permanent`, {
+    method: "DELETE",
+  });
   if (!res.ok) await readJsonOrApiError(res);
 }
 

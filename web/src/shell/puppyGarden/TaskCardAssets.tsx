@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { MessageSquareIcon, XIcon, UnlinkIcon, ArrowLeftRightIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useDeleteTaskAsset, useUntrackWorker } from "@/hooks/useAgentTasks";
 import type { TaskAssetCategory, TaskAssetSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { cn } from "@/lib/utils";
