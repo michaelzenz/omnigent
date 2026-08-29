@@ -37,6 +37,45 @@ _logger = logging.getLogger(__name__)
 
 SESSION_ADOPTED = "session.adopted"
 
+
+def _extract_last_turn_text(conversation_store: ConversationStore, session_id: str) -> tuple[str | None, str | None]:
+    """Return (last_user_message, last_agent_response) from the last turn.
+
+    Collects all assistant text messages after the last user message,
+    excluding thinking and tool-call blocks. No truncation.
+    """
+    last_user_message = None
+    last_agent_response = None
+    try:
+        items = conversation_store.list_items(session_id, limit=50, order="desc")
+        for item in reversed(items.data):
+            if item.type != "message":
+                continue
+            data = item.data
+            if not hasattr(data, "role"):
+                continue
+            text_parts = [
+                block.get("text", "")
+                for block in (data.content or [])
+                if isinstance(block, dict) and block.get("type") in ("input_text", "output_text", "text")
+            ]
+            text = " ".join(text_parts).strip()
+            if not text:
+                continue
+            if data.role == "user":
+                if last_user_message is None:
+                    last_user_message = text[:2000]
+                    last_agent_response = ""
+                continue
+            if data.role == "assistant" and last_user_message is not None:
+                if last_agent_response:
+                    last_agent_response += "\n" + text
+                else:
+                    last_agent_response = text
+    except Exception:
+        pass
+    return last_user_message, last_agent_response or None
+
 # Orphan adoption is active: sessions that finish a turn with no existing
 # worker binding enter the adoption pipeline.
 _ORPHAN_SESSION_ADOPTION_ENABLED = True
@@ -239,34 +278,11 @@ async def enqueue_orphan_session(
     if find_open_orphan_event(_context.task_event_store, session_id) is not None:
         return False
 
-    # Fetch the last user message and last assistant response so the
+    # Fetch the last user message and the full last assistant turn so the
     # broker can triage without calling sys_session_get_history.
-    last_user_message = None
-    last_agent_response = None
-    try:
-        items = _context.conversation_store.list_items(session_id, limit=50, order="desc")
-        for item in reversed(items.data):
-            if item.type != "message":
-                continue
-            data = item.data
-            if not hasattr(data, "role"):
-                continue
-            text_parts = [
-                block.get("text", "")
-                for block in (data.content or [])
-                if isinstance(block, dict) and block.get("type") in ("input_text", "output_text", "text")
-            ]
-            text = " ".join(text_parts).strip()
-            if not text:
-                continue
-            if data.role == "user" and last_user_message is None:
-                last_user_message = text[:2000]
-            elif data.role == "assistant" and last_agent_response is None:
-                last_agent_response = text[:2000]
-            if last_user_message is not None and last_agent_response is not None:
-                break
-    except Exception:
-        pass
+    last_user_message, last_agent_response = _extract_last_turn_text(
+        _context.conversation_store, session_id
+    )
 
     title = f"Adopt session: {conv.title or session_id}"
     payload = json.dumps({
@@ -480,11 +496,16 @@ def emit_turn_finished_event(
     conv = _context.conversation_store.get_conversation(session_id)
     session_title = conv.title if conv is not None else session_id
     owner = task.owner_user_id or "__anonymous__"
+    last_user_message, last_agent_response = _extract_last_turn_text(
+        _context.conversation_store, session_id
+    )
     payload = json.dumps({
         "session_id": session_id,
         "session_title": session_title,
         "worker_id": worker.id,
         "status": status,
+        "last_user_message": last_user_message,
+        "last_agent_response": last_agent_response,
     })
     title = f"Session turn finished: {session_title}"
     try:
@@ -514,8 +535,13 @@ def emit_turn_finished_event(
             f"[System: Adopted session turn finished]\n"
             f"Session: {session_title}\n"
             f"Session ID: {session_id}\n"
-            f"Read the session transcript to see what was done. "
-            f"Reconcile into task items if relevant."
+        )
+        if last_user_message:
+            notice += f"\nLast user message:\n{last_user_message}\n"
+        if last_agent_response:
+            notice += f"\nAgent response:\n{last_agent_response}\n"
+        notice += (
+            f"\nReconcile into task items if relevant."
         )
         try:
             _context.agent_queue_store.enqueue(
