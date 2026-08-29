@@ -77,6 +77,7 @@ def _item_to_entity(row: SqlAgentQueueItem) -> AgentQueueItem:
         payload=row.payload,
         seq=row.seq,
         not_before=row.not_before,
+        retry_count=row.retry_count,
         edit_lease_token=row.edit_lease_token,
         edit_lease_expires_at=row.edit_lease_expires_at,
         last_error=row.last_error,
@@ -436,24 +437,53 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         *,
         error: str,
         now: int,
+        retryable: bool = False,
+        max_retries: int = 0,
+        backoff_s: int = 0,
     ) -> AgentQueueItem | None:
         with self._session() as session:
             row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
             if row is None:
                 return None
-            row.state = encode_agent_queue_item_state("dispatch_failed")
-            row.last_error = error
-            row.completed_at = now
-            row.updated_at = now
             queue = self._get_queue_row(session, key)
-            if queue is not None:
-                queue.state = encode_agent_queue_state("halted")
+            can_retry = (
+                retryable
+                and max_retries > 0
+                and row.retry_count < max_retries
+                and queue is not None
+            )
+            if can_retry:
+                # Re-queue the item with a backoff delay; the dispatcher
+                # picks it up again via due_queues + next_dispatchable_item.
+                row.state = encode_agent_queue_item_state("queued")
+                row.last_error = error
+                row.retry_count = row.retry_count + 1
+                row.not_before = now + backoff_s
+                row.dispatched_at = None
+                row.completed_at = None
+                row.updated_at = now
+                queue.state = encode_agent_queue_state("active")
                 queue.last_error = error
                 queue.inflight_item_id = None
                 queue.inflight_since = None
                 queue.lease_owner = None
                 queue.lease_expires_at = None
+                queue.next_due_at = now + backoff_s
                 queue.updated_at = now
+            else:
+                # Permanent halt: park the item and halt the queue.
+                row.state = encode_agent_queue_item_state("dispatch_failed")
+                row.last_error = error
+                row.completed_at = now
+                row.updated_at = now
+                if queue is not None:
+                    queue.state = encode_agent_queue_state("halted")
+                    queue.last_error = error
+                    queue.inflight_item_id = None
+                    queue.inflight_since = None
+                    queue.lease_owner = None
+                    queue.lease_expires_at = None
+                    queue.updated_at = now
             session.flush()
             return _item_to_entity(row)
 
@@ -534,6 +564,53 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 item.updated_at = now
             session.flush()
             return _item_to_entity(item) if item is not None else None
+
+    def recover_halted_queue_for_session(
+        self,
+        session_id: str,
+        *,
+        now: int,
+    ) -> int:
+        halted = encode_agent_queue_state("halted")
+        parked = (
+            encode_agent_queue_item_state("dispatch_failed"),
+            encode_agent_queue_item_state("interrupted"),
+        )
+        with self._session() as session:
+            queue = session.execute(
+                select(SqlAgentQueue)
+                .where(SqlAgentQueue.workspace_id == current_workspace_id())
+                .where(SqlAgentQueue.conversation_id == session_id)
+                .where(SqlAgentQueue.state == halted)
+                .limit(1)
+            ).scalars().first()
+            if queue is None:
+                return 0
+            queue.state = encode_agent_queue_state("active")
+            queue.last_error = None
+            queue.next_due_at = None
+            queue.lease_owner = None
+            queue.lease_expires_at = None
+            queue.updated_at = now
+            count = 0
+            for item in session.execute(
+                select(SqlAgentQueueItem)
+                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
+                .where(SqlAgentQueueItem.role == queue.role)
+                .where(SqlAgentQueueItem.owner_user_id == queue.owner_user_id)
+                .where(SqlAgentQueueItem.scope_id == queue.scope_id)
+                .where(SqlAgentQueueItem.state.in_(parked))
+            ).scalars().all():
+                item.state = encode_agent_queue_item_state("queued")
+                item.last_error = None
+                item.retry_count = 0
+                item.not_before = None
+                item.completed_at = None
+                item.dispatched_at = None
+                item.updated_at = now
+                count += 1
+            session.flush()
+            return count
 
     # ── Control plane ──────────────────────────────────
 
@@ -790,6 +867,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 return None
             row.state = encode_agent_queue_item_state("queued")
             row.last_error = None
+            row.retry_count = 0
             row.completed_at = None
             row.dispatched_at = None
             row.edit_lease_token = None
