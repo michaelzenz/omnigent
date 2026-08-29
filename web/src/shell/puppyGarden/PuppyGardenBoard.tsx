@@ -33,8 +33,11 @@ export function PuppyGardenBoard() {
     isLoading: activeLoading,
     error: activeError,
   } = useAgentTaskList("live");
-  const activeTasks = useMemo(() => rankTasks(activeData ?? []), [activeData]);
-  const orderKey = activeTasks.map((task) => task.id).join("|");
+  const allTasks = useMemo(
+    () => rankTasks([...(pendingTasks ?? []), ...(activeData ?? [])]),
+    [pendingTasks, activeData],
+  );
+  const orderKey = allTasks.map((task) => task.id).join("|");
 
   const captureAnchor = useCallback(() => {
     const root = scrollRef.current;
@@ -77,8 +80,8 @@ export function PuppyGardenBoard() {
   }, [captureAnchor, orderKey]);
 
   const markExplicitMove = (taskId: string) => {
-    const index = activeTasks.findIndex((task) => task.id === taskId);
-    explicitMoveRef.current = { movedId: taskId, successorId: activeTasks[index + 1]?.id ?? null };
+    const index = allTasks.findIndex((task) => task.id === taskId);
+    explicitMoveRef.current = { movedId: taskId, successorId: allTasks[index + 1]?.id ?? null };
     return () => {
       if (explicitMoveRef.current?.movedId === taskId) explicitMoveRef.current = null;
     };
@@ -100,8 +103,7 @@ export function PuppyGardenBoard() {
       </div>
     );
 
-  const hasPending = (pendingTasks?.length ?? 0) > 0;
-  const hasActive = activeTasks.length > 0;
+  const hasTasks = allTasks.length > 0;
 
   return (
     <div
@@ -119,31 +121,13 @@ export function PuppyGardenBoard() {
           </div>
         ) : null}
         <BoardFyiStream />
-        {hasPending ? (
-          <section className="space-y-3" data-testid="board-pending-tasks">
-            <h2 className="text-sm font-semibold text-amber-900">Pending packages</h2>
-            {pendingTasks?.map((task) => (
-              <TaskCard
-                key={task.id}
-                taskId={task.id}
-                title={task.title}
-                description={task.description}
-                goal={task.goal}
-                createdAt={task.created_at}
-                priority={task.priority}
-                state={task.state}
-                managerRoleKey={task.manager_role_key}
-              />
-            ))}
-          </section>
-        ) : null}
-        {hasActive ? (
+        {hasTasks ? (
           <section className="space-y-5" data-testid="board-active-tasks">
             <div>
               <h1 className="text-xl font-semibold">PuppyGarden</h1>
               <p className="text-sm text-muted-foreground">Live board</p>
             </div>
-            {activeTasks.map((task, index) => (
+            {allTasks.map((task, index) => (
               <TaskCard
                 key={task.id}
                 taskId={task.id}
@@ -154,14 +138,14 @@ export function PuppyGardenBoard() {
                 priority={task.priority}
                 state={task.state}
                 managerRoleKey={task.manager_role_key}
-                isLast={index === activeTasks.length - 1}
+                isLast={index === allTasks.length - 1}
                 onMovedToEnd={markExplicitMove}
               />
             ))}
           </section>
-        ) : !hasPending ? (
+        ) : (
           <p className="text-sm text-muted-foreground">No tasks yet.</p>
-        ) : null}
+        )}
       </div>
     </div>
   );
