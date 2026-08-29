@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, delete, desc, func, select
+from sqlalchemy import asc, delete, desc, func, select, update
 
 from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY
 from omnigent.db.db_models import (
@@ -246,10 +246,12 @@ class SqlAlchemyTaskStore(TaskStore):
                 )
             )
             session.execute(
-                delete(SqlWorker).where(
+                update(SqlWorker)
+                .where(
                     SqlWorker.workspace_id == workspace_id,
                     SqlWorker.task_id == task_id,
                 )
+                .values(state="deleted")
             )
             session.delete(row)
             return True

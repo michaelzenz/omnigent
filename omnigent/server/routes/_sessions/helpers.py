@@ -621,6 +621,9 @@ async def _maybe_adopt_session(session_id: str) -> None:
             return
         worker = ctx.worker_store.get_by_target_id(session_id)
         if worker is not None:
+            if worker.state == "deleted":
+                # User dismissed adoption or task was deleted — stop tracking.
+                return
             # Already adopted — emit a turn-finished event to the manager.
             emit_turn_finished_event(
                 session_id=session_id,

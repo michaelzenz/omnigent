@@ -32,7 +32,7 @@ interface TaskCardItemEditorProps {
   item: TaskItemSummary;
   workerLanes: TaskWorkerLane[];
   workerKind: string;
-  mode: "ack" | "edit" | "parked" | "draft";
+  mode: "ack" | "edit" | "parked";
 }
 
 export function TaskCardItemEditor({
@@ -47,10 +47,8 @@ export function TaskCardItemEditor({
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState(() => initialState(item));
   const [editing, setEditing] = useState(mode !== "edit");
-  const isDraft = mode === "draft";
   const [editLeaseToken, setEditLeaseToken] = useState<string | null>(null);
   const [leaseError, setLeaseError] = useState<string | null>(null);
-  const [dispatchError, setDispatchError] = useState<string | null>(null);
 
   useEffect(() => setEditor(initialState(item)), [item]);
   useEffect(() => {
@@ -175,10 +173,10 @@ export function TaskCardItemEditor({
           onChange={(event) =>
             setEditor((current) => ({ ...current, instructions: event.target.value }))
           }
-          className="min-h-7 resize-none overflow-y-auto py-1"
+          className="field-sizing-fixed min-h-7 resize-none overflow-y-auto py-1"
         />
       </div>
-      {mode === "ack" || isDraft ? (
+      {mode === "ack" ? (
         <div className="flex justify-end gap-1.5 pt-0.5">
           <Button
             type="button"
@@ -186,11 +184,12 @@ export function TaskCardItemEditor({
             size="sm"
             disabled={pending}
             onClick={() => void submitAck("reject_item")}
-            aria-label={isDraft ? "Remove draft item" : "Dismiss inbox item"}
+            aria-label="Dismiss inbox item"
+            title="Future turn-finished events from this session will be filtered out. You can still interact with the session directly."
           >
-            <XIcon aria-hidden /> {isDraft ? "Remove" : "Skip"}
+            <XIcon aria-hidden /> Skip
           </Button>
-          {workerKind === "external" && !isDraft ? (
+          {workerKind === "external" ? (
             <Button
               type="button"
               size="sm"
@@ -206,20 +205,12 @@ export function TaskCardItemEditor({
             <Button
               type="button"
               size="sm"
-              disabled={pending}
-              onClick={async () => {
-                if (item.worker_id == null) {
-                  setDispatchError("Assign a worker before dispatching.");
-                  return;
-                }
-                setDispatchError(null);
-                await submitAck("accept_item");
-              }}
+              disabled={pending || item.worker_id == null}
+              onClick={() => void submitAck("accept_item")}
             >
-              <CheckIcon aria-hidden /> {isDraft ? "Go" : "Accept"}
+              <CheckIcon aria-hidden /> Accept
             </Button>
           )}
-          {dispatchError ? <p className="w-full text-xs text-destructive">{dispatchError}</p> : null}
         </div>
       ) : mode === "edit" || mode === "parked" ? (
         <div className="flex justify-end gap-1.5 pt-0.5">

@@ -2335,7 +2335,7 @@ class SqlWorker(OmnigentBase):
         CheckConstraint("kind IN ('managed', 'external')", name="ck_workers_kind"),
         CheckConstraint(
             "state IN ('uninitialized', 'initializing', 'idle', 'busy', "
-            "'disconnected', 'initialization_failed', 'terminated')",
+            "'disconnected', 'initialization_failed', 'terminated', 'deleted')",
             name="ck_workers_state",
         ),
         Index("ix_workers_task", "workspace_id", "task_id", "id"),
