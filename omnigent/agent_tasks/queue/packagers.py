@@ -383,10 +383,16 @@ class BrokerPackager(Packager):
         return status is None or status == "idle"
 
     async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
-        conversation_id = await self._live_broker_conversation_id(batch.key.owner_user_id)
+        # Read-only lookup: the dispatcher's deliver path handles runner
+        # resolution and retry. Booting a runner here blocks the packager
+        # poll loop (30s timeout) and wedges all owners behind one slow boot.
+        conversation_id = await self._broker_conversation_id(batch.key.owner_user_id)
+        if conversation_id is None:
+            # No session at all — try a full boot on first flush only.
+            conversation_id = await self._live_broker_conversation_id(batch.key.owner_user_id)
         if conversation_id is None:
             _logger.debug(
-                "broker packager: no live broker for %s; %d events stay in awaiting_grouping",
+                "broker packager: no broker session for %s; %d events stay in awaiting_grouping",
                 batch.key.owner_user_id,
                 len(batch.events),
             )
