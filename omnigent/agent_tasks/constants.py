@@ -18,6 +18,10 @@ AUTO_ROUTE_MAX_CANDIDATES = 10
 BROKER_BATCH_MAX_SIZE = 10
 MANAGER_BATCH_MAX_SIZE = 10
 
+# Minimum age (seconds) before any routed event is eligible for packaging.
+# Session events wait this long so small bursts batch together.
+SESSION_EVENT_COOLDOWN_S = 180
+
 # Broker packager: tag-overlap coefficient (|A ∩ B| / min(|A|, |B|)) at/above
 # which two events join the same cluster. 0.8 ≈ "4 of 5 tags shared".
 BROKER_TAG_SIMILARITY_THRESHOLD = 0.8

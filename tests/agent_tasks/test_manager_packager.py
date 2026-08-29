@@ -303,4 +303,4 @@ async def test_events_grouped_by_task_id(manager_setup: dict) -> None:
 
 def test_defaults_are_configurable_constants() -> None:
     assert DEFAULT_PACKAGER_POLL_INTERVAL_S == 5.0
-    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 15
+    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 180

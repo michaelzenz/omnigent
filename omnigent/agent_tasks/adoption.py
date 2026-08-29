@@ -507,37 +507,3 @@ def emit_turn_finished_event(
             session_id,
             task.id,
         )
-        return
-
-    if _context.agent_queue_store is not None:
-        notice = (
-            f"[System: Adopted session turn finished]\n"
-            f"Session: {session_title}\n"
-            f"Session ID: {session_id}\n"
-            f"Read the session transcript to see what was done. "
-            f"Reconcile into task items if relevant."
-        )
-        try:
-            _context.agent_queue_store.enqueue(
-                uuid.uuid4().hex,
-                AgentQueueKey(
-                    role="manager",
-                    owner_user_id=owner,
-                    scope_id=task.id,
-                ),
-                "notice",
-                source_ids=[event.id],
-                payload=notice,
-            )
-            _context.task_event_store.update_event(
-                event.id,
-                state="reconciled",
-                processed_at=now_epoch(),
-            )
-        except Exception:  # noqa: BLE001
-            _logger.warning(
-                "failed to enqueue manager notice for turn-finish event %s; "
-                "packager will pick it up on next poll",
-                event.id,
-                exc_info=True,
-            )

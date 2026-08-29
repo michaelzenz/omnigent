@@ -48,7 +48,9 @@ from omnigent.agent_tasks.constants import (
 )
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
+    EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     SESSION_ORPHAN_EVENT_TYPE,
+    SESSION_TURN_FINISHED_EVENT_TYPE,
 )
 from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
@@ -64,6 +66,11 @@ from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 
+
+def _is_session_event(event_type: str) -> bool:
+    """Whether this event is a session-watcher event subject to cooldown + per-session grouping."""
+    return event_type.startswith("session.") or event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE
+
 _logger = logging.getLogger(__name__)
 
 # ── Configurable defaults (global constants for now) ───
@@ -71,9 +78,9 @@ _logger = logging.getLogger(__name__)
 # How often each packager scans business state.
 DEFAULT_PACKAGER_POLL_INTERVAL_S = 5.0
 
-# A partial batch waits this long (oldest event age) before it is flushed to a
-# ready-but-not-full agent. Caps the "wait for more events" window.
-DEFAULT_PACKAGER_AGE_THRESHOLD_S = 15
+# Minimum age before a partial batch is flushed to a ready-but-not-full agent.
+# Unified with session event cooldown — all events wait the same window.
+DEFAULT_PACKAGER_AGE_THRESHOLD_S = 180
 
 # ── Base class ───────────────────────────────────────
 
@@ -458,6 +465,7 @@ class ManagerPackager(Packager):
             owner = event.owner_user_id or "__anonymous__"
             grouped.setdefault((owner, event.task_id), []).append(event)
         batches: list[_PendingBatch] = []
+        now = now_epoch()
         for (owner, task_id), task_events in grouped.items():
             key = AgentQueueKey(
                 role=TASK_MANAGER_ROLE,
@@ -470,8 +478,30 @@ class ManagerPackager(Packager):
                 scope_id=task_id,
             )
             unclaimed = [e for e in task_events if e.id not in claimed]
-            if unclaimed:
-                batches.append(_PendingBatch(key=key, events=unclaimed))
+            if not unclaimed:
+                continue
+            # Split session events (cooldown + per-session grouping) from
+            # other routed events (existing single-batch behavior).
+            session_events: list[TaskEvent] = []
+            other_events: list[TaskEvent] = []
+            for event in unclaimed:
+                if _is_session_event(event.event_type):
+                    if now - event.created_at < self._age_threshold_s:
+                        continue  # too young — leave it routed for next poll
+                    session_events.append(event)
+                else:
+                    other_events.append(event)
+            # Non-session events: one batch (existing behavior).
+            if other_events:
+                batches.append(_PendingBatch(key=key, events=other_events))
+            # Session events: one batch per source_key (per session), so all
+            # events for the same session arrive in one notice.
+            by_session: dict[str, list[TaskEvent]] = {}
+            for event in session_events:
+                sk = event.source_key or event.id
+                by_session.setdefault(sk, []).append(event)
+            for session_evts in by_session.values():
+                batches.append(_PendingBatch(key=key, events=session_evts))
         return batches
 
     async def _is_idle(self, key: AgentQueueKey) -> bool:

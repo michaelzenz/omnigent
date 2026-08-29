@@ -35,9 +35,9 @@ EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE = "external.session.discovered"
 # the session (via ``target_id`` on the Worker row).
 EXTERNAL_SESSION_UPDATED_EVENT_TYPE = "external.session.updated"
 
-# An adopted internal session finished a turn. Bypasses packager batching —
-# enqueued directly as a standalone manager notice so each turn is handled
-# independently, never clustered with other events.
+# An adopted internal session finished a turn. Routed to the task so the
+# manager packager polls it, applies cooldown, and batches with other events
+# for the same session.
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 
 

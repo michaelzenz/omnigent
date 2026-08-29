@@ -21,29 +21,91 @@ from omnigent.agent_tasks.event_types import (
 _logger = logging.getLogger(__name__)
 
 
+def _is_session_event(event_type: str) -> bool:
+    """Whether this event is a session-watcher event eligible for batch summary."""
+    return event_type.startswith("session.") or event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE
+
+
 def _format_manager_notice(events: list) -> str:
     """Format the notice the manager packager hands the dispatcher.
 
     One notice per task per dispatch, listing every routed event the manager has
-    not yet reconciled. A ``worker.execution.finished`` event carries its
-    outcome in the JSON ``payload``; an ``external.session.updated`` event carries
-    a transcript delta; any other routed event is shown by type and title,
-    matching the old per-event wake text.
+    not yet reconciled. Session events for the same session are summarized as a
+    single entry so the agent sees "3 turns finished" rather than 3 copies.
     """
     lines = [
         f"[System: {len(events)} event(s) routed to this task — triage or act]",
     ]
+    # Group session events by source_key for summarization.
+    session_groups: dict[str, list] = {}
+    other_events: list = []
     for event in events:
+        if _is_session_event(event.event_type) and event.source_key:
+            session_groups.setdefault(event.source_key, []).append(event)
+        else:
+            other_events.append(event)
+    for event in other_events:
         if event.event_type == WORKER_EXECUTION_FINISHED_EVENT_TYPE:
             detail = _format_execution_detail(event)
             lines.append(f"- {event.event_type}: {detail}")
-        elif event.event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
-            lines.append(_format_external_update_notice(event))
-        elif event.event_type == SESSION_TURN_FINISHED_EVENT_TYPE:
-            lines.append(_format_turn_finished_notice(event))
         else:
             lines.append(f"- {event.event_type}: {event.title!r} (routed)")
+    for session_evts in session_groups.values():
+        if len(session_evts) == 1:
+            event = session_evts[0]
+            if event.event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
+                lines.append(_format_external_update_notice(event))
+            elif event.event_type == SESSION_TURN_FINISHED_EVENT_TYPE:
+                lines.append(_format_turn_finished_notice(event))
+            else:
+                lines.append(f"- {event.event_type}: {event.title!r} (routed)")
+        else:
+            lines.append(_format_session_batch_notice(session_evts))
     return "\n".join(lines)
+
+
+def _format_session_batch_notice(events: list) -> str:
+    """Summarize multiple events for the same session as a single entry."""
+    event_type = events[0].event_type
+    count = len(events)
+    payload: dict = {}
+    if events[0].payload:
+        try:
+            payload = json.loads(events[0].payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    session_title = payload.get("session_title") or payload.get("session_hint", "?")
+    session_id = payload.get("session_id") or payload.get("session_hint", "?")
+    if event_type == SESSION_TURN_FINISHED_EVENT_TYPE:
+        return (
+            f"- {event_type}: Session '{session_title}' finished {count} turns since last check\n"
+            f"  Session ID: {session_id}\n"
+            f"  Read the session transcript to see what was done. "
+            f"Reconcile into task items if relevant."
+        )
+    if event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
+        deltas = []
+        for event in events:
+            p: dict = {}
+            if event.payload:
+                try:
+                    p = json.loads(event.payload)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            delta = p.get("transcript_delta", "")
+            if delta:
+                deltas.append(delta)
+        parts = [
+            f"- {event_type}: External session '{session_title}' updated {count} times since last check"
+        ]
+        if deltas:
+            parts.append(f"  Combined transcript delta ({len(deltas)} updates):\n" + "\n---\n".join(deltas))
+        parts.append(
+            "  Review the delta. Update item states if the work is done. "
+            "If follow-up is needed, suggest a new taskItem (Copy button)."
+        )
+        return "\n".join(parts)
+    return f"- {event_type}: {count} events for session '{session_title}' (routed)"
 
 
 def _format_external_update_notice(event) -> str:
