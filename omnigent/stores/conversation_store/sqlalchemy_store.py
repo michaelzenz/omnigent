@@ -4055,6 +4055,25 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .values(live_status=encode_session_live_status(status))
             )
 
+    def reset_mid_turn_sessions_to_idle(self) -> int:
+        from sqlalchemy import update
+
+        with self._session("reset_mid_turn_sessions_to_idle") as session:
+            result = session.execute(
+                update(SqlConversationMetadata)
+                .where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.live_status.in_(
+                        [
+                            encode_session_live_status("running"),
+                            encode_session_live_status("waiting"),
+                        ]
+                    ),
+                )
+                .values(live_status=encode_session_live_status("idle"))
+            )
+            return result.rowcount or 0
+
     def set_pending_elicitation_count(self, conversation_id: str, count: int) -> None:
         """
         Persist the outstanding elicitation count for one session.
