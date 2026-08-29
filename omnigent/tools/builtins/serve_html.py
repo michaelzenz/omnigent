@@ -27,7 +27,8 @@ _SCHEMA: dict[str, Any] = {
             "Serve HTML content for the user to preview in-app. "
             "Provide either inline HTML via 'html' or a workspace file path via 'path'. "
             "Returns a preview_url the user can click to see the rendered HTML. "
-            "The HTML is sandboxed and session-scoped — it is deleted when the session ends."
+            "The HTML is sandboxed and session-scoped — it is deleted when the session ends. "
+            "After calling this tool, give the preview_url to the user as a clickable link."
         ),
         "parameters": {
             "type": "object",
@@ -65,7 +66,8 @@ class ServeHtmlTool(Tool):
         return (
             "Serve HTML content for the user to preview in-app. "
             "Provide either inline HTML via 'html' or a workspace file path via 'path'. "
-            "Returns a preview_url the user can click to see the rendered HTML."
+            "Returns a preview_url the user can click to see the rendered HTML. "
+            "After calling this tool, give the preview_url to the user as a clickable link."
         )
 
     def get_schema(self) -> dict[str, Any]:
