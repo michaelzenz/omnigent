@@ -1413,7 +1413,6 @@ def create_app(
             if task_store is not None:
                 manager_handler = ManagerDispatchHandler(
                     store=agent_queue_store,
-                    task_store=task_store,
                     conversation_store=conversation_store,
                     runner_router=runner_router,
                     app_state=app_inst.state,

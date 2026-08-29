@@ -145,6 +145,7 @@ def _seed_task(
         "execution_id": execution.id,
         "queue_item_id": queue_item_id,
         "worker_conv_id": worker_conv.id,
+        "manager_conv_id": manager_conv.id,
     }
 
 
@@ -335,7 +336,7 @@ async def test_with_queue_enqueues_notice_and_reconciles(
     key = AgentQueueKey(
         role="manager",
         owner_user_id=completion_setup_with_queue["owner"],
-        scope_id=completion_setup_with_queue["task_id"],
+        scope_id=completion_setup_with_queue["manager_conv_id"],
     )
     items = queue_store.list_items(key)
     notices = [i for i in items if i.kind == "notice"]
@@ -469,7 +470,7 @@ async def test_purge_old_items_keeps_queued_notice(db_uri: str) -> None:
     key = AgentQueueKey(
         role="manager",
         owner_user_id=seeded["owner"],
-        scope_id=seeded["task_id"],
+        scope_id=seeded["manager_conv_id"],
     )
     items = queue_store.list_items(key)
     notices = [i for i in items if i.kind == "notice"]

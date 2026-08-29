@@ -242,7 +242,7 @@ async def _emit_worker_execution_finished_event(
         )
         return
 
-    if _context.agent_queue_store is not None:
+    if _context.agent_queue_store is not None and task.manager_conversation_id is not None:
         notice = _format_worker_notice(event)
         try:
             _context.agent_queue_store.enqueue(
@@ -250,7 +250,7 @@ async def _emit_worker_execution_finished_event(
                 AgentQueueKey(
                     role="manager",
                     owner_user_id=owner,
-                    scope_id=task.id,
+                    scope_id=task.manager_conversation_id,
                 ),
                 "notice",
                 source_ids=[event.id],
