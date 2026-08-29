@@ -2952,7 +2952,7 @@ def create_agent_tasks_router(
             session_id: str,
             body: AdoptSessionRequest,
         ) -> dict[str, Any]:
-            """Directly adopt a session to a task (Worker + human_action item).
+            """Directly adopt a session to a task (Worker binding).
 
             Replaces the old propose → accept → reject flow. The broker calls
             this when it triages a low-score orphan and decides which task to
@@ -2965,7 +2965,7 @@ def create_agent_tasks_router(
             if conv is None:
                 raise OmnigentError("Session not found", code=ErrorCode.NOT_FOUND)
 
-            def _adopt() -> tuple[str, str]:
+            def _adopt() -> str:
                 return adopt_session_to_task(
                     session_id=session_id,
                     task=task,
@@ -2973,7 +2973,7 @@ def create_agent_tasks_router(
                     owner_user_id=_effective_user_id(user_id),
                 )
 
-            worker_id, item_id = await asyncio.to_thread(_adopt)
+            worker_id = await asyncio.to_thread(_adopt)
             # Reconcile the orphan event if one exists.
             from omnigent.agent_tasks.adoption import find_open_orphan_event
 
@@ -2990,7 +2990,6 @@ def create_agent_tasks_router(
                 "session_id": session_id,
                 "task_id": body.task_id,
                 "worker_id": worker_id,
-                "item_id": item_id,
             }
 
         # ── External session adoption (watcher-discovered) ──────────

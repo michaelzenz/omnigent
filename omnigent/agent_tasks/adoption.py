@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE, SESSION_TURN_FINISHED_EVENT_TYPE
-from omnigent.agent_tasks.items import create_task_item
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
@@ -20,7 +19,6 @@ from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, Worker
 from omnigent.entities.conversation import Conversation
-from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -82,7 +80,7 @@ def _extract_last_turn_text(conversation_store: ConversationStore, session_id: s
 _ORPHAN_SESSION_ADOPTION_ENABLED = True
 
 # Score threshold for confident auto-adopt. At or above this, the system
-# creates the Worker + human_action item directly. Below it, the session.orphan
+# creates the Worker directly. Below it, the session.orphan
 # event falls to the broker for manual triage.
 _AUTO_ADOPT_SCORE_THRESHOLD = 0.5
 
@@ -173,7 +171,7 @@ async def notify_new_session(
     """Trigger adoption for a session that just finished a turn.
 
     If the best-matching task scores above the threshold, creates a Worker
-    and a human_action item directly (auto-adopt). Otherwise, enqueues a
+    and a Worker directly (auto-adopt). Otherwise, enqueues a
     ``session.orphan`` event for the broker to triage.
     """
     if not _ORPHAN_SESSION_ADOPTION_ENABLED:
@@ -229,10 +227,10 @@ def adopt_session_to_task(
     conv: Conversation,
     score: float = 0.0,
     owner_user_id: str | None = None,
-) -> tuple[str, str]:
-    """Create a Worker and a human_action item for an adopted session.
+) -> str:
+    """Create a Worker for an adopted session.
 
-    :returns: (worker_id, item_id)
+    :returns: worker_id
     """
     assert _context is not None
     worker_id = _generate_worker_id()
@@ -244,18 +242,7 @@ def adopt_session_to_task(
         state="idle",
         provider_name=conv.title or session_id,
     )
-    item = create_task_item(
-        task=task,
-        task_item_store=_context.task_item_store,
-        worker_store=_context.worker_store,
-        title=f'New session "{conv.title or session_id}" related to this task — can you confirm?',
-        description=f"Session: {session_id}\nMatch score: {score:.2f}",
-        kind="human_action",
-        state="pending",
-        created_by="broker",
-        internal_note=json.dumps({"worker_id": worker_id, "session_id": session_id}),
-    )
-    return worker_id, item.id
+    return worker_id
 
 
 async def enqueue_orphan_session(
@@ -542,13 +529,10 @@ def emit_turn_finished_event(
     worker: Worker,
     status: str = "idle",
 ) -> None:
-    """Emit a ``session.turn.finished`` event and directly enqueue a
-    standalone manager notice.
+    """Emit a ``session.turn.finished`` event for an adopted session.
 
-    Bypasses packager batching — each turn is its own notice so the manager
-    handles them independently. The event is born ``routed``, immediately
-    enqueued onto the manager queue, then marked ``reconciled`` so the
-    packager never picks it up.
+    The event is born ``routed`` so the packager never picks it up.
+    The manager is woken by the event itself, not a separate notice.
     """
     if _context is None:
         return
@@ -590,42 +574,3 @@ def emit_turn_finished_event(
             session_id,
             task.id,
         )
-        return
-
-    if _context.agent_queue_store is not None:
-        notice = (
-            f"[System: Adopted session turn finished]\n"
-            f"Session: {session_title}\n"
-            f"Session ID: {session_id}\n"
-        )
-        if last_user_message:
-            notice += f"\nLast user message:\n{last_user_message}\n"
-        if last_agent_response:
-            notice += f"\nAgent response:\n{last_agent_response}\n"
-        notice += (
-            f"\nReconcile into task items if relevant."
-        )
-        try:
-            _context.agent_queue_store.enqueue(
-                uuid.uuid4().hex,
-                AgentQueueKey(
-                    role="manager",
-                    owner_user_id=owner,
-                    scope_id=task.id,
-                ),
-                "notice",
-                source_ids=[event.id],
-                payload=notice,
-            )
-            _context.task_event_store.update_event(
-                event.id,
-                state="reconciled",
-                processed_at=now_epoch(),
-            )
-        except Exception:  # noqa: BLE001
-            _logger.warning(
-                "failed to enqueue manager notice for turn-finish event %s; "
-                "packager will pick it up on next poll",
-                event.id,
-                exc_info=True,
-            )
