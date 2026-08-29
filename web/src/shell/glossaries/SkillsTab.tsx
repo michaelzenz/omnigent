@@ -174,9 +174,15 @@ function SkillInventoryRow({
 function SkillRootsDialog({
   open,
   onOpenChange,
+  hiddenSkills,
+  onToggleHidden,
+  allSkillNames,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  hiddenSkills: string[];
+  onToggleHidden: (name: string) => void;
+  allSkillNames: string[];
 }) {
   const hosts = useSkillRoots(open);
   const updateSetting = useUpdateSkillHarnessSetting();
@@ -217,7 +223,7 @@ function SkillRootsDialog({
             {selectedHost.error}
           </p>
         ) : (
-          <div className="divide-y divide-border rounded-lg border border-border">
+          <div className="max-h-[40vh] divide-y divide-border overflow-y-auto rounded-lg border border-border">
             {["claude", "codex", "cursor"].map((harness) => {
               const paths = selectedHost?.roots.filter((root) => root.harness === harness) ?? [];
               const globallyEnabled =
@@ -273,6 +279,40 @@ function SkillRootsDialog({
             })}
           </div>
         )}
+        <div className="space-y-3 rounded-lg border border-border p-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Hidden skills</h3>
+            <span className="text-xs text-muted-foreground">
+              {hiddenSkills.length} hidden
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Skills listed here won't appear in the sidebar. Toggle to unhide.
+          </p>
+          <div className="max-h-[30vh] space-y-1.5 overflow-y-auto">
+            {allSkillNames.length === 0 && (
+              <p className="text-xs text-muted-foreground">No skills available.</p>
+            )}
+            {allSkillNames.map((name) => {
+              const isHidden = hiddenSkills.includes(name);
+              return (
+                <label
+                  key={name}
+                  className="flex items-center gap-2 text-xs"
+                >
+                  <Switch
+                    checked={!isHidden}
+                    onCheckedChange={() => onToggleHidden(name)}
+                    aria-label={`Show ${name}`}
+                  />
+                  <span className={cn(isHidden && "text-muted-foreground line-through")}>
+                    {name}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -295,6 +335,20 @@ export function SkillsTab() {
   const [message, setMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [hiddenSkills, setHiddenSkills] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("omnigent.skillFilters") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  function toggleHiddenSkill(name: string) {
+    setHiddenSkills((prev) => {
+      const next = prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name];
+      localStorage.setItem("omnigent.skillFilters", JSON.stringify(next));
+      return next;
+    });
+  }
   const [previewPaths, setPreviewPaths] = useState<Set<string>>(new Set());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRevision = useRef(0);
@@ -308,11 +362,12 @@ export function SkillsTab() {
     const query = search.trim().toLowerCase();
     return (skills.data ?? []).filter(
       (skill) =>
-        !query ||
-        skill.name.toLowerCase().includes(query) ||
-        skill.description.toLowerCase().includes(query),
+        !hiddenSkills.includes(skill.name) &&
+        (!query ||
+          skill.name.toLowerCase().includes(query) ||
+          skill.description.toLowerCase().includes(query)),
     );
-  }, [search, skills.data]);
+  }, [search, skills.data, hiddenSkills]);
   const selected = useMemo(
     () => (skills.data ?? []).find((skill) => skill.name === selectedName) ?? null,
     [selectedName, skills.data],
@@ -758,7 +813,13 @@ export function SkillsTab() {
           </>
         )}
       </section>
-      <SkillRootsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SkillRootsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        hiddenSkills={hiddenSkills}
+        onToggleHidden={toggleHiddenSkill}
+        allSkillNames={(skills.data ?? []).map((s) => s.name)}
+      />
       <CreateSkillDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
