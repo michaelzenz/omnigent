@@ -1164,10 +1164,7 @@ export function ChatPage() {
     // viewing another conversation. The pending map is the single source
     // of truth — if the prompt is gone or the dispatched marker is set,
     // it was sent.
-    if (
-      peekPendingInitialPrompt(urlConvId) === null ||
-      isInitialPromptDispatched(urlConvId)
-    ) {
+    if (peekPendingInitialPrompt(urlConvId) === null || isInitialPromptDispatched(urlConvId)) {
       initialPromptSentForConvRef.current = urlConvId;
       return;
     }
@@ -2001,6 +1998,9 @@ interface MainAgentSurfaceProps {
    * ``subAgentComposerLabel``.
    */
   subAgentLabel: string | null;
+  /** Hide the prompt-profile row in the gear modal for role sessions
+   *  whose profile is system-managed (PuppyGarden broker/secretary/manager). */
+  hideProfileSelection?: boolean;
   /** The session's ``omnigent.wrapper`` label; see ``ComposerProps``. */
   wrapperLabel: string | null;
 }
@@ -2140,6 +2140,7 @@ export function MainAgentSurface({
   subagentRoutingEligible,
   subAgentLabel,
   wrapperLabel,
+  hideProfileSelection = false,
 }: MainAgentSurfaceProps) {
   const terminalFirst = useTerminalFirst();
   const chatTopButtonMode = useSyncExternalStore(
@@ -2810,6 +2811,7 @@ export function MainAgentSurface({
             subagentRoutingEligible={subagentRoutingEligible}
             subAgentLabel={subAgentLabel}
             wrapperLabel={wrapperLabel}
+            hideProfileSelection={hideProfileSelection}
           />
 
           {/* Chat/Terminal toggle for terminal-first sessions, reconnect-or-
@@ -5522,6 +5524,9 @@ interface ComposerProps {
    * keep using ``modelPickerKind`` / ``isNativeWrapper``.
    */
   wrapperLabel?: string | null;
+  /** Hide the prompt-profile row in the gear modal for role sessions
+   *  whose profile is system-managed (PuppyGarden broker/secretary/manager). */
+  hideProfileSelection?: boolean;
 }
 
 /**
@@ -6238,6 +6243,7 @@ export function Composer({
   subagentRoutingEligible = false,
   subAgentLabel = null,
   wrapperLabel = null,
+  hideProfileSelection = false,
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -7549,6 +7555,7 @@ export function Composer({
                 sdkModelOptions={sdkModelOptions}
                 costRoutingEligible={costRoutingEligible}
                 subagentRoutingEligible={subagentRoutingEligible}
+                hideProfileSelection={hideProfileSelection}
                 // Config changes persist server-side and apply on the next
                 // wake/turn (the runner forward is best-effort), so the gear
                 // stays live wherever a message could be sent — including
@@ -8088,6 +8095,7 @@ function SessionConfigModal({
   sdkModelOptions,
   costRoutingEligible,
   subagentRoutingEligible,
+  hideProfileSelection = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -8101,6 +8109,7 @@ function SessionConfigModal({
   sdkModelOptions: readonly OmniHarnessModelOption[];
   costRoutingEligible: boolean;
   subagentRoutingEligible: boolean;
+  hideProfileSelection?: boolean;
 }) {
   const selectedEffort = useSessionEffort();
   const claudePermissionMode = useChatStore((s) => s.claudePermissionMode);
@@ -8112,7 +8121,10 @@ function SessionConfigModal({
   const parentSessionId = useChatStore((s) => s.parentSessionId);
   const conversationId = useChatStore((s) => s.conversationId);
   const profileSelectionEnabled =
-    modelPickerKind === "sdk" && isOnihTargetName(boundAgentName) && parentSessionId === null;
+    !hideProfileSelection &&
+    modelPickerKind === "sdk" &&
+    isOnihTargetName(boundAgentName) &&
+    parentSessionId === null;
   const profileSelection =
     promptProfile?.mode === "fixed"
       ? promptProfile.profileId
@@ -8547,6 +8559,7 @@ function ComposerConfigGear({
   sdkModelOptions,
   costRoutingEligible,
   subagentRoutingEligible,
+  hideProfileSelection = false,
   disabled,
   openNonce = 0,
 }: {
@@ -8560,6 +8573,7 @@ function ComposerConfigGear({
   sdkModelOptions: readonly OmniHarnessModelOption[];
   costRoutingEligible: boolean;
   subagentRoutingEligible: boolean;
+  hideProfileSelection?: boolean;
   disabled: boolean;
   openNonce?: number;
 }) {
@@ -8649,6 +8663,7 @@ function ComposerConfigGear({
         sdkModelOptions={sdkModelOptions}
         costRoutingEligible={costRoutingEligible}
         subagentRoutingEligible={subagentRoutingEligible}
+        hideProfileSelection={hideProfileSelection}
       />
     </>
   );

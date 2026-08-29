@@ -276,6 +276,7 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
           showGoalControl={shouldShowGoalControl(capabilitySource)}
           costRoutingEligible={costRoutingEligible}
           subAgentLabel={subAgentLabel}
+          hideProfileSelection
         />
       </div>
     </TerminalFirstContextProvider>
