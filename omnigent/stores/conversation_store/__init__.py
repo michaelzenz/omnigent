@@ -1513,6 +1513,21 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def reset_mid_turn_sessions_to_idle(self) -> int:
+        """
+        Bulk-reset all sessions in ``running`` or ``waiting`` to ``idle``.
+
+        Called once on server startup. After a restart no runner tunnel is
+        connected, so any ``running``/``waiting`` status left in the DB is
+        stale — the runner will re-report its actual status when it
+        reconnects. Without this reset the packager and dispatcher trust
+        the stale status and hold events indefinitely.
+
+        :returns: Number of sessions reset to idle.
+        """
+        ...
+
+    @abstractmethod
     def set_pending_elicitation_count(self, conversation_id: str, count: int) -> None:
         """
         Persist the outstanding elicitation count for one session.

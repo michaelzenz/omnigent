@@ -1505,6 +1505,17 @@ def create_app(
                 await _manager_packager.start()
             await _agent_queue_dispatcher.start()
             configure_broker_packager(_broker_packager)
+
+            # After a restart no runner tunnel is connected, so any
+            # ``running``/``waiting`` live_status in the DB is stale. Reset
+            # them to ``idle`` so the packager and dispatcher don't hold
+            # events waiting for a session that will never report back.
+            reset_count = conversation_store.reset_mid_turn_sessions_to_idle()
+            if reset_count:
+                _logger.info(
+                    "startup: reset %d stale running/waiting sessions to idle",
+                    reset_count,
+                )
         else:
             configure_broker_packager(None)
 
