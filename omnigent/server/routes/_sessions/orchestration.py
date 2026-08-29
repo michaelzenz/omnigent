@@ -5620,10 +5620,13 @@ async def _forward_event_to_runner(
         runner_body["execution_context"] = _execution_context
 
     if _uses_omniharness and body.data.get("role") == "user":
+        from omnigent.usage_ledger import role_purpose_from_labels
+
+        _role_purpose = role_purpose_from_labels(conv.labels)
         _pending_omniharness_usage[session_id] = PendingOmniHarnessUsage(
             turn_id=turn_id,
-            workload=_selected_workload,
-            purpose=usage_purpose,
+            workload="other" if _role_purpose is not None else _selected_workload,
+            purpose=_role_purpose or usage_purpose,
         )
 
     # Keep invariant I1 (persist before forwarding), while delaying the append
