@@ -92,11 +92,13 @@ export function TaskCardWorkerRows({ taskId, rows, workerLanes, workerKind }: Ta
                         workerLanes={workerLanes}
                         workerKind={workerKind}
                         mode={
-                          row.item.state === "pending"
-                            ? "ack"
-                            : row.item.state === "queued"
-                              ? "edit"
-                              : "parked"
+                          row.item.state === "draft"
+                            ? "draft"
+                            : row.item.state === "pending"
+                              ? "ack"
+                              : row.item.state === "queued"
+                                ? "edit"
+                                : "parked"
                         }
                       />
                       <TaskCardRowActions taskId={taskId} item={row.item} />

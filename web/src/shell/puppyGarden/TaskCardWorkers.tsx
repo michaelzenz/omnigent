@@ -31,7 +31,7 @@ import { TaskCardRowActions } from "./TaskCardRowActions";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 import { isEditableItemState } from "./taskCardUtils";
 
-const ACTIVE_STATES = new Set(["pending", "queued", "running", "interrupted", "dispatch_failed"]);
+const ACTIVE_STATES = new Set(["draft", "pending", "queued", "running", "interrupted", "dispatch_failed"]);
 
 function collectFallbackItems(dashboard: TaskDashboard): TaskItemSummary[] {
   const byId = new Map<string, TaskItemSummary>();
@@ -401,7 +401,15 @@ function ItemRow({
           item={item}
           workerLanes={workers}
           workerKind={worker?.kind ?? "managed"}
-          mode={item.state === "pending" ? "ack" : item.state === "queued" ? "edit" : "parked"}
+          mode={
+            item.state === "draft"
+              ? "draft"
+              : item.state === "pending"
+                ? "ack"
+                : item.state === "queued"
+                  ? "edit"
+                  : "parked"
+          }
         />
       ) : (
         <>

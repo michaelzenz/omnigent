@@ -31,7 +31,7 @@ from omnigent.stores.worker_store import WorkerStore
 _logger = logging.getLogger(__name__)
 
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
-_INBOX_STATES = frozenset({"pending"})
+_INBOX_STATES = frozenset({"draft", "pending"})
 # Editable while the work is waiting: before it is handed over, and after it is
 # parked. A parked item is stopped precisely so its instructions can be fixed
 # before the retry.

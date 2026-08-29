@@ -116,25 +116,28 @@ export function fixtureResolveInboxItem(
 ): void {
   const dashboard = dashboards.get(taskId);
   if (!dashboard) return;
+  const found = findItem(dashboard, taskItemId);
+  if (!found) return;
+  const item = found.item;
   if (resolution === "reject_item") {
-    dashboard.inbox_items = dashboard.inbox_items.filter((item) => item.id !== taskItemId);
+    removeItemRow(dashboard, taskItemId);
     notify();
     return;
   }
-  const item = dashboard.inbox_items.find((row) => row.id === taskItemId);
-  if (!item) return;
   if (resolution === "mark_done") {
     item.state = "done";
     item.updated_at = Math.floor(Date.now() / 1000);
-    dashboard.inbox_items = dashboard.inbox_items.filter((row) => row.id !== taskItemId);
+    removeItemRow(dashboard, taskItemId);
     const recent = dashboard.recent_done_items ?? { all: [], by_worker: {} };
     recent.all = [{ ...item }, ...recent.all].slice(0, 3);
     dashboard.recent_done_items = recent;
     notify();
     return;
   }
+  // accept_item — move to a worker lane as queued
   item.state = "queued";
-  dashboard.inbox_items = dashboard.inbox_items.filter((row) => row.id !== taskItemId);
+  item.updated_at = Math.floor(Date.now() / 1000);
+  removeItemRow(dashboard, taskItemId);
   const lane = dashboard.workers[0];
   if (lane) {
     lane.rows.unshift({

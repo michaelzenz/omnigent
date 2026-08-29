@@ -14,7 +14,7 @@ from omnigent.stores.worker_store import WorkerStore
 _RUNNING_EXECUTION_STATUSES = frozenset({"queued", "running"})
 _TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 _WORKER_LANE_ITEM_STATES = frozenset(
-    {"pending", "queued", "running", "interrupted", "dispatch_failed"}
+    {"draft", "pending", "queued", "running", "interrupted", "dispatch_failed"}
 )
 _WORKER_STATE = Literal["new", "active", "idle"]
 
@@ -150,6 +150,7 @@ def _worker_lane(
         if item.id in covered_item_ids:
             continue
         if item.state in {
+            "draft",
             "pending",
             "queued",
             "running",
@@ -234,13 +235,13 @@ def _worker_state_and_situation(
         return "active", f"Running: {title}"
 
     if not has_ever_executed:
-        awaiting = sum(1 for item in worker_items if item.state == "pending")
+        awaiting = sum(1 for item in worker_items if item.state in {"draft", "pending"})
         if awaiting:
             suffix = f" · {awaiting} awaiting" if awaiting > 1 else " · 1 awaiting"
             return "new", f"New{suffix}"
         return "new", "New"
 
-    pending = sum(1 for item in worker_items if item.state in {"pending", "queued"})
+    pending = sum(1 for item in worker_items if item.state in {"draft", "pending", "queued"})
     if pending:
         return "idle", f"Idle · {pending} pending"
     return "idle", "Idle"
