@@ -278,8 +278,12 @@ export async function fetchAgentTasks(state = "idle"): Promise<AgentTaskSummary[
 
 /** Active and idle managed tasks (excludes pending packages and archived). */
 export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
-  const [active, idle] = await Promise.all([fetchAgentTasks("active"), fetchAgentTasks("idle")]);
-  return [...active, ...idle];
+  const [active, idle, agentResolved] = await Promise.all([
+    fetchAgentTasks("active"),
+    fetchAgentTasks("idle"),
+    fetchAgentTasks("agent-resolved"),
+  ]);
+  return [...active, ...idle, ...agentResolved];
 }
 
 export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard> {

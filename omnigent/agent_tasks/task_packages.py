@@ -208,8 +208,9 @@ def create_task_package(
     description: str | None = None,
     tags: list[TaskTag] | None = None,
     event_tags: list | None = None,
+    manager_conversation_id: str | None = None,
 ) -> Task:
-    """Create a pending task package with broker-reconciled items."""
+    """Create a pending task package, optionally born attached to a manager."""
     if not items:
         raise OmnigentError("At least one item is required", code=ErrorCode.INVALID_INPUT)
 
@@ -228,6 +229,7 @@ def create_task_package(
         owner_user_id=owner_user_id,
         description=description,
         internal_note=resolved_internal_note,
+        manager_conversation_id=manager_conversation_id,
         manager_role_key=MANAGER_DEFAULT_ROLE_KEY,
         state="pending",
         tags=resolved_tags,

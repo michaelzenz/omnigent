@@ -457,3 +457,40 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
     assert candidates
     assert candidates[0]["task_id"] == paused_id
     assert candidates[0]["state"] == "pending"
+
+
+def test_create_task_package_born_attached(stores) -> None:
+    """A package created with manager_conversation_id is born attached."""
+    task_store = stores["task"]
+    event_store = stores["event"]
+    item_store = stores["item"]
+    event_id = _uid("attached-event")
+    event_store.create_event(
+        event_id,
+        "github.pr.checks_failed",
+        "PR checks failed",
+        state="awaiting_grouping",
+        tags=[EventTag(tag_type="repo", tag="acme/widgets")],
+    )
+    manager_conv_id = _uid("manager_conv")
+
+    task = create_task_package(
+        owner_user_id=_uid("owner"),
+        title="CI failure",
+        goal="CI green",
+        items=[PackageItemSpec(title="Fix CI", event_ids=[event_id])],
+        manager_conversation_id=manager_conv_id,
+        task_store=task_store,
+        task_item_store=item_store,
+        task_event_store=event_store,
+        worker_store=stores["worker"],
+    )
+    assert task.state == "pending"
+    assert task.manager_conversation_id == manager_conv_id
+
+
+def test_agent_resolved_state_codec(stores) -> None:
+    """The new agent-resolved state encodes/decodes through the store codec."""
+    from omnigent.db.enum_codecs import decode_task_state, encode_task_state
+
+    assert decode_task_state(encode_task_state("agent-resolved")) == "agent-resolved"

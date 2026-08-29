@@ -7,6 +7,7 @@ import re
 from omnigent.errors import ErrorCode, OmnigentError
 
 MANAGER_ROLE_PREFIX = "manager:"
+WORKER_DEFAULT_ROLE_KEY = "worker:default"
 MANAGER_DEFAULT_ROLE_KEY = "manager:default"
 TASK_BROKER_ROLE_KEY = "broker"
 TASK_SECRETARY_ROLE_KEY = "secretary"

@@ -168,8 +168,14 @@ export function TaskCard({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h2 className="min-w-0 text-lg leading-tight font-semibold">{title}</h2>
-              <Badge variant="outline" className="shrink-0 capitalize">
-                {state}
+              <Badge
+                variant="outline"
+                className={cn(
+                  "shrink-0 capitalize",
+                  state === "agent-resolved" && "border-[#3fb27f] text-[#3fb27f]",
+                )}
+              >
+                {state === "agent-resolved" ? "resolved" : state}
               </Badge>
               {dashboard?.derived.has_running_workers ? (
                 <Loader2Icon
