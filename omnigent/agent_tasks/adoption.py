@@ -148,16 +148,17 @@ def is_orphan_candidate(
         return False
     if conv.kind == "sub_agent":
         return False
-    if (
-        task_for_session(
-            conv.id,
-            task_store=task_store,
-            worker_store=worker_store,
-        )
-        is not None
-    ):
+    worker = worker_store.get_by_target_id(conv.id)
+    if worker is not None:
+        # A soft-deleted worker is a tombstone — the user dismissed
+        # adoption or the task was deleted. Don't re-adopt.
+        if worker.state == "deleted":
+            return False
+        # Active worker — already adopted, not an orphan.
         return False
-    if conv.labels.get(ADOPTION_DISMISSED_LABEL) == "1":
+    if (
+        task_store.get_by_manager_conversation_id(conv.id) is not None
+    ):
         return False
     return True
 
@@ -463,10 +464,18 @@ def reject_external_session_adoption(
     *,
     session_hint: str,
     task_event_store: TaskEventStore,
+    worker_store: WorkerStore | None = None,
     proposal_event: TaskEvent | None = None,
 ) -> TaskEvent | None:
-    """Dismiss an external session adoption proposal."""
-    del session_hint
+    """Dismiss an external session adoption proposal.
+
+    Soft-deletes the worker bound to the session hint so future updates
+    from that session stop generating events.
+    """
+    if worker_store is not None:
+        worker = worker_store.get_by_target_id(session_hint)
+        if worker is not None:
+            worker_store.update_worker(worker.id, state="deleted")
     if proposal_event is None:
         return None
     return task_event_store.update_event(proposal_event.id, state="dismissed")

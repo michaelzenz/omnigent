@@ -175,8 +175,18 @@ def submit_item_for_user_ack(task_item_store: TaskItemStore, item_id: str) -> Ta
     return updated
 
 
-def reject_task_item(*, item: TaskItem, task_item_store: TaskItemStore) -> TaskItem:
-    """Cancel a user-inbox task item without dispatching."""
+def reject_task_item(
+    *,
+    item: TaskItem,
+    task_item_store: TaskItemStore,
+    worker_store: WorkerStore | None = None,
+) -> TaskItem:
+    """Cancel a user-inbox task item without dispatching.
+
+    If the item is an adoption human_action with a worker_id in internal_note,
+    soft-delete the worker so future turns from that session stop generating
+    events.
+    """
     if item.state not in _INBOX_STATES:
         raise OmnigentError(
             f"Cannot resolve item in state {item.state!r}",
@@ -185,6 +195,14 @@ def reject_task_item(*, item: TaskItem, task_item_store: TaskItemStore) -> TaskI
     updated = task_item_store.update_item(item.id, state="cancelled")
     if updated is None:
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+    if worker_store is not None and item.internal_note:
+        try:
+            note = json.loads(item.internal_note)
+            worker_id = note.get("worker_id")
+            if worker_id:
+                worker_store.update_worker(worker_id, state="deleted")
+        except (json.JSONDecodeError, TypeError):
+            pass
     return updated
 
 

@@ -1576,12 +1576,33 @@ def create_agent_tasks_router(
         """Permanently delete a managed task and its related data.
 
         Deletes task items (except running/queued), assets, event
-        subscriptions, worker rows, and tags. Manager and worker sessions
-        are left running as regular conversations. Events, executions,
+        subscriptions, soft-deletes worker rows, and tags. Manager and
+        worker sessions are left running as regular conversations. Queued
+        (not yet dispatched) agent-queue items for this task are cancelled;
+        in-flight items are left to finish naturally. Events, executions,
         and routing history are preserved.
         """
         user_id = require_user(request, auth_provider)
         await _get_task_or_404(task_id, user_id)
+        # Cancel queued agent-queue items for this task's manager and worker
+        # queues. In-flight (dispatched) items are left alone — the agent is
+        # already working on them and will finish naturally.
+        if agent_queue_store is not None:
+            from omnigent.db.utils import now_epoch
+            from omnigent.entities import AgentQueueKey
+            for role in ("manager", "worker"):
+                key = AgentQueueKey(
+                    role=role,
+                    owner_user_id=user_id or "local",
+                    scope_id=task_id,
+                )
+                items = await asyncio.to_thread(
+                    agent_queue_store.list_items, key, state="queued"
+                )
+                for item in items:
+                    await asyncio.to_thread(
+                        agent_queue_store.cancel_item, item.id, now=now_epoch()
+                    )
         # Delete non-running, non-queued items. Running/queued items
         # are still active and left in place.
         await asyncio.to_thread(
@@ -1593,7 +1614,7 @@ def create_agent_tasks_router(
         await asyncio.to_thread(task_asset_store.delete_assets_for_task, task_id)
         # Delete all event subscriptions for this task.
         await asyncio.to_thread(task_event_store.delete_subscriptions_for_task, task_id)
-        # Delete worker rows and tags, then the task itself.
+        # Soft-delete workers and delete tags, then the task itself.
         deleted = await asyncio.to_thread(task_store.delete, task_id)
         if not deleted:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
@@ -2243,6 +2264,7 @@ def create_agent_tasks_router(
                     reject_task_item,
                     item=item,
                     task_item_store=task_item_store,
+                    worker_store=worker_store,
                 )
                 return _item_to_response(updated)
             # mark_done settles a human action without dispatch — short-circuit
@@ -3078,6 +3100,7 @@ def create_agent_tasks_router(
                 reject_external_session_adoption,
                 session_hint=session_hint,
                 task_event_store=task_event_store,
+                worker_store=worker_store,
                 proposal_event=proposal,
             )
             return {

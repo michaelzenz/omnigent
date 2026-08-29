@@ -142,8 +142,9 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
               Delete task permanently?
             </DialogTitle>
             <DialogDescription>
-              This action cannot be undone. All task data — items, workers,
-              events, and assets — will be permanently removed.
+              This action cannot be undone. All task data — items and events —
+              will be permanently removed. Worker sessions and assets will be
+              untracked but remain accessible as regular conversations.
             </DialogDescription>
           </DialogHeader>
           {deleteError ? (

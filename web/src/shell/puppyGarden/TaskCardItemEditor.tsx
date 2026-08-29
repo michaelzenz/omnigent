@@ -185,6 +185,7 @@ export function TaskCardItemEditor({
             disabled={pending}
             onClick={() => void submitAck("reject_item")}
             aria-label="Dismiss inbox item"
+            title="Future turn-finished events from this session will be filtered out. You can still interact with the session directly."
           >
             <XIcon aria-hidden /> Skip
           </Button>
