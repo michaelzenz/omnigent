@@ -155,7 +155,7 @@ export function TaskCard({
   return (
     <article
       className={cn(
-        "puppy-task-card @container flex min-w-0 flex-col rounded-xl border border-border bg-card shadow-sm",
+        "puppy-task-card @container flex min-w-0 flex-col rounded-xl border-2 border-[#888] bg-card shadow-[0_2px_4px_rgba(0,0,0,0.12)]",
         managerSelected && "ring-2 ring-primary ring-offset-1",
       )}
       data-testid={`task-card-${taskId}`}
@@ -179,32 +179,28 @@ export function TaskCard({
               ) : null}
             </div>
           </div>
-          {!isPending ? (
-            <div className="flex shrink-0 items-center gap-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isLast || moveToEnd.isPending}
-                title={isLast ? "This task is already last" : "Move task to queue end"}
-                onClick={async (event) => {
-                  event.stopPropagation();
-                  event.currentTarget.blur();
-                  const cancelExplicitMove = onMovedToEnd?.(taskId);
-                  try {
-                    await moveToEnd.mutateAsync();
-                  } catch {
-                    cancelExplicitMove?.();
-                  }
-                }}
-              >
-                {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
-              </Button>
-              <TaskActionsMenu taskId={taskId} taskState={state} />
-            </div>
-          ) : (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLast || moveToEnd.isPending}
+              title={isLast ? "This task is already last" : "Move task to queue end"}
+              onClick={async (event) => {
+                event.stopPropagation();
+                event.currentTarget.blur();
+                const cancelExplicitMove = onMovedToEnd?.(taskId);
+                try {
+                  await moveToEnd.mutateAsync();
+                } catch {
+                  cancelExplicitMove?.();
+                }
+              }}
+            >
+              {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
+            </Button>
             <TaskActionsMenu taskId={taskId} taskState={state} />
-          )}
+          </div>
         </div>
         {!isPending ? <EditableGoal taskId={taskId} goal={effectiveGoal} /> : null}
       </header>
