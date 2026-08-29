@@ -35,6 +35,10 @@ from omnigent.inner.pi_executor import (
     _build_onih_models_json,
     _databricks_model_wire_catalog,
     _generate_extension_js,
+    _load_local_pi_models,
+    _local_pi_provider_for_model,
+    _local_pi_settings,
+    _merge_local_pi_models,
     _onih_pi_provider_for_model,
     _pi_provider_for_model,
     _PiRpcSession,
@@ -3760,6 +3764,152 @@ def test_databricks_wire_catalog_prefers_exact_id_over_alias_collision() -> None
 
     assert catalog["system.ai.glm-5-2"] == responses
     assert catalog["databricks-glm-5-2"] == chat
+
+
+def test_local_pi_models_are_isolated_renamed_and_preferred(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / "models.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "databricks-claude": {
+                        "baseUrl": "https://local.example/anthropic",
+                        "apiKey": "!ucode auth token",
+                        "api": "anthropic-messages",
+                        "models": [{"id": "system.ai.claude-sonnet-5"}],
+                    },
+                    "not-ready": {
+                        "baseUrl": "https://other.example/v1",
+                        "apiKey": "secret",
+                        "models": [{"id": "other-model"}],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (agent_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "defaultProvider": "databricks-claude",
+                "defaultModel": "system.ai.claude-sonnet-5",
+                "packages": ["must-not-be-copied"],
+                "theme": "ambient-theme",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    local = _load_local_pi_models(agent_dir, ("databricks-claude",))
+    merged = _merge_local_pi_models({"providers": {}}, local)
+    settings = _local_pi_settings(agent_dir, local, {"retry": {"maxRetries": 2}})
+
+    assert set(merged["providers"]) == {"local-databricks-claude"}
+    assert (
+        _local_pi_provider_for_model("system.ai.claude-sonnet-5", local)
+        == "local-databricks-claude"
+    )
+    assert settings == {
+        "retry": {"maxRetries": 2},
+        "defaultProvider": "local-databricks-claude",
+        "defaultModel": "system.ai.claude-sonnet-5",
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_pi_model_is_selected_for_rpc_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / "models.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "databricks-claude": {
+                        "baseUrl": "https://local.example/anthropic",
+                        "apiKey": "!ucode auth token",
+                        "api": "anthropic-messages",
+                        "models": [{"id": "system.ai.claude-sonnet-5"}],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    started: dict[str, object] = {}
+
+    async def fake_start(self, pi_path, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr(_PiRpcSession, "start", fake_start)
+    executor = PiExecutor(
+        pi_path="/bin/echo",
+        local_config_dir=agent_dir,
+        local_provider_ids=("databricks-claude",),
+    )
+
+    await executor._ensure_rpc(
+        "session",
+        "system prompt",
+        "system.ai.claude-sonnet-5",
+        [],
+    )
+
+    assert started["model"] == "local-databricks-claude/system.ai.claude-sonnet-5"
+    generated_dir = Path(str(started["env"]["PI_CODING_AGENT_DIR"]))  # type: ignore[index]
+    generated = json.loads((generated_dir / "models.json").read_text(encoding="utf-8"))
+    assert set(generated["providers"]) == {"local-databricks-claude"}
+    await executor.close()
+
+
+@pytest.mark.asyncio
+async def test_local_pi_model_miss_uses_server_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / "models.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "databricks-claude": {
+                        "apiKey": "!ucode auth token",
+                        "models": [{"id": "system.ai.claude-sonnet-5"}],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    started: dict[str, object] = {}
+
+    async def fake_start(self, pi_path, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr(_PiRpcSession, "start", fake_start)
+    executor = PiExecutor(
+        pi_path="/bin/echo",
+        gateway=True,
+        gateway_host="http://127.0.0.1:43127/v1/inference",
+        base_urls_override={
+            "claude": "http://127.0.0.1:43127/v1/inference/ai-gateway/anthropic",
+            "openai": "http://127.0.0.1:43127/v1/inference/ai-gateway/codex/v1",
+        },
+        openai_wire_api="responses",
+        gateway_auth_command="printf proxy-secret",
+        server_inference_proxy=True,
+        local_config_dir=agent_dir,
+        local_provider_ids=("databricks-claude",),
+    )
+
+    await executor._ensure_rpc("session", "system prompt", "databricks-gpt-5-4", [])
+
+    assert started["model"] == "databricks-openai/databricks-gpt-5-4"
+    await executor.close()
 
 
 def test_onih_models_json_and_routing_support_openai_chat() -> None:

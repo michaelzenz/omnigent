@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server-Brokered Pi Inference Architecture</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+        }
+        h1 { color: #7c9eff; font-size: 1.6em; }
+        h2 { color: #a0c4ff; font-size: 1.2em; margin-top: 1.5em; }
+        .mermaid {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .note {
+            background: #1a1a3e;
+            border-left: 4px solid #7c9eff;
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 8px 8px 0;
+            line-height: 1.6;
+        }
+        .note code {
+            background: #0d1117;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: #f0a050;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+        }
+        th, td {
+            border: 1px solid #333;
+            padding: 8px 12px;
+            text-align: left;
+        }
+        th { background: #16213e; color: #7c9eff; }
+        td { background: #111; }
+        td code { color: #f0a050; }
+    </style>
+</head>
+<body>
+    <h1>Server-Brokered Pi Inference: How It Works</h1>
+    <p>When a Pi session runs in server-brokered mode, model inference traffic is proxied through the Omnigent server so the Pi CLI never touches Databricks credentials directly.</p>
+
+    <h2>1. High-Level Architecture</h2>
+    <div class="mermaid">
+graph TB
+    subgraph Host["omnigent host process (loopback)"]
+        Relay["HostInferenceRelay<br/>127.0.0.1:<ephemeral><br/>FastAPI loopback server"]
+    end
+
+    subgraph Runner["runner process (Pi harness)"]
+        PiCLI["Pi CLI process<br/>models.json points at relay"]
+    end
+
+    subgraph Server["Omnigent server"]
+        ProxyRoute["server/routes/inference_proxy.py<br/>/v1/runners/{rid}/sessions/{sid}/inference/{surface}/{path}"]
+        DatabricksAuth["_profile_auth<br/>refreshes Databricks OAuth token"]
+    end
+
+    subgraph Databricks["Databricks AI Gateway"]
+        AnthropicEP["/ai-gateway/anthropic/v1/messages"]
+        ResponsesEP["/ai-gateway/openai/v1/responses"]
+        CompletionsEP["/serving-endpoints/chat/completions"]
+    end
+
+    PiCLI -- "1. POST + Bearer capability" --> Relay
+    Relay -- "2. Authorize capability → binding lookup<br/>3. Strip bearer, add tunnel token<br/>4. Forward to server" --> ProxyRoute
+    ProxyRoute -- "5. Validate tunnel token + session<br/>6. Parse model from JSON body<br/>7. Check model-surface match<br/>8. Resolve + refresh Databricks OAuth" --> DatabricksAuth
+    DatabricksAuth -- "9. Return live bearer token" --> ProxyRoute
+    ProxyRoute -- "10. Replace Authorization with DBX bearer<br/>11. Forward to gateway" --> AnthropicEP
+    ProxyRoute -- "same, responses surface" --> ResponsesEP
+    ProxyRoute -- "same, completions surface" --> CompletionsEP
+    AnthropicEP -. "12. SSE stream back" .-> ProxyRoute
+    ResponsesEP -. "SSE stream back" .-> ProxyRoute
+    CompletionsEP -. "SSE stream back" .-> ProxyRoute
+    ProxyRoute -. "13. Stream response back" .-> Relay
+    Relay -. "14. Stream to Pi CLI" .-> PiCLI
+
+    style Relay fill:#1a4a3a,stroke:#4a9,stroke-width:2px
+    style PiCLI fill:#2a2a4e,stroke:#88a,stroke-width:2px
+    style ProxyRoute fill:#2a4a3e,stroke:#4a9,stroke-width:2px
+    style DatabricksAuth fill:#2a4a3e,stroke:#4a9,stroke-width:1px
+    style AnthropicEP fill:#3a3a5e,stroke:#77a
+    style ResponsesEP fill:#3a3a5e,stroke:#77a
+    style CompletionsEP fill:#3a3a5e,stroke:#77a
+    </div>
+
+    <h2>2. Session Startup: Relay Registration and Env Wiring</h2>
+    <div class="mermaid">
+sequenceDiagram
+    participant Host as omnigent host
+    participant Relay as HostInferenceRelay
+    participant Runner as runner process
+    participant Workflow as runtime/workflow.py
+    participant PiExec as PiExecutor
+
+    Host->>Relay: start() on ephemeral loopback port
+    Note over Relay: FastAPI on 127.0.0.1:random<br/>Route: POST /v1/inference/{path}
+
+    Host->>Relay: register(session_id, runner_id, binding_token)
+    Relay-->>Host: RelayEndpoint {base_url, capability}
+    Note over Relay: capability = random 32-char secret<br/>SHA-256 hashed for lookup<br/>Bound to session+runner+tunnel token
+
+    Host->>Runner: spawn with env vars:<br/>OMNIGENT_INFERENCE_PROXY_URL = relay base_url<br/>OMNIGENT_INFERENCE_PROXY_TOKEN = capability
+
+    Runner->>Workflow: build pi harness env
+    Workflow->>Workflow: Read OMNIGENT_INFERENCE_PROXY_URL + TOKEN
+    Note over Workflow: If both present, set:<br/>HARNESS_PI_SERVER_PROXY=true<br/>HARNESS_PI_GATEWAY_HOST=relay_url<br/>HARNESS_PI_GATEWAY_BASE_URLS=JSON mapping<br/>PI_OMNIGENT_INFERENCE_PROXY_TOKEN=capability<br/>HARNESS_PI_GATEWAY_AUTH_COMMAND='printf %s "$PI_..._TOKEN"'
+
+    Workflow->>PiExec: launch with server_inference_proxy=True
+    PiExec->>PiExec: Build models.json:<br/>baseUrl = relay/ai-gateway/anthropic<br/>apiKey = "!printf %s $PI_..._TOKEN"<br/>authHeader = true
+    Note over PiExec: Pi resolves !command apiKey<br/>at request time → gets capability token
+    </div>
+
+    <h2>3. Per-Request Flow: Surface Routing</h2>
+    <div class="mermaid">
+flowchart LR
+    subgraph Pi["Pi CLI"]
+        A["Model request<br/>{model: 'claude-...', ...}"]
+    end
+
+    subgraph Relay["HostInferenceRelay (loopback)"]
+        B["_authorize()<br/>hash capability → binding"]
+        C["_surface_and_path()<br/>path prefix → surface"]
+        D["Forward to server:<br/>/v1/runners/{rid}/sessions/{sid}/<br/>inference/{surface}/{path}"]
+    end
+
+    subgraph Server["Server proxy route"]
+        E["_authorize_runner()<br/>validate tunnel token + session"]
+        F["Parse JSON body<br/>extract 'model' field"]
+        G["inference_surface_for_model(model)<br/>check model-surface match"]
+        H["_profile_auth(profile)<br/>get/refresh Databricks OAuth"]
+        I["Forward to Databricks gateway<br/>with Bearer {databricks_token}"]
+    end
+
+    subgraph GW["Databricks AI Gateway"]
+        J["/ai-gateway/anthropic/v1/messages<br/>(Claude models)"]
+        K["/ai-gateway/openai/v1/responses<br/>(GPT, kimi, glm, qwen3)"]
+        L["/serving-endpoints/chat/completions<br/>(databricks-* aliases)"]
+    end
+
+    A -->|"Authorization: Bearer {capability}"| B
+    B --> C
+    C -->|"path=ai-gateway/anthropic/..."| D
+    C -->|"path=ai-gateway/codex/v1/..."| D
+    C -->|"path=serving-endpoints/..."| D
+    D --> E
+    E --> F
+    F --> G
+    G -->|"surface=anthropic"| H
+    G -->|"surface=responses"| H
+    G -->|"surface=completions"| H
+    H --> I
+    I -->|"anthropic"| J
+    I -->|"responses"| K
+    I -->|"completions"| L
+
+    J -.->|"SSE stream"| I
+    K -.->|"SSE stream"| I
+    L -.->|"SSE stream"| I
+    I -.->|"stream"| D
+    D -.->|"stream"| A
+
+    style B fill:#1a4a3a,stroke:#4a9
+    style G fill:#3a2a4e,stroke:#a7a
+    style H fill:#2a4a3e,stroke:#4a9
+    </div>
+
+    <h2>4. Model to Surface Classification</h2>
+    <p>The <code>inference_surface_for_model()</code> function in <code>inference_proxy.py</code> maps each model ID to exactly one of three gateway surfaces:</p>
+    <table>
+        <tr><th>Model ID pattern</th><th>Surface</th><th>Gateway path</th><th>Pi wire protocol</th></tr>
+        <tr><td><code>claude*</code></td><td><code>anthropic</code></td><td><code>/ai-gateway/anthropic/v1/messages</code></td><td>anthropic-messages</td></tr>
+        <tr><td><code>gpt*</code>, <code>system.ai.kimi-*</code>, <code>system.ai.glm-*</code>, <code>inkling</code>, <code>qwen3</code></td><td><code>responses</code></td><td><code>/ai-gateway/openai/v1/responses</code></td><td>openai-responses</td></tr>
+        <tr><td><code>databricks-kimi-*</code>, <code>databricks-glm-*</code>, other <code>databricks-*</code></td><td><code>completions</code></td><td><code>/serving-endpoints/chat/completions</code></td><td>openai-completions</td></tr>
+        <tr><td>Other <code>system.ai.*</code></td><td colspan="3" style="text-align:center">MLflow — <strong>not supported by the broker</strong></td></tr>
+    </table>
+    <div class="note">
+        <strong>Why spelling matters:</strong> <code>system.ai.glm-5-2</code> goes to the <em>Responses</em> surface, but <code>databricks-glm-5-2</code> (same model, different alias) goes to <em>Completions</em>. The gateway rejects a model sent to the wrong surface with <code>"API type ... is not supported by ..."</code>.
+    </div>
+
+    <h2>5. Security Properties</h2>
+    <div class="mermaid">
+graph TB
+    S1["Capability token — random 32-char secret<br/>SHA-256 hashed, never stored in plaintext<br/>Bound to one session+runner pair<br/>Revoked on runner disconnect"]
+    S2["Loopback only — relay binds 127.0.0.1<br/>Not reachable from network<br/>Ephemeral port, process-scoped"]
+    S3["Tunnel token auth — relay adds RUNNER_TUNNEL_TOKEN_HEADER<br/>Server validates: token→runner_id, session→runner match<br/>Session must be host-bound"]
+    S4["Credential isolation — Pi CLI only sees relay URL + capability<br/>Databricks OAuth token resolved server-side<br/>Never exposed to the Pi process"]
+    S5["Workspace origin validation<br/>Must be https://*.databricks.com or *.azuredatabricks.net<br/>No path, query, userinfo, or non-443 port"]
+    S6["Model-surface enforcement<br/>Server parses JSON body, checks model field<br/>Rejects model sent to wrong surface (400)"]
+    S7["Auto-refreshing Databricks auth<br/>_profile_auth caches auth per profile<br/>current_token() refreshes expired OAuth tokens<br/>Server re-authenticates transparently"]
+    </div>
+
+    <h2>6. Key Files</h2>
+    <table>
+        <tr><th>File</th><th>Role</th></tr>
+        <tr><td><code>omnigent/host/inference_relay.py</code></td><td>Loopback relay (FastAPI on 127.0.0.1). Authorizes capability, maps path→surface, forwards to server.</td></tr>
+        <tr><td><code>omnigent/server/routes/inference_proxy.py</code></td><td>Server-side route. Validates runner, checks model↔surface, resolves Databricks auth, forwards to gateway.</td></tr>
+        <tr><td><code>omnigent/inference_proxy.py</code></td><td>Shared constants: env var names, <code>inference_surface_for_model()</code> classifier.</td></tr>
+        <tr><td><code>omnigent/pi_model_compatibility.py</code></td><td>Model→surface fallback classifier (<code>databricks_pi_surface_for_model</code>), model entry rendering.</td></tr>
+        <tr><td><code>omnigent/pi_native_credentials.py</code></td><td>Builds Pi <code>models.json</code> for native mode (non-brokered). Sets up providers, surface routing, auth commands.</td></tr>
+        <tr><td><code>omnigent/host/connect.py</code></td><td>Host process: starts relay, registers runner sessions, injects proxy URL/token into runner env.</td></tr>
+        <tr><td><code>omnigent/runtime/workflow.py</code></td><td>Runner-side: reads proxy env vars, translates to Pi harness env (<code>HARNESS_PI_GATEWAY_HOST</code>, auth command, etc.).</td></tr>
+        <tr><td><code>omnigent/inner/pi_executor.py</code></td><td>PiExecutor: when <code>server_inference_proxy=true</code>, builds models.json pointing at relay.</td></tr>
+    </table>
+</body>
+</html>

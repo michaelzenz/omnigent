@@ -66,6 +66,11 @@ from omnigent.onboarding.provider_config import (
     load_providers,
 )
 from omnigent.onboarding.ucode_state import UcodeAgentState, read_ucode_state
+from omnigent.pi_local_config import (
+    HARNESS_PI_LOCAL_CONFIG_DIR_ENV,
+    HARNESS_PI_LOCAL_PROVIDER_IDS_ENV,
+    resolve_usable_pi_local_config,
+)
 from omnigent.runtime import (
     get_artifact_store,
     get_conversation_store,
@@ -1421,9 +1426,20 @@ def _build_pi_spawn_env(
     if model is not None:
         env["HARNESS_PI_MODEL"] = model
 
+    # A bare ``ucode configure --agents pi`` writes self-contained providers
+    # to ~/.pi/agent/models.json without adding an Omnigent provider. Ask Pi
+    # itself whether those providers can authenticate; when they can, carry
+    # them into Onih's private config and prefer them for matching models.
+    local_config = resolve_usable_pi_local_config()
+    if local_config is not None:
+        env[HARNESS_PI_LOCAL_CONFIG_DIR_ENV] = str(local_config.agent_dir)
+        env[HARNESS_PI_LOCAL_PROVIDER_IDS_ENV] = json.dumps(local_config.provider_ids)
+
     proxy_url = os.environ.get(HOST_INFERENCE_PROXY_URL_ENV, "").rstrip("/")
     proxy_token = os.environ.get(HOST_INFERENCE_PROXY_TOKEN_ENV, "")
     if proxy_url and proxy_token:
+        # Keep the relay registered as a model-level fallback. PiExecutor selects
+        # a matching local provider first and uses these entries only on a miss.
         env[_HARNESS_GATEWAY_FLAG["pi"]] = "true"
         env[HARNESS_PI_SERVER_PROXY_ENV] = "true"
         env["HARNESS_PI_GATEWAY_HOST"] = proxy_url
@@ -1436,12 +1452,12 @@ def _build_pi_spawn_env(
         )
         env["HARNESS_PI_GATEWAY_OPENAI_WIRE_API"] = RESPONSES_WIRE_API
         env[PI_INFERENCE_PROXY_TOKEN_ENV] = proxy_token
-        env["HARNESS_PI_GATEWAY_AUTH_COMMAND"] = f'printf %s "${PI_INFERENCE_PROXY_TOKEN_ENV}"'
-    else:
-        # Generic-provider branch (slotted ahead of the legacy-profile /
-        # databricks-prefix path): a ProviderAuth on the spec, or — when the spec
-        # declares no auth — the per-family global default. pi consumes both
-        # families (see :func:`_apply_provider_to_pi`).
+        env["HARNESS_PI_GATEWAY_AUTH_COMMAND"] = (
+            f'printf %s "${PI_INFERENCE_PROXY_TOKEN_ENV}"'
+        )
+    elif local_config is None:
+        # Preserve standalone/no-server provider resolution when neither local
+        # ucode configuration nor a server relay can serve the Pi harness.
         provider = _resolve_provider_for_build(spec, harness_type="pi", for_launch=True)
         if provider is not None:
             configure_agent_harness_with_provider(env, provider, harness_type="pi")

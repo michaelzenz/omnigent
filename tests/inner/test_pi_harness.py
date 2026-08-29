@@ -15,6 +15,7 @@ e2e suite, gated on the binary being available.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -82,6 +83,11 @@ def test_executor_factory_reads_env_vars(
     )
     monkeypatch.setenv("HARNESS_PI_GATEWAY_OPENAI_WIRE_API", "responses")
     monkeypatch.setenv("HARNESS_PI_GATEWAY_AUTH_COMMAND", "printf token")
+    monkeypatch.setenv("HARNESS_PI_LOCAL_CONFIG_DIR", "/tmp/pi-agent")
+    monkeypatch.setenv(
+        "HARNESS_PI_LOCAL_PROVIDER_IDS",
+        '["databricks-claude", "databricks-openai"]',
+    )
     monkeypatch.setenv("HARNESS_PI_CWD", "/tmp/test-cwd")
     monkeypatch.setenv("HARNESS_PI_PATH", "/usr/local/bin/pi")
     monkeypatch.delenv("OMNIGENT_PI_PATH", raising=False)
@@ -102,6 +108,8 @@ def test_executor_factory_reads_env_vars(
         base_urls_override: dict[str, str] | None,
         openai_wire_api: str | None,
         gateway_auth_command: str | None,
+        local_config_dir: Path | None,
+        local_provider_ids: tuple[str, ...],
         **_kwargs: Any,
     ) -> None:
         captured["cwd"] = cwd
@@ -115,6 +123,8 @@ def test_executor_factory_reads_env_vars(
         captured["base_urls_override"] = base_urls_override
         captured["openai_wire_api"] = openai_wire_api
         captured["gateway_auth_command"] = gateway_auth_command
+        captured["local_config_dir"] = local_config_dir
+        captured["local_provider_ids"] = local_provider_ids
 
     with patch(
         "omnigent.inner.pi_harness.PiExecutor.__init__",
@@ -135,6 +145,8 @@ def test_executor_factory_reads_env_vars(
     }
     assert captured["openai_wire_api"] == "responses"
     assert captured["gateway_auth_command"] == "printf token"
+    assert captured["local_config_dir"] == Path("/tmp/pi-agent")
+    assert captured["local_provider_ids"] == ("databricks-claude", "databricks-openai")
     assert captured["cwd"] == "/tmp/test-cwd"
     assert captured["pi_path"] == "/usr/local/bin/pi"
     # Default os_env when no HARNESS_PI_OS_ENV is set: the

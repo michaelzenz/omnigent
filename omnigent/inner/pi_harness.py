@@ -79,6 +79,10 @@ from omnigent.inference_proxy import HARNESS_PI_SERVER_PROXY_ENV
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.executor import Executor
 from omnigent.inner.pi_executor import PiExecutor, PiLaunchOptions
+from omnigent.pi_local_config import (
+    HARNESS_PI_LOCAL_CONFIG_DIR_ENV,
+    HARNESS_PI_LOCAL_PROVIDER_IDS_ENV,
+)
 from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
 
 _logger = logging.getLogger(__name__)
@@ -155,6 +159,21 @@ def _resolve_gateway_base_urls() -> dict[str, str] | None:
         _logger.warning("Ignoring non-object %s value", _ENV_GATEWAY_BASE_URLS)
         return None
     return {str(key): str(item) for key, item in value.items() if isinstance(item, str)}
+
+
+def _resolve_local_provider_ids() -> tuple[str, ...]:
+    """Decode the locally authenticated Pi provider allowlist."""
+    raw = os.environ.get(HARNESS_PI_LOCAL_PROVIDER_IDS_ENV, "").strip()
+    if not raw:
+        return ()
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        _logger.warning("Ignoring invalid %s JSON", HARNESS_PI_LOCAL_PROVIDER_IDS_ENV)
+        return ()
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
 
 
 def _resolve_os_env() -> OSEnvSpec:
@@ -261,6 +280,12 @@ def _build_pi_executor() -> Executor:
         openai_wire_api=os.environ.get(_ENV_GATEWAY_OPENAI_WIRE_API) or None,
         gateway_auth_command=os.environ.get(_ENV_GATEWAY_AUTH_COMMAND) or None,
         server_inference_proxy=_parse_truthy(HARNESS_PI_SERVER_PROXY_ENV, default=False),
+        local_config_dir=(
+            Path(os.environ[HARNESS_PI_LOCAL_CONFIG_DIR_ENV])
+            if os.environ.get(HARNESS_PI_LOCAL_CONFIG_DIR_ENV)
+            else None
+        ),
+        local_provider_ids=_resolve_local_provider_ids(),
         bundle_dir=bundle_dir,
         agent_name=agent_name,
         skills_filter=_resolve_skills_filter(),
