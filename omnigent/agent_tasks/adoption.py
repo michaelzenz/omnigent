@@ -42,7 +42,7 @@ def _extract_last_turn_text(conversation_store: ConversationStore, session_id: s
     """Return (last_user_message, last_agent_response) from the last turn.
 
     Collects all assistant text messages after the last user message,
-    excluding thinking and tool-call blocks. No truncation.
+    excluding thinking and tool-call blocks, truncated to 2000 chars.
     """
     last_user_message = None
     last_agent_response = None
@@ -72,6 +72,7 @@ def _extract_last_turn_text(conversation_store: ConversationStore, session_id: s
                     last_agent_response += "\n" + text
                 else:
                     last_agent_response = text
+                last_agent_response = last_agent_response[:2000]
     except Exception:
         pass
     return last_user_message, last_agent_response or None
