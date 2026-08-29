@@ -2220,7 +2220,7 @@ class SqlTaskEvent(OmnigentBase):
 
     __table_args__ = (
         CheckConstraint(
-            "state IN (1, 4, 6, 7, 8, 9, 12, 13)",
+            "state IN (1, 4, 6, 7, 8, 9, 12, 13, 14)",
             name="ck_task_events_state",
         ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),

@@ -2932,6 +2932,7 @@ def create_app(
                 create_agent_queues_router(
                     agent_queue_store,
                     auth_provider=auth_provider,
+                    task_event_store=task_event_store,
                 ),
                 prefix="/v1",
                 tags=["agent_queues"],

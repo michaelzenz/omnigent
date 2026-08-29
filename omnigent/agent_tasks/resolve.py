@@ -17,12 +17,14 @@ _ROUTE_TO_TASK_STATES = frozenset(
     {
         "received",
         "awaiting_grouping",
+        "pending_triage",
     }
 )
 _DISMISSABLE_STATES = frozenset(
     {
         "received",
         "awaiting_grouping",
+        "pending_triage",
         "classified_fyi",
     }
 )

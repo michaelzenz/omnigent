@@ -147,6 +147,8 @@ TASK_EVENT_STATE: dict[str, int] = {
     "classified_fyi": 12,
     # Canonical ingress event fanned out to subscription deliveries.
     "broadcast": 13,
+    # Packaged into a queue item; waiting for the broker to triage.
+    "pending_triage": 14,
 }
 
 FYI_CLUSTER_STATE: dict[str, int] = {
