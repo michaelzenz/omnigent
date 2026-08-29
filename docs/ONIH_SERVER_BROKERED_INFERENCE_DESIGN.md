@@ -9,12 +9,12 @@ and must receive its own design before the server is shared across users.
 
 ## Summary
 
-Every server-backed Onih Pi session uses server-proxied inference, whether its
-runner is local or on an SSH host. Pi sends model requests to a loopback relay
-inside `omnigent host`. The relay forwards the request to the Omnigent server
-with the session's runner binding token. The server validates the binding,
-refreshes its local Databricks credential, calls AI Gateway, and streams the
-response back.
+A server-backed Onih Pi session first uses a matching provider from a locally
+usable ucode-generated Pi configuration. When local Pi cannot serve the selected
+model, Pi sends the request through a loopback relay inside `omnigent host`. The
+relay forwards it to the Omnigent server with the session's runner binding token.
+The server validates the binding, refreshes its local Databricks credential,
+calls AI Gateway, and streams the response back.
 
 The Databricks bearer never leaves the server. An execution host needs Omnigent
 and Pi, but does not need `.databrickscfg`, a Databricks login, ucode, or the
@@ -24,14 +24,14 @@ Standalone execution without a server keeps using local provider resolution.
 
 ## Decisions
 
-1. Server-backed local and SSH sessions use one inference path.
+1. Server-backed local and SSH sessions share local-first, server-fallback routing.
 2. The relay runs in the existing host process, not a new process.
 3. The server proxies inference; it does not vend raw Databricks tokens.
 4. The single-user server uses its local `.databrickscfg` and Databricks SDK.
 5. V1 supports Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions.
 6. Databricks SDK authentication refreshes on demand. There is no background
    credential heartbeat in v1.
-7. Brokered mode never falls back silently to remote credentials.
+7. Only providers that `pi auth check` reports ready are eligible for local routing.
 8. Built-in Onih targets do not pin a hidden default model.
 9. Multitenancy, shared workers, and per-user credential storage are non-goals
    for v1.
@@ -62,14 +62,15 @@ Standalone execution without a server keeps using local provider resolution.
 
 | Mode | Credential path |
 | --- | --- |
-| Server-backed localhost session | Server inference proxy |
-| Server-backed SSH session | Server inference proxy |
-| Server-backed managed host | Server inference proxy |
+| Server-backed localhost session | Ready local Pi/ucode provider, then server inference proxy |
+| Server-backed SSH session | Ready local Pi/ucode provider, then server inference proxy |
+| Server-backed managed host | Ready local Pi/ucode provider, then server inference proxy |
 | Direct runner without a host | Runner may embed the same relay adapter |
 | Standalone/no-server | Local provider resolution |
 
-Brokered mode is explicit. A broker failure does not switch to ambient host
-credentials.
+Local routing is selected before a request only from Pi providers that declare
+their own `models.json` credential and pass Pi's readiness check. A broker failure
+does not replay an in-flight request through ambient host credentials.
 
 ## Architecture
 
@@ -418,7 +419,7 @@ and multitenant credentials are post-v1 work.
 - Fresh SSH home has no Databricks or ucode state.
 - SSH manager installs Pi using the configured npm registry.
 - Onih Pi completes a streamed turn through relay and server proxy.
-- Local server-backed Onih Pi follows the same proxy path.
+- Local ucode-configured Pi is preferred, with a model miss routed through the proxy.
 - Runner replacement invalidates the old capability.
 - Session deletion revokes access.
 - Server restart reconstructs SDK auth from its local login.
@@ -438,7 +439,7 @@ and multitenant credentials are post-v1 work.
 - Local standalone Pi retains its current provider path.
 - Non-Onih Pi agents retain their current behavior unless explicitly launched in
   broker mode.
-- Broker mode never falls back to remote ambient credentials.
+- Only ready, self-contained local Pi providers are copied into Onih's isolated config.
 
 ## Deferred multitenancy
 

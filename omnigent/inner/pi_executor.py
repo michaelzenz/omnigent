@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import copy
 import hashlib
 import hmac
 import json
@@ -865,6 +866,102 @@ def _build_onih_models_json(
             "databricks-gemini": gemini,
         }
     }
+
+
+_LOCAL_PI_PROVIDER_PREFIX = "local-"
+
+
+def _load_local_pi_models(
+    agent_dir: pathlib.Path,
+    provider_ids: Sequence[str],
+) -> _PiModelsConfig:
+    """Load only authenticated local providers into an isolated Pi config."""
+    try:
+        payload = json.loads((agent_dir / "models.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"could not read local Pi models.json: {exc}") from exc
+    raw_providers = payload.get("providers") if isinstance(payload, dict) else None
+    if not isinstance(raw_providers, dict):
+        raise ValueError("local Pi models.json has no providers object")
+    providers: dict[str, _PiProviderConfig] = {}
+    for provider_id in provider_ids:
+        raw = raw_providers.get(provider_id)
+        if not isinstance(raw, dict):
+            continue
+        providers[f"{_LOCAL_PI_PROVIDER_PREFIX}{provider_id}"] = cast(
+            _PiProviderConfig, copy.deepcopy(raw)
+        )
+    if not providers:
+        raise ValueError("local Pi configuration has no authenticated providers")
+    return {"providers": providers}
+
+
+def _merge_local_pi_models(
+    models_json: _PiModelsConfig,
+    local_models: _PiModelsConfig,
+) -> _PiModelsConfig:
+    """Add renamed local providers without shadowing server providers."""
+    return {
+        "providers": {
+            **models_json["providers"],
+            **local_models["providers"],
+        }
+    }
+
+
+def _local_pi_provider_for_model(
+    model: str,
+    local_models: _PiModelsConfig | None,
+) -> str | None:
+    """Return the unique authenticated local provider containing *model*."""
+    if local_models is None:
+        return None
+    requested_provider, separator, requested_model = model.partition("/")
+    model_id = requested_model if separator else model
+    matches: list[str] = []
+    for provider_id, provider in local_models["providers"].items():
+        original_provider = provider_id.removeprefix(_LOCAL_PI_PROVIDER_PREFIX)
+        if separator and requested_provider not in (provider_id, original_provider):
+            continue
+        entries = provider.get("models", [])
+        if any(
+            isinstance(entry, dict) and str(entry.get("id", "")).lower() == model_id.lower()
+            for entry in entries
+        ):
+            matches.append(provider_id)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _local_pi_settings(
+    agent_dir: pathlib.Path,
+    local_models: _PiModelsConfig,
+    retry_settings: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Copy only local model defaults, excluding ambient Pi resources."""
+    settings: dict[str, Any] = dict(retry_settings)
+    try:
+        raw = json.loads((agent_dir / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return settings
+    if not isinstance(raw, dict):
+        return settings
+    provider = raw.get("defaultProvider")
+    model = raw.get("defaultModel")
+    renamed = f"{_LOCAL_PI_PROVIDER_PREFIX}{provider}" if isinstance(provider, str) else None
+    if renamed in local_models["providers"] and isinstance(model, str) and model:
+        settings["defaultProvider"] = renamed
+        settings["defaultModel"] = model
+        return settings
+    # ucode normally writes a default, but an older config may not. Choose the
+    # first authenticated local model so local-first remains deterministic.
+    for provider_id, provider_config in local_models["providers"].items():
+        for entry in provider_config.get("models", []):
+            model_id = entry.get("id") if isinstance(entry, dict) else None
+            if isinstance(model_id, str) and model_id:
+                settings["defaultProvider"] = provider_id
+                settings["defaultModel"] = model_id
+                return settings
+    return settings
 
 
 def _build_models_json(
@@ -2011,6 +2108,8 @@ class PiExecutor(Executor):
         openai_wire_api: str | None = None,
         gateway_auth_command: str | None = None,
         server_inference_proxy: bool = False,
+        local_config_dir: pathlib.Path | None = None,
+        local_provider_ids: Sequence[str] = (),
         retry_policy: RetryPolicy | None = None,
         bundle_dir: pathlib.Path | None = None,
         agent_name: str | None = None,
@@ -2096,6 +2195,12 @@ class PiExecutor(Executor):
         self._gateway_model_wire_apis: dict[str, frozenset[ModelWireAPI]] | None = None
         self._gateway_auth_command = gateway_auth_command
         self._server_inference_proxy = server_inference_proxy
+        self._local_config_dir = local_config_dir
+        self._local_models = (
+            _load_local_pi_models(local_config_dir, local_provider_ids)
+            if local_config_dir is not None and local_provider_ids
+            else None
+        )
         # Retry policy → Pi's .pi/settings.json before subprocess spawn.
         # See ``RetryPolicy.pi.settings()`` for the schema. Pi natively
         # does exponential backoff + Retry-After honoring; we just set
@@ -2360,7 +2465,7 @@ class PiExecutor(Executor):
         """
         cfg = config or ExecutorConfig()
         model = cfg.model or self._model_override
-        if model is None and self._server_inference_proxy:
+        if model is None and self._server_inference_proxy and self._local_models is None:
             raise ValueError("server-proxied Pi requires Smart Routing or an explicit model")
         if model is None and self._gateway_uses_databricks_profile:
             # DATABRICKS-PATCH(pi-live-model-discovery): resolve from the
@@ -2554,11 +2659,22 @@ class PiExecutor(Executor):
                     host=self._gateway_workspace_url or self._databricks_host,
                     api_key=api_key,
                 )
+            if self._local_models is not None:
+                models_json = _merge_local_pi_models(models_json, self._local_models)
+            settings = (
+                _local_pi_settings(
+                    self._local_config_dir,
+                    self._local_models,
+                    self._retry_policy.pi.settings(),
+                )
+                if self._local_config_dir is not None and self._local_models is not None
+                else self._retry_policy.pi.settings()
+            )
             config_dir = pathlib.Path(tmp_dir)
             if self._launch_options.isolated_resources:
                 fingerprint_payload = {
                     "models": models_json,
-                    "settings": self._retry_policy.pi.settings(),
+                    "settings": settings,
                     "isolation": True,
                     "bridge_protocol": 1,
                     "session_format": 3,
@@ -2575,9 +2691,7 @@ class PiExecutor(Executor):
                 from omnigent.onih_pi_session_store import ensure_shared_pi_config
 
                 models_content = json.dumps(models_json, indent=2, sort_keys=True) + "\n"
-                settings_content = (
-                    json.dumps(self._retry_policy.pi.settings(), indent=2, sort_keys=True) + "\n"
-                )
+                settings_content = json.dumps(settings, indent=2, sort_keys=True) + "\n"
                 config_dir = ensure_shared_pi_config(
                     config_root,
                     fingerprint,
@@ -2598,13 +2712,37 @@ class PiExecutor(Executor):
                     overlay=self._retry_policy.pi.settings(),
                 )
             env["PI_CODING_AGENT_DIR"] = str(config_dir)
+        elif self._local_models is not None and self._local_config_dir is not None:
+            config_dir = pathlib.Path(tmp_dir)
+            models_path = config_dir / "models.json"
+            models_path.write_text(
+                json.dumps(self._local_models, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            models_path.chmod(0o600)
+            settings_path = config_dir / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    _local_pi_settings(
+                        self._local_config_dir,
+                        self._local_models,
+                        self._retry_policy.pi.settings(),
+                    ),
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            settings_path.chmod(0o600)
+            env["PI_CODING_AGENT_DIR"] = str(config_dir)
 
         # Pi natively supports retry config via ``.pi/settings.json``
         # (see ``RetryPolicy.pi.settings()`` for schema). On the non-gateway
         # path, merge the retry block into ``<cwd>/.pi/settings.json``.
         # Gateway runs apply retry via :func:`prepare_managed_pi_agent_dir`
         # into the managed agent dir instead.
-        if not self._gateway:
+        if not self._gateway and self._local_models is None:
             retry_settings = self._retry_policy.pi.settings()
             settings_dir_root = self._cwd or tmp_dir
             settings_path = os.path.join(settings_dir_root, ".pi", "settings.json")
@@ -2790,7 +2928,15 @@ class PiExecutor(Executor):
         # For Databricks models, prefix with the provider name so Pi resolves
         # the model from our custom provider in models.json.
         pi_model: str | None
-        if self._gateway and effective_model:
+        local_provider = (
+            _local_pi_provider_for_model(effective_model, self._local_models)
+            if effective_model
+            else None
+        )
+        if local_provider is not None and effective_model is not None:
+            _, separator, local_model = effective_model.partition("/")
+            pi_model = f"{local_provider}/{local_model if separator else effective_model}"
+        elif self._gateway and effective_model:
             if self._launch_options.isolated_resources:
                 wire_apis = wire_catalog.get(effective_model.lower(), frozenset())
                 if self._server_inference_proxy:

@@ -21,6 +21,11 @@ from omnigent.inference_proxy import (
     HOST_INFERENCE_PROXY_URL_ENV,
     PI_INFERENCE_PROXY_TOKEN_ENV,
 )
+from omnigent.pi_local_config import (
+    HARNESS_PI_LOCAL_CONFIG_DIR_ENV,
+    HARNESS_PI_LOCAL_PROVIDER_IDS_ENV,
+    PiLocalConfig,
+)
 from omnigent.runtime.workflow import _build_pi_spawn_env
 from omnigent.spec import load
 from omnigent.spec.types import AgentSpec, ExecutorSpec, LLMConfig
@@ -46,9 +51,15 @@ def _isolate_global_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv(HOST_INFERENCE_PROXY_URL_ENV, raising=False)
+    monkeypatch.delenv(HOST_INFERENCE_PROXY_TOKEN_ENV, raising=False)
     monkeypatch.setattr(
         "omnigent.runtime.workflow._resolve_catalog_default_model",
         lambda provider_name, family, *, context: f"catalog-{provider_name}-{family}-default",
+    )
+    monkeypatch.setattr(
+        "omnigent.runtime.workflow.resolve_usable_pi_local_config",
+        lambda: None,
     )
 
 
@@ -97,6 +108,46 @@ def test_server_proxy_configures_pi_without_remote_provider(
     assert env[PI_INFERENCE_PROXY_TOKEN_ENV] == "proxy-secret"
     assert PI_INFERENCE_PROXY_TOKEN_ENV in env["HARNESS_PI_GATEWAY_AUTH_COMMAND"]
     assert "HARNESS_PI_DATABRICKS_PROFILE" not in env
+
+
+def test_ucode_configured_pi_is_preferred_over_server_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    agent_dir = tmp_path / ".pi" / "agent"
+    monkeypatch.setattr(
+        "omnigent.runtime.workflow.resolve_usable_pi_local_config",
+        lambda: PiLocalConfig(agent_dir, ("databricks-claude",)),
+    )
+    monkeypatch.setenv(HOST_INFERENCE_PROXY_URL_ENV, "http://127.0.0.1:43127/v1/inference")
+    monkeypatch.setenv(HOST_INFERENCE_PROXY_TOKEN_ENV, "proxy-secret")
+
+    env = _build_pi_spawn_env(_make_spec(), workdir=None)
+
+    assert env[HARNESS_PI_LOCAL_CONFIG_DIR_ENV] == str(agent_dir)
+    assert env[HARNESS_PI_LOCAL_PROVIDER_IDS_ENV] == '["databricks-claude"]'
+    # The proxy remains available for a model absent from local ucode config;
+    # PiExecutor chooses the local provider first for matching model IDs.
+    assert env[HARNESS_PI_SERVER_PROXY_ENV] == "true"
+
+
+def test_ucode_configured_pi_runs_without_server_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    agent_dir = tmp_path / ".pi" / "agent"
+    monkeypatch.delenv(HOST_INFERENCE_PROXY_URL_ENV, raising=False)
+    monkeypatch.delenv(HOST_INFERENCE_PROXY_TOKEN_ENV, raising=False)
+    monkeypatch.setattr(
+        "omnigent.runtime.workflow.resolve_usable_pi_local_config",
+        lambda: PiLocalConfig(agent_dir, ("databricks-openai",)),
+    )
+
+    env = _build_pi_spawn_env(_make_spec(), workdir=None)
+
+    assert env[HARNESS_PI_LOCAL_CONFIG_DIR_ENV] == str(agent_dir)
+    assert HARNESS_PI_SERVER_PROXY_ENV not in env
+    assert "HARNESS_PI_GATEWAY" not in env
 
 
 def test_pi_spawn_env_threads_cwd_separately_from_bundle_dir(tmp_path: Path) -> None:
