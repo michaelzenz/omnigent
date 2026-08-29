@@ -274,6 +274,13 @@ class BrokerPackager(Packager):
         self._similarity_threshold = similarity_threshold
         self._candidate_limit = candidate_limit
 
+    async def _broker_conversation_id(self, owner_user_id: str) -> str | None:
+        """Return the owner's broker conversation id without side effects."""
+        session = self._user_role_session_store.get(owner_user_id, TASK_BROKER_ROLE)
+        if session is None:
+            return None
+        return session.conversation_id
+
     async def _live_broker_conversation_id(self, owner_user_id: str) -> str | None:
         """Return the owner's live broker conversation, booting one if needed."""
         if (
@@ -374,10 +381,13 @@ class BrokerPackager(Packager):
         return batches
 
     async def _is_idle(self, key: AgentQueueKey) -> bool:
-        conversation_id = await self._live_broker_conversation_id(key.owner_user_id)
+        conversation_id = await self._broker_conversation_id(key.owner_user_id)
         if conversation_id is None:
             return False
-        return self._status_reader.status_for(conversation_id) == "idle"
+        status = self._status_reader.status_for(conversation_id)
+        # None = no status reported yet (cold cache after restart). Treat as
+        # idle so events flush to the dispatcher, which will retry delivery.
+        return status is None or status == "idle"
 
     async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         conversation_id = await self._live_broker_conversation_id(batch.key.owner_user_id)
