@@ -29,6 +29,7 @@ response then carries `deliveries: [{event_id, task_id}]`.
 | POST | `/v1/task-events/{id}/complete` |
 | POST | `/v1/task-events/{id}/dismiss` |
 | POST | `/v1/task-events/batch-resolve` |
+| POST | `/v1/task-events/{event_id}/reroute` |
 | GET | `/v1/task-events/ambiguous-inbox` |
 | POST | `/v1/task-events/match-tasks` |
 | POST | `/v1/task-events/fyi-clusters` |

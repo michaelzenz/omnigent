@@ -464,6 +464,12 @@ class MatchTasksRequest(BaseModel):
         return cleaned
 
 
+class RerouteEventRequest(BaseModel):
+    """Request body for ``POST /v1/task-events/{event_id}/reroute``."""
+
+    task_id: str = Field(min_length=1)
+
+
 class PackageItemInput(BaseModel):
     """One backlog item on a pending task package."""
 
@@ -2827,6 +2833,40 @@ def create_agent_tasks_router(
                 task_item_store=task_item_store,
                 task_store=task_store,
             )
+
+        @router.post("/task-events/{event_id}/reroute")
+        async def reroute_task_event(
+            request: Request, event_id: str, body: RerouteEventRequest
+        ) -> dict[str, Any]:
+            """Move a misrouted event to a different task (cross-manager too).
+
+            The receiving manager's packager picks it up as a fresh routed
+            event. The event must be in ``routed`` state (already reconciled
+            work is not moved).
+            """
+            user_id = require_user(request, auth_provider)
+            target_task = await _get_task_or_404(body.task_id, user_id)
+            event = await asyncio.to_thread(task_event_store.get_event, event_id)
+            if event is None:
+                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+            if event.state != "routed":
+                raise OmnigentError(
+                    f"Cannot reroute an event in state {event.state!r}",
+                    code=ErrorCode.CONFLICT,
+                )
+            if event.task_id == target_task.id:
+                return {"id": event.id, "object": "task.event", "task_id": target_task.id}
+            updated = await asyncio.to_thread(
+                task_event_store.update_event,
+                event_id,
+                task_id=target_task.id,
+            )
+            return {
+                "id": event.id,
+                "object": "task.event",
+                "task_id": target_task.id,
+                "previous_task_id": event.task_id,
+            }
 
         @router.post("/task-events/match-tasks")
         async def match_tasks(request: Request, body: MatchTasksRequest) -> dict[str, Any]:
