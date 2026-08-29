@@ -312,13 +312,19 @@ def find_open_orphan_event(
     task_event_store: TaskEventStore,
     session_id: str,
 ) -> TaskEvent | None:
-    """Return the open ``session.orphan`` event for a session, if any."""
-    for event in task_event_store.list_events(
-        state="awaiting_grouping",
-        event_type=SESSION_ORPHAN_EVENT_TYPE,
-    ):
-        if event.source_key == session_id:
-            return event
+    """Return an open ``session.orphan`` event for a session, if any.
+
+    Open means awaiting_grouping (not yet packaged) or pending_triage
+    (packaged, broker hasn't triaged yet). Routed, reconciled, or
+    dismissed events are closed.
+    """
+    for state in ("awaiting_grouping", "pending_triage"):
+        for event in task_event_store.list_events(
+            state=state,
+            event_type=SESSION_ORPHAN_EVENT_TYPE,
+        ):
+            if event.source_key == session_id:
+                return event
     return None
 
 
@@ -482,6 +488,52 @@ def reject_external_session_adoption(
 
 
 # ── Turn-finish event for adopted internal sessions ────────────────
+
+
+def emit_turn_finished_event_unbound(
+    *,
+    session_id: str,
+    conv: Conversation,
+    owner_user_id: str,
+) -> None:
+    """Emit a ``session.turn.finished`` event with no task binding.
+
+    Used when a session has a pending orphan event (broker is triaging
+    adoption) and finishes another turn. The event is born
+    ``awaiting_grouping`` so the broker packager picks it up and the
+    broker routes it to the task once adoption completes.
+    """
+    if _context is None:
+        return
+    session_title = conv.title if conv is not None else session_id
+    last_user_message, last_agent_response = _extract_last_turn_text(
+        _context.conversation_store, session_id
+    )
+    payload = json.dumps({
+        "session_id": session_id,
+        "session_title": session_title,
+        "status": "idle",
+        "last_user_message": last_user_message,
+        "last_agent_response": last_agent_response,
+    })
+    title = f"Session turn finished: {session_title}"
+    try:
+        _context.task_event_store.create_event(
+            uuid.uuid4().hex,
+            SESSION_TURN_FINISHED_EVENT_TYPE,
+            title,
+            source="adoption",
+            source_key=session_id,
+            state="awaiting_grouping",
+            payload=payload,
+            owner_user_id=owner_user_id,
+        )
+    except Exception:
+        _logger.exception(
+            "failed to emit %s event for session %s (unbound)",
+            SESSION_TURN_FINISHED_EVENT_TYPE,
+            session_id,
+        )
 
 
 def emit_turn_finished_event(
