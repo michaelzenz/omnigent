@@ -50,6 +50,7 @@ async def _inject_notice(
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
     app_state: Any | None = None,
+    usage_purpose: str | None = None,
 ) -> None:
     """Inject ``item.payload`` into the target session as a synthetic user message.
 
@@ -67,6 +68,9 @@ async def _inject_notice(
     )
     from omnigent.server.schemas import SessionEventInput
     from omnigent.usage_ledger import TASK_EVENT_ROUTING_PURPOSE
+
+    if usage_purpose is None:
+        usage_purpose = TASK_EVENT_ROUTING_PURPOSE
 
     if not item.payload:
         raise DispatchFailed("notice item has no payload to deliver")
@@ -119,7 +123,7 @@ async def _inject_notice(
             file_store=None,
             artifact_store=None,
             runner_router=runner_router,
-            usage_purpose=TASK_EVENT_ROUTING_PURPOSE,
+            usage_purpose=usage_purpose,
         )
     except Exception as exc:
         raise DispatchFailed(f"notice delivery to {target.session_id} failed: {exc}") from exc
@@ -173,12 +177,15 @@ class BrokerDispatchHandler(RoleDispatchHandler):
         )
 
     async def deliver(self, item: AgentQueueItem, target: DispatchTarget) -> None:
+        from omnigent.usage_ledger import BROKER_PURPOSE
+
         await _inject_notice(
             item,
             target,
             conversation_store=self._conversation_store,
             runner_router=self._runner_router,
             app_state=self._app_state,
+            usage_purpose=BROKER_PURPOSE,
         )
 
 
@@ -228,12 +235,15 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         )
 
     async def deliver(self, item: AgentQueueItem, target: DispatchTarget) -> None:
+        from omnigent.usage_ledger import MANAGER_PURPOSE
+
         await _inject_notice(
             item,
             target,
             conversation_store=self._conversation_store,
             runner_router=self._runner_router,
             app_state=self._app_state,
+            usage_purpose=MANAGER_PURPOSE,
         )
 
 

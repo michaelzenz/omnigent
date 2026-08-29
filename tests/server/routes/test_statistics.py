@@ -547,3 +547,21 @@ def test_record_omniharness_usage_splits_cost_equally(db_uri: str) -> None:
     assert {r["purpose"] for r in rows} == {"profile_selection", "workload_classification"}
     for r in rows:
         assert r["cost_usd"] == pytest.approx(0.5)
+
+
+def test_role_purpose_from_labels() -> None:
+    """Role labels on a conversation map to role-specific purposes."""
+    from omnigent.usage_ledger import (
+        BROKER_PURPOSE,
+        MANAGER_PURPOSE,
+        SECRETARY_PURPOSE,
+        role_purpose_from_labels,
+    )
+
+    assert role_purpose_from_labels({"omnigent.role": "task_broker"}) == BROKER_PURPOSE
+    assert role_purpose_from_labels({"omnigent.role": "task_secretary"}) == SECRETARY_PURPOSE
+    assert role_purpose_from_labels({"omnigent.role": "manager:default"}) == MANAGER_PURPOSE
+    assert role_purpose_from_labels({"omnigent.role": "manager:custom"}) == MANAGER_PURPOSE
+    assert role_purpose_from_labels({"omnigent.role": "external"}) is None
+    assert role_purpose_from_labels({}) is None
+    assert role_purpose_from_labels(None) is None

@@ -19,6 +19,34 @@ _logger = logging.getLogger(__name__)
 USER_INTERACTION_PURPOSE = "user_interaction"
 TASK_EVENT_ROUTING_PURPOSE = "task_event_routing"
 
+# Role-specific purposes so the by_purpose breakdown can attribute cost to
+# each PuppyGarden role (broker, manager, secretary) instead of lumping
+# them into the generic "task_event_routing" / "user_interaction" buckets.
+BROKER_PURPOSE = "task_broker"
+MANAGER_PURPOSE = "task_manager"
+SECRETARY_PURPOSE = "task_secretary"
+
+ROLE_PURPOSES: dict[str, str] = {
+    "task_broker": BROKER_PURPOSE,
+    "task_secretary": SECRETARY_PURPOSE,
+}
+
+
+def role_purpose_from_labels(labels: dict[str, str] | None) -> str | None:
+    """Return a role-specific purpose if the conversation labels mark a role session."""
+    if not labels:
+        return None
+    from omnigent.agent_tasks.session_labels import ROLE_LABEL
+
+    role_value = labels.get(ROLE_LABEL)
+    if role_value is None:
+        return None
+    if role_value in ROLE_PURPOSES:
+        return ROLE_PURPOSES[role_value]
+    if role_value.startswith("manager:"):
+        return MANAGER_PURPOSE
+    return None
+
 
 def canonical_purpose(components: Iterable[str]) -> str:
     """Return a stable purpose for one consolidated model request."""
@@ -160,9 +188,13 @@ def record_omniharness_usage(
 
 
 __all__ = [
+    "BROKER_PURPOSE",
+    "MANAGER_PURPOSE",
+    "SECRETARY_PURPOSE",
     "TASK_EVENT_ROUTING_PURPOSE",
     "USER_INTERACTION_PURPOSE",
     "canonical_purpose",
     "record_omniharness_usage",
     "response_usage",
+    "role_purpose_from_labels",
 ]

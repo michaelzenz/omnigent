@@ -132,15 +132,12 @@ async def test_deliver_calls_wake_parent(handler_setup: dict) -> None:
     item = _item(key, payload="[System: route me]")
     target = DispatchTarget(session_id=conv_id, harness="claude-native")
     with patch(
-        "omnigent.server.routes.sessions._wake_parent_for_blocked_child",
+        "omnigent.agent_tasks.queue.handlers._inject_notice",
         new_callable=AsyncMock,
-        return_value=True,
-    ) as wake:
+    ) as inject:
         await handler.deliver(item, target)
-    wake.assert_called_once()
-    assert wake.call_args.args[0] == conv_id
-    assert wake.call_args.args[2] == "[System: route me]"
-    assert wake.call_args.kwargs["usage_purpose"] == "task_event_routing"
+    inject.assert_called_once()
+    assert inject.call_args.kwargs["usage_purpose"] == "task_broker"
 
 
 @pytest.mark.asyncio
@@ -151,9 +148,9 @@ async def test_deliver_fails_when_wake_returns_false(handler_setup: dict) -> Non
     item = _item(key)
     target = DispatchTarget(session_id=conv_id)
     with patch(
-        "omnigent.server.routes.sessions._wake_parent_for_blocked_child",
+        "omnigent.agent_tasks.queue.handlers._inject_notice",
         new_callable=AsyncMock,
-        return_value=False,
+        side_effect=DispatchFailed("wake returned false"),
     ):
         with pytest.raises(DispatchFailed):
             await handler.deliver(item, target)
