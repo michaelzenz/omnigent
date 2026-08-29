@@ -1,4 +1,4 @@
-"""Pending task packages — broker reconcile and user inbox ack."""
+"""Pending task packages — manager reconcile and user inbox ack."""
 
 from __future__ import annotations
 

@@ -2819,7 +2819,7 @@ def create_agent_tasks_router(
 
         @router.get("/task-events/ambiguous-inbox")
         async def get_ambiguous_inbox(request: Request) -> dict[str, Any]:
-            """Return ambiguous events and suggested clusters for broker reconcile."""
+            """Return ambiguous events and suggested clusters for manager reconcile."""
             require_user(request, auth_provider)
             return await asyncio.to_thread(
                 build_ambiguous_inbox,
@@ -2853,7 +2853,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateTaskPackageRequest,
         ) -> dict[str, Any]:
-            """Create a pending task package with broker-reconciled items."""
+            """Create a pending task package with manager-reconciled items."""
             user_id = require_user(request, auth_provider)
             task_id = _generate_task_id()
             tags = _tags_from_input(task_id, body.tags)
@@ -3122,17 +3122,6 @@ def create_agent_tasks_router(
                 )
 
             worker_id = await asyncio.to_thread(_adopt)
-            # Reconcile the orphan event if one exists.
-            from omnigent.agent_tasks.adoption import find_open_orphan_event
-
-            orphan = find_open_orphan_event(task_event_store, session_id)
-            if orphan is not None:
-                await asyncio.to_thread(
-                    task_event_store.update_event,
-                    orphan.id,
-                    state="reconciled",
-                    processed_at=now_epoch(),
-                )
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,

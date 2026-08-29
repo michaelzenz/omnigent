@@ -50,7 +50,6 @@ from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
-    SESSION_ORPHAN_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
 )
 from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
@@ -232,14 +231,12 @@ class BrokerPackager(Packager):
     Scans ``awaiting_grouping`` events each tick, groups by (owner, host) —
     events from different hosts never share a batch, since each batch must be
     distributable to a host-compatible manager — excludes already-claimed
-    events, and for each group splits orphans (``session.orphan``) from routed
-    business events. Routed events are clustered by tag similarity
-    (leader-based, oldest-first) so each notice is a focused batch of similar
-    events carrying its own candidate task ids; each orphan is its own notice.
-    The agent-idle check reads the broker's bound session from the role
-    profile and looks up its raw status. The broker has no UI surface to boot
-    its own session, so when the conversation/agent/host stores are wired the
-    packager provisions one on demand the first time an owner has work.
+    events, and for each group splits watcher-discovered external sessions
+    (one notice each) from routed business events (clustered by tag
+    similarity, oldest-first). The agent-idle check reads the broker's bound
+    session from the role profile and looks up its raw status. The broker has
+    no UI surface to boot its own session, so when the conversation/agent/
+    host stores are wired the packager provisions one on demand.
     """
 
     def __init__(
@@ -344,19 +341,12 @@ class BrokerPackager(Packager):
             unclaimed = [e for e in owner_events if e.id not in claimed]
             if not unclaimed:
                 continue
-            orphans = [e for e in unclaimed if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
             discovered = [
                 e for e in unclaimed if e.event_type == EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
             ]
             routed = [
-                e
-                for e in unclaimed
-                if e.event_type
-                not in (SESSION_ORPHAN_EVENT_TYPE, EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE)
+                e for e in unclaimed if e.event_type != EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
             ]
-            # Each orphan is its own batch — adoption is heavy and per-session.
-            for orphan in orphans:
-                batches.append(_PendingBatch(key=key, events=[orphan], is_orphan=True))
             # Each discovered external session is its own batch — the broker
             # reads the transcript snippet and decides: adopt, create task, or FYI.
             for disc in discovered:
