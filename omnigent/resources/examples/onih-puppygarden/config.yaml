@@ -1,6 +1,6 @@
 spec_version: 1
 name: onih-puppygarden
-description: Onih for PuppyGarden broker and manager roles — read-only profile restricted to file read, search, MCP access, and PuppyGarden APIs.
+description: Onih for PuppyGarden roles — read-only profile restricted to file read, search, MCP access, and PuppyGarden APIs.
 
 executor:
   type: omnigent
