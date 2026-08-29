@@ -43,6 +43,14 @@ vi.mock("@/hooks/useAgentTasks", () => ({
     mutate: vi.fn(),
     isPending: false,
   })),
+  useMoveTaskToQueueEnd: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  usePatchAgentTask: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
   useInitializeWorker: vi.fn(() => ({
     mutate: vi.fn(),
     isPending: false,
@@ -50,6 +58,30 @@ vi.mock("@/hooks/useAgentTasks", () => ({
   })),
   useDeleteTaskAsset: vi.fn(() => ({
     mutate: vi.fn(),
+    isPending: false,
+  })),
+  useArchiveAgentTask: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  usePermanentlyDeleteAgentTask: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useAssignTaskItemWorker: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useCreateTaskItem: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useUntrackWorker: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useReassignWorker: vi.fn(() => ({
+    mutateAsync: vi.fn(),
     isPending: false,
   })),
 }));
@@ -407,7 +439,64 @@ describe("TaskCard", () => {
     expect(screen.queryByTestId("worker-row-item:item-unassigned")).not.toBeInTheDocument();
   });
 
-  it("applies minimum body height when the dashboard is sparse", () => {
+  it("renders overview and instructions for pending task packages", () => {
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-pending",
+          title: "Pending task",
+          description: "This is the task overview.",
+          state: "pending",
+          manager_conversation_id: null,
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [
+          {
+            id: "item-1",
+            title: "Review the PR",
+            description: "Check the diff for breaking changes",
+            instructions: "Focus on the API surface",
+            internal_note: null,
+            state: "pending",
+            worker_id: null,
+            created_at: 1,
+            updated_at: null,
+          },
+        ],
+        reconcile_queue_count: 0,
+        assets: [],
+        workers: [],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <MemoryRouter>
+          <PuppyGardenChatProvider>
+            <TaskCard
+              taskId="task-pending"
+              title="Pending task"
+              description="This is the task overview."
+              state="pending"
+              managerRoleKey="manager:default"
+            />
+          </PuppyGardenChatProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Goal:")).toBeInTheDocument();
+    expect(screen.getByText("Overview")).toBeInTheDocument();
+    expect(screen.getByText("This is the task overview.")).toBeInTheDocument();
+    expect(screen.getByText("Create Task")).toBeInTheDocument();
+    expect(screen.getByText("Dismiss Task")).toBeInTheDocument();
+  });
+
+  it("shows no-overview placeholder for pending task without description", () => {
     mockedDashboard.mockReturnValue({
       data: {
         task: {
@@ -445,8 +534,7 @@ describe("TaskCard", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByTestId("task-card-body")).toHaveAttribute("data-sparse", "true");
-    expect(screen.getByTestId("task-card-body").className).toContain("max-h-[480px]");
-    expect(screen.getByText("No assets yet.")).toBeInTheDocument();
+    expect(screen.getByText("No overview yet.")).toBeInTheDocument();
+    expect(screen.getByText("Create Task")).toBeInTheDocument();
   });
 });

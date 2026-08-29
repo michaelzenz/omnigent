@@ -218,7 +218,7 @@ export function TaskCardItemEditor({
             >
               <CheckIcon aria-hidden /> {isDraft ? "Go" : "Accept"}
             </Button>
-          )
+          )}
           {dispatchError ? <p className="w-full text-xs text-destructive">{dispatchError}</p> : null}
         </div>
       ) : mode === "edit" || mode === "parked" ? (

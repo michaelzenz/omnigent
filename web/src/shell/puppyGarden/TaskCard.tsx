@@ -210,36 +210,62 @@ export function TaskCard({
       </header>
 
       {isPending ? (
-        <div className="flex flex-wrap items-center gap-2 p-3">
-          <TaskCardManagerRolePicker
-            taskId={taskId}
-            managerRoleKey={managerRoleKey}
-            editable
-            compact
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={packageActionPending}
-            onClick={(event) => {
-              event.stopPropagation();
-              rejectPackage.mutate();
-            }}
-          >
-            Dismiss Task
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!managerRoleKey.trim() || packageActionPending}
-            onClick={(event) => {
-              event.stopPropagation();
-              acceptPackage.mutate();
-            }}
-          >
-            Create Task
-          </Button>
+        <div className="space-y-4 p-4">
+          <EditableGoal taskId={taskId} goal={effectiveGoal} />
+          <section className="min-w-0 space-y-2">
+            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Overview
+            </h3>
+            {effectiveDescription ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: ({ children, ...props }) => (
+                      <a {...props} target="_blank" rel="noopener noreferrer">
+                        {children}
+                      </a>
+                    ),
+                  }}
+                >
+                  {effectiveDescription}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No overview yet.</p>
+            )}
+          </section>
+          <div className="flex flex-wrap items-center gap-2">
+            <TaskCardManagerRolePicker
+              taskId={taskId}
+              managerRoleKey={managerRoleKey}
+              editable
+              compact
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={packageActionPending}
+              onClick={(event) => {
+                event.stopPropagation();
+                rejectPackage.mutate();
+              }}
+            >
+              Dismiss Task
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!managerRoleKey.trim() || packageActionPending}
+              onClick={(event) => {
+                event.stopPropagation();
+                acceptPackage.mutate();
+              }}
+            >
+              Create Task
+            </Button>
+          </div>
         </div>
       ) : isLoading ? (
         <div className="flex min-h-64 items-center justify-center p-8 text-sm text-muted-foreground">
