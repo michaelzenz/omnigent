@@ -10,10 +10,12 @@ Two properties are worth stating explicitly because they shape the code:
   dispatcher marks it in flight, releases the lease, and lets the completion
   signal re-arm the queue. Holding the lease would stall other queues behind a
   bounded pool slot and expire mid-run anyway.
-* **A failed dispatch halts that queue rather than retrying.** A dispatch failure
-  almost always means the agent's environment is broken — no runner, host
-  offline — so the next item would fail identically and bury the original cause.
-  Only a user resumes it.
+* **A failed dispatch retries with backoff before halting.** A dispatch
+  failure is often transient — the runner hasn't reconnected after a
+  restart, the host is briefly offline. The dispatcher retries up to
+  ``MAX_DISPATCH_RETRIES`` times with exponential backoff before parking
+  the item and halting the queue. Only a user resumes a permanently
+  halted queue.
 """
 
 from __future__ import annotations
@@ -48,6 +50,12 @@ SCAN_INTERVAL_S = 1.0
 # An item in flight longer than this is presumed to have lost its completion
 # signal, and the watchdog re-arms the queue rather than leaving it wedged.
 MAX_INFLIGHT_S = 6 * 60 * 60
+
+# Retry backoff for transient dispatch failures (runner not connected yet,
+# host briefly offline, etc). The item is re-queued with not_before = now +
+# backoff; after MAX_DISPATCH_RETRIES the queue is permanently halted.
+MAX_DISPATCH_RETRIES = 3
+_BASE_BACKOFF_S = 30  # 30s, 60s, 120s
 
 # Concurrent queue drains, and the knob for global dispatch pressure. With
 # thousands of tasks — each a manager queue — a task per queue is not affordable.
@@ -327,11 +335,15 @@ class AgentQueueDispatcher:
         )
 
     async def _fail(self, item: AgentQueueItem, key: AgentQueueKey, error: str) -> None:
+        backoff = _BASE_BACKOFF_S * (2 ** item.retry_count)
         _logger.warning(
-            "agent queue %s/%s/%s: dispatch failed, halting queue (%s)",
+            "agent queue %s/%s/%s: dispatch failed (retry %d/%d, backoff %ds): %s",
             key.role,
             key.owner_user_id,
             key.scope_id,
+            item.retry_count + 1,
+            MAX_DISPATCH_RETRIES,
+            backoff,
             error,
         )
         await asyncio.to_thread(
@@ -340,6 +352,9 @@ class AgentQueueDispatcher:
             key,
             error=error,
             now=now_epoch(),
+            retryable=True,
+            max_retries=MAX_DISPATCH_RETRIES,
+            backoff_s=backoff,
         )
         await self._notify_parked(item, "dispatch_failed")
 

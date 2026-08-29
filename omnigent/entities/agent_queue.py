@@ -138,6 +138,7 @@ class AgentQueueItem:
     payload: str | None = None
     seq: int = 0
     not_before: int | None = None
+    retry_count: int = 0
     edit_lease_token: str | None = None
     edit_lease_expires_at: int | None = None
     last_error: str | None = None

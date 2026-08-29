@@ -159,12 +159,17 @@ class AgentQueueStore(ABC):
         *,
         error: str,
         now: int,
+        retryable: bool = False,
+        max_retries: int = 0,
+        backoff_s: int = 0,
     ) -> AgentQueueItem | None:
-        """Record a failed dispatch and halt the queue.
+        """Record a failed dispatch.
 
-        There is no retry: a dispatch failure almost always means the agent's
-        environment is broken, so the next item would fail identically. Only a
-        user resumes the queue.
+        When ``retryable`` and retries remain: re-queue the item with a
+        ``not_before`` backoff and keep the queue ``active`` so the
+        dispatcher retries after the delay. When retries are exhausted or
+        the failure is not retryable: park the item as ``dispatch_failed``
+        and halt the queue (user must resume).
         """
 
     @abstractmethod
@@ -201,6 +206,24 @@ class AgentQueueStore(ABC):
 
         A no-op when the session has no queue or nothing in flight, so it is safe to
         call for every session status change.
+        """
+
+    @abstractmethod
+    def recover_halted_queue_for_session(
+        self,
+        session_id: str,
+        *,
+        now: int,
+    ) -> int:
+        """Re-arm a halted queue and re-queue its parked items.
+
+        Called when the session goes idle after being halted — the user sent
+        a message and got a response, proving the session is healthy. Finds
+        the queue by its cached conversation_id, un-halts it, and re-queues
+        any parked (``dispatch_failed`` / ``interrupted``) items with fresh
+        retry counts.
+
+        :returns: Number of items re-queued.
         """
 
     # ── Control plane ──────────────────────────────────

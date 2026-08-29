@@ -2730,6 +2730,7 @@ class SqlAgentQueueItem(OmnigentBase):
     # arbitrarily. Assigned monotonically per workspace.
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     not_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retry_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
     edit_lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     edit_lease_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
