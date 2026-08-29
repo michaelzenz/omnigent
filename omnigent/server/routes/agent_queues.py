@@ -39,6 +39,8 @@ class PatchQueueItemRequest(BaseModel):
 def create_agent_queues_router(
     agent_queue_store: AgentQueueStore,
     auth_provider: AuthProvider | None = None,
+    *,
+    task_event_store: Any = None,
 ) -> APIRouter:
     """Build the agent-queue control-plane router."""
     router = APIRouter()
@@ -157,6 +159,15 @@ def create_agent_queues_router(
                 "Queue item not found",
                 code=ErrorCode.NOT_FOUND,
             )
+        # Release source events back to awaiting_grouping so the packager
+        # can re-package them.
+        if task_event_store is not None and item.source_ids:
+            for sid in item.source_ids:
+                await asyncio.to_thread(
+                    task_event_store.update_event,
+                    sid,
+                    state="awaiting_grouping",
+                )
         return _item_to_response(item)
 
     return router

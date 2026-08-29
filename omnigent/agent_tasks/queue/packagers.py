@@ -419,13 +419,17 @@ class BrokerPackager(Packager):
             candidate_task_ids=candidate_task_ids,
             is_orphan=batch.is_orphan,
         )
-        return self._store.enqueue(
+        item = self._store.enqueue(
             uuid.uuid4().hex,
             batch.key,
             "notice",
             source_ids=[event.id for event in batch.events],
             payload=notice,
         )
+        if item is not None:
+            for event in batch.events:
+                self._task_event_store.update_event(event.id, state="pending_triage")
+        return item
 
 
 # ── Manager packager ────────────────────────────────
