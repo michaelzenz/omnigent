@@ -3027,6 +3027,7 @@ class PiExecutor(Executor):
                     break
             except BaseException:
                 shutil.rmtree(staging_dir, ignore_errors=True)
+                self._onih_session_store.release(session_key)
                 raise
             finally:
                 await validator.close()

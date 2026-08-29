@@ -214,3 +214,54 @@ def test_rebuild_with_unpaired_output_does_not_raise(tmp_path: Path) -> None:
         assert [r["message"]["role"] for r in records[1:]] == ["user", "assistant"]
     finally:
         store.close()
+
+
+def test_lock_released_after_rebuild_allows_new_store_acquire(tmp_path: Path) -> None:
+    """After rebuild+activate the lock is freed so a new store can acquire it.
+
+    Simulates the real-world bug: when an ExecutorError causes the adapter to
+    abandon the old executor and create a new one, the new executor's fresh
+    OnihPiSessionStore must be able to acquire the same conversation lock.
+    Before the fix, the lock was held until close_session, so the background
+    reap of the old executor raced with the new one's acquire.
+    """
+    store_a = OnihPiSessionStore(tmp_path)
+    try:
+        staging = store_a.rebuild(
+            conversation_id="conv_abc",
+            pi_session_id=_PI_SESSION_ID,
+            items=[_user_item("q"), _assistant_item("a")],
+            workspace=Path("/repo"),
+            provider="omnigent",
+            model="claude-opus-4-8",
+        )
+        store_a.activate("conv_abc", staging)
+        # Lock should be released after activate — a second store (simulating a
+        # new executor) can acquire the same conversation without "already owned".
+        store_b = OnihPiSessionStore(tmp_path)
+        try:
+            store_b.acquire("conv_abc")  # must not raise
+        finally:
+            store_b.close()
+    finally:
+        store_a.close()
+
+
+def test_lock_released_when_rebuild_fails(tmp_path: Path) -> None:
+    """A failed rebuild releases the lock so retry can proceed."""
+    store = OnihPiSessionStore(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="unsupported canonical item"):
+            store.rebuild(
+                conversation_id="conv_abc",
+                pi_session_id=_PI_SESSION_ID,
+                items=[{"type": "reasoning"}],
+                workspace=Path("/repo"),
+                provider="omnigent",
+                model="claude-opus-4-8",
+            )
+        # Lock was released on the error path — re-acquire must succeed.
+        store.acquire("conv_abc")
+        store.release("conv_abc")
+    finally:
+        store.close()

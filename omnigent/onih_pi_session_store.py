@@ -161,45 +161,58 @@ class OnihPiSessionStore:
     ) -> Path:
         """Strictly convert canonical items into a staging directory."""
         self.acquire(conversation_id)
-        items = self._validate_items(items)
-        active = self.active_dir(conversation_id)
-        root = active.parent
-        staging = Path(tempfile.mkdtemp(prefix="staging-", dir=root))
         try:
-            records = pi_session_records_from_session_items(
-                items,
-                session_id=conversation_id,
-                external_session_id=pi_session_id,
-                cwd=workspace,
-                provider=provider,
-                model=model,
-            )
-            target = pi_resume_session_path(staging, pi_session_id)
-            write_pi_session_records(target, records)
-            staging.chmod(0o700)
-            return staging
+            items = self._validate_items(items)
+            active = self.active_dir(conversation_id)
+            root = active.parent
+            staging = Path(tempfile.mkdtemp(prefix="staging-", dir=root))
+            try:
+                records = pi_session_records_from_session_items(
+                    items,
+                    session_id=conversation_id,
+                    external_session_id=pi_session_id,
+                    cwd=workspace,
+                    provider=provider,
+                    model=model,
+                )
+                target = pi_resume_session_path(staging, pi_session_id)
+                write_pi_session_records(target, records)
+                staging.chmod(0o700)
+                return staging
+            except BaseException:
+                with contextlib.suppress(FileNotFoundError):
+                    shutil.rmtree(staging)
+                raise
         except BaseException:
-            with contextlib.suppress(FileNotFoundError):
-                shutil.rmtree(staging)
+            self.release(conversation_id)
             raise
 
     def activate(self, conversation_id: str, staging: Path) -> Path:
-        """Atomically install a Pi-validated staging directory."""
-        active = self.active_dir(conversation_id)
-        previous = active.parent / "previous-replacement"
-        with contextlib.suppress(FileNotFoundError):
-            shutil.rmtree(previous)
-        if active.exists():
-            os.replace(active, previous)
+        """Atomically install a Pi-validated staging directory.
+
+        Releases the rebuild lock — it only serializes the rebuild→activate
+        sequence, not the session lifetime.  Holding it until close_session
+        causes "already owned" when a new executor is created before the old
+        one's background reap finishes.
+        """
         try:
-            os.replace(staging, active)
-        except BaseException:
-            if previous.exists() and not active.exists():
-                os.replace(previous, active)
-            raise
-        with contextlib.suppress(FileNotFoundError):
-            shutil.rmtree(previous)
-        return active
+            active = self.active_dir(conversation_id)
+            previous = active.parent / "previous-replacement"
+            with contextlib.suppress(FileNotFoundError):
+                shutil.rmtree(previous)
+            if active.exists():
+                os.replace(active, previous)
+            try:
+                os.replace(staging, active)
+            except BaseException:
+                if previous.exists() and not active.exists():
+                    os.replace(previous, active)
+                raise
+            with contextlib.suppress(FileNotFoundError):
+                shutil.rmtree(previous)
+            return active
+        finally:
+            self.release(conversation_id)
 
     @staticmethod
     def _validate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
