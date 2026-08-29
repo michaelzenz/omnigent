@@ -595,6 +595,7 @@ async def _maybe_adopt_session(session_id: str) -> None:
 
         from omnigent.agent_tasks.adoption import (
             emit_turn_finished_event,
+            emit_turn_finished_event_unbound,
             get_session_adoption_context,
             notify_new_session,
         )
@@ -631,9 +632,24 @@ async def _maybe_adopt_session(session_id: str) -> None:
                 status="idle",
             )
             return
-        # No worker — trigger adoption. Pass the conversation's host_id so
-        # the owner resolves to the host's user (e.g. "local") instead of
-        # "__anonymous__".
+        # No worker yet. Check if there's already a pending orphan event
+        # for this session — if so, the broker is still triaging adoption.
+        # Emit a turn-finished event as awaiting_grouping so the broker can
+        # route it to the task once adoption completes.
+        from omnigent.agent_tasks.adoption import find_open_orphan_event
+
+        if find_open_orphan_event(ctx.task_event_store, session_id) is not None:
+            emit_turn_finished_event_unbound(
+                session_id=session_id,
+                conv=conv,
+                owner_user_id=resolve_owner_user_id(
+                    user_id=None,
+                    host_id=conv.host_id,
+                    host_store=ctx.host_store,
+                ),
+            )
+            return
+        # No orphan event yet — trigger adoption.
         await notify_new_session(
             session_id,
             source="internal",
