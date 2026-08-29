@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE, SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
@@ -513,6 +514,7 @@ def emit_turn_finished_event_unbound(
             source_key=session_id,
             state="awaiting_grouping",
             payload=payload,
+            tags=[tag] if (tag := host_tag(conv.host_id if conv is not None else None)) else [],
             owner_user_id=owner_user_id,
         )
     except Exception:

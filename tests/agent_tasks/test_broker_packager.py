@@ -786,3 +786,40 @@ async def test_discovered_session_is_isolated_from_routed_events(
         json.loads(has_events[0].payload)["events"][0]["event_type"]
         == "external.session.discovered"
     )
+
+
+@pytest.mark.asyncio
+async def test_events_from_different_hosts_are_not_clustered_together(
+    broker_setup: dict,
+) -> None:
+    """Same owner, two hosts → two separate batches (host-aware clustering)."""
+    queue_store: SqlAlchemyAgentQueueStore = broker_setup["queue_store"]
+    event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
+    packager: BrokerPackager = broker_setup["packager"]
+    broker_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    def _host_event(seed: str, host: str, title: str) -> str:
+        event_id = _uid(seed)
+        event_store.create_event(
+            event_id,
+            "build.finished",
+            title,
+            state="awaiting_grouping",
+            owner_user_id=broker_setup["user_id"],
+            source_offset=f"host:{host}",
+        )
+        return event_id
+
+    # Identical untagged events — only host attribution separates them.
+    event_a = _host_event("evt_host_a", "host-a", "build broke")
+    event_b = _host_event("evt_host_b", "host-b", "build broke")
+    await packager.scan_once()
+
+    items = queue_store.list_items(_key(broker_setup["user_id"]))
+    assert len(items) == 2
+    sources = {sid for item in items for sid in (item.source_ids or [])}
+    assert sources == {event_a, event_b}
+    # Each notice carries exactly one host's events.
+    for item in items:
+        assert len(item.source_ids) == 1

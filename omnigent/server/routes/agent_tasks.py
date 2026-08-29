@@ -78,6 +78,11 @@ from omnigent.agent_tasks.task_match import (
     routable_tasks,
     task_tags_from_event_tags,
 )
+from omnigent.agent_tasks.task_search import (
+    SEARCH_MATCH_LIMIT,
+    SEARCH_RECENT_LIMIT,
+    rank_tasks_by_text,
+)
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     accept_task_package,
@@ -1439,6 +1444,74 @@ def create_agent_tasks_router(
                     created=True,
                 )
 
+    @router.get("/agent-tasks/search")
+    async def search_agent_tasks(
+        request: Request,
+        q: str = "",
+        session_id: str | None = None,
+        event_id: str | None = None,
+        limit: int = SEARCH_MATCH_LIMIT,
+    ) -> dict[str, Any]:
+        """Three-list task search for managers: recent + text matches + tag matches.
+
+        - ``recent``: the owner's most recently touched tasks (no state filter).
+          With ``session_id``, tasks bound to that session come first.
+        - ``matches``: fuzzy text match over title/goal/description/internal_note.
+        - ``tag_matches``: tag-overlap ranking, computed when ``event_id`` is given.
+        """
+        user_id = get_user_id(request, auth_provider)
+        limit = max(1, min(limit, SEARCH_MATCH_LIMIT))
+
+        recent = await asyncio.to_thread(task_store.list_recent, SEARCH_RECENT_LIMIT)
+        recent = _filter_tasks_for_user(recent, user_id)
+        if session_id:
+            # Session-first ordering only applies to worker-bound sessions;
+            # manager/plain sessions have no worker row to look up.
+            bound = (
+                await asyncio.to_thread(worker_store.get_by_target_id, session_id)
+                if worker_store is not None
+                else None
+            )
+            if bound is not None:
+                bound_task = await asyncio.to_thread(task_store.get, bound.task_id)
+                bound_task = (
+                    bound_task
+                    if bound_task is not None and _filter_tasks_for_user([bound_task], user_id)
+                    else None
+                )
+                if bound_task is not None:
+                    recent = [bound_task] + [t for t in recent if t.id != bound_task.id]
+        recent = recent[:SEARCH_RECENT_LIMIT]
+
+        candidates = _filter_tasks_for_user(
+            await asyncio.to_thread(task_store.list), user_id
+        )
+        matches = rank_tasks_by_text(candidates, q, limit=limit) if q.strip() else []
+        tag_matches: list = []
+        if event_id:
+            events = await asyncio.to_thread(load_events, [event_id], task_event_store=task_event_store)
+            tag_matches = await asyncio.to_thread(
+                rank_tasks_for_events,
+                events=events,
+                tasks=candidates,
+                task_store=task_store,
+                limit=limit,
+            )
+        return {
+            "object": "task.search",
+            "recent": [
+                {
+                    "task_id": task.id,
+                    "title": task.title,
+                    "state": task.state,
+                    "updated_at": task.updated_at or task.created_at,
+                }
+                for task in recent
+            ],
+            "matches": ranked_task_payload(matches),
+            "tag_matches": ranked_task_payload(tag_matches),
+        }
+
     @router.get("/agent-tasks/{task_id}")
     async def get_task(request: Request, task_id: str) -> dict[str, Any]:
         """Return one managed task with its tags."""
@@ -1518,15 +1591,17 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Temporarily stop new manager dispatches while the user inspects chat."""
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
+        task = await _get_task_or_404(task_id, user_id)
         if agent_queue_store is None:
             raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        if task.manager_conversation_id is None:
+            raise OmnigentError("Task has no manager queue", code=ErrorCode.CONFLICT)
         token = body.token or uuid.uuid4().hex
         now = now_epoch()
         key = AgentQueueKey(
             role="manager",
             owner_user_id=_effective_user_id(user_id),
-            scope_id=task_id,
+            scope_id=task.manager_conversation_id,
         )
         try:
             queue = await asyncio.to_thread(
@@ -1550,13 +1625,15 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Release the caller's temporary manager dispatch hold."""
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
+        task = await _get_task_or_404(task_id, user_id)
         if agent_queue_store is None:
             raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        if task.manager_conversation_id is None:
+            raise OmnigentError("Task has no manager queue", code=ErrorCode.CONFLICT)
         key = AgentQueueKey(
             role="manager",
             owner_user_id=_effective_user_id(user_id),
-            scope_id=task_id,
+            scope_id=task.manager_conversation_id,
         )
         released = await asyncio.to_thread(agent_queue_store.release_inspection_hold, key, token)
         return {"object": "agent.queue.hold.release", "released": released}
@@ -1583,23 +1660,35 @@ def create_agent_tasks_router(
         and routing history are preserved.
         """
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
-        # Cancel queued agent-queue items for this task's manager and worker
-        # queues. In-flight (dispatched) items are left alone — the agent is
-        # already working on them and will finish naturally.
+        task = await _get_task_or_404(task_id, user_id)
+        # Cancel queued agent-queue items for this task's manager queue (keyed
+        # by the manager session) and its worker queues (keyed by worker id).
+        # In-flight (dispatched) items are left alone — the agent is already
+        # working on them and will finish naturally.
         if agent_queue_store is not None:
             from omnigent.db.utils import now_epoch
             from omnigent.entities import AgentQueueKey
-            for role in ("manager", "worker"):
-                key = AgentQueueKey(
-                    role=role,
-                    owner_user_id=user_id or "local",
-                    scope_id=task_id,
+            if task.manager_conversation_id is not None:
+                manager_key = AgentQueueKey(
+                    role="manager",
+                    owner_user_id=_effective_user_id(user_id),
+                    scope_id=task.manager_conversation_id,
                 )
-                items = await asyncio.to_thread(
-                    agent_queue_store.list_items, key, state="queued"
+                for item in await asyncio.to_thread(
+                    agent_queue_store.list_items, manager_key, state="queued"
+                ):
+                    await asyncio.to_thread(
+                        agent_queue_store.cancel_item, item.id, now=now_epoch()
+                    )
+            for worker in await asyncio.to_thread(worker_store.list_workers_for_task, task_id):
+                worker_key = AgentQueueKey(
+                    role="worker",
+                    owner_user_id=_effective_user_id(user_id),
+                    scope_id=worker.id,
                 )
-                for item in items:
+                for item in await asyncio.to_thread(
+                    agent_queue_store.list_items, worker_key, state="queued"
+                ):
                     await asyncio.to_thread(
                         agent_queue_store.cancel_item, item.id, now=now_epoch()
                     )
