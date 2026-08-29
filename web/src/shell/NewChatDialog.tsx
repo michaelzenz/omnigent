@@ -5945,7 +5945,7 @@ export function NewChatLandingScreen() {
                     )}
                   </button>
                   <Dialog open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
-                    <DialogContent className="sm:max-w-3xl">
+                    <DialogContent className="sm:max-w-[52rem]">
                       <DialogHeader>
                         <DialogTitle>Worktree Sizes</DialogTitle>
                       </DialogHeader>
@@ -5993,7 +5993,7 @@ export function NewChatLandingScreen() {
                     </button>
                   </div>
                   <Dialog open={worktreeSizePopoverOpen} onOpenChange={setWorktreeSizePopoverOpen}>
-                    <DialogContent className="sm:max-w-3xl">
+                    <DialogContent className="sm:max-w-[52rem]">
                       <DialogHeader>
                         <DialogTitle>Worktree Sizes</DialogTitle>
                         {worktreeSizes.calculated_at > 0 && (
