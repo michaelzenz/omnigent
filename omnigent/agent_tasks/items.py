@@ -21,6 +21,24 @@ from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
 from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
+
+
+def _require_worker_owner_scope(
+    worker,
+    owner_user_id: str | None,
+    *,
+    task_store,
+) -> None:
+    """A shared worker lane may only serve tasks of its own owner.
+
+    The worker row has no owner column; its owner is the owner of the home
+    task it was created on — a stable binding, unlike worker.task_id which
+    v2 treats as a weak lane reference.
+    """
+    home = task_store.get(worker.task_id)
+    home_owner = home.owner_user_id if home is not None else None
+    if home_owner is not None and home_owner != owner_user_id:
+        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -71,6 +89,7 @@ def create_task_item(
     kind: str = "work",
     event_ids: list[str] | None = None,
     task_event_store: TaskEventStore | None = None,
+    task_store=None,
 ) -> TaskItem:
     """Create a task item and optionally link contributing events."""
     if kind == "human_action":
@@ -103,8 +122,11 @@ def create_task_item(
     )
     if worker_id is not None:
         worker = worker_store.get_worker(worker_id)
-        if worker is None or worker.task_id != task.id:
+        # A worker lane may serve any task of the same owner.
+        if worker is None:
             raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+        if task_store is not None:
+            _require_worker_owner_scope(worker, task.owner_user_id, task_store=task_store)
         item = task_item_store.update_item(item.id, worker_id=worker_id)
     if event_ids and task_event_store is not None:
         for event_id in event_ids:
@@ -436,6 +458,7 @@ def patch_task_item(
     instructions: str | None = None,
     internal_note: str | None = None,
     worker_id: str | None = None,
+    task_store=None,
 ) -> TaskItem:
     """Update a queued work item before it is dispatched."""
     if item.state not in _EDITABLE_WORK_ITEM_STATES:
@@ -461,7 +484,14 @@ def patch_task_item(
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
     if worker_id is not None:
         worker = worker_store.get_worker(worker_id)
-        if worker is None or worker.task_id != item.task_id:
+        if worker is None:
             raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+        if task_store is not None:
+            item_owner = task_store.get(item.task_id)
+            _require_worker_owner_scope(
+                worker,
+                item_owner.owner_user_id if item_owner is not None else None,
+                task_store=task_store,
+            )
         updated = task_item_store.update_item(item.id, worker_id=worker_id)
     return updated

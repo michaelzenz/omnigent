@@ -17,8 +17,9 @@ from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_store import TaskStore
 
-# A live task occupies capacity on its manager. Archived tasks free the slot.
-_LIVE_TASK_STATES = frozenset({"active", "idle", "pending"})
+# A live task occupies capacity on its manager. Archived tasks free the slot;
+# agent-resolved stays live (it can revive to pending on new events).
+_LIVE_TASK_STATES = frozenset({"active", "idle", "pending", "agent-resolved"})
 
 
 @dataclass

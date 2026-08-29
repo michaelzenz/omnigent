@@ -154,6 +154,7 @@ class SqlAlchemyTaskStore(TaskStore):
                 select(SqlTask)
                 .where(SqlTask.workspace_id == current_workspace_id())
                 .where(SqlTask.manager_conversation_id == conversation_id)
+                .where(SqlTask.state != encode_task_state("archived"))
                 .order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
             )
             rows = session.execute(stmt).scalars().all()
@@ -165,7 +166,7 @@ class SqlAlchemyTaskStore(TaskStore):
         with self._session() as session:
             live = [
                 encode_task_state(state)
-                for state in ("active", "idle", "pending")
+                for state in ("active", "idle", "pending", "agent-resolved")
             ]
             stmt = (
                 select(SqlTask.manager_conversation_id)

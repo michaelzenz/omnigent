@@ -199,6 +199,9 @@ function WorkerPicker({ taskId, item, workers }: WorkerPickerProps) {
             {workers.map((worker) => (
               <option key={worker.worker_id} value={worker.worker_id}>
                 {worker.provider_name ?? "Worker"}
+                {(worker.worker_state === "disconnected" ||
+                  worker.worker_state === "initialization_failed") &&
+                  " ⚠ halted"}
               </option>
             ))}
           </optgroup>

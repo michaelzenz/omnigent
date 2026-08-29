@@ -95,9 +95,6 @@ item — or even the same task.
   with `{"resolution":"reject_item"}`.
 - **Ack** an event that needs no item — `POST /v1/agent-tasks/{id}/ack`
   marks events reconciled without creating a task item.
-- **Re-route** a misrouted event — when an event clearly belongs to a
-  different task (yours or another manager's), move it instead of forcing it:
-  `POST /v1/task-events/<event_id>/reroute` with `{"task_id": "<correct_task_id>"}`.
 
 **Step 3 — create new items (with worker assignment).** For events that
 don't fit any existing item, create one and assign a worker lane at

@@ -362,12 +362,13 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         )
         if worker is None:
             raise DispatchFailed(f"worker slot {item.key.scope_id} not found at deliver time")
-        task = await asyncio.to_thread(self._task_store.get, worker.task_id)
-        if task is None:
-            raise DispatchFailed(f"task {worker.task_id} not found")
         task_item = await asyncio.to_thread(self._task_item_store.get_item, item.source_ids[0])
         if task_item is None:
             raise DispatchFailed(f"task item {item.source_ids[0]} not found")
+        # The item names its task; a shared worker lane serves many tasks.
+        task = await asyncio.to_thread(self._task_store.get, task_item.task_id)
+        if task is None:
+            raise DispatchFailed(f"task {task_item.task_id} not found")
 
         payload = parse_dispatch_payload(item.payload)
         manager_role_profile = await asyncio.to_thread(

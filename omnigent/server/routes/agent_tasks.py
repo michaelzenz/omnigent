@@ -1990,8 +1990,13 @@ def create_agent_tasks_router(
                             workspace=assignment.workspace or "",
                         )
                     )
-                    if worker is None or worker.task_id != task_id:
+                    if worker is None:
                         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    # A worker lane may serve any task of the same owner.
+                    if worker.task_id != task_id:
+                        home_task = task_store.get(worker.task_id)
+                        if home_task is None or home_task.owner_user_id != task.owner_user_id:
+                            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
                     if (
                         item.state in {"queued", "interrupted", "dispatch_failed"}
                         and item.worker_id != worker.id
@@ -2339,6 +2344,7 @@ def create_agent_tasks_router(
                     worker_id=body.worker_id,
                     kind=body.kind,
                     event_ids=body.event_ids or None,
+                    task_store=task_store,
                 )
                 if body.submit_for_user_ack and item.state == "draft":
                     return submit_item_for_user_ack(task_item_store, item.id)
@@ -2566,6 +2572,7 @@ def create_agent_tasks_router(
                     instructions=body.instructions,
                     internal_note=body.internal_note,
                     worker_id=body.worker_id,
+                    task_store=task_store,
                 )
 
             if (
