@@ -206,9 +206,9 @@ export function TaskCardItemEditor({
             <Button
               type="button"
               size="sm"
-              disabled={pending || (!isDraft && item.worker_id == null)}
+              disabled={pending}
               onClick={async () => {
-                if (isDraft && item.worker_id == null) {
+                if (item.worker_id == null) {
                   setDispatchError("Assign a worker before dispatching.");
                   return;
                 }
@@ -218,7 +218,7 @@ export function TaskCardItemEditor({
             >
               <CheckIcon aria-hidden /> {isDraft ? "Go" : "Accept"}
             </Button>
-          )}
+          )
           {dispatchError ? <p className="w-full text-xs text-destructive">{dispatchError}</p> : null}
         </div>
       ) : mode === "edit" || mode === "parked" ? (
