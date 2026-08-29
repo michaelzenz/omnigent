@@ -26,7 +26,11 @@ def _is_session_event(event_type: str) -> bool:
     return event_type.startswith("session.") or event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE
 
 
-def _format_manager_notice(events: list, task_titles: dict | None = None) -> str:
+def _format_manager_notice(
+    events: list,
+    task_titles: dict | None = None,
+    task_states: dict | None = None,
+) -> str:
     """Format the notice the manager packager hands the dispatcher.
 
     One notice per manager session per dispatch — possibly spanning several
@@ -79,6 +83,11 @@ def _format_manager_notice(events: list, task_titles: dict | None = None) -> str
                 lines.append(f"- {_label(event)}{event.event_type}: {event.title!r} (routed)")
         else:
             lines.append(_format_session_batch_notice(session_evts))
+    if task_states:
+        # Roster footer: the manager's whole portfolio, so it never has to
+        # re-query which tasks it owns.
+        roster = ", ".join(f"{tid} ({state})" for tid, state in sorted(task_states.items()))
+        lines.append(f"[Your tasks: {roster}]")
     return "\n".join(lines)
 
 

@@ -334,6 +334,10 @@ async def test_tasks_sharing_one_manager_share_one_queue(manager_setup: dict) ->
     assert "'Shared-manager task'" in items[0].payload
     assert f"[task:{manager_setup['task_id']}]" in items[0].payload
     assert f"[task:{second_task_id}]" in items[0].payload
+    # The roster footer lists the manager's whole portfolio.
+    assert "[Your tasks:" in items[0].payload
+    assert manager_setup["task_id"] in items[0].payload
+    assert second_task_id in items[0].payload
 
 
 def test_defaults_are_configurable_constants() -> None:

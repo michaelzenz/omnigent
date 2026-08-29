@@ -102,6 +102,9 @@ class _PendingBatch:
     # Manager-only: task_id → title for the batch's events, so the notice can
     # label each event with its task when one manager spans several tasks.
     task_titles: dict[str, str] | None = None
+    # Manager-only: task_id → state for every task on this manager session,
+    # for the roster footer (not just the batch's tasks).
+    task_states: dict[str, str] | None = None
 
     @property
     def oldest_age_s(self) -> float:
@@ -528,6 +531,10 @@ class ManagerPackager(Packager):
                 for e in unclaimed
                 if e.task_id is not None and e.task_id in title_by_task
             }
+            task_states = {
+                task.id: task.state
+                for task in self._task_store.list_by_manager_conversation_id(manager_conv_id)
+            }
             # Split session events (cooldown + per-session grouping) from
             # other routed events (existing single-batch behavior).
             session_events: list[TaskEvent] = []
@@ -542,7 +549,12 @@ class ManagerPackager(Packager):
             # Non-session events: one batch (existing behavior).
             if other_events:
                 batches.append(
-                    _PendingBatch(key=key, events=other_events, task_titles=task_titles)
+                    _PendingBatch(
+                        key=key,
+                        events=other_events,
+                        task_titles=task_titles,
+                        task_states=task_states,
+                    )
                 )
             # Session events: one batch per source_key (per session), so all
             # events for the same session arrive in one notice.
@@ -552,7 +564,12 @@ class ManagerPackager(Packager):
                 by_session.setdefault(sk, []).append(event)
             for session_evts in by_session.values():
                 batches.append(
-                    _PendingBatch(key=key, events=session_evts, task_titles=task_titles)
+                    _PendingBatch(
+                        key=key,
+                        events=session_evts,
+                        task_titles=task_titles,
+                        task_states=task_states,
+                    )
                 )
         return batches
 
@@ -564,7 +581,11 @@ class ManagerPackager(Packager):
     async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         if batch.key.scope_id is None:
             return None
-        notice = _format_manager_notice(batch.events, task_titles=batch.task_titles)
+        notice = _format_manager_notice(
+            batch.events,
+            task_titles=batch.task_titles,
+            task_states=batch.task_states,
+        )
         return self._store.enqueue(
             uuid.uuid4().hex,
             batch.key,
