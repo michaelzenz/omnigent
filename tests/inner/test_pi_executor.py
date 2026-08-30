@@ -3818,6 +3818,22 @@ def test_local_pi_models_are_isolated_renamed_and_preferred(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_missing_local_pi_models_falls_back_to_server(monkeypatch, tmp_path: Path) -> None:
+    agent_dir = tmp_path / "missing-agent"
+    executor = PiExecutor(
+        pi_path="/bin/echo",
+        gateway=True,
+        gateway_host="http://127.0.0.1:43127/v1/inference",
+        gateway_auth_command="printf proxy-secret",
+        server_inference_proxy=True,
+        local_config_dir=agent_dir,
+        local_provider_ids=("databricks-glm",),
+    )
+
+    assert executor._local_models is None
+
+
+@pytest.mark.asyncio
 async def test_local_pi_model_is_selected_for_rpc_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

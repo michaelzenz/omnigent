@@ -874,15 +874,20 @@ _LOCAL_PI_PROVIDER_PREFIX = "local-"
 def _load_local_pi_models(
     agent_dir: pathlib.Path,
     provider_ids: Sequence[str],
-) -> _PiModelsConfig:
-    """Load only authenticated local providers into an isolated Pi config."""
+) -> _PiModelsConfig | None:
+    """Load authenticated local providers, or skip stale local metadata."""
     try:
         payload = json.loads((agent_dir / "models.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"could not read local Pi models.json: {exc}") from exc
+    except (OSError, json.JSONDecodeError):
+        # The workflow can discover local config before a user removes it or
+        # another process replaces it. Treat that metadata as stale and let the
+        # server route handle the session instead of failing startup.
+        logger.info("Skipping unavailable local Pi models.json at %s", agent_dir)
+        return None
     raw_providers = payload.get("providers") if isinstance(payload, dict) else None
     if not isinstance(raw_providers, dict):
-        raise ValueError("local Pi models.json has no providers object")
+        logger.info("Skipping local Pi config without a providers object at %s", agent_dir)
+        return None
     providers: dict[str, _PiProviderConfig] = {}
     for provider_id in provider_ids:
         raw = raw_providers.get(provider_id)
@@ -892,7 +897,8 @@ def _load_local_pi_models(
             _PiProviderConfig, copy.deepcopy(raw)
         )
     if not providers:
-        raise ValueError("local Pi configuration has no authenticated providers")
+        logger.info("Skipping local Pi config with no discovered providers at %s", agent_dir)
+        return None
     return {"providers": providers}
 
 
