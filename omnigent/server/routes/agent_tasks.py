@@ -28,6 +28,7 @@ from omnigent.agent_tasks.agent_builtins import (
     TASK_SECRETARY_ROLE,
 )
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
+from omnigent.agent_tasks.bootstrap import ensure_puppygarden_project
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.broker_session import (
     ensure_role_profile,
@@ -760,6 +761,7 @@ async def _create_role_session_via_create_path(
     parent_session_id: str | None = None,
     sub_agent_name: str | None = None,
     title: str | None = None,
+    project_id: str | None = None,
 ) -> str:
     """Create a role session through the same ``POST /v1/sessions`` path.
 
@@ -778,6 +780,7 @@ async def _create_role_session_via_create_path(
         labels=labels,
         parent_session_id=parent_session_id,
         sub_agent_name=sub_agent_name,
+        project_id=project_id,
     )
     resp = await session_creator(
         body=body,
@@ -920,6 +923,7 @@ def create_agent_tasks_router(
     prompt_profile_store: PromptProfileStore | None = None,
     worker_provider_store: WorkerProviderStore | None = None,
     runner_router: RunnerRouter | None = None,
+    project_store: Any = None,
 ) -> APIRouter:
     """Build the managed-task router.
 
@@ -1418,6 +1422,9 @@ def create_agent_tasks_router(
                     request=request,
                     user_id=user_id,
                     session_creator=session_creator,
+                    project_id=await asyncio.to_thread(
+                        ensure_puppygarden_project, project_store, user_id
+                    ),
                 )
                 await _bind_role_session(effective_user_id, role, conversation_id)
                 return _agent_role_session_to_response(
@@ -1447,6 +1454,9 @@ def create_agent_tasks_router(
                     request=request,
                     user_id=user_id,
                     session_creator=session_creator,
+                    project_id=await asyncio.to_thread(
+                        ensure_puppygarden_project, project_store, user_id
+                    ),
                 )
                 await _bind_role_session(effective_user_id, role, conversation_id)
                 # Orphan sessions are now durable ``session.orphan`` events the

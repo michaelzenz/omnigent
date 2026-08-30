@@ -138,6 +138,16 @@ async def create_session_internal(
         resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
     _announce_session_added(user_id, resp.id)
 
+    # File the session into a first-class project at creation time. Used by
+    # managed-task role bootstraps to group their sessions under a project
+    # instead of leaving them in the flat sessions list.
+    if body.project_id is not None:
+        await asyncio.to_thread(
+            conversation_store.set_conversation_project,
+            resp.id,
+            body.project_id,
+        )
+
     launch_host_id = body.host_id
     if body.host_type == "managed" and resp.runner_id is None:
         sandbox_config = getattr(request.app.state, "sandbox_config", None)

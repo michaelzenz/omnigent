@@ -1593,6 +1593,11 @@ class SessionCreateRequest(BaseModel):
     harness_override: str | None = None
     prompt_profile: PromptProfileSelection | None = None
     smart_routing_message: str | None = None
+    # First-class project to file this session into at creation time.
+    # Set by managed-task role bootstraps (broker, secretary, manager) so
+    # their sessions land in the "PuppyGarden" project instead of the flat
+    # sessions list. None = unfiled (the default for user-initiated creates).
+    project_id: str | None = None
 
     @model_validator(mode="after")
     def _check_git_requires_host(self) -> SessionCreateRequest:

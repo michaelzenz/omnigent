@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -88,6 +89,39 @@ def resolve_bootstrap_params(
     )
 
 
+_PUPPYGARDEN_PROJECT_NAME = "PuppyGarden"
+
+
+def ensure_puppygarden_project(
+    project_store: Any,
+    user_id: str | None,
+) -> str | None:
+    """Find or create the owner's "PuppyGarden" project, return its id.
+
+    Called by role session bootstraps so broker, secretary, and manager
+    sessions are filed into one project instead of cluttering the flat
+    sessions list. Returns None when no project store is wired.
+    """
+    if project_store is None:
+        return None
+    for proj in project_store.list(user_id=user_id):
+        if proj.name == _PUPPYGARDEN_PROJECT_NAME:
+            return proj.id
+    try:
+        proj = project_store.create(
+            uuid.uuid4().hex,
+            _PUPPYGARDEN_PROJECT_NAME,
+            user_id,
+        )
+        return proj.id
+    except OmnigentError as exc:
+        if exc.code == ErrorCode.ALREADY_EXISTS:
+            for proj in project_store.list(user_id=user_id):
+                if proj.name == _PUPPYGARDEN_PROJECT_NAME:
+                    return proj.id
+        raise
+
+
 def build_role_session_request(
     profile: TaskRoleProfile,
     *,
@@ -96,6 +130,7 @@ def build_role_session_request(
     parent_session_id: str | None = None,
     sub_agent_name: str | None = None,
     overrides: dict[str, Any] | None = None,
+    project_id: str | None = None,
 ) -> Any:
     """Build a ``SessionCreateRequest`` from a glossary role profile.
 
@@ -141,6 +176,7 @@ def build_role_session_request(
             if profile.prompt_profile_id
             else None
         ),
+        project_id=project_id,
     )
     if overrides:
         for key, value in overrides.items():
@@ -271,6 +307,11 @@ async def _attach_or_create_manager(
             {"mode": "fixed", "profile_id": params.prompt_profile_id}
             if params.prompt_profile_id
             else None
+        ),
+        project_id=await asyncio.to_thread(
+            ensure_puppygarden_project,
+            getattr(app_state, "project_store", None),
+            user_id,
         ),
     )
     request = _make_internal_request(app_state)
