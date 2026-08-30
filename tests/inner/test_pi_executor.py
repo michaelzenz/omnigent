@@ -2412,6 +2412,83 @@ class TestRunTurn(unittest.TestCase):
 
         _run(_test())
 
+    def test_already_processing_retries_with_followUp(self):
+        """When Pi rejects the prompt with "already processing", the executor
+        retries the same prompt with streamingBehavior=followUp so Pi queues
+        the message instead of rejecting it — no process restart needed.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = _FakeProcess()
+            fake_rpc._stderr_lines = []
+            fake_rpc._eof = False
+
+            lines = [
+                # First prompt rejected: "already processing"
+                json.dumps({
+                    "type": "response",
+                    "success": False,
+                    "command": "prompt",
+                    "error": (
+                        "Agent is already processing. "
+                        "Specify streamingBehavior ('steer' or 'followUp') "
+                        "to queue the message."
+                    ),
+                }),
+                # Retried prompt with followUp: accepted
+                json.dumps({"type": "response", "success": True}),
+                json.dumps({
+                    "type": "message_update",
+                    "assistantMessageEvent": {"type": "text_delta", "delta": "hi"},
+                }),
+                json.dumps({"type": "message_end", "message": {"stopReason": "stop"}}),
+                json.dumps({"type": "agent_end", "messages": []}),
+            ]
+            for line in lines:
+                fake_rpc._line_queue.put_nowait(line)
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                state = executor._session_states.setdefault(
+                    args[0] if args else kwargs.get("session_key", ""),
+                    _PiSessionState(),
+                )
+                state.rpc = fake_rpc
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            # The turn should complete normally, not error.
+            self.assertFalse(
+                any(isinstance(e, ExecutorError) for e in events),
+                f"Expected no ExecutorError, got {[e for e in events if isinstance(e, ExecutorError)]}",
+            )
+            self.assertTrue(any(isinstance(e, TextChunk) for e in events))
+            self.assertTrue(any(isinstance(e, TurnComplete) for e in events))
+
+            # Verify the second prompt command included streamingBehavior=followUp.
+            sent_commands = [
+                json.loads(d.decode()) for d in fake_rpc.process.stdin.data
+            ]
+            prompt_cmds = [c for c in sent_commands if c.get("type") == "prompt"]
+            self.assertEqual(len(prompt_cmds), 2)
+            self.assertNotIn("streamingBehavior", prompt_cmds[0])
+            self.assertEqual(prompt_cmds[1].get("streamingBehavior"), "followUp")
+
+        _run(_test())
+
     def test_compaction_start_eof_yields_compaction_complete(self):
         """When Pi exits after compaction_start but before compaction_end,
         CompactionComplete must be yielded to dismiss the UI's "Compacting…"

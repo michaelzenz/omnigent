@@ -3173,6 +3173,9 @@ class PiExecutor(Executor):
         except Exception as exc:  # noqa: BLE001 — executor boundary surfaces prompt-send errors as ExecutorError
             yield ExecutorError(message=f"Failed to send prompt to Pi: {exc}")
             return
+        # True after retrying the prompt with streamingBehavior=followUp so
+        # a persistent "already processing" state fails instead of looping.
+        _retried_already_processing = False
 
         # Read events until agent_end.
         response_text = ""
@@ -3284,7 +3287,31 @@ class PiExecutor(Executor):
                             event.get("error", "unknown"),
                         )
                         continue
-                    yield ExecutorError(message=event.get("error", "Pi command failed"))
+                    error_msg = event.get("error", "")
+                    # Pi rejected the prompt because it was still processing a
+                    # prior turn (agent_end was emitted but Pi's internal flag
+                    # wasn't cleared yet). Retry with streamingBehavior=followUp
+                    # so Pi queues the message instead of rejecting it.
+                    if (
+                        "already processing" in error_msg.lower()
+                        and not _retried_already_processing
+                    ):
+                        logger.warning(
+                            "PiExecutor: Pi was still processing; retrying "
+                            "prompt with streamingBehavior=followUp (session %s)",
+                            session_key,
+                        )
+                        _retried_already_processing = True
+                        command["streamingBehavior"] = "followUp"
+                        try:
+                            await rpc.send_command(command)
+                        except Exception as resend_exc:  # noqa: BLE001
+                            yield ExecutorError(
+                                message=f"Failed to resend prompt to Pi: {resend_exc}"
+                            )
+                            return
+                        continue
+                    yield ExecutorError(message=error_msg or "Pi command failed")
                     return
                 continue
 
