@@ -1792,6 +1792,7 @@ def create_app(
     app.state.tool_preferences_store = tool_preferences_store
     app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
+    app.state.project_store = project_store
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
@@ -2878,6 +2879,7 @@ def create_app(
                 prompt_profile_store=prompt_profile_store,
                 worker_provider_store=worker_provider_store,
                 runner_router=runner_router,
+                project_store=project_store,
             ),
             prefix="/v1",
             tags=["agent_tasks"],
