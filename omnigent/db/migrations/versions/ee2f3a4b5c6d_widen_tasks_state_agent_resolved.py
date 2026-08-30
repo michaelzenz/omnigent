@@ -16,16 +16,10 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("ALTER TABLE tasks DROP CONSTRAINT ck_tasks_state")
-    op.execute(
-        "ALTER TABLE tasks ADD CONSTRAINT ck_tasks_state "
-        "CHECK (state IN (1, 2, 3, 4, 5))"
-    )
+    op.execute("ALTER TABLE tasks ADD CONSTRAINT ck_tasks_state CHECK (state IN (1, 2, 3, 4, 5))")
 
 
 def downgrade() -> None:
     # Fails if any row is already in state 5.
     op.execute("ALTER TABLE tasks DROP CONSTRAINT ck_tasks_state")
-    op.execute(
-        "ALTER TABLE tasks ADD CONSTRAINT ck_tasks_state "
-        "CHECK (state IN (1, 2, 3, 4))"
-    )
+    op.execute("ALTER TABLE tasks ADD CONSTRAINT ck_tasks_state CHECK (state IN (1, 2, 3, 4))")
