@@ -17,7 +17,7 @@ from omnigent.model_metadata import ModelCapability, ModelMetadata
 from omnigent.onboarding.providers import find_catalog_models
 
 _ESTIMATED_DATABRICKS_CONTEXT_WINDOW = 1_000_000
-_LEGACY_CONTEXT_WINDOW = 128_000
+_LEGACY_CONTEXT_WINDOW = 1_000_000
 
 
 class _LiteLLM(Protocol):
