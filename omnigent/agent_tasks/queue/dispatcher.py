@@ -10,12 +10,14 @@ Two properties are worth stating explicitly because they shape the code:
   dispatcher marks it in flight, releases the lease, and lets the completion
   signal re-arm the queue. Holding the lease would stall other queues behind a
   bounded pool slot and expire mid-run anyway.
-* **A failed dispatch retries with backoff before halting.** A dispatch
+* **A failed dispatch retries with capped exponential backoff.** A dispatch
   failure is often transient — the runner hasn't reconnected after a
-  restart, the host is briefly offline. The dispatcher retries up to
-  ``MAX_DISPATCH_RETRIES`` times with exponential backoff before parking
-  the item and halting the queue. Only a user resumes a permanently
-  halted queue.
+  restart, the host is briefly offline. The item is re-queued with
+  ``not_before = now + backoff`` (exponential from ``_BASE_BACKOFF_S``,
+  capped at ``_MAX_BACKOFF_S``) and retried indefinitely, so a restart
+  that brings the runner back heals the queue on its own. Only
+  non-retryable failures park the item and halt the queue, and only a
+  user resumes a permanently halted queue.
 """
 
 from __future__ import annotations
@@ -53,9 +55,12 @@ MAX_INFLIGHT_S = 6 * 60 * 60
 
 # Retry backoff for transient dispatch failures (runner not connected yet,
 # host briefly offline, etc). The item is re-queued with not_before = now +
-# backoff; after MAX_DISPATCH_RETRIES the queue is permanently halted.
-MAX_DISPATCH_RETRIES = 3
-_BASE_BACKOFF_S = 30  # 30s, 60s, 120s
+# backoff and retried indefinitely — exponential from _BASE_BACKOFF_S, capped
+# at _MAX_BACKOFF_S so a long outage retries at most every 5 minutes and a
+# restart that brings everything back is never blocked on a user resuming
+# the queue. Only non-retryable failures park and halt.
+_BASE_BACKOFF_S = 30  # 30s, 60s, 120s, 240s, then 300s
+_MAX_BACKOFF_S = 5 * 60
 
 # Concurrent queue drains, and the knob for global dispatch pressure. With
 # thousands of tasks — each a manager queue — a task per queue is not affordable.
@@ -298,6 +303,18 @@ class AgentQueueDispatcher:
         if dispatched is None:
             # Another dispatcher claimed the in-flight slot first.
             return _DrainOutcome()
+        if dispatched.retry_count:
+            # A retry going out: say so, with why it failed before, so a queue
+            # stuck in a retry loop is visible in the logs without digging.
+            _logger.info(
+                "agent queue %s/%s/%s: retrying item %s (attempt %d, last error: %s)",
+                key.role,
+                key.owner_user_id,
+                key.scope_id,
+                dispatched.id,
+                dispatched.retry_count + 1,
+                dispatched.last_error or "unknown",
+            )
 
         try:
             await handler.deliver(dispatched, target)
@@ -335,28 +352,31 @@ class AgentQueueDispatcher:
         )
 
     async def _fail(self, item: AgentQueueItem, key: AgentQueueKey, error: str) -> None:
-        backoff = _BASE_BACKOFF_S * (2 ** item.retry_count)
+        backoff = min(_BASE_BACKOFF_S * (2 ** item.retry_count), _MAX_BACKOFF_S)
         _logger.warning(
-            "agent queue %s/%s/%s: dispatch failed (retry %d/%d, backoff %ds): %s",
+            "agent queue %s/%s/%s: dispatch failed (attempt %d, retrying in %ds): %s",
             key.role,
             key.owner_user_id,
             key.scope_id,
             item.retry_count + 1,
-            MAX_DISPATCH_RETRIES,
             backoff,
             error,
         )
-        await asyncio.to_thread(
+        failed = await asyncio.to_thread(
             self._context.store.fail_dispatch,
             item.id,
             key,
             error=error,
             now=now_epoch(),
             retryable=True,
-            max_retries=MAX_DISPATCH_RETRIES,
+            max_retries=None,
             backoff_s=backoff,
         )
-        await self._notify_parked(item, "dispatch_failed")
+        # Mirror only a true park onto the work record: a requeued item is
+        # still being retried, and marking its task dispatch_failed would
+        # smear the board every cycle and outlive a successful retry.
+        if failed is not None and failed.state == "dispatch_failed":
+            await self._notify_parked(item, "dispatch_failed")
 
     async def _notify_parked(self, item: AgentQueueItem, state: str) -> None:
         """Let the owning role mirror a park onto its own work record."""

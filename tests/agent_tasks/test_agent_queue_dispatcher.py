@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 import pytest
 
+from omnigent.agent_tasks.queue import dispatcher as dispatcher_module
 from omnigent.agent_tasks.queue.dispatcher import (
     AgentQueueDispatcher,
     DispatcherContext,
@@ -14,6 +16,7 @@ from omnigent.agent_tasks.queue.dispatcher import (
     RoleDispatchHandler,
     StatusReader,
 )
+from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 
@@ -138,8 +141,8 @@ async def test_quiet_session_is_dispatched_to(store: SqlAlchemyAgentQueueStore) 
 
 
 @pytest.mark.asyncio
-async def test_failed_session_halts_the_queue(store: SqlAlchemyAgentQueueStore) -> None:
-    """``failed`` is sticky, so the item is abandoned rather than waited on."""
+async def test_failed_session_requeues_for_retry(store: SqlAlchemyAgentQueueStore) -> None:
+    """``failed`` is sticky for the gate, but the queue retries instead of dying."""
     key = _key()
     store.enqueue(_uid("a"), key, "item.dispatch")
     handler = _RecordingHandler(session_id=_SESSION)
@@ -148,16 +151,17 @@ async def test_failed_session_halts_the_queue(store: SqlAlchemyAgentQueueStore) 
     assert handler.delivered == []
     queue = store.get_queue(key)
     assert queue is not None
-    assert queue.state == "halted"
+    assert queue.state == "active"
     item = store.get_item(_uid("a"))
     assert item is not None
-    assert item.state == "dispatch_failed"
+    assert item.state == "queued"
+    assert item.retry_count == 1
+    assert item.last_error is not None
 
 
 @pytest.mark.asyncio
-async def test_delivery_failure_halts_the_queue_without_retrying(
-    store: SqlAlchemyAgentQueueStore,
-) -> None:
+async def test_delivery_failure_requeues_the_item(store: SqlAlchemyAgentQueueStore) -> None:
+    """A transient delivery failure retries with backoff; the slot stays live."""
     key = _key()
     store.enqueue(_uid("a"), key, "item.dispatch")
     store.enqueue(_uid("b"), key, "item.dispatch")
@@ -165,24 +169,91 @@ async def test_delivery_failure_halts_the_queue_without_retrying(
     dispatcher = _dispatcher(store, handler)
 
     assert await dispatcher.run_once() == 0
-    # The queue is halted, so the *next* item is not attempted either.
-    assert await dispatcher.run_once() == 0
 
     failed = store.get_item(_uid("a"))
     assert failed is not None
-    assert failed.state == "dispatch_failed"
+    assert failed.state == "queued"
+    assert failed.retry_count == 1
     assert failed.last_error == "no runner bound"
-    queued = store.get_item(_uid("b"))
-    assert queued is not None
-    assert queued.state == "queued"
     queue = store.get_queue(key)
     assert queue is not None
-    assert queue.state == "halted"
+    assert queue.state == "active"
     assert queue.inflight_item_id is None
+    # 'a' is waiting out its backoff: the slot may send 'b' meanwhile, but 'a'
+    # itself only becomes dispatchable again once not_before passes.
+    head = store.next_dispatchable_item(key, now=now_epoch() + 5)
+    assert head is not None
+    assert head.id != _uid("a")
+    retried = store.next_dispatchable_item(key, now=now_epoch() + 60)
+    assert retried is not None
+    assert retried.id == _uid("a")
 
 
 @pytest.mark.asyncio
-async def test_unresolvable_target_halts_the_queue(
+async def test_retry_succeeds_once_the_failure_clears(
+    store: SqlAlchemyAgentQueueStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A restart that brings the runner back heals the queue without a resume."""
+    monkeypatch.setattr(dispatcher_module, "_BASE_BACKOFF_S", 0)
+    key = _key()
+    store.enqueue(_uid("a"), key, "item.dispatch")
+    failing = _RecordingHandler(deliver_error="no runner bound")
+    assert await _dispatcher(store, failing).run_once() == 0
+
+    healthy = _RecordingHandler()
+    assert await _dispatcher(store, healthy).run_once() == 1
+    assert [item.id for item in healthy.delivered] == [_uid("a")]
+    queue = store.get_queue(key)
+    assert queue is not None
+    assert queue.state == "active"
+
+
+@pytest.mark.asyncio
+async def test_retry_backoff_is_capped(store: SqlAlchemyAgentQueueStore) -> None:
+    """A long outage retries at most every _MAX_BACKOFF_S, never with runaway delays."""
+    key = _key()
+    store.enqueue(_uid("a"), key, "item.dispatch")
+    # Push the retry count well past the point where 30s * 2^n would run away.
+    for _ in range(12):
+        assert store.mark_dispatched(_uid("a"), key, now=now_epoch()) is not None
+        store.fail_dispatch(
+            _uid("a"), key, error="boom", now=now_epoch(),
+            retryable=True, max_retries=None, backoff_s=0,
+        )
+
+    handler = _RecordingHandler(deliver_error="still down")
+    before = now_epoch()
+    assert await _dispatcher(store, handler).run_once() == 0
+    item = store.get_item(_uid("a"))
+    assert item is not None
+    assert item.retry_count == 13
+    assert item.not_before is not None
+    assert item.not_before - before <= dispatcher_module._MAX_BACKOFF_S + 5
+    queue = store.get_queue(key)
+    assert queue is not None
+    assert queue.state == "active"
+
+
+@pytest.mark.asyncio
+async def test_every_retry_attempt_is_logged(
+    store: SqlAlchemyAgentQueueStore,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each retry going out says so in the log, with the prior error."""
+    monkeypatch.setattr(dispatcher_module, "_BASE_BACKOFF_S", 0)
+    key = _key()
+    store.enqueue(_uid("a"), key, "item.dispatch")
+    assert await _dispatcher(store, _RecordingHandler(deliver_error="down")).run_once() == 0
+
+    with caplog.at_level(logging.INFO, logger="omnigent.agent_tasks.queue.dispatcher"):
+        assert await _dispatcher(store, _RecordingHandler()).run_once() == 1
+    assert any("retrying item" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_target_requeues_for_retry(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
     key = _key()
@@ -192,30 +263,18 @@ async def test_unresolvable_target_halts_the_queue(
     assert await _dispatcher(store, handler).run_once() == 0
     queue = store.get_queue(key)
     assert queue is not None
+    assert queue.state == "active"
     assert queue.last_error == "worker slot is gone"
-
-
-@pytest.mark.asyncio
-async def test_resume_drains_the_rest_of_a_halted_queue(
-    store: SqlAlchemyAgentQueueStore,
-) -> None:
-    key = _key()
-    store.enqueue(_uid("a"), key, "item.dispatch")
-    store.enqueue(_uid("b"), key, "item.dispatch")
-    failing = _RecordingHandler(deliver_error="boom")
-    assert await _dispatcher(store, failing).run_once() == 0
-
-    store.set_queue_state(key, "active")
-    healthy = _RecordingHandler()
-    assert await _dispatcher(store, healthy).run_once() == 1
-    assert [item.id for item in healthy.delivered] == [_uid("b")]
+    item = store.get_item(_uid("a"))
+    assert item is not None
+    assert item.state == "queued"
 
 
 @pytest.mark.asyncio
 async def test_one_broken_queue_does_not_stop_the_others(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
-    """Halting is per queue: a broken worker slot must not stop other agents."""
+    """Retries are per queue: a broken worker slot must not stop other agents."""
     broken = _key("slot-a")
     healthy = _key("slot-b")
     store.enqueue(_uid("a"), broken, "item.dispatch")
@@ -239,7 +298,12 @@ async def test_one_broken_queue_does_not_stop_the_others(
 
     broken_queue = store.get_queue(broken)
     assert broken_queue is not None
-    assert broken_queue.state == "halted"
+    # The broken slot keeps retrying its item on its own backoff clock.
+    assert broken_queue.state == "active"
+    broken_item = store.get_item(_uid("a"))
+    assert broken_item is not None
+    assert broken_item.state == "queued"
+    assert broken_item.retry_count == 1
     healthy_queue = store.get_queue(healthy)
     assert healthy_queue is not None
     assert healthy_queue.state == "active"
@@ -264,9 +328,13 @@ async def test_unexpected_delivery_error_does_not_wedge_the_queue(
     queue = store.get_queue(key)
     assert queue is not None
     assert queue.inflight_item_id is None
-    assert queue.state == "halted"
-    assert queue.last_error is not None
-    assert "kaboom" in queue.last_error
+    # The item is requeued for retry, not lost, and the slot stays live.
+    assert queue.state == "active"
+    item = store.get_item(_uid("a"))
+    assert item is not None
+    assert item.state == "queued"
+    assert item.last_error is not None
+    assert "kaboom" in item.last_error
 
 
 @pytest.mark.asyncio
