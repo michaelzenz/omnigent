@@ -3,7 +3,7 @@ Context window resolution for LLM models.
 
 Provides :func:`get_model_context_window` which resolves a model's context
 window from the shared MLflow catalog, then optional local metadata, with a
-1M fallback.
+conservative 128K fallback.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any, Protocol, cast
 
 from omnigent.onboarding.providers import ModelInfo, find_catalog_models
 
-_DEFAULT_CONTEXT_WINDOW: int = 1_000_000
+_DEFAULT_CONTEXT_WINDOW: int = 128_000
 
 _ANTHROPIC_1M_BETA_SUFFIX = "[1m]"
 _ANTHROPIC_1M_BETA_WINDOW = 1_000_000
@@ -48,7 +48,7 @@ def _catalog_context_window(model: str) -> int | None:
 
 # Known context windows for models whose MLflow catalog entry omits
 # max_input_tokens. Catalog stays authoritative; this fills the gap so
-# compaction doesn't fall back to the default for a large-window model.
+# compaction doesn't fall back to the 128K default for a large-window model.
 _HARDCODED_CONTEXT_WINDOWS: dict[str, int] = {
     "kimi-k3": 1_000_000,
 }
@@ -132,7 +132,7 @@ def get_model_context_window(model: str) -> int:
        default.
     5. ``litellm.get_model_info()`` — optional local metadata. Also
        tried with the ``databricks/`` prefix for Databricks models.
-    6. ``_DEFAULT_CONTEXT_WINDOW`` (1 M) — fallback.
+    6. ``_DEFAULT_CONTEXT_WINDOW`` (128 K) — conservative fallback.
 
     :param model: The model identifier, e.g. ``"openai/gpt-4o"`` or
         ``"databricks-gpt-5-5"``.
@@ -154,8 +154,8 @@ def resolve_effective_context_window(
     Prefers an explicit, spec-declared window (``executor.context_window``)
     over the model-catalog lookup. An agent author who declares a window is
     stating the size the model actually serves for this agent (e.g. a 1M
-    Claude window); the catalog lookup falls back to a 1M default for models
-    it can't resolve, which would otherwise compact far
+    Claude window); the catalog lookup falls back to a conservative 128K
+    default for models it can't resolve, which would otherwise compact far
     too early.
 
     Mirrors the server's display ring (``server/routes/sessions.py``):

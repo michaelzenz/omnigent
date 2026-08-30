@@ -359,7 +359,7 @@ def test_get_model_context_window_encoded_and_offline_fallback(
     monkeypatch.setattr(context_window, "find_catalog_models", lambda _model: [])
     assert get_model_context_window("claude-opus-4-8[1m]") == 1_000_000
     assert get_model_context_window("anthropic/claude-opus-4-8[1m]") == 1_000_000
-    assert get_model_context_window("uncatalogued-model") == 1_000_000
+    assert get_model_context_window("uncatalogued-model") == 128_000
 
 
 def test_hardcoded_context_window_fills_catalog_gap_for_kimi_k3(
