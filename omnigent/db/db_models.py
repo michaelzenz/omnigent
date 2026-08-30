@@ -2704,6 +2704,30 @@ class SqlAgentQueue(OmnigentBase):
     )
 
 
+class SqlDispatchStop(OmnigentBase):
+    """SQLAlchemy model for the ``dispatch_stoplist`` table.
+
+    One row per role the user has told the dispatcher not to dispatch.
+    Role-wide and persistent — distinct from a per-queue ``paused`` state,
+    which the resume endpoint clears. The PuppyGarden board config panel
+    is the intended writer; the dispatcher reads the whole list once per
+    scan pass.
+    """
+
+    __tablename__ = "dispatch_stoplist"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class SqlAgentQueueItem(OmnigentBase):
     """SQLAlchemy model for the ``agent_queue_items`` table."""
 

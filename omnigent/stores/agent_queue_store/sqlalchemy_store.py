@@ -11,6 +11,7 @@ from sqlalchemy import asc, desc, func, or_, select, update
 from omnigent.db.db_models import (
     SqlAgentQueue,
     SqlAgentQueueItem,
+    SqlDispatchStop,
     current_workspace_id,
 )
 from omnigent.db.enum_codecs import (
@@ -438,7 +439,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         error: str,
         now: int,
         retryable: bool = False,
-        max_retries: int = 0,
+        max_retries: int | None = 0,
         backoff_s: int = 0,
     ) -> AgentQueueItem | None:
         with self._session() as session:
@@ -448,8 +449,10 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             queue = self._get_queue_row(session, key)
             can_retry = (
                 retryable
-                and max_retries > 0
-                and row.retry_count < max_retries
+                # max_retries=None means unlimited: the dispatcher retries a
+                # transient failure forever with capped backoff so a restart
+                # that brings the runner back heals the queue on its own.
+                and (max_retries is None or (max_retries > 0 and row.retry_count < max_retries))
                 and queue is not None
             )
             if can_retry:
@@ -611,6 +614,34 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 count += 1
             session.flush()
             return count
+
+    def get_dispatch_stoplist(self) -> frozenset[str]:
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlDispatchStop.role).where(
+                    SqlDispatchStop.workspace_id == current_workspace_id()
+                )
+            ).scalars().all()
+            return frozenset(rows)
+
+    def set_role_dispatch_stopped(self, role: str, stopped: bool) -> None:
+        now = now_epoch()
+        with self._session() as session:
+            row = session.get(
+                SqlDispatchStop, (current_workspace_id(), role)
+            )
+            if stopped:
+                if row is None:
+                    session.add(
+                        SqlDispatchStop(
+                            role=role, created_at=now, updated_at=now
+                        )
+                    )
+                else:
+                    row.updated_at = now
+            elif row is not None:
+                session.delete(row)
+            session.flush()
 
     # ── Control plane ──────────────────────────────────
 

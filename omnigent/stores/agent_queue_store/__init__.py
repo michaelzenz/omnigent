@@ -160,16 +160,17 @@ class AgentQueueStore(ABC):
         error: str,
         now: int,
         retryable: bool = False,
-        max_retries: int = 0,
+        max_retries: int | None = 0,
         backoff_s: int = 0,
     ) -> AgentQueueItem | None:
         """Record a failed dispatch.
 
-        When ``retryable`` and retries remain: re-queue the item with a
-        ``not_before`` backoff and keep the queue ``active`` so the
-        dispatcher retries after the delay. When retries are exhausted or
-        the failure is not retryable: park the item as ``dispatch_failed``
-        and halt the queue (user must resume).
+        When ``retryable``: re-queue the item with a ``not_before`` backoff and
+        keep the queue ``active`` so the dispatcher retries after the delay —
+        indefinitely when ``max_retries`` is ``None``, otherwise up to
+        ``max_retries`` attempts. When the failure is not retryable, or a
+        finite retry budget is exhausted: park the item as
+        ``dispatch_failed`` and halt the queue (user must resume).
         """
 
     @abstractmethod
@@ -224,6 +225,21 @@ class AgentQueueStore(ABC):
         retry counts.
 
         :returns: Number of items re-queued.
+        """
+
+    @abstractmethod
+    def get_dispatch_stoplist(self) -> frozenset[str]:
+        """Return the roles the dispatcher must not dispatch.
+
+        The global stoplist is role-wide and persistent, written from the
+        board config panel ("broker off"); distinct from a per-queue
+        ``paused`` state, which is per owner/scope and user-resumable.
+        """
+
+    @abstractmethod
+    def set_role_dispatch_stopped(self, role: str, stopped: bool) -> None:
+        """Add *role* to (``stopped=True``) or remove it from (``False``) the
+        global dispatch stoplist. Idempotent either way.
         """
 
     # ── Control plane ──────────────────────────────────
