@@ -3,9 +3,15 @@
 // and 404'd), or stripped the href and appended " [blocked]", which read as
 // though the app had censored it. These cases pin which hrefs get handed to the
 // FileViewer renderer and which are still left to harden untouched.
+// serve_html preview URLs are path-shaped too, so they get their own lane here
+// — the in-app preview pane opens them via the restored href, not FileViewer.
 
 import { describe, expect, it } from "vitest";
-import { markWorkspaceFileLinks, WORKSPACE_FILE_LINK_ATTR } from "./streamdown-security";
+import {
+  markWorkspaceFileLinks,
+  PREVIEW_LINK_ATTR,
+  WORKSPACE_FILE_LINK_ATTR,
+} from "./streamdown-security";
 
 interface TestNode {
   type: string;
@@ -104,5 +110,37 @@ describe("markWorkspaceFileLinks", () => {
     markWorkspaceFileLinks()({ type: "root", children: [img, bare] });
     expect(img.properties).toEqual({ src: "x.png" });
     expect(bare.properties).toEqual({});
+  });
+});
+
+describe("markWorkspaceFileLinks — serve_html preview links", () => {
+  const previewHref =
+    "/v1/sessions/conv_abc123/resources/files/8c10cea0209540529060c9a982240766/preview";
+
+  it("hands a preview URL to the preview renderer, not the FileViewer", () => {
+    const properties = markHref(previewHref);
+    expect(properties[PREVIEW_LINK_ATTR]).toBe(previewHref);
+    expect(properties.href).toMatch(/^#./);
+    expect(properties[WORKSPACE_FILE_LINK_ATTR]).toBeUndefined();
+  });
+
+  it.each([
+    ["/v1/sessions/conv_abc123/resources/files/deadbeef", "no /preview suffix"],
+    ["/v1/sessions/conv_abc123/resources/files/deadbeef/preview/extra", "trailing segment"],
+    ["/v1/sessions//resources/files/deadbeef/preview", "empty session id"],
+    ["/v1/other/conv_abc123/resources/files/deadbeef/preview", "not the preview route"],
+  ])("does not treat %s as a preview (%s)", (href) => {
+    expect(markHref(href)[PREVIEW_LINK_ATTR]).toBeUndefined();
+  });
+
+  it("parks file links and preview links independently in one tree", () => {
+    const file = anchor("notes.md");
+    const preview = anchor(previewHref);
+    markWorkspaceFileLinks()({
+      type: "root",
+      children: [{ type: "element", tagName: "p", children: [file, preview] }],
+    });
+    expect(file.properties?.[WORKSPACE_FILE_LINK_ATTR]).toBe("notes.md");
+    expect(preview.properties?.[PREVIEW_LINK_ATTR]).toBe(previewHref);
   });
 });

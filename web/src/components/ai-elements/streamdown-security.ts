@@ -36,6 +36,9 @@ export const FILE_LINK_STREAMDOWN_REHYPE_PLUGINS = createStreamdownRehypePlugins
 // Attribute carrying the original, unhardened href of a workspace-file link.
 export const WORKSPACE_FILE_LINK_ATTR = "data-omnigent-file";
 
+// Attribute carrying the original href of a serve_html preview link.
+export const PREVIEW_LINK_ATTR = "data-omnigent-preview";
+
 // An href that can only be a protocol URL, a protocol-relative URL, or an
 // in-page anchor, never a path to a file in the session workspace. The
 // lookahead keeps a cited position off the scheme branch: `notes.md:12` is a
@@ -47,6 +50,17 @@ const NON_FILE_HREF = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?::\d+)?$)|\/\/|#)/;
 // through only when `new URL(href, base).hash` round-trips, and a bare "#"
 // parses to an empty hash, so it would be blocked like any unresolvable URL.
 const PARKED_FILE_HREF = "#omnigent-file";
+
+// A serve_html preview URL: the app's own same-origin HTML pane, not a file.
+// The tool emits exactly this shape — a relative API path with no query or
+// fragment — so an absolute spelling falls through to harden, which passes it
+// and lets AppShell's click interceptor match it anyway.
+const PREVIEW_HREF = /^\/v1\/sessions\/[^/?#]+\/resources\/files\/[^/?#]+\/preview$/;
+
+// Where a preview link's href is parked while the real URL moves to the data
+// attribute. Same fragment trick as PARKED_FILE_HREF: harden passes a
+// fragment-only href through untouched.
+const PARKED_PREVIEW_HREF = "#omnigent-preview";
 
 interface HastElement {
   type: string;
@@ -81,6 +95,13 @@ export const CHAT_LINK_SAFETY: LinkSafetyConfig = { enabled: false };
  * unresolvable URL. Only hrefs that could name a real file are moved: a URL,
  * a `mailto:`/`javascript:` scheme, or anything carrying a query or fragment
  * is left for harden to judge exactly as before.
+ *
+ * serve_html preview URLs (`/v1/sessions/…/resources/files/…/preview`) are
+ * path-shaped too, so without a lane of their own they'd be handed to the
+ * FileViewer renderer, which can't open an API path and drops the link to
+ * inert text. They are parked on {@link PREVIEW_LINK_ATTR} instead, and the
+ * link renderer restores the real href so AppShell's click interceptor can
+ * open the in-app preview pane.
  */
 export function markWorkspaceFileLinks() {
   return (tree: HastElement) => {
@@ -88,6 +109,14 @@ export function markWorkspaceFileLinks() {
       if (node.tagName !== "a") return;
       const href = node.properties?.href;
       if (typeof href !== "string" || !href) return;
+      if (PREVIEW_HREF.test(href)) {
+        node.properties = {
+          ...node.properties,
+          href: PARKED_PREVIEW_HREF,
+          [PREVIEW_LINK_ATTR]: href,
+        };
+        return;
+      }
       if (NON_FILE_HREF.test(href) || href.includes("?") || href.includes("#")) return;
       node.properties = {
         ...node.properties,
