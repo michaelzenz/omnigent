@@ -26,16 +26,38 @@ def _is_session_event(event_type: str) -> bool:
     return event_type.startswith("session.") or event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE
 
 
-def _format_manager_notice(events: list) -> str:
+def _format_manager_notice(
+    events: list,
+    task_titles: dict | None = None,
+    task_states: dict | None = None,
+) -> str:
     """Format the notice the manager packager hands the dispatcher.
 
-    One notice per task per dispatch, listing every routed event the manager has
-    not yet reconciled. Session events for the same session are summarized as a
-    single entry so the agent sees "3 turns finished" rather than 3 copies.
+    One notice per manager session per dispatch — possibly spanning several
+    tasks when tasks share a manager — listing every routed event the manager
+    has not yet reconciled. Each event is labeled with its task id so a
+    multi-task manager knows which task to act on. Session events for the same
+    session are summarized as a single entry so the agent sees "3 turns
+    finished" rather than 3 copies.
     """
-    lines = [
-        f"[System: {len(events)} event(s) routed to this task — triage or act]",
-    ]
+    titles = task_titles or {}
+    task_ids: list[str] = []
+    for event in events:
+        task_id = getattr(event, "task_id", None)
+        if task_id and task_id not in task_ids:
+            task_ids.append(task_id)
+
+    def _task_scope(task_id: str | None) -> str:
+        title = titles.get(task_id or "")
+        return f"{title!r} ({task_id})" if title else (task_id or "?")
+
+    if len(task_ids) == 1:
+        scope = f"task {_task_scope(task_ids[0])}"
+    elif task_ids:
+        scope = f"{len(task_ids)} tasks: " + ", ".join(_task_scope(t) for t in task_ids)
+    else:
+        scope = "this manager"
+    lines = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
     # Group session events by source_key for summarization.
     session_groups: dict[str, list] = {}
     other_events: list = []
@@ -47,9 +69,9 @@ def _format_manager_notice(events: list) -> str:
     for event in other_events:
         if event.event_type == WORKER_EXECUTION_FINISHED_EVENT_TYPE:
             detail = _format_execution_detail(event)
-            lines.append(f"- {event.event_type}: {detail}")
+            lines.append(f"- {_label(event)}{event.event_type}: {detail}")
         else:
-            lines.append(f"- {event.event_type}: {event.title!r} (routed)")
+            lines.append(f"- {_label(event)}{event.event_type}: {event.title!r} (routed)")
     for session_evts in session_groups.values():
         if len(session_evts) == 1:
             event = session_evts[0]
@@ -58,10 +80,21 @@ def _format_manager_notice(events: list) -> str:
             elif event.event_type == SESSION_TURN_FINISHED_EVENT_TYPE:
                 lines.append(_format_turn_finished_notice(event))
             else:
-                lines.append(f"- {event.event_type}: {event.title!r} (routed)")
+                lines.append(f"- {_label(event)}{event.event_type}: {event.title!r} (routed)")
         else:
             lines.append(_format_session_batch_notice(session_evts))
+    if task_states:
+        # Roster footer: the manager's whole portfolio, so it never has to
+        # re-query which tasks it owns.
+        roster = ", ".join(f"{tid} ({state})" for tid, state in sorted(task_states.items()))
+        lines.append(f"[Your tasks: {roster}]")
     return "\n".join(lines)
+
+
+def _label(event) -> str:
+    """Task label prefix for one event line, e.g. ``[task:abc123] ``."""
+    task_id = getattr(event, "task_id", None)
+    return f"[task:{task_id}] " if task_id else ""
 
 
 def _format_session_batch_notice(events: list) -> str:
@@ -259,7 +292,10 @@ def _format_broker_stall_notice(
     else:
         prompt = (
             "[System: please triage and route these events] "
-            "The following are possible clusters waiting for route/reconcile."
+            "The following are possible clusters waiting for route/reconcile. "
+            "You may split a cluster into subclusters and route each to the "
+            "correct manager. Events in one batch share the same host when the "
+            "host is known — distribute them to a manager on a compatible host."
         )
         payload = {
             "prompt": prompt,

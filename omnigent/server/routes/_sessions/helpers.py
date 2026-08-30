@@ -597,7 +597,6 @@ async def _maybe_adopt_session(session_id: str) -> None:
             emit_turn_finished_event,
             emit_turn_finished_event_unbound,
             get_session_adoption_context,
-            notify_new_session,
         )
 
         ctx = get_session_adoption_context()
@@ -625,35 +624,23 @@ async def _maybe_adopt_session(session_id: str) -> None:
             if worker.state == "deleted":
                 # User dismissed adoption or task was deleted — stop tracking.
                 return
-            # Already adopted — emit a turn-finished event to the manager.
+            # Bound session — emit a turn-finished event to its manager(s).
             emit_turn_finished_event(
                 session_id=session_id,
                 worker=worker,
                 status="idle",
             )
             return
-        # No worker yet. Check if there's already a pending orphan event
-        # for this session — if so, the broker is still triaging adoption.
-        # Emit a turn-finished event as awaiting_grouping so the broker can
-        # route it to the task once adoption completes.
-        from omnigent.agent_tasks.adoption import find_open_orphan_event
-
-        if find_open_orphan_event(ctx.task_event_store, session_id) is not None:
-            emit_turn_finished_event_unbound(
-                session_id=session_id,
-                conv=conv,
-                owner_user_id=resolve_owner_user_id(
-                    user_id=None,
-                    host_id=conv.host_id,
-                    host_store=ctx.host_store,
-                ),
-            )
-            return
-        # No orphan event yet — trigger adoption.
-        await notify_new_session(
-            session_id,
-            source="internal",
-            host_id=conv.host_id,
+        # Unbound session — emit the ordinary ingress event; the broker
+        # distributes it to a manager (no auto-adoption, no orphan triage).
+        emit_turn_finished_event_unbound(
+            session_id=session_id,
+            conv=conv,
+            owner_user_id=resolve_owner_user_id(
+                user_id=None,
+                host_id=conv.host_id,
+                host_store=ctx.host_store,
+            ),
         )
     except Exception:
         _logger.warning("session adoption check failed for %s", session_id, exc_info=True)

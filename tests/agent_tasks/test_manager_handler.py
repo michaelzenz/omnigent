@@ -69,7 +69,6 @@ def handler_setup(db_uri: str) -> dict:
     )
     handler = ManagerDispatchHandler(
         store=queue_store,
-        task_store=task_store,
         conversation_store=conversation_store,
         runner_router=None,
     )
@@ -91,7 +90,7 @@ async def test_resolve_target_returns_manager_session(handler_setup: dict) -> No
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["task_id"],
+        scope_id=handler_setup["manager_conv_id"],
     )
     target = await handler.resolve_target(_item(key))
     assert target.session_id == handler_setup["manager_conv_id"]
@@ -104,7 +103,7 @@ async def test_resolve_target_caches_conversation_on_queue(handler_setup: dict) 
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["task_id"],
+        scope_id=handler_setup["manager_conv_id"],
     )
     # Enqueue so the queue row exists.
     queue_store.enqueue(_uid("e"), key, "notice", payload="x")
@@ -115,21 +114,22 @@ async def test_resolve_target_caches_conversation_on_queue(handler_setup: dict) 
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_fails_when_task_missing(handler_setup: dict) -> None:
+async def test_resolve_target_fails_when_conversation_missing(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=_uid("ghost_task"),
+        scope_id=_uid("ghost_conv"),
     )
     with pytest.raises(DispatchFailed):
         await handler.resolve_target(_item(key))
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_fails_when_no_manager_conversation(
+async def test_resolve_target_fails_when_scope_is_not_a_conversation(
     handler_setup: dict,
 ) -> None:
+    """A legacy task-scoped key no longer resolves: scope must be a session."""
     handler = handler_setup["handler"]
     task_store: SqlAlchemyTaskStore = handler_setup["task_store"]
     task_id = _uid("task_no_mgr")
@@ -151,19 +151,10 @@ async def test_resolve_target_fails_when_no_manager_conversation(
 @pytest.mark.asyncio
 async def test_resolve_target_fails_when_conversation_gone(handler_setup: dict) -> None:
     handler = handler_setup["handler"]
-    task_store: SqlAlchemyTaskStore = handler_setup["task_store"]
-    task_id = _uid("task_stale")
-    task_store.create(
-        task_id,
-        "Stale task",
-        "stale goal",
-        owner_user_id=handler_setup["owner"],
-        manager_conversation_id=_uid("conv_missing"),
-    )
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=task_id,
+        scope_id=_uid("conv_missing"),
     )
     with pytest.raises(DispatchFailed):
         await handler.resolve_target(_item(key))
@@ -176,7 +167,7 @@ async def test_deliver_calls_wake_parent(handler_setup: dict) -> None:
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["task_id"],
+        scope_id=handler_setup["manager_conv_id"],
     )
     item = _item(key, payload="[System: triage me]")
     target = DispatchTarget(session_id=conv_id, harness="cursor-native")
@@ -196,7 +187,7 @@ async def test_deliver_fails_when_wake_returns_false(handler_setup: dict) -> Non
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["task_id"],
+        scope_id=handler_setup["manager_conv_id"],
     )
     item = _item(key)
     target = DispatchTarget(session_id=conv_id)
@@ -215,7 +206,7 @@ async def test_deliver_fails_without_payload(handler_setup: dict) -> None:
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["task_id"],
+        scope_id=handler_setup["manager_conv_id"],
     )
     item = _item(key, payload="")
     target = DispatchTarget(session_id=handler_setup["manager_conv_id"])

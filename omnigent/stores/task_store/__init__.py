@@ -51,6 +51,21 @@ class TaskStore(ABC):
         """List tasks ordered by ``queue_rank DESC, id DESC``."""
 
     @abstractmethod
+    def list_recent(self, limit: int) -> list[Task]:
+        """List the most recently touched tasks (``updated_at``, falling back to
+        ``created_at``), newest first. No state filter — recency only."""
+
+    @abstractmethod
+    def list_by_manager_conversation_id(self, conversation_id: str) -> list[Task]:
+        """List every task bound to one manager session."""
+
+    @abstractmethod
+    def list_manager_conversation_ids(
+        self, *, owner_user_id: str | None = None
+    ) -> list[str]:
+        """Distinct manager session ids across live tasks, optionally per owner."""
+
+    @abstractmethod
     def update(
         self,
         task_id: str,

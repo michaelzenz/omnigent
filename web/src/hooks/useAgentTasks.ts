@@ -69,7 +69,9 @@ export function useAgentTaskList(state = "active") {
           return FIXTURE_TASK_LIST.filter((task) => task.state === "pending");
         }
         if (state === "live") {
-          return FIXTURE_TASK_LIST.filter((task) => task.state !== "pending");
+          return FIXTURE_TASK_LIST.filter(
+            (task) => task.state !== "pending" && task.state !== "archived",
+          );
         }
         return FIXTURE_TASK_LIST;
       }

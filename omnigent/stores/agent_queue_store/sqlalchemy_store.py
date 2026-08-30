@@ -747,6 +747,17 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     return _item_to_entity(row)
             return None
 
+    def list_open_items_for_role(self, role: str) -> list[AgentQueueItem]:
+        with self._session() as session:
+            stmt = (
+                select(SqlAgentQueueItem)
+                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
+                .where(SqlAgentQueueItem.role == role)
+                .where(SqlAgentQueueItem.state.in_(_open_item_codes()))
+                .order_by(SqlAgentQueueItem.seq, SqlAgentQueueItem.id)
+            )
+            return [_item_to_entity(row) for row in session.execute(stmt).scalars().all()]
+
     def list_items(
         self,
         key: AgentQueueKey,

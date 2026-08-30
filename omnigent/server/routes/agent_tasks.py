@@ -55,6 +55,10 @@ from omnigent.agent_tasks.items import (
     resolve_task_item,
     submit_item_for_user_ack,
 )
+from omnigent.agent_tasks.manager_discovery import (
+    list_active_managers,
+    manager_role_profile_response,
+)
 from omnigent.agent_tasks.manager_role_profile import (
     get_or_create_manager_role_profile,
 )
@@ -77,6 +81,11 @@ from omnigent.agent_tasks.task_match import (
     ranked_task_payload,
     routable_tasks,
     task_tags_from_event_tags,
+)
+from omnigent.agent_tasks.task_search import (
+    SEARCH_MATCH_LIMIT,
+    SEARCH_RECENT_LIMIT,
+    rank_tasks_by_text,
 )
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
@@ -155,7 +164,7 @@ class CreateAgentTaskRequest(BaseModel):
     goal: str
     description: str | None = None
     internal_note: str | None = None
-    state: str = "pending"
+    state: str = "active"
     priority: int = Field(default=2, ge=0, le=3)
     tags: list[TaskTagInput] = Field(default_factory=list)
 
@@ -455,6 +464,12 @@ class MatchTasksRequest(BaseModel):
         return cleaned
 
 
+class RerouteEventRequest(BaseModel):
+    """Request body for ``POST /v1/task-events/{event_id}/reroute``."""
+
+    task_id: str = Field(min_length=1)
+
+
 class PackageItemInput(BaseModel):
     """One backlog item on a pending task package."""
 
@@ -492,6 +507,9 @@ class CreateTaskPackageRequest(BaseModel):
     internal_note: str | None = None
     tags: list[TaskTagInput] = Field(default_factory=list)
     items: list[PackageItemInput] = Field(min_length=1)
+    # Manager session to attach the task to at birth. Omitted by the user;
+    # managers pass their own session id so the task is born attached.
+    manager_conversation_id: str | None = None
 
     @field_validator("title", "goal")
     @classmethod
@@ -1439,6 +1457,120 @@ def create_agent_tasks_router(
                     created=True,
                 )
 
+    @router.get("/agent-tasks/managers")
+    async def list_managers(request: Request) -> dict[str, Any]:
+        """List the caller's active managers with task portfolios and capacity.
+
+        The broker distributor picks a manager from this list (or spins up a
+        new one from the returned role profiles when none fits).
+        """
+        user_id = require_user(request, auth_provider)
+        owner = _effective_user_id(user_id)
+        if conversation_store is None:
+            return {"object": "list", "managers": [], "role_profiles": []}
+        managers = await asyncio.to_thread(
+            list_active_managers,
+            owner_user_id=owner,
+            task_store=task_store,
+            conversation_store=conversation_store,
+        )
+        role_profiles: list = []
+        if task_role_profile_store is not None:
+            profiles = await asyncio.to_thread(
+                task_role_profile_store.list_roles, kind="manager"
+            )
+            role_profiles = manager_role_profile_response(profiles)
+        return {
+            "object": "list",
+            "managers": [
+                {
+                    "conversation_id": manager.conversation_id,
+                    "title": manager.title,
+                    "host_id": manager.host_id,
+                    "workspace": manager.workspace,
+                    "task_count": manager.task_count,
+                    "tasks": [
+                        {
+                            "task_id": task.id,
+                            "title": task.title,
+                            "state": task.state,
+                        }
+                        for task in manager.tasks
+                    ],
+                }
+                for manager in managers
+            ],
+            "role_profiles": role_profiles,
+        }
+
+    @router.get("/agent-tasks/search")
+    async def search_agent_tasks(
+        request: Request,
+        q: str = "",
+        session_id: str | None = None,
+        event_id: str | None = None,
+        limit: int = SEARCH_MATCH_LIMIT,
+    ) -> dict[str, Any]:
+        """Three-list task search for managers: recent + text matches + tag matches.
+
+        - ``recent``: the owner's most recently touched tasks (no state filter).
+          With ``session_id``, tasks bound to that session come first.
+        - ``matches``: fuzzy text match over title/goal/description/internal_note.
+        - ``tag_matches``: tag-overlap ranking, computed when ``event_id`` is given.
+        """
+        user_id = get_user_id(request, auth_provider)
+        limit = max(1, min(limit, SEARCH_MATCH_LIMIT))
+
+        recent = await asyncio.to_thread(task_store.list_recent, SEARCH_RECENT_LIMIT)
+        recent = _filter_tasks_for_user(recent, user_id)
+        if session_id:
+            # Session-first ordering only applies to worker-bound sessions;
+            # manager/plain sessions have no worker row to look up.
+            bound = (
+                await asyncio.to_thread(worker_store.get_by_target_id, session_id)
+                if worker_store is not None
+                else None
+            )
+            if bound is not None:
+                bound_task = await asyncio.to_thread(task_store.get, bound.task_id)
+                bound_task = (
+                    bound_task
+                    if bound_task is not None and _filter_tasks_for_user([bound_task], user_id)
+                    else None
+                )
+                if bound_task is not None:
+                    recent = [bound_task] + [t for t in recent if t.id != bound_task.id]
+        recent = recent[:SEARCH_RECENT_LIMIT]
+
+        candidates = _filter_tasks_for_user(
+            await asyncio.to_thread(task_store.list), user_id
+        )
+        matches = rank_tasks_by_text(candidates, q, limit=limit) if q.strip() else []
+        tag_matches: list = []
+        if event_id:
+            events = await asyncio.to_thread(load_events, [event_id], task_event_store=task_event_store)
+            tag_matches = await asyncio.to_thread(
+                rank_tasks_for_events,
+                events=events,
+                tasks=candidates,
+                task_store=task_store,
+                limit=limit,
+            )
+        return {
+            "object": "task.search",
+            "recent": [
+                {
+                    "task_id": task.id,
+                    "title": task.title,
+                    "state": task.state,
+                    "updated_at": task.updated_at or task.created_at,
+                }
+                for task in recent
+            ],
+            "matches": ranked_task_payload(matches),
+            "tag_matches": ranked_task_payload(tag_matches),
+        }
+
     @router.get("/agent-tasks/{task_id}")
     async def get_task(request: Request, task_id: str) -> dict[str, Any]:
         """Return one managed task with its tags."""
@@ -1518,15 +1650,17 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Temporarily stop new manager dispatches while the user inspects chat."""
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
+        task = await _get_task_or_404(task_id, user_id)
         if agent_queue_store is None:
             raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        if task.manager_conversation_id is None:
+            raise OmnigentError("Task has no manager queue", code=ErrorCode.CONFLICT)
         token = body.token or uuid.uuid4().hex
         now = now_epoch()
         key = AgentQueueKey(
             role="manager",
             owner_user_id=_effective_user_id(user_id),
-            scope_id=task_id,
+            scope_id=task.manager_conversation_id,
         )
         try:
             queue = await asyncio.to_thread(
@@ -1550,13 +1684,15 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Release the caller's temporary manager dispatch hold."""
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
+        task = await _get_task_or_404(task_id, user_id)
         if agent_queue_store is None:
             raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        if task.manager_conversation_id is None:
+            raise OmnigentError("Task has no manager queue", code=ErrorCode.CONFLICT)
         key = AgentQueueKey(
             role="manager",
             owner_user_id=_effective_user_id(user_id),
-            scope_id=task_id,
+            scope_id=task.manager_conversation_id,
         )
         released = await asyncio.to_thread(agent_queue_store.release_inspection_hold, key, token)
         return {"object": "agent.queue.hold.release", "released": released}
@@ -1583,23 +1719,35 @@ def create_agent_tasks_router(
         and routing history are preserved.
         """
         user_id = require_user(request, auth_provider)
-        await _get_task_or_404(task_id, user_id)
-        # Cancel queued agent-queue items for this task's manager and worker
-        # queues. In-flight (dispatched) items are left alone — the agent is
-        # already working on them and will finish naturally.
+        task = await _get_task_or_404(task_id, user_id)
+        # Cancel queued agent-queue items for this task's manager queue (keyed
+        # by the manager session) and its worker queues (keyed by worker id).
+        # In-flight (dispatched) items are left alone — the agent is already
+        # working on them and will finish naturally.
         if agent_queue_store is not None:
             from omnigent.db.utils import now_epoch
             from omnigent.entities import AgentQueueKey
-            for role in ("manager", "worker"):
-                key = AgentQueueKey(
-                    role=role,
-                    owner_user_id=user_id or "local",
-                    scope_id=task_id,
+            if task.manager_conversation_id is not None:
+                manager_key = AgentQueueKey(
+                    role="manager",
+                    owner_user_id=_effective_user_id(user_id),
+                    scope_id=task.manager_conversation_id,
                 )
-                items = await asyncio.to_thread(
-                    agent_queue_store.list_items, key, state="queued"
+                for item in await asyncio.to_thread(
+                    agent_queue_store.list_items, manager_key, state="queued"
+                ):
+                    await asyncio.to_thread(
+                        agent_queue_store.cancel_item, item.id, now=now_epoch()
+                    )
+            for worker in await asyncio.to_thread(worker_store.list_workers_for_task, task_id):
+                worker_key = AgentQueueKey(
+                    role="worker",
+                    owner_user_id=_effective_user_id(user_id),
+                    scope_id=worker.id,
                 )
-                for item in items:
+                for item in await asyncio.to_thread(
+                    agent_queue_store.list_items, worker_key, state="queued"
+                ):
                     await asyncio.to_thread(
                         agent_queue_store.cancel_item, item.id, now=now_epoch()
                     )
@@ -1848,8 +1996,13 @@ def create_agent_tasks_router(
                             workspace=assignment.workspace or "",
                         )
                     )
-                    if worker is None or worker.task_id != task_id:
+                    if worker is None:
                         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    # A worker lane may serve any task of the same owner.
+                    if worker.task_id != task_id:
+                        home_task = task_store.get(worker.task_id)
+                        if home_task is None or home_task.owner_user_id != task.owner_user_id:
+                            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
                     if (
                         item.state in {"queued", "interrupted", "dispatch_failed"}
                         and item.worker_id != worker.id
@@ -2197,6 +2350,7 @@ def create_agent_tasks_router(
                     worker_id=body.worker_id,
                     kind=body.kind,
                     event_ids=body.event_ids or None,
+                    task_store=task_store,
                 )
                 if body.submit_for_user_ack and item.state == "draft":
                     return submit_item_for_user_ack(task_item_store, item.id)
@@ -2424,6 +2578,7 @@ def create_agent_tasks_router(
                     instructions=body.instructions,
                     internal_note=body.internal_note,
                     worker_id=body.worker_id,
+                    task_store=task_store,
                 )
 
             if (
@@ -2670,7 +2825,7 @@ def create_agent_tasks_router(
 
         @router.get("/task-events/ambiguous-inbox")
         async def get_ambiguous_inbox(request: Request) -> dict[str, Any]:
-            """Return ambiguous events and suggested clusters for broker reconcile."""
+            """Return ambiguous events and suggested clusters for manager reconcile."""
             require_user(request, auth_provider)
             return await asyncio.to_thread(
                 build_ambiguous_inbox,
@@ -2678,6 +2833,40 @@ def create_agent_tasks_router(
                 task_item_store=task_item_store,
                 task_store=task_store,
             )
+
+        @router.post("/task-events/{event_id}/reroute")
+        async def reroute_task_event(
+            request: Request, event_id: str, body: RerouteEventRequest
+        ) -> dict[str, Any]:
+            """Move a misrouted event to a different task (cross-manager too).
+
+            The receiving manager's packager picks it up as a fresh routed
+            event. The event must be in ``routed`` state (already reconciled
+            work is not moved).
+            """
+            user_id = require_user(request, auth_provider)
+            target_task = await _get_task_or_404(body.task_id, user_id)
+            event = await asyncio.to_thread(task_event_store.get_event, event_id)
+            if event is None:
+                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+            if event.state != "routed":
+                raise OmnigentError(
+                    f"Cannot reroute an event in state {event.state!r}",
+                    code=ErrorCode.CONFLICT,
+                )
+            if event.task_id == target_task.id:
+                return {"id": event.id, "object": "task.event", "task_id": target_task.id}
+            updated = await asyncio.to_thread(
+                task_event_store.update_event,
+                event_id,
+                task_id=target_task.id,
+            )
+            return {
+                "id": event.id,
+                "object": "task.event",
+                "task_id": target_task.id,
+                "previous_task_id": event.task_id,
+            }
 
         @router.post("/task-events/match-tasks")
         async def match_tasks(request: Request, body: MatchTasksRequest) -> dict[str, Any]:
@@ -2704,7 +2893,7 @@ def create_agent_tasks_router(
             request: Request,
             body: CreateTaskPackageRequest,
         ) -> dict[str, Any]:
-            """Create a pending task package with broker-reconciled items."""
+            """Create a pending task package with manager-reconciled items."""
             user_id = require_user(request, auth_provider)
             task_id = _generate_task_id()
             tags = _tags_from_input(task_id, body.tags)
@@ -2714,35 +2903,34 @@ def create_agent_tasks_router(
                 task_event_store=task_event_store,
             )
 
-            def _create() -> Task:
-                return create_task_package(
-                    task_id=task_id,
-                    owner_user_id=_effective_user_id(user_id),
-                    title=body.title,
-                    goal=body.goal,
-                    description=body.description,
-                    internal_note=body.internal_note,
-                    tags=tags or task_tags_from_event_tags(task_id, event_tags),
-                    event_tags=event_tags,
-                    items=[
-                        PackageItemSpec(
-                            title=item.title,
-                            event_ids=item.event_ids,
-                            description=item.description,
-                            instructions=item.instructions,
-                            internal_note=item.internal_note,
-                            item_id=item.item_id,
-                            worker_id=item.worker_id,
-                        )
-                        for item in body.items
-                    ],
-                    task_store=task_store,
-                    task_item_store=task_item_store,
-                    task_event_store=task_event_store,
-                    worker_store=worker_store,
-                )
-
-            task = await asyncio.to_thread(_create)
+            task = await asyncio.to_thread(
+                create_task_package,
+                task_id=task_id,
+                owner_user_id=_effective_user_id(user_id),
+                title=body.title,
+                goal=body.goal,
+                description=body.description,
+                internal_note=body.internal_note,
+                tags=tags or task_tags_from_event_tags(task_id, event_tags),
+                event_tags=event_tags,
+                manager_conversation_id=body.manager_conversation_id,
+                items=[
+                    PackageItemSpec(
+                        title=item.title,
+                        event_ids=item.event_ids,
+                        description=item.description,
+                        instructions=item.instructions,
+                        internal_note=item.internal_note,
+                        item_id=item.item_id,
+                        worker_id=item.worker_id,
+                    )
+                    for item in body.items
+                ],
+                task_store=task_store,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                worker_store=worker_store,
+            )
             saved_tags = await asyncio.to_thread(task_store.get_tags, task.id)
             return _task_to_response(task, tags=saved_tags)
 
@@ -2974,17 +3162,6 @@ def create_agent_tasks_router(
                 )
 
             worker_id = await asyncio.to_thread(_adopt)
-            # Reconcile the orphan event if one exists.
-            from omnigent.agent_tasks.adoption import find_open_orphan_event
-
-            orphan = find_open_orphan_event(task_event_store, session_id)
-            if orphan is not None:
-                await asyncio.to_thread(
-                    task_event_store.update_event,
-                    orphan.id,
-                    state="reconciled",
-                    processed_at=now_epoch(),
-                )
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,

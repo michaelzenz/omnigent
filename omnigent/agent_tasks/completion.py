@@ -168,7 +168,9 @@ async def notify_worker_execution_status(
     item_state = "done" if terminal_status == "succeeded" else "queued"
     _context.task_item_store.update_item(execution.task_item_id, state=item_state)
 
-    task = _context.task_store.get(worker.task_id)
+    # The execution row carries the task; a shared worker lane serves many
+    # tasks, so worker.task_id (home task) is not the right parent here.
+    task = _context.task_store.get(execution.task_id)
     if task is not None:
         sync_task_activity_state(
             task,
@@ -242,7 +244,7 @@ async def _emit_worker_execution_finished_event(
         )
         return
 
-    if _context.agent_queue_store is not None:
+    if _context.agent_queue_store is not None and task.manager_conversation_id is not None:
         notice = _format_worker_notice(event)
         try:
             _context.agent_queue_store.enqueue(
@@ -250,7 +252,7 @@ async def _emit_worker_execution_finished_event(
                 AgentQueueKey(
                     role="manager",
                     owner_user_id=owner,
-                    scope_id=task.id,
+                    scope_id=task.manager_conversation_id,
                 ),
                 "notice",
                 source_ids=[event.id],

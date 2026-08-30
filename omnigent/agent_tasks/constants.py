@@ -34,6 +34,11 @@ CLASSIFIED_FYI_EVENT_STATE = "classified_fyi"
 FYI_CLUSTER_OPEN_STATE = "pending"
 DISPATCHABLE_ITEM_STATES = frozenset({"pending"})
 
+# Manager sharing: how many live tasks one manager session may own before the
+# attach flow spawns a new manager. Permissive at v2 launch; tune from logged
+# attach decisions.
+MANAGER_TASK_CAPACITY = 1_000_000
+
 
 def resolve_task_harness(harness: str) -> str:
     """Return a runnable harness id for managed task agents."""

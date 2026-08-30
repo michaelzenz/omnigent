@@ -134,6 +134,9 @@ TASK_STATE: dict[str, int] = {
     "pending": 2,
     "idle": 3,
     "archived": 4,
+    # Manager believes the task is resolved; sorts to the queue end with a
+    # distinct badge, and revives to pending when a new relevant event lands.
+    "agent-resolved": 5,
 }
 
 TASK_EVENT_STATE: dict[str, int] = {

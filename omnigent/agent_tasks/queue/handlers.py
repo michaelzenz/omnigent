@@ -190,47 +190,41 @@ class BrokerDispatchHandler(RoleDispatchHandler):
 
 
 class ManagerDispatchHandler(RoleDispatchHandler):
-    """Deliver manager notices to a task's manager session.
+    """Deliver manager notices to a manager session.
 
-    The target is the task's ``manager_conversation_id`` (one manager
-    conversation per task), so the queue's ``scope_id`` is the task id. The
-    handler caches the conversation on the queue row for the status feed's
-    reverse look-up, the same way the broker handler does.
+    The queue's ``scope_id`` *is* the manager conversation id (one queue per
+    manager session, shared by every task bound to it), so the target resolves
+    directly — no task lookup. The handler caches the conversation on the queue
+    row for the status feed's reverse look-up, the same way the broker handler
+    does.
     """
 
     def __init__(
         self,
         store: AgentQueueStore,
-        task_store: TaskStore,
         conversation_store: ConversationStore,
         runner_router: RunnerRouter | None,
         *,
         app_state: Any | None = None,
     ) -> None:
         self._store = store
-        self._task_store = task_store
         self._conversation_store = conversation_store
         self._runner_router = runner_router
         self._app_state = app_state
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         if item.key.scope_id is None:
-            raise DispatchFailed("manager item has no task scope")
-        task = await asyncio.to_thread(self._task_store.get, item.key.scope_id)
-        if task is None:
-            raise DispatchFailed(f"task {item.key.scope_id} not found")
-        if task.manager_conversation_id is None:
-            raise DispatchFailed(f"task {item.key.scope_id} has no manager conversation")
+            raise DispatchFailed("manager item has no manager scope")
         conv = await asyncio.to_thread(
             self._conversation_store.get_conversation,
-            task.manager_conversation_id,
+            item.key.scope_id,
         )
         if conv is None:
-            raise DispatchFailed(f"manager conversation {task.manager_conversation_id} missing")
-        self._store.set_queue_conversation(item.key, task.manager_conversation_id)
+            raise DispatchFailed(f"manager conversation {item.key.scope_id} missing")
+        self._store.set_queue_conversation(item.key, item.key.scope_id)
         harness = conv.harness_override or "cursor-native"
         return DispatchTarget(
-            session_id=task.manager_conversation_id,
+            session_id=item.key.scope_id,
             harness=harness,
         )
 
@@ -368,12 +362,13 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         )
         if worker is None:
             raise DispatchFailed(f"worker slot {item.key.scope_id} not found at deliver time")
-        task = await asyncio.to_thread(self._task_store.get, worker.task_id)
-        if task is None:
-            raise DispatchFailed(f"task {worker.task_id} not found")
         task_item = await asyncio.to_thread(self._task_item_store.get_item, item.source_ids[0])
         if task_item is None:
             raise DispatchFailed(f"task item {item.source_ids[0]} not found")
+        # The item names its task; a shared worker lane serves many tasks.
+        task = await asyncio.to_thread(self._task_store.get, task_item.task_id)
+        if task is None:
+            raise DispatchFailed(f"task {task_item.task_id} not found")
 
         payload = parse_dispatch_payload(item.payload)
         manager_role_profile = await asyncio.to_thread(

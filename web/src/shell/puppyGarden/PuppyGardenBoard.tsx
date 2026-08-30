@@ -8,12 +8,20 @@ import { TaskCard } from "./TaskCard";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 
 function rankTasks(tasks: AgentTaskSummary[]): AgentTaskSummary[] {
-  if (!tasks.some((task) => task.queue_rank != null)) return tasks;
-  return [...tasks].sort(
-    (a, b) =>
-      (b.queue_rank ?? Number.MIN_SAFE_INTEGER) - (a.queue_rank ?? Number.MIN_SAFE_INTEGER) ||
-      b.id.localeCompare(a.id),
-  );
+  const endOfQueue = (task: AgentTaskSummary) =>
+    task.state === "agent-resolved" || task.state === "idle";
+  const rankGroup = (group: AgentTaskSummary[]) => {
+    if (!group.some((task) => task.queue_rank != null)) return group;
+    return [...group].sort(
+      (a, b) =>
+        (b.queue_rank ?? Number.MIN_SAFE_INTEGER) - (a.queue_rank ?? Number.MIN_SAFE_INTEGER) ||
+        b.id.localeCompare(a.id),
+    );
+  };
+  return [
+    ...rankGroup(tasks.filter((task) => !endOfQueue(task))),
+    ...rankGroup(tasks.filter(endOfQueue)),
+  ];
 }
 
 export function PuppyGardenBoard() {

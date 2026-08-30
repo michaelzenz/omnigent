@@ -285,6 +285,15 @@ class AgentQueueStore(ABC):
         """Find the newest open queue delivery claiming a business source id."""
 
     @abstractmethod
+    def list_open_items_for_role(self, role: str) -> list[AgentQueueItem]:
+        """List every non-terminal item for a role, across owners and scopes.
+
+        Open means not ``done`` and not ``cancelled``. Used by migrations that
+        re-key a role's queues and must cancel derived items so their sources
+        re-package under the new keys.
+        """
+
+    @abstractmethod
     def list_items(
         self,
         key: AgentQueueKey,

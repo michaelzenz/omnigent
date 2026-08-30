@@ -24,13 +24,14 @@ class AgentQueueKey:
     """
     Identity of one agent queue.
 
-    ``scope_id`` narrows the role to a single agent: the task id for a manager,
-    the worker id for a worker slot, and ``None`` for per-user roles such as the
-    broker, which have exactly one queue per owner.
+    ``scope_id`` narrows the role to a single agent: the manager session id for
+    a manager (one queue per manager conversation, shared by every task bound to
+    it), the worker id for a worker slot, and ``None`` for per-user roles such
+    as the broker, which have exactly one queue per owner.
 
     :param role: One of :data:`AGENT_QUEUE_ROLES`.
     :param owner_user_id: Owning user, or ``""`` in single-user mode.
-    :param scope_id: Task/worker id narrowing the role, or ``None``.
+    :param scope_id: Manager session/worker id narrowing the role, or ``None``.
     """
 
     role: str

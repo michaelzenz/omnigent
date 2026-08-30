@@ -46,10 +46,10 @@ from omnigent.agent_tasks.constants import (
     BROKER_TAG_SIMILARITY_THRESHOLD,
     MANAGER_BATCH_MAX_SIZE,
 )
+from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
-    SESSION_ORPHAN_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
 )
 from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
@@ -98,6 +98,12 @@ class _PendingBatch:
     # these at their defaults.
     clusters: list[AmbiguousEventCluster] | None = None
     is_orphan: bool = False
+    # Manager-only: task_id → title for the batch's events, so the notice can
+    # label each event with its task when one manager spans several tasks.
+    task_titles: dict[str, str] | None = None
+    # Manager-only: task_id → state for every task on this manager session,
+    # for the roster footer (not just the batch's tasks).
+    task_states: dict[str, str] | None = None
 
     @property
     def oldest_age_s(self) -> float:
@@ -222,15 +228,15 @@ class Packager(ABC):
 class BrokerPackager(Packager):
     """Stage-1 packager for broker events.
 
-    Scans ``awaiting_grouping`` events each tick, groups by owner, excludes
-    already-claimed events, and for each owner splits orphans (``session.orphan``)
-    from routed business events. Routed events are clustered by tag similarity
-    (leader-based, oldest-first) so each notice is a focused batch of similar
-    events carrying its own candidate task ids; each orphan is its own notice.
-    The agent-idle check reads the broker's bound session from the role
-    profile and looks up its raw status. The broker has no UI surface to boot
-    its own session, so when the conversation/agent/host stores are wired the
-    packager provisions one on demand the first time an owner has work.
+    Scans ``awaiting_grouping`` events each tick, groups by (owner, host) —
+    events from different hosts never share a batch, since each batch must be
+    distributable to a host-compatible manager — excludes already-claimed
+    events, and for each group splits watcher-discovered external sessions
+    (one notice each) from routed business events (clustered by tag
+    similarity, oldest-first). The agent-idle check reads the broker's bound
+    session from the role profile and looks up its raw status. The broker has
+    no UI surface to boot its own session, so when the conversation/agent/
+    host stores are wired the packager provisions one on demand.
     """
 
     def __init__(
@@ -317,13 +323,16 @@ class BrokerPackager(Packager):
         events = self._task_event_store.list_events(state="awaiting_grouping")
         if not events:
             return []
-        # Group by owner; events without an owner fall back to "__anonymous__".
-        grouped: dict[str, list[TaskEvent]] = {}
+        # Group by (owner, host); events without an owner fall back to
+        # "__anonymous__", events without host attribution to None. Hosts never
+        # mix inside one batch — each batch must be distributable to a
+        # host-compatible manager.
+        grouped: dict[tuple[str, str | None], list[TaskEvent]] = {}
         for event in events:
             owner = event.owner_user_id or "__anonymous__"
-            grouped.setdefault(owner, []).append(event)
+            grouped.setdefault((owner, event_host(event)), []).append(event)
         batches: list[_PendingBatch] = []
-        for owner, owner_events in grouped.items():
+        for (owner, _host), owner_events in grouped.items():
             key = AgentQueueKey(role=TASK_BROKER_ROLE, owner_user_id=owner)
             claimed = self._store.list_claimed_source_ids(
                 TASK_BROKER_ROLE,
@@ -332,19 +341,12 @@ class BrokerPackager(Packager):
             unclaimed = [e for e in owner_events if e.id not in claimed]
             if not unclaimed:
                 continue
-            orphans = [e for e in unclaimed if e.event_type == SESSION_ORPHAN_EVENT_TYPE]
             discovered = [
                 e for e in unclaimed if e.event_type == EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
             ]
             routed = [
-                e
-                for e in unclaimed
-                if e.event_type
-                not in (SESSION_ORPHAN_EVENT_TYPE, EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE)
+                e for e in unclaimed if e.event_type != EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
             ]
-            # Each orphan is its own batch — adoption is heavy and per-session.
-            for orphan in orphans:
-                batches.append(_PendingBatch(key=key, events=[orphan], is_orphan=True))
             # Each discovered external session is its own batch — the broker
             # reads the transcript snippet and decides: adopt, create task, or FYI.
             for disc in discovered:
@@ -441,10 +443,11 @@ class ManagerPackager(Packager):
     Scans ``routed`` events each tick — these are events the ingress scorer (or the
     broker resolve path) already bound to a task, plus ``worker.execution.finished``
     events the completion hook emits when a worker settles. They are grouped by
-    ``(owner, task_id)`` and evaluated against the same batching matrix as the
-    broker. The agent-idle check reads the task's ``manager_conversation_id``
-    and looks up its raw status; a task with no manager session yet is treated as
-    not idle, so events stay routed until bootstrap.
+    ``(owner, manager_conversation_id)`` — one queue per manager session, shared
+    by every task bound to that manager — and evaluated against the same batching
+    matrix as the broker. The agent-idle check reads the manager session status
+    directly; a task with no manager session yet keeps its events routed until
+    bootstrap.
     """
 
     def __init__(
@@ -476,30 +479,52 @@ class ManagerPackager(Packager):
         events = self._task_event_store.list_events(state="routed")
         if not events:
             return []
-        # Group by (owner, task_id). Routed events always carry a task_id; any
-        # without one is not a manager concern and is skipped.
+        # Resolve each event's task to its manager session. Tasks without one
+        # keep their events routed until bootstrap.
+        manager_by_task: dict[str, str] = {}
+        title_by_task: dict[str, str] = {}
+        for task_id in {event.task_id for event in events if event.task_id is not None}:
+            task = self._task_store.get(task_id)
+            if task is None or task.manager_conversation_id is None:
+                continue
+            manager_by_task[task_id] = task.manager_conversation_id
+            title_by_task[task_id] = task.title
+        # Group by (owner, manager session). Routed events always carry a
+        # task_id; any without one is not a manager concern and is skipped.
         grouped: dict[tuple[str, str], list[TaskEvent]] = {}
         for event in events:
             if event.task_id is None:
                 continue
+            manager_conv_id = manager_by_task.get(event.task_id)
+            if manager_conv_id is None:
+                continue
             owner = event.owner_user_id or "__anonymous__"
-            grouped.setdefault((owner, event.task_id), []).append(event)
+            grouped.setdefault((owner, manager_conv_id), []).append(event)
         batches: list[_PendingBatch] = []
         now = now_epoch()
-        for (owner, task_id), task_events in grouped.items():
+        for (owner, manager_conv_id), task_events in grouped.items():
             key = AgentQueueKey(
                 role=TASK_MANAGER_ROLE,
                 owner_user_id=owner,
-                scope_id=task_id,
+                scope_id=manager_conv_id,
             )
             claimed = self._store.list_claimed_source_ids(
                 TASK_MANAGER_ROLE,
                 owner,
-                scope_id=task_id,
+                scope_id=manager_conv_id,
             )
             unclaimed = [e for e in task_events if e.id not in claimed]
             if not unclaimed:
                 continue
+            task_titles = {
+                e.task_id: title_by_task[e.task_id]
+                for e in unclaimed
+                if e.task_id is not None and e.task_id in title_by_task
+            }
+            task_states = {
+                task.id: task.state
+                for task in self._task_store.list_by_manager_conversation_id(manager_conv_id)
+            }
             # Split session events (cooldown + per-session grouping) from
             # other routed events (existing single-batch behavior).
             session_events: list[TaskEvent] = []
@@ -513,7 +538,14 @@ class ManagerPackager(Packager):
                     other_events.append(event)
             # Non-session events: one batch (existing behavior).
             if other_events:
-                batches.append(_PendingBatch(key=key, events=other_events))
+                batches.append(
+                    _PendingBatch(
+                        key=key,
+                        events=other_events,
+                        task_titles=task_titles,
+                        task_states=task_states,
+                    )
+                )
             # Session events: one batch per source_key (per session), so all
             # events for the same session arrive in one notice.
             by_session: dict[str, list[TaskEvent]] = {}
@@ -521,29 +553,29 @@ class ManagerPackager(Packager):
                 sk = event.source_key or event.id
                 by_session.setdefault(sk, []).append(event)
             for session_evts in by_session.values():
-                batches.append(_PendingBatch(key=key, events=session_evts))
+                batches.append(
+                    _PendingBatch(
+                        key=key,
+                        events=session_evts,
+                        task_titles=task_titles,
+                        task_states=task_states,
+                    )
+                )
         return batches
 
     async def _is_idle(self, key: AgentQueueKey) -> bool:
         if key.scope_id is None:
             return False
-        task = self._task_store.get(key.scope_id)
-        if task is None or task.manager_conversation_id is None:
-            return False
-        return self._status_reader.status_for(task.manager_conversation_id) == "idle"
+        return self._status_reader.status_for(key.scope_id) == "idle"
 
     async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         if batch.key.scope_id is None:
             return None
-        task = self._task_store.get(batch.key.scope_id)
-        if task is None or task.manager_conversation_id is None:
-            _logger.debug(
-                "manager packager: no live manager session for task %s; %d events stay routed",
-                batch.key.scope_id,
-                len(batch.events),
-            )
-            return None
-        notice = _format_manager_notice(batch.events)
+        notice = _format_manager_notice(
+            batch.events,
+            task_titles=batch.task_titles,
+            task_states=batch.task_states,
+        )
         return self._store.enqueue(
             uuid.uuid4().hex,
             batch.key,

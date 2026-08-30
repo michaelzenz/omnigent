@@ -117,7 +117,6 @@ def worker_setup(db_uri: str) -> dict:
     worker = worker_store.create_worker(
         _uid("worker"),
         task_id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
     )
     item = item_store.create_item(
         _uid("item"),
@@ -346,7 +345,6 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
     worker = worker_store.create_worker(
         uuid.uuid4().hex,
         task_id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
         kind="managed",
     )
     item = item_store.update_item(item.id, worker_id=worker.id)
@@ -422,7 +420,6 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
     worker = worker_store.create_worker(
         uuid.uuid4().hex,
         task_id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
         kind="managed",
     )
     item = item_store.update_item(item.id, worker_id=worker.id)
@@ -482,3 +479,98 @@ def test_resume_endpoint_rearms_halted_queue(db_uri: str) -> None:
     assert response.status_code == 200
     resumed = queue_store.get_queue(key)
     assert resumed is not None and resumed.state == "active"
+
+
+@pytest.mark.asyncio
+async def test_shared_worker_lane_carries_other_task_items(worker_setup: dict) -> None:
+    """A worker lane may serve items from a different task of the same owner."""
+    task_store = worker_setup["task_store"]
+    item_store = worker_setup["item_store"]
+    worker = worker_setup["worker"]
+
+    other_task_id = _uid("task_other")
+    task_store.create(
+        other_task_id,
+        "Other task",
+        "other goal",
+        owner_user_id=worker_setup["owner"],
+        manager_conversation_id=worker_setup["manager_conv_id"],
+    )
+    other_item = item_store.create_item(
+        _uid("item_other"),
+        other_task_id,
+        "Work from another task",
+        state="queued",
+        instructions="Do other work",
+        worker_id=worker.id,  # shared lane
+    )
+    key = AgentQueueKey(role="worker", owner_user_id=worker_setup["owner"], scope_id=worker.id)
+    worker_setup["queue_store"].enqueue(
+        _uid("queue_other"), key, kind="item.dispatch", source_ids=[other_item.id], payload="{}"
+    )
+    items = worker_setup["queue_store"].list_items(key)
+    assert any(other_item.id in (i.source_ids or []) for i in items)
+
+
+@pytest.mark.asyncio
+async def test_completion_resolves_task_from_execution(worker_setup: dict) -> None:
+    """Completion maps to execution.task_id, so a shared lane finishes the right task."""
+    from omnigent.agent_tasks.completion import (
+        TaskCompletionContext,
+        configure_task_completion,
+        notify_worker_session_status,
+    )
+
+    task_store = worker_setup["task_store"]
+    item_store = worker_setup["item_store"]
+    event_store = worker_setup["event_store"]
+    worker = worker_setup["worker"]
+    worker_store = worker_setup["worker_store"]
+    conversation_store = worker_setup["conversation_store"]
+    worker_conv_id = _uid("worker_conv")
+    worker_store.update_worker(worker.id, target_id=worker_conv_id, state="busy")
+
+    other_task_id = _uid("task_comp")
+    task_store.create(
+        other_task_id,
+        "Completion task",
+        "comp goal",
+        owner_user_id=worker_setup["owner"],
+        manager_conversation_id=worker_setup["manager_conv_id"],
+    )
+    other_item = item_store.create_item(
+        _uid("item_comp"),
+        other_task_id,
+        "Work from another task",
+        state="running",
+        instructions="Do work",
+        worker_id=worker.id,
+    )
+    execution = event_store.create_execution(
+        _uid("exec_shared"),
+        other_item.id,
+        other_task_id,  # execution names the real task, not worker.task_id
+        status="running",
+        conversation_id=worker_conv_id,
+    )
+    configure_task_completion(
+        TaskCompletionContext(
+            task_store=task_store,
+            task_event_store=event_store,
+            task_item_store=item_store,
+            conversation_store=conversation_store,
+            worker_store=worker_store,
+            agent_queue_store=None,
+            runner_router=None,
+        )
+    )
+    await notify_worker_session_status(execution.conversation_id, "idle", output="done")
+    updated = item_store.get_item(other_item.id)
+    assert updated.state == "done"
+    # The completion event targets the item's task, not the worker's home
+    # task — this is what pins execution.task_id over worker.task_id.
+    events = event_store.list_events(state="routed", task_id=other_task_id)
+    assert len(events) == 1
+    assert events[0].task_id == other_task_id
+    home_events = event_store.list_events(state="routed", task_id=worker_setup["task_id"])
+    assert home_events == []

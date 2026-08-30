@@ -92,11 +92,11 @@ def manager_setup(db_uri: str) -> dict:
     }
 
 
-def _key(owner: str, task_id: str) -> AgentQueueKey:
+def _key(owner: str, manager_conv_id: str) -> AgentQueueKey:
     return AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=owner,
-        scope_id=task_id,
+        scope_id=manager_conv_id,
     )
 
 
@@ -134,7 +134,7 @@ async def test_full_batch_sends_regardless_of_agent_state(manager_setup: dict) -
         _routed_event(manager_setup, seed=f"evt{i}")
     await packager.scan_once()
 
-    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))) == 1
+    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))) == 1
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_partial_batch_waits_when_agent_busy(manager_setup: dict) -> None:
     _routed_event(manager_setup, seed="evt")
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"])) == []
+    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"])) == []
 
 
 @pytest.mark.asyncio
@@ -160,9 +160,9 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(manager_setup: dic
     _routed_event(manager_setup, seed="evt")
     await packager.scan_once()
 
-    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))
+    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))
     assert len(items) == 1
-    assert "[System: 1 event(s) routed to this task" in items[0].payload
+    assert "[System: 1 event(s) routed to task 'Manager task'" in items[0].payload
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,7 @@ async def test_partial_batch_waits_when_idle_but_young(manager_setup: dict) -> N
     _routed_event(manager_setup, seed="evt")
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"])) == []
+    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"])) == []
 
 
 @pytest.mark.asyncio
@@ -189,7 +189,7 @@ async def test_claimed_events_are_not_repackaged(manager_setup: dict) -> None:
     await packager.scan_once()  # packages it
     await packager.scan_once()  # should not duplicate
 
-    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))) == 1
+    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))) == 1
 
 
 @pytest.mark.asyncio
@@ -204,7 +204,7 @@ async def test_reconciled_events_are_filtered(manager_setup: dict) -> None:
     event_store.update_event(event_id, state="reconciled")
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"])) == []
+    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"])) == []
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,8 @@ async def test_no_manager_conversation_holds_events(manager_setup: dict) -> None
     _routed_event(manager_setup, seed="orphan_evt", task_id=orphan_task_id)
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], orphan_task_id)) == []
+    # Nothing was packaged for any manager queue.
+    assert queue_store.list_open_items_for_role(TASK_MANAGER_ROLE) == []
 
 
 @pytest.mark.asyncio
@@ -256,7 +257,7 @@ async def test_worker_execution_finished_event_is_packaged(manager_setup: dict) 
     )
     await packager.scan_once()
 
-    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))
+    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))
     assert len(items) == 1
     assert "worker.execution.finished" in items[0].payload
     assert "Fix login" in items[0].payload
@@ -264,7 +265,7 @@ async def test_worker_execution_finished_event_is_packaged(manager_setup: dict) 
 
 
 @pytest.mark.asyncio
-async def test_events_grouped_by_task_id(manager_setup: dict) -> None:
+async def test_events_grouped_by_manager_conversation(manager_setup: dict) -> None:
     task_store: SqlAlchemyTaskStore = manager_setup["task_store"]
     queue_store: SqlAlchemyAgentQueueStore = manager_setup["queue_store"]
     packager: ManagerPackager = manager_setup["packager"]
@@ -293,12 +294,50 @@ async def test_events_grouped_by_task_id(manager_setup: dict) -> None:
     _routed_event(manager_setup, seed="b1", task_id=second_task_id)
     await packager.scan_once()
 
-    a_items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["task_id"]))
-    b_items = queue_store.list_items(_key(manager_setup["owner"], second_task_id))
+    a_items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))
+    b_items = queue_store.list_items(_key(manager_setup["owner"], second_conv.id))
     assert len(a_items) == 1
     assert len(b_items) == 1
     # The task-A notice bundles both of its events.
-    assert "[System: 2 event(s) routed to this task" in a_items[0].payload
+    assert "[System: 2 event(s) routed to task 'Manager task'" in a_items[0].payload
+
+
+@pytest.mark.asyncio
+async def test_tasks_sharing_one_manager_share_one_queue(manager_setup: dict) -> None:
+    """Two tasks bound to the same manager session package into one batch."""
+    task_store: SqlAlchemyTaskStore = manager_setup["task_store"]
+    queue_store: SqlAlchemyAgentQueueStore = manager_setup["queue_store"]
+    packager: ManagerPackager = manager_setup["packager"]
+    manager_setup["status_reader"].status = "idle"
+    packager._age_threshold_s = -1.0
+
+    second_task_id = _uid("task_shared")
+    task_store.create(
+        second_task_id,
+        "Shared-manager task",
+        "shared goal",
+        owner_user_id=manager_setup["owner"],
+        manager_conversation_id=manager_setup["manager_conv_id"],
+    )
+
+    _routed_event(manager_setup, seed="s1")
+    _routed_event(manager_setup, seed="s2", task_id=second_task_id)
+    await packager.scan_once()
+
+    items = queue_store.list_items(
+        _key(manager_setup["owner"], manager_setup["manager_conv_id"])
+    )
+    assert len(items) == 1
+    # Both tasks are labeled in the shared notice.
+    assert "2 tasks" in items[0].payload
+    assert "'Manager task'" in items[0].payload
+    assert "'Shared-manager task'" in items[0].payload
+    assert f"[task:{manager_setup['task_id']}]" in items[0].payload
+    assert f"[task:{second_task_id}]" in items[0].payload
+    # The roster footer lists the manager's whole portfolio.
+    assert "[Your tasks:" in items[0].payload
+    assert manager_setup["task_id"] in items[0].payload
+    assert second_task_id in items[0].payload
 
 
 def test_defaults_are_configurable_constants() -> None:

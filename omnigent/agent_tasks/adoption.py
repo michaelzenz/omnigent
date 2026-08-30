@@ -8,13 +8,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.event_types import SESSION_ORPHAN_EVENT_TYPE, SESSION_TURN_FINISHED_EVENT_TYPE
+from omnigent.agent_tasks.event_host import host_tag
+from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.routing import route_event_to_task
-from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
-from omnigent.agent_tasks.session_profile import resolve_session_routing_tags
 from omnigent.agent_tasks.session_task import task_for_session
-from omnigent.agent_tasks.task_match import live_tasks
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, Worker
@@ -76,20 +74,6 @@ def _extract_last_turn_text(conversation_store: ConversationStore, session_id: s
     return last_user_message, last_agent_response or None
 
 # Orphan adoption is active: sessions that finish a turn with no existing
-# worker binding enter the adoption pipeline.
-_ORPHAN_SESSION_ADOPTION_ENABLED = True
-
-# Score threshold for confident auto-adopt. At or above this, the system
-# creates the Worker directly. Below it, the session.orphan
-# event falls to the broker for manual triage.
-_AUTO_ADOPT_SCORE_THRESHOLD = 0.5
-
-
-def orphan_session_adoption_enabled() -> bool:
-    """Return whether turn-finish triggers session adoption."""
-    return _ORPHAN_SESSION_ADOPTION_ENABLED
-
-
 @dataclass
 class SessionAdoptionContext:
     """Stores required to handle orphan session adoption."""
@@ -135,91 +119,6 @@ def resolve_owner_user_id(
     return "__anonymous__"
 
 
-def is_orphan_candidate(
-    conv: Conversation | None,
-    *,
-    task_store: TaskStore,
-    worker_store: WorkerStore,
-) -> bool:
-    """Return whether a conversation should enter the adoption pipeline."""
-    if conv is None:
-        return False
-    if conv.kind == "sub_agent":
-        return False
-    worker = worker_store.get_by_target_id(conv.id)
-    if worker is not None:
-        # A soft-deleted worker is a tombstone — the user dismissed
-        # adoption or the task was deleted. Don't re-adopt.
-        if worker.state == "deleted":
-            return False
-        # Active worker — already adopted, not an orphan.
-        return False
-    if (
-        task_store.get_by_manager_conversation_id(conv.id) is not None
-    ):
-        return False
-    return True
-
-
-async def notify_new_session(
-    session_id: str,
-    *,
-    user_id: str | None = None,
-    host_id: str | None = None,
-    source: str = "internal",
-) -> bool:
-    """Trigger adoption for a session that just finished a turn.
-
-    If the best-matching task scores above the threshold, creates a Worker
-    and a Worker directly (auto-adopt). Otherwise, enqueues a
-    ``session.orphan`` event for the broker to triage.
-    """
-    if not _ORPHAN_SESSION_ADOPTION_ENABLED:
-        return False
-    if _context is None:
-        return False
-    owner_user_id = resolve_owner_user_id(
-        user_id=user_id,
-        host_id=host_id,
-        host_store=_context.host_store,
-    )
-    conv = _context.conversation_store.get_conversation(session_id)
-    if not is_orphan_candidate(
-        conv,
-        task_store=_context.task_store,
-        worker_store=_context.worker_store,
-    ):
-        return False
-    assert conv is not None
-
-    active_tasks = live_tasks(_context.task_store)
-    if not active_tasks:
-        # No live tasks — broker creates one during triage.
-        return await enqueue_orphan_session(session_id, owner_user_id=owner_user_id)
-
-    routing_tags = resolve_session_routing_tags(session_id, conv)
-    ranked = rank_tasks_for_event_tags(
-        event_tags=routing_tags,
-        tasks=active_tasks,
-        task_store=_context.task_store,
-    )
-
-    if ranked and ranked[0][1] >= _AUTO_ADOPT_SCORE_THRESHOLD:
-        # Confident match — auto-adopt directly.
-        task, score = ranked[0]
-        adopt_session_to_task(
-            session_id=session_id,
-            task=task,
-            conv=conv,
-            score=score,
-            owner_user_id=owner_user_id,
-        )
-        return True
-
-    # Low score or no match — fall back to broker triage.
-    return await enqueue_orphan_session(session_id, owner_user_id=owner_user_id)
-
-
 def adopt_session_to_task(
     *,
     session_id: str,
@@ -243,79 +142,6 @@ def adopt_session_to_task(
         provider_name=conv.title or session_id,
     )
     return worker_id
-
-
-async def enqueue_orphan_session(
-    session_id: str,
-    *,
-    owner_user_id: str,
-) -> bool:
-    """Record an orphan session for broker triage.
-
-    Creates a ``session.orphan`` task event in ``awaiting_grouping`` state.
-    """
-    if _context is None:
-        return False
-    conv = _context.conversation_store.get_conversation(session_id)
-    if not is_orphan_candidate(
-        conv,
-        task_store=_context.task_store,
-        worker_store=_context.worker_store,
-    ):
-        return False
-    assert conv is not None
-    if find_open_orphan_event(_context.task_event_store, session_id) is not None:
-        return False
-
-    # Fetch the last user message and the full last assistant turn so the
-    # broker can triage without calling sys_session_get_history.
-    last_user_message, last_agent_response = _extract_last_turn_text(
-        _context.conversation_store, session_id
-    )
-
-    title = f"Adopt session: {conv.title or session_id}"
-    payload = json.dumps({
-        "session_id": session_id,
-        "session_title": conv.title,
-        "host_id": conv.host_id,
-        "workspace": conv.workspace,
-        "last_user_message": last_user_message,
-        "last_agent_response": last_agent_response,
-    })
-    _context.task_event_store.create_event(
-        uuid.uuid4().hex,
-        SESSION_ORPHAN_EVENT_TYPE,
-        title,
-        source="adoption",
-        source_key=session_id,
-        state="awaiting_grouping",
-        owner_user_id=owner_user_id,
-        payload=payload,
-    )
-    return True
-
-
-def find_open_orphan_event(
-    task_event_store: TaskEventStore,
-    session_id: str,
-) -> TaskEvent | None:
-    """Return an open ``session.orphan`` event for a session, if any.
-
-    Open means awaiting_grouping (not yet packaged) or pending_triage
-    (packaged, broker hasn't triaged yet). Routed, reconciled, or
-    dismissed events are closed.
-    """
-    for state in ("awaiting_grouping", "pending_triage"):
-        for event in task_event_store.list_events(
-            state=state,
-            event_type=SESSION_ORPHAN_EVENT_TYPE,
-        ):
-            if event.source_key == session_id:
-                return event
-    return None
-
-
-# ── External session adoption (watcher-discovered sessions) ────────
 
 
 def find_open_external_adoption_proposal(
@@ -513,6 +339,7 @@ def emit_turn_finished_event_unbound(
             source_key=session_id,
             state="awaiting_grouping",
             payload=payload,
+            tags=[tag] if (tag := host_tag(conv.host_id if conv is not None else None)) else [],
             owner_user_id=owner_user_id,
         )
     except Exception:

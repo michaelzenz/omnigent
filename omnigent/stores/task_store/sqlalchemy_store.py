@@ -133,6 +133,52 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
+    def list_recent(self, limit: int) -> list[Task]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .order_by(
+                    desc(SqlTask.updated_at),
+                    desc(SqlTask.created_at),
+                    desc(SqlTask.id),
+                )
+                .limit(limit)
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_to_entity(row) for row in rows]
+
+    def list_by_manager_conversation_id(self, conversation_id: str) -> list[Task]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .where(SqlTask.manager_conversation_id == conversation_id)
+                .where(SqlTask.state != encode_task_state("archived"))
+                .order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_to_entity(row) for row in rows]
+
+    def list_manager_conversation_ids(
+        self, *, owner_user_id: str | None = None
+    ) -> list[str]:
+        with self._session() as session:
+            live = [
+                encode_task_state(state)
+                for state in ("active", "idle", "pending", "agent-resolved")
+            ]
+            stmt = (
+                select(SqlTask.manager_conversation_id)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .where(SqlTask.manager_conversation_id.is_not(None))
+                .where(SqlTask.state.in_(live))
+                .distinct()
+            )
+            if owner_user_id is not None:
+                stmt = stmt.where(SqlTask.owner_user_id == owner_user_id)
+            return list(session.execute(stmt).scalars().all())
+
     def update(
         self,
         task_id: str,

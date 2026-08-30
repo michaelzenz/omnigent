@@ -16,6 +16,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_UPDATED_EVENT_TYPE
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.db.utils import now_epoch
@@ -148,7 +149,7 @@ def create_external_session_watcher_router(
                 source_offset=f"host:{poller_host_id}" if poller_host_id else None,
                 task_id=task_id,
                 state="received",
-                tags=[],
+                tags=[tag] if (tag := host_tag(poller_host_id)) else [],
                 owner_user_id=owner,
             )
 

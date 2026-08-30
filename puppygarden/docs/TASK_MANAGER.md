@@ -1,19 +1,18 @@
 # Task manager manual
 
-Manager duty is to steer the task towards the goal, you almost ONLY suggest actionable taskItem for user to review, and the only exception is follow up. The system will feed you the events so you have full context
+You own **every task attached to you** — usually several. Maintain each
+task's `internal_note` and tags so the ingress scorer can route inbound
+events, and keep its user-facing `description` as a concise Markdown
+Overview (refresh after material changes; summarize status and only
+meaningful recent activity; nested bullets are fine; never paste raw logs).
+
+Your manager session id is your own conversation id — the
+`manager_conversation_id` on your tasks points back at you.
 
 For other manuals, resolve the data dir from `$OMNIGENT_DATA_DIR`
 (falling back to `~/.omnigent` when unset), read `host.puppygarden.root`
 from `<data_dir>/config.yaml`, and use its `docs/` directory. See the
 manual index at `<host.puppygarden.root>/docs/README.md`.
-
-You own **one** managed task. Maintain its `internal_note` and tags so the ingress scorer can route inbound events.
-
-Also maintain the task's user-facing `description` as a concise Markdown
-Overview. Refresh it after material changes. Summarize current status and only
-meaningful recent activity, using nested bullets when useful. Do not repeat the
-user-editable `goal`, paste raw logs, or turn the Overview into a full history.
-Update it with `PATCH /v1/agent-tasks/<task_id>` and a Markdown `description`.
 
 ## API access
 
@@ -29,32 +28,49 @@ puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>")
 Use `puppygarden_api` for every endpoint below. See
 `<host.puppygarden.root>/docs/API_REFERENCE.md` contains the full catalogue.
 
+## Your portfolio
+
+Your notices end with `[Your tasks: <id> (<state>), ...]` — the tasks
+attached to you right now. If you need the full fields, list them:
+
+```
+# Every task bound to this manager session
+puppygarden_api(
+  method="GET",
+  path="/v1/agent-tasks",
+  query={"manager_conversation_id": "<your_session_id>"}
+)
+```
+
 ## Handling routed events
 
 The manager packager wraps routed events into a dispatch notice and sends
-it to your session. Each notice lists every routed event the task has not
-yet reconciled — you don't need to poll for them yourself.
+it to your session. Each notice lists every routed event across your
+tasks that is not yet reconciled — every line is labeled `[task:<id>]`
+so you know which task it belongs to. You don't need to poll.
 
-Your job is to reconcile those events into **task items** — the actual
-execution work for workers. You can split/merge items as needed, and resolve
-items you know are already done (e.g. a monitoring item whose PR was merged). Note that not necessarily all events are for same item, do this flexibly.
-
-Work through these steps in order:
-
-### Step 1 — Read the current state
+**Step 1 — pick the task.** Most notices already label the task. When the
+right task is genuinely unclear (a drifted session, a vague source event),
+search your own portfolio:
 
 ```
-# Task info: internal_note, tags, state, available Worker Providers
-puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>")
-
-# Existing pending/queued items — each has worker_id (may be null)
-puppygarden_api(method="GET", path="/v1/agent-tasks/<task_id>/items")
+puppygarden_api(
+  method="GET",
+  path="/v1/agent-tasks/search",
+  query={"q": "<event keywords>", "session_id": "<optional session>", "event_id": "<optional event>"}
+)
 ```
 
-### Step 2 — Reconcile into existing items
+Three lists come back: `recent` (your most recently touched tasks, no
+state filter — drift usually means one of these), `matches` (text match
+over title/goal/description/internal_note), `tag_matches` (tag overlap,
+when `event_id` is given). Pass `session_id` to put the session's bound
+task first.
 
-For each routed event, decide whether it extends an existing pending/queued
-item, needs a split, or is already handled:
+**Step 2 — reconcile into the task's items.** For each routed event,
+decide whether it extends an existing pending/queued item, needs a split,
+or is already handled. Not all events in one batch belong to the same
+item — or even the same task.
 
 - **Extend** an existing item — pass `item_id` in the reconcile call:
   ```
@@ -73,22 +89,16 @@ item, needs a split, or is already handled:
     }
   )
   ```
-- **Split** an existing item — create a new item for the split portion, and
-  update the original item's title/instructions to reflect the narrower scope.
+- **Split** an existing item — create a new item for the split portion,
+  and narrow the original's title/instructions.
 - **Resolve** an item that is already done — `POST /v1/task-items/{id}/resolve`
   with `{"resolution":"reject_item"}`.
-- **Ack** an event that needs no item — `POST /v1/agent-tasks/{id}/ack` marks
-  events reconciled without creating a task item.
+- **Ack** an event that needs no item — `POST /v1/agent-tasks/{id}/ack`
+  marks events reconciled without creating a task item.
 
-### Step 3 — Create new items (with worker assignment)
-
-For events that don't fit any existing item, create a new item. You must
-assign a worker lane at creation time. (Worker lanes can only be created and
-assigned after the task is accepted — not while it is pending.) Decide the
-lane in two sub-steps:
-
-**3a. Check existing Workers** — If a Worker from a suitable provider already
-has related context, assign the new item to it by passing `worker_id`:
+**Step 3 — create new items (with worker assignment).** For events that
+don't fit any existing item, create one and assign a worker lane at
+creation time:
 
 ```
 # Workers already on this task include worker_id, provider_name, target_id,
@@ -112,85 +122,120 @@ puppygarden_api(
 )
 ```
 
-**3b. No suitable Worker — create one** — list Worker Providers, choose one,
-create the Worker, and initialize it before dispatch:
+**No suitable Worker — create one.** List Worker Providers, choose one,
+create the Worker, initialize it, then create the item:
 
 ```
-# Providers describe how a Worker is initialized; they contain no prompt.
 puppygarden_api(method="GET", path="/v1/worker-providers")
-# Pick an available provider by its stable id and description.
 
 puppygarden_api(
   method="POST",
   path="/v1/agent-tasks/<task_id>/workers",
   body={"provider_id": "<provider_id>"}
 )
-# → returns worker_id immediately with target_id=null and state=uninitialized.
+# → worker_id immediately, state=uninitialized
 
+puppygarden_api(method="POST", path="/v1/task-workers/<worker_id>/initialize")
+# Async — wait until GET workers reports state=idle, then create the item.
+```
+
+**Worker assignment principle — context affinity.** Workers are long-lived
+lanes: initialization starts the target session, and all later items reuse
+it. Prefer reusing a lane that already has related context — and a lane
+may serve **several of your tasks** when the context is shared (a lane
+working in one repo). Fewer lanes with deeper context beats many shallow
+lanes.
+
+**You propose; the user dispatches.** Creating an item with
+`submit_for_user_ack: true` puts it on the task card. The user clicks go
+(ack) — only then does the queue dispatch to the lane. If the lane halts
+(retries exhausted, disconnected, init failed, or the user stopped the
+session), a red **!** appears on every task referencing it; when the user
+gets it working again, it un-halts and the badge clears.
+
+## Task lifecycle
+
+You steer each task through its states via `PATCH /v1/agent-tasks/<id>`:
+
+- `pending` — tasks you create are **born pending**: the user reviews and
+  confirms to activate. (User-created tasks are born active.)
+- `agent-resolved` — the task looks done. It sorts to the board's end
+  with a distinct badge. **Not final**: when a new relevant event lands,
+  move it back to `pending`. Prefer this over endless `active` — the
+  board should show what needs attention.
+- `idle` — do not set manually; tasks auto-idle after a quiet week.
+
+Typical flow: create task (pending) → user confirms (active) → work →
+`agent-resolved` when done → revive to `pending` on new events.
+
+## Creating new tasks
+
+When a routed event belongs to none of your tasks (and no other manager's
+task fits better — check via the same search), open a new one. It is born
+**pending** and attached to you; the user confirms it:
+
+```
 puppygarden_api(
   method="POST",
-  path="/v1/task-workers/<worker_id>/initialize"
-)
-# Initialization is asynchronous. Wait until GET workers reports state=idle.
-
-puppygarden_api(
-  method="POST",
-  path="/v1/agent-tasks/<task_id>/items",
+  path="/v1/agent-tasks/packages",
   body={
-    "title": "<item title>",
-    "description": "<why>",
-    "instructions": "<instructions to run>",
-    "worker_id": "<worker_id>",
-    "state": "draft",
-    "submit_for_user_ack": true
+    "title": "<task title>",
+    "goal": "<endstate this task should land on>",
+    "manager_conversation_id": "<your_session_id>",
+    "internal_note": "<agent context — routing rationale>",
+    "items": [
+      {
+        "title": "<item title>",
+        "event_ids": ["<id>"],
+        "description": "<why this item exists>",
+        "instructions": "<worker instructions>",
+        "internal_note": "<agent context>"
+      }
+    ]
   }
 )
 ```
 
-### Batch worker assignment (sweep)
+Pass your own session id as `manager_conversation_id` so the task is
+attached to you from birth.
 
-When a task is accepted, list providers once, create the Workers you need by
-`provider_id`, initialize them, then assign every pending item by `worker_id`.
-Multiple items may share one Worker; Agent Queue waits for that Worker to become
-idle before sending its next message. The assign endpoint also accepts
-`provider_id` to create-and-assign in one call.
+## FYI
 
-### Worker assignment principle
+When an event reaches you but is not actionable for any task, file it to
+FYI instead of forcing a task on it:
 
-**Context affinity** — prefer reusing a lane that already has related
-context. Each Worker is long-lived: initialization starts its target session,
-and all subsequently dispatched items reuse the same target conversation.
-Fewer lanes with deeper context beats many shallow lanes.
+```
+# List open clusters first (each fyi[].id is the cluster_id)
+puppygarden_api(method="GET", path="/v1/agent-tasks/board/pending")
 
-# Managing the Task
-As a manager of the task, again you need to steer the task towards the goal, understand the situation, suggest taskItems for user to review. here are the taskItems you can suggest but not limited to
-* Investigate: investigate the issue
-* Code: do the coding
-* Verify: verify the result is correct/code change takes effect
-* Human Verify: after agent finished work, write a script/notebook, and a one line command to run it so that user can run to manually verify the result is correct
-* Human action: when the next step can only be done by the user (console access, manual approval, local environment), create an item with `kind: "human_action"` — no `worker_id`, no `instructions`; put the what/why/how in `description`. The user marks it done (or dismisses it) on the task card:
-  ```
-  puppygarden_api(
-    method="POST",
-    path="/v1/agent-tasks/<task_id>/items",
-    body={
-      "title": "<what the user must do>",
-      "description": "<why + exact steps>",
-      "kind": "human_action",
-      "state": "draft",
-      "submit_for_user_ack": true
-    }
-  )
-  ```
+puppygarden_api(
+  method="POST",
+  path="/v1/task-events/fyi-clusters",
+  body={"event_ids": ["<id>"], "headline": "<headline>", "cluster_id": "<optional-existing-cluster-id>"}
+)
+```
 
-**Never stay silent after a `worker.execution.finished` event** — always react:
-suggest the next taskItem or a human action. If the work is done, say so in the
-task Overview and suggest whatever steers the task towards the goal next. If the task is done, add a human notice that says task is done, please confirm. This final task finish confirmation should only have one, this is special case where if other workers done and you think no more work to do and see there is already a final task complete confirmation, dont add new ones.
+## Item kinds you can suggest
+
+* **Investigate**: investigate the issue
+* **Code**: do the coding
+* **Verify**: verify the result is correct / the change takes effect
+* **Human Verify**: after agent work, write a script/notebook + a one-line
+  command so the user can manually verify
+* **Human action**: when only the user can do the next step (console
+  access, manual approval, local env), create an item with
+  `kind: "human_action"` — no `worker_id`, no `instructions`; the what/why/
+  how goes in `description`. The user marks it done on the card.
+
+**Never stay silent after a `worker.execution.finished` event** — always
+react: suggest the next taskItem or a human action, or mark the task
+`agent-resolved` if the work is done (say so in the Overview). If there is
+already a final task-complete confirmation pending, don't add another.
 
 ## Human action completed
 
-When an `item.human_action.done` event is routed to you, the user says they
-finished the human step. Verify the action actually took effect when you can
+When an `item.human_action.done` event is routed to you, the user says
+they finished the human step. Verify the action took effect when you can
 (re-check the system, re-run the check), then continue the workflow it was
 blocking — and ack the event like any routed event.
 
