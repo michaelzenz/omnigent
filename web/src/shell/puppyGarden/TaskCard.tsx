@@ -20,6 +20,21 @@ import { TaskCardSidebar } from "./TaskCardAssets";
 import { TaskItemsPanel } from "./TaskCardWorkers";
 import { TaskActionsMenu } from "./TaskActionsMenu";
 
+// Task-state badge palette ("tinted outline"): hue-matched border + translucent
+// fill, darker text in light mode and brighter tinted text in dark mode.
+const TASK_STATE_BADGE_CLASSES: Record<string, string> = {
+  active:
+    "border-[rgba(34,197,94,0.55)] bg-[rgba(34,197,94,0.07)] text-[#15803d] dark:bg-[rgba(34,197,94,0.08)] dark:text-[#4ade80]",
+  pending:
+    "border-[rgba(234,179,8,0.6)] bg-[rgba(234,179,8,0.08)] text-[#a16207] dark:bg-[rgba(234,179,8,0.08)] dark:text-[#fde047]",
+  "agent-resolved":
+    "border-[rgba(59,130,246,0.55)] bg-[rgba(59,130,246,0.07)] text-[#1d4ed8] dark:bg-[rgba(59,130,246,0.08)] dark:text-[#60a5fa]",
+  idle:
+    "border-[rgba(100,116,139,0.45)] bg-[rgba(100,116,139,0.06)] text-[#64748b] dark:bg-[rgba(148,163,184,0.06)] dark:text-[#94a3b8]",
+  archived:
+    "border-[rgba(120,113,108,0.45)] bg-[rgba(120,113,108,0.06)] text-[#78716c] dark:bg-[rgba(120,113,108,0.08)] dark:text-[#a8a29e]",
+};
+
 interface TaskCardProps {
   taskId: string;
   title: string;
@@ -171,8 +186,8 @@ export function TaskCard({
               <Badge
                 variant="outline"
                 className={cn(
-                  "shrink-0 capitalize",
-                  state === "agent-resolved" && "border-[#3fb27f] text-[#3fb27f]",
+                  "shrink-0 border-[1.5px] capitalize",
+                  TASK_STATE_BADGE_CLASSES[state] ?? "",
                 )}
               >
                 {state === "agent-resolved" ? "resolved" : state}
