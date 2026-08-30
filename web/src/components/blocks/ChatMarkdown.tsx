@@ -16,7 +16,7 @@ import { defaultRemarkPlugins } from "streamdown";
 import remarkBreaks from "remark-breaks";
 import { normalizeExplicitMathDelimiters } from "@/components/ai-elements/mathMarkdown";
 import { MessageResponse } from "@/components/ai-elements/message";
-import { WORKSPACE_FILE_LINK_ATTR } from "@/components/ai-elements/streamdown-security";
+import { PREVIEW_LINK_ATTR, WORKSPACE_FILE_LINK_ATTR } from "@/components/ai-elements/streamdown-security";
 import { ZoomableImage } from "@/components/ImageLightbox";
 import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { cn } from "@/lib/utils";
@@ -162,8 +162,11 @@ const STREAMDOWN_LINK_CLASS = "wrap-anywhere font-medium text-primary underline"
  * Anchor renderer for markdown links. A link to a workspace file, its href
  * parked on a fragment by `markWorkspaceFileLinks` and the real path moved to
  * `WORKSPACE_FILE_LINK_ATTR`, opens the FileViewer instead of navigating,
- * matching how an inline-code path behaves. Every other link (http(s), mailto,
- * in-page anchors) still carries its own href and renders as Streamdown would.
+ * matching how an inline-code path behaves. A serve_html preview link, parked
+ * on `PREVIEW_LINK_ATTR`, gets its real href back: AppShell's capture-phase
+ * click listener opens the in-app preview pane for anchors carrying it. Every
+ * other link (http(s), mailto, in-page anchors) still carries its own href and
+ * renders as Streamdown would.
  *
  * A marked path that names no workspace file renders as plain text: its href is
  * the parked fragment, so a live link there would go nowhere.
@@ -179,6 +182,23 @@ function WorkspaceFileLink({
   const marked = (props as Record<string, unknown>)[WORKSPACE_FILE_LINK_ATTR];
   const path = typeof marked === "string" ? marked : "";
   const openWorkspaceFile = useWorkspaceFileOpener(path);
+
+  // A preview URL is the app's own resource: restore the real href so the
+  // anchor renders live and AppShell's click interceptor opens the pane.
+  const previewMarked = (props as Record<string, unknown>)[PREVIEW_LINK_ATTR];
+  if (typeof previewMarked === "string") {
+    return (
+      <a
+        href={previewMarked}
+        className={cn(STREAMDOWN_LINK_CLASS, className)}
+        title={title}
+        data-streamdown="link"
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  }
 
   if (!path) {
     return (
