@@ -400,3 +400,21 @@ def test_list_queues_filters_by_role_and_state(store: SqlAlchemyAgentQueueStore)
     assert [q.key for q in store.list_queues(role="worker")] == [worker]
     assert [q.key for q in store.list_queues(state="paused")] == [worker]
     assert len(store.list_queues(owner_user_id=_OWNER)) == 2
+
+
+def test_dispatch_stoplist_roundtrip(store: SqlAlchemyAgentQueueStore) -> None:
+    """The stoplist is empty by default and idempotent on both directions."""
+    assert store.get_dispatch_stoplist() == frozenset()
+
+    store.set_role_dispatch_stopped("broker", True)
+    assert store.get_dispatch_stoplist() == frozenset({"broker"})
+    store.set_role_dispatch_stopped("broker", True)  # re-add is a no-op
+    assert store.get_dispatch_stoplist() == frozenset({"broker"})
+
+    store.set_role_dispatch_stopped("manager", True)
+    assert store.get_dispatch_stoplist() == frozenset({"broker", "manager"})
+
+    store.set_role_dispatch_stopped("broker", False)
+    assert store.get_dispatch_stoplist() == frozenset({"manager"})
+    store.set_role_dispatch_stopped("broker", False)  # removing an absent role is a no-op
+    assert store.get_dispatch_stoplist() == frozenset({"manager"})

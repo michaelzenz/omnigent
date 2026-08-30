@@ -389,3 +389,40 @@ async def test_two_dispatchers_never_drain_one_queue(
 
     assert sum(counts) == 1
     assert len(first.delivered) + len(second.delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_stoplist_role_queues_are_skipped(store: SqlAlchemyAgentQueueStore) -> None:
+    """A stopped role keeps its items queued; other roles still dispatch."""
+    worker = _key("slot-a")
+    manager = AgentQueueKey(role="manager", owner_user_id=_OWNER, scope_id=_uid("slot-b"))
+    store.enqueue(_uid("a"), worker, "item.dispatch")
+    store.enqueue(_uid("b"), manager, "item.dispatch")
+    store.set_role_dispatch_stopped("manager", True)
+
+    def _two_role_dispatcher(handler: RoleDispatchHandler) -> AgentQueueDispatcher:
+        return AgentQueueDispatcher(
+            DispatcherContext(
+                store=store,
+                handlers={"worker": handler, "manager": handler},
+                read_status=_FakeStatus("idle"),
+                grace_period_s=0.0,
+            )
+        )
+
+    handler = _RecordingHandler()
+    assert await _two_role_dispatcher(handler).run_once() == 1
+    assert [item.id for item in handler.delivered] == [_uid("a")]
+
+    # The stopped role's queue is untouched: item queued, nothing in flight.
+    manager_item = store.get_item(_uid("b"))
+    assert manager_item is not None
+    assert manager_item.state == "queued"
+    manager_queue = store.get_queue(manager)
+    assert manager_queue is not None
+    assert manager_queue.inflight_item_id is None
+
+    # Re-enabling resumes on its own — no user resume needed.
+    store.set_role_dispatch_stopped("manager", False)
+    assert await _two_role_dispatcher(handler).run_once() == 1
+    assert [item.id for item in handler.delivered] == [_uid("a"), _uid("b")]

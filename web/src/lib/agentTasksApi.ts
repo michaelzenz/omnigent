@@ -747,3 +747,19 @@ export async function updateScriptPollPlugin(
     throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
   }
 }
+
+/** Roles the dispatcher currently refuses to dispatch (the global stoplist). */
+export async function fetchDispatchStoplist(): Promise<string[]> {
+  const res = await authenticatedFetch("/v1/agent-queues/dispatch-stoplist");
+  const body = await readJson<{ data: string[] }>(res);
+  return body.data;
+}
+
+export async function setRoleDispatchStopped(role: string, stopped: boolean): Promise<void> {
+  const res = await authenticatedFetch("/v1/agent-queues/dispatch-stoplist", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, stopped }),
+  });
+  if (!res.ok) await readJsonOrApiError(res);
+}

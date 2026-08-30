@@ -36,6 +36,13 @@ class PatchQueueItemRequest(BaseModel):
     payload: str | None = None
 
 
+class DispatchStoplistRequest(BaseModel):
+    """One role's entry on the global dispatch stoplist."""
+
+    role: str
+    stopped: bool
+
+
 def create_agent_queues_router(
     agent_queue_store: AgentQueueStore,
     auth_provider: AuthProvider | None = None,
@@ -64,6 +71,31 @@ def create_agent_queues_router(
             "object": "list",
             "data": [_queue_to_response(q) for q in queues],
         }
+
+    @router.get("/agent-queues/dispatch-stoplist")
+    async def get_dispatch_stoplist(request: Request) -> dict[str, Any]:
+        """Roles the dispatcher currently refuses to dispatch."""
+        require_user(request, auth_provider)
+        stopped = await asyncio.to_thread(agent_queue_store.get_dispatch_stoplist)
+        return {"object": "list", "data": sorted(stopped)}
+
+    @router.put("/agent-queues/dispatch-stoplist")
+    async def set_dispatch_stoplist(
+        request: Request,
+        body: DispatchStoplistRequest,
+    ) -> dict[str, Any]:
+        """Add a role to (or remove it from) the global dispatch stoplist.
+
+        The dispatcher skips a stopped role's queues entirely — items stay
+        queued and resume on their own when the role is re-enabled.
+        """
+        require_user(request, auth_provider)
+        await asyncio.to_thread(
+            agent_queue_store.set_role_dispatch_stopped,
+            body.role,
+            body.stopped,
+        )
+        return {"role": body.role, "stopped": body.stopped}
 
     @router.get("/agent-queues/{role}/items")
     async def list_queue_items(

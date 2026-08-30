@@ -3,6 +3,7 @@ import { Loader2Icon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
 import type { AgentTaskSummary } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
+import { BoardConfigPanel } from "./BoardConfigPanel";
 import { BoardFyiStream } from "./BoardFyiStream";
 import { TaskCard } from "./TaskCard";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
@@ -129,12 +130,15 @@ export function PuppyGardenBoard() {
           </div>
         ) : null}
         <BoardFyiStream />
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h1 className="text-xl font-semibold">PuppyGarden</h1>
+            <p className="text-sm text-muted-foreground">Live board</p>
+          </div>
+          <BoardConfigPanel disabled={fixtureMode} />
+        </div>
         {hasTasks ? (
           <section className="space-y-5" data-testid="board-active-tasks">
-            <div>
-              <h1 className="text-xl font-semibold">PuppyGarden</h1>
-              <p className="text-sm text-muted-foreground">Live board</p>
-            </div>
             {allTasks.map((task, index) => (
               <TaskCard
                 key={task.id}

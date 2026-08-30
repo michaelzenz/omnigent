@@ -206,6 +206,21 @@ class AgentQueueDispatcher:
         queues = await asyncio.to_thread(store.due_queues, now=now, limit=SCAN_BATCH)
         if not queues:
             return 0
+        # The global stoplist (board config panel) silences whole roles: their
+        # queues stay in place with items queued, and come back on their own
+        # when the role is re-enabled. Read once per pass — one cheap lookup.
+        stopped = await asyncio.to_thread(store.get_dispatch_stoplist)
+        if stopped:
+            skipped = [queue for queue in queues if queue.role in stopped]
+            queues = [queue for queue in queues if queue.role not in stopped]
+            if skipped:
+                _logger.debug(
+                    "agent queue dispatcher: skipping stopped roles %s (%d queues)",
+                    sorted(stopped),
+                    len(skipped),
+                )
+            if not queues:
+                return 0
         results = await asyncio.gather(
             *(self._drain_one(queue) for queue in queues),
             return_exceptions=True,
