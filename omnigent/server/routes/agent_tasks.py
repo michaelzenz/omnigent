@@ -156,6 +156,12 @@ class TaskTagInput(BaseModel):
         return stripped
 
 
+class AdoptSessionRequest(BaseModel):
+    """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
+
+    task_id: str
+
+
 class CreateAgentTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks``."""
 
@@ -3138,11 +3144,6 @@ def create_agent_tasks_router(
                 permission_store,
                 conversation_store,
             )
-
-        class AdoptSessionRequest(BaseModel):
-            """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
-
-            task_id: str
 
         @router.post("/agent-tasks/sessions/{session_id}/adopt")
         async def adopt_session_route(

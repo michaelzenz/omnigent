@@ -3306,11 +3306,20 @@ class PiExecutor(Executor):
                         try:
                             await rpc.send_command(command)
                         except Exception as resend_exc:  # noqa: BLE001
-                            yield ExecutorError(
-                                message=f"Failed to resend prompt to Pi: {resend_exc}"
-                            )
-                            return
-                        continue
+                            error_msg = f"Failed to resend prompt to Pi: {resend_exc}"
+                        else:
+                            continue
+                    # A failed response ends the turn. If Pi was mid-compaction,
+                    # dismiss the UI's "Compacting…" indicator first — without
+                    # CompactionComplete it stays stuck forever.
+                    if compaction_active:
+                        compaction_active = False
+                        yield CompactionComplete(
+                            summary="",
+                            token_count=0,
+                            model=model,
+                            compacted_messages=None,
+                        )
                     yield ExecutorError(message=error_msg or "Pi command failed")
                     return
                 continue

@@ -597,6 +597,7 @@ async def _maybe_adopt_session(session_id: str) -> None:
             emit_turn_finished_event,
             emit_turn_finished_event_unbound,
             get_session_adoption_context,
+            resolve_owner_user_id,
         )
 
         ctx = get_session_adoption_context()

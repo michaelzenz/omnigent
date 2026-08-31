@@ -2548,6 +2548,78 @@ class TestRunTurn(unittest.TestCase):
 
         _run(_test())
 
+    def test_failed_response_dismisses_active_compaction(self):
+        """A failed prompt response (e.g. the followUp retry is rejected too)
+        ends the turn — if compaction was active, CompactionComplete must be
+        yielded first so the UI's "Compacting…" indicator is dismissed
+        instead of staying stuck forever.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = MagicMock()
+            fake_rpc.process.returncode = None
+            fake_rpc.process.stdin = _FakeStreamWriter()
+            fake_rpc._stderr_lines = []
+            fake_rpc._eof = False
+
+            lines = [
+                # Pi is mid-compaction from a prior turn when our prompt is
+                # rejected with "already processing".
+                json.dumps({"type": "compaction_start"}),
+                json.dumps({
+                    "type": "response",
+                    "success": False,
+                    "command": "prompt",
+                    "error": (
+                        "Agent is already processing. "
+                        "Specify streamingBehavior ('steer' or 'followUp') "
+                        "to queue the message."
+                    ),
+                }),
+                # Retried prompt with followUp: rejected again.
+                json.dumps({
+                    "type": "response",
+                    "success": False,
+                    "command": "prompt",
+                    "error": "Agent is already processing.",
+                }),
+            ]
+            for line in lines:
+                fake_rpc._line_queue.put_nowait(line)
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            # CompactionStarted must be followed by CompactionComplete even
+            # though the turn failed — otherwise the "Compacting…" indicator
+            # stays stuck.
+            compaction_events = [e for e in events if isinstance(e, (CompactionStarted, CompactionComplete))]
+            self.assertEqual(len(compaction_events), 2)
+            self.assertIsInstance(compaction_events[0], CompactionStarted)
+            self.assertIsInstance(compaction_events[1], CompactionComplete)
+            self.assertEqual(compaction_events[1].summary, "")
+            # Turn ends with the prompt error — not TurnComplete.
+            self.assertTrue(any(isinstance(e, ExecutorError) for e in events))
+            self.assertIn("already processing", events[-1].message)
+            self.assertFalse(any(isinstance(e, TurnComplete) for e in events))
+
+        _run(_test())
+
     def test_idle_timeout_with_live_pi_closes_session_and_errors(self):
         """When the read budget expires while Pi is still alive and no tool is
         in flight (Pi itself is stuck), the executor aborts, closes the

@@ -16,7 +16,7 @@ ONIH_SETTINGS_KEY = "omniharness"
 ONIH_OPENAI_AGENTS_TARGET = "onih-openai-agents"
 ONIH_PI_TARGET = "onih-pi"
 ONIH_PUPPYGARDEN_TARGET = "onih-puppygarden"
-ONIH_TARGET_NAMES = frozenset({ONIH_OPENAI_AGENTS_TARGET, ONIH_PI_TARGET})
+ONIH_TARGET_NAMES = frozenset({ONIH_OPENAI_AGENTS_TARGET, ONIH_PI_TARGET, ONIH_PUPPYGARDEN_TARGET})
 # Restricted read-only profile for PuppyGarden broker and manager
 # roles. NOT in ONIH_TARGET_NAMES so it does not appear as a
 # user-selectable Onih variant in the session picker — only used

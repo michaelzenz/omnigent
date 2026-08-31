@@ -1503,6 +1503,20 @@ def create_app(
                     task_store=task_store,
                     status_reader=_PackagerStatusReaderSync(),
                 )
+            # Cancel stale manager queue items keyed by task_id (pre-rekey)
+            # so events re-package under the correct manager_conversation_id key.
+            from omnigent.agent_tasks.queue.rekey_migration import rekey_manager_queues
+
+            rekey_result = rekey_manager_queues(
+                agent_queue_store=agent_queue_store,
+                task_event_store=task_event_store,
+            )
+            if rekey_result["items_canceled"]:
+                _logger.info(
+                    "startup: rekey migration cancelled %d stale manager queue items",
+                    rekey_result["items_canceled"],
+                )
+
             await _broker_packager.start()
             if _manager_packager is not None:
                 await _manager_packager.start()
