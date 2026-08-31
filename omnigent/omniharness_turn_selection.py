@@ -13,7 +13,7 @@ from omnigent.db.db_models import normalize_uuid
 from omnigent.entities import PromptProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime import get_caps
-from omnigent.runtime.policies.builder import build_server_llm_client
+from omnigent.runtime.policies.builder import _normalize_policy_model, build_server_llm_client
 from omnigent.server.smart_routing import (
     DEFAULT_SMART_ROUTING_PROMPT,
     ROUTING_REQUEST_TIMEOUT_S,
@@ -233,7 +233,7 @@ async def select_omniharness_turn(
                     }
                 },
                 timeout=ROUTING_REQUEST_TIMEOUT_S,
-                **({"model": decision_model} if decision_model else {}),
+                **({"model": _normalize_policy_model(decision_model)} if decision_model else {}),
             ),
             timeout=ROUTING_REQUEST_TIMEOUT_S,
         )
