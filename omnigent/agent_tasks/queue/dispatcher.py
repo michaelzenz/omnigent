@@ -16,8 +16,8 @@ Two properties are worth stating explicitly because they shape the code:
   ``not_before = now + backoff`` (exponential from ``_BASE_BACKOFF_S``,
   capped at ``_MAX_BACKOFF_S``) and retried indefinitely, so a restart
   that brings the runner back heals the queue on its own. Only
-  non-retryable failures park the item and halt the queue, and only a
-  user resumes a permanently halted queue.
+  all failures retry with exponential backoff (cap 5 min); only a
+  user-initiated pause stops the queue permanently.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ MAX_INFLIGHT_S = 6 * 60 * 60
 # backoff and retried indefinitely — exponential from _BASE_BACKOFF_S, capped
 # at _MAX_BACKOFF_S so a long outage retries at most every 5 minutes and a
 # restart that brings everything back is never blocked on a user resuming
-# the queue. Only non-retryable failures park and halt.
+# the queue. All failures retry indefinitely.
 _BASE_BACKOFF_S = 30  # 30s, 60s, 120s, 240s, then 300s
 _MAX_BACKOFF_S = 5 * 60
 

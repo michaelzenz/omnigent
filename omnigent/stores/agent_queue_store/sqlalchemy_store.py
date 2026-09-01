@@ -474,18 +474,25 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 queue.next_due_at = now + backoff_s
                 queue.updated_at = now
             else:
-                # Permanent halt: park the item and halt the queue.
-                row.state = encode_agent_queue_item_state("dispatch_failed")
+                # Non-retryable: re-queue with max backoff so the queue
+                # stays active and the dispatcher keeps trying. The only
+                # permanent stop is a user-initiated pause.
+                backoff = 5 * 60
+                row.state = encode_agent_queue_item_state("queued")
                 row.last_error = error
-                row.completed_at = now
+                row.retry_count = row.retry_count + 1
+                row.not_before = now + backoff
+                row.dispatched_at = None
+                row.completed_at = None
                 row.updated_at = now
                 if queue is not None:
-                    queue.state = encode_agent_queue_state("halted")
+                    queue.state = encode_agent_queue_state("active")
                     queue.last_error = error
                     queue.inflight_item_id = None
                     queue.inflight_since = None
                     queue.lease_owner = None
                     queue.lease_expires_at = None
+                    queue.next_due_at = now + backoff
                     queue.updated_at = now
             session.flush()
             return _item_to_entity(row)
@@ -516,11 +523,19 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 # Park rather than complete. The agent went away mid-item, so
                 # calling this "done" would record unfinished work as finished
                 # and leave the user no way to notice or retry.
-                item.state = encode_agent_queue_item_state("interrupted")
+                backoff = 30
+                item.state = encode_agent_queue_item_state("queued")
                 item.last_error = "agent went away while the item was in flight"
+                item.retry_count = item.retry_count + 1
+                item.not_before = now + backoff
+                item.dispatched_at = None
+                item.completed_at = None
                 item.updated_at = now
-                queue.state = encode_agent_queue_state("halted")
+                queue.state = encode_agent_queue_state("active")
                 queue.last_error = item.last_error
+                queue.next_due_at = now + backoff
+                queue.lease_owner = None
+                queue.lease_expires_at = None
                 reclaimed.append(_item_to_entity(item))
             session.flush()
             return reclaimed
@@ -567,53 +582,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 item.updated_at = now
             session.flush()
             return _item_to_entity(item) if item is not None else None
-
-    def recover_halted_queue_for_session(
-        self,
-        session_id: str,
-        *,
-        now: int,
-    ) -> int:
-        halted = encode_agent_queue_state("halted")
-        parked = (
-            encode_agent_queue_item_state("dispatch_failed"),
-            encode_agent_queue_item_state("interrupted"),
-        )
-        with self._session() as session:
-            queue = session.execute(
-                select(SqlAgentQueue)
-                .where(SqlAgentQueue.workspace_id == current_workspace_id())
-                .where(SqlAgentQueue.conversation_id == session_id)
-                .where(SqlAgentQueue.state == halted)
-                .limit(1)
-            ).scalars().first()
-            if queue is None:
-                return 0
-            queue.state = encode_agent_queue_state("active")
-            queue.last_error = None
-            queue.next_due_at = None
-            queue.lease_owner = None
-            queue.lease_expires_at = None
-            queue.updated_at = now
-            count = 0
-            for item in session.execute(
-                select(SqlAgentQueueItem)
-                .where(SqlAgentQueueItem.workspace_id == current_workspace_id())
-                .where(SqlAgentQueueItem.role == queue.role)
-                .where(SqlAgentQueueItem.owner_user_id == queue.owner_user_id)
-                .where(SqlAgentQueueItem.scope_id == queue.scope_id)
-                .where(SqlAgentQueueItem.state.in_(parked))
-            ).scalars().all():
-                item.state = encode_agent_queue_item_state("queued")
-                item.last_error = None
-                item.retry_count = 0
-                item.not_before = None
-                item.completed_at = None
-                item.dispatched_at = None
-                item.updated_at = now
-                count += 1
-            session.flush()
-            return count
 
     def get_dispatch_stoplist(self) -> frozenset[str]:
         with self._session() as session:
@@ -958,10 +926,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     scope_id=row.scope_id if row.scope_id else None,
                 )
                 queue = self._get_queue_row(session, key)
-                if queue is not None and queue.state == encode_agent_queue_state("halted"):
-                    queue.state = encode_agent_queue_state("active")
-                    queue.last_error = None
-                    queue.updated_at = now
+                # Queue is always active now (no halted state); nothing to clear.
             session.flush()
             return _item_to_entity(row)
 

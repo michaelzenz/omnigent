@@ -47,7 +47,7 @@ class AgentQueue:
     :param role: One of :data:`AGENT_QUEUE_ROLES`.
     :param owner_user_id: Owning user, or ``""`` in single-user mode.
     :param scope_id: Task/worker id narrowing the role, or ``None``.
-    :param state: ``"active"``, ``"paused"`` (by a user), or ``"halted"`` (by a
+    :param state: ``"active"`` or ``"paused"`` (by a user).
         failed dispatch). Only a user clears either stopped state.
     :param created_at: Unix epoch seconds at row creation.
     :param conversation_id: Cached delivery target, or ``None`` before bind.
@@ -61,7 +61,7 @@ class AgentQueue:
         ``None`` when the queue is free to dispatch.
     :param inflight_since: Unix epoch seconds the in-flight item was dispatched,
         used by the watchdog. ``None`` when nothing is in flight.
-    :param last_error: Why the queue halted. ``None`` unless halted.
+    :param last_error: Last dispatch error if any.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     """
 

@@ -59,9 +59,8 @@ class QueueStatusFeed:
         no-op when there is nothing in flight, so this is safe to call for every
         session — worker sessions included — without distinguishing roles.
 
-        When a session goes idle and its queue was halted (retries exhausted),
-        the user sending a message and getting a response proves the session
-        is healthy — recover the queue and re-queue parked items.
+        Completes any in-flight item for the session when it reaches a
+        terminal status.
         """
         if self._on_status is not None:
             self._on_status(session_id, status)
@@ -87,25 +86,6 @@ class QueueStatusFeed:
                 session_id,
                 status,
             )
-        if status == QUIET_STATUS:
-            try:
-                recovered = await asyncio.to_thread(
-                    self._store.recover_halted_queue_for_session,
-                    session_id,
-                    now=now,
-                )
-            except Exception:
-                _logger.exception(
-                    "status feed: recover_halted_queue_for_session(%s) failed",
-                    session_id,
-                )
-                return
-            if recovered:
-                _logger.info(
-                    "status feed: recovered halted queue for session %s, re-queued %d items",
-                    session_id,
-                    recovered,
-                )
 
 
 # A callable that pushes a status reading into the dispatch gate.

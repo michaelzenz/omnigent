@@ -195,9 +195,6 @@ AGENT_QUEUE_STATE: dict[str, int] = {
     "active": 1,
     # Stopped by a user, who is the only one that may resume it.
     "paused": 2,
-    # Stopped by a failed dispatch. Also user-resumable only, but surfaced
-    # separately because it means something broke rather than someone chose.
-    "halted": 3,
 }
 
 TASK_EVENT_EXECUTION_STATUS: dict[str, int] = {

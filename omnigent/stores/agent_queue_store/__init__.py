@@ -210,33 +210,6 @@ class AgentQueueStore(ABC):
         """
 
     @abstractmethod
-    def recover_halted_queue_for_session(
-        self,
-        session_id: str,
-        *,
-        now: int,
-    ) -> int:
-        """Re-arm a halted queue and re-queue its parked items.
-
-        Called when the session goes idle after being halted — the user sent
-        a message and got a response, proving the session is healthy. Finds
-        the queue by its cached conversation_id, un-halts it, and re-queues
-        any parked (``dispatch_failed`` / ``interrupted``) items with fresh
-        retry counts.
-
-        :returns: Number of items re-queued.
-        """
-
-    @abstractmethod
-    def get_dispatch_stoplist(self) -> frozenset[str]:
-        """Return the roles the dispatcher must not dispatch.
-
-        The global stoplist is role-wide and persistent, written from the
-        board config panel ("broker off"); distinct from a per-queue
-        ``paused`` state, which is per owner/scope and user-resumable.
-        """
-
-    @abstractmethod
     def set_role_dispatch_stopped(self, role: str, stopped: bool) -> None:
         """Add *role* to (``stopped=True``) or remove it from (``False``) the
         global dispatch stoplist. Idempotent either way.

@@ -137,7 +137,7 @@ def create_agent_queues_router(
         role: str,
         body: QueueKeyRequest,
     ) -> dict[str, Any]:
-        """Re-arm a paused or halted agent queue. User-only."""
+        """Re-arm a paused agent queue. User-only."""
         require_user(request, auth_provider)
         key = _key(role, body)
         await asyncio.to_thread(agent_queue_store.set_queue_state, key, "active")
@@ -176,7 +176,7 @@ def create_agent_queues_router(
     ) -> dict[str, Any]:
         """Drop a queued or dispatch-failed item. User-only.
 
-        For a dispatch-failed item — the one that halted the queue — cancel also
+        For a parked item — cancel also
         clears the halt, so it is a complete recovery and not a two-step resume.
         Idempotent: an already-terminal item returns its current state.
         """
