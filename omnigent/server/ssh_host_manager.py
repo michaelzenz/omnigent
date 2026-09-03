@@ -549,6 +549,9 @@ class SshHostOperations:
             "OMNIGENT_HOST_TOKEN": token,
             "OMNIGENT_HOST_ID": host_id,
             "OMNIGENT_HOST_NAME": host_name,
+            # Remote shells (e.g. Arca) may set OMNIGENT_REQUIRE_WRAPPER=1;
+            # bypass it so the host daemon can launch directly.
+            "OMNIGENT_WRAPPER_BYPASS": "1",
         }
         env = " ".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
         runtime_name = shlex.quote(f"{self._remote_namespace}-{profile.id}")
