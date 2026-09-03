@@ -4,6 +4,7 @@ from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.file_store import FileStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.project_store import ProjectStore
 from omnigent.stores.prompt_profile_store import PromptProfileStore
@@ -16,6 +17,7 @@ __all__ = [
     "ArtifactStore",
     "ConversationStore",
     "FileStore",
+    "ManagerStore",
     "PermissionStore",
     "ProjectStore",
     "PromptProfileStore",

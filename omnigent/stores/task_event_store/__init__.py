@@ -32,6 +32,7 @@ class TaskEventStore(ABC):
         title: str,
         *,
         task_id: str | None = None,
+        manager_conversation_id: str | None = None,
         payload: str | None = None,
         source: str | None = None,
         source_key: str | None = None,
@@ -83,12 +84,34 @@ class TaskEventStore(ABC):
         event_id: str,
         *,
         task_id: str | None = _UNSET,
+        manager_conversation_id: str | None = _UNSET,
         state: str | None = None,
         routed_at: int | None = None,
         processed_at: int | None = None,
         owner_user_id: str | None = _UNSET,
     ) -> TaskEvent | None:
         """Update mutable event fields."""
+
+    @abstractmethod
+    def reconcile_events_to_task(
+        self,
+        event_ids: list[str],
+        *,
+        task_id: str,
+        manager_conversation_id: str | None,
+    ) -> list[TaskEvent]:
+        """Atomically reconcile routed events assigned to one task."""
+
+    @abstractmethod
+    def route_events_to_manager(
+        self,
+        event_ids: list[str],
+        *,
+        manager_conversation_id: str,
+        owner_user_id: str,
+        routable_states: frozenset[str],
+    ) -> list[TaskEvent] | None:
+        """Atomically route a batch, returning ``None`` on any conflict."""
 
     @abstractmethod
     def get_event_tags(self, event_id: str) -> list[EventTag]:

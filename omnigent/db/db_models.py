@@ -2118,6 +2118,36 @@ class SqlScheduledTaskRun(OmnigentBase):
     )
 
 
+class SqlManager(OmnigentBase):
+    """A first-class task manager bound to one conversation."""
+
+    __tablename__ = "managers"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    role_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_managers_owner",
+            "workspace_id",
+            "owner_user_id",
+            "created_at",
+            "conversation_id",
+        ),
+    )
+
+
 class SqlTask(OmnigentBase):
     """
     SQLAlchemy model for the ``tasks`` table.
@@ -2202,6 +2232,7 @@ class SqlTaskEvent(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
@@ -2224,6 +2255,14 @@ class SqlTaskEvent(OmnigentBase):
             name="ck_task_events_state",
         ),
         Index("ix_task_events_task_state", "workspace_id", "task_id", "state", "id"),
+        Index(
+            "ix_task_events_manager_state",
+            "workspace_id",
+            "manager_conversation_id",
+            "state",
+            "created_at",
+            "id",
+        ),
         Index("ix_task_events_state_created", "workspace_id", "state", "created_at", "id"),
         Index("ix_task_events_event_type", "workspace_id", "event_type", "created_at", "id"),
         Index(

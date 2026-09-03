@@ -387,6 +387,7 @@ def emit_turn_finished_event(
             SESSION_TURN_FINISHED_EVENT_TYPE,
             title,
             task_id=task.id,
+            manager_conversation_id=task.manager_conversation_id,
             source="adoption",
             source_key=session_id,
             state="routed",

@@ -100,6 +100,9 @@ def _key(owner: str, manager_conv_id: str) -> AgentQueueKey:
     )
 
 
+_DEFAULT_MANAGER = object()
+
+
 def _routed_event(
     setup: dict,
     *,
@@ -107,20 +110,59 @@ def _routed_event(
     event_type: str = "build.finished",
     title: str = "Build broke",
     task_id: str | None = None,
+    manager_conversation_id: str | None | object = _DEFAULT_MANAGER,
     payload: str | None = None,
 ) -> str:
     event_store: SqlAlchemyTaskEventStore = setup["event_store"]
     event_id = _uid(seed)
+    resolved_manager = (
+        setup["manager_conv_id"]
+        if manager_conversation_id is _DEFAULT_MANAGER
+        else manager_conversation_id
+    )
+    assert resolved_manager is None or isinstance(resolved_manager, str)
     event_store.create_event(
         event_id,
         event_type,
         title,
         task_id=task_id or setup["task_id"],
+        manager_conversation_id=resolved_manager,
         state="routed",
         payload=payload,
         owner_user_id=setup["owner"],
     )
     return event_id
+
+
+@pytest.mark.asyncio
+async def test_manager_routed_event_without_task_is_delivered(
+    manager_setup: dict,
+) -> None:
+    event_store: SqlAlchemyTaskEventStore = manager_setup["event_store"]
+    queue_store: SqlAlchemyAgentQueueStore = manager_setup["queue_store"]
+    event_id = _uid("direct-manager-event")
+    event_store.create_event(
+        event_id,
+        "build.finished",
+        "Unassigned build",
+        task_id=None,
+        manager_conversation_id=manager_setup["manager_conv_id"],
+        state="routed",
+        owner_user_id=manager_setup["owner"],
+    )
+
+    await manager_setup["packager"].scan_once()
+
+    items = queue_store.list_items(
+        _key(manager_setup["owner"], manager_setup["manager_conv_id"])
+    )
+    assert len(items) == 1
+    assert items[0].source_ids == [event_id]
+    assert "[manager-routed; task unassigned]" in items[0].payload
+    stored = event_store.get_event(event_id)
+    assert stored is not None
+    assert stored.task_id is None
+    assert stored.manager_conversation_id == manager_setup["manager_conv_id"]
 
 
 @pytest.mark.asyncio
@@ -224,7 +266,12 @@ async def test_no_manager_conversation_holds_events(manager_setup: dict) -> None
         "orphan goal",
         owner_user_id=manager_setup["owner"],
     )
-    _routed_event(manager_setup, seed="orphan_evt", task_id=orphan_task_id)
+    _routed_event(
+        manager_setup,
+        seed="orphan_evt",
+        task_id=orphan_task_id,
+        manager_conversation_id=None,
+    )
     await packager.scan_once()
 
     # Nothing was packaged for any manager queue.
@@ -291,7 +338,12 @@ async def test_events_grouped_by_manager_conversation(manager_setup: dict) -> No
     # Two events on task A, one on task B.
     _routed_event(manager_setup, seed="a1")
     _routed_event(manager_setup, seed="a2")
-    _routed_event(manager_setup, seed="b1", task_id=second_task_id)
+    _routed_event(
+        manager_setup,
+        seed="b1",
+        task_id=second_task_id,
+        manager_conversation_id=second_conv.id,
+    )
     await packager.scan_once()
 
     a_items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))

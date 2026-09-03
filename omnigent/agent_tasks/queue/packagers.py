@@ -39,9 +39,7 @@ from omnigent.agent_tasks.broker_inbox import (
     AmbiguousEventCluster,
     cluster_events_by_similarity,
 )
-from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
-from omnigent.agent_tasks.broker_session import ensure_broker_session, get_or_create_role_profile
-from omnigent.agent_tasks.manager_role_profile import load_manager_role_profile
+from omnigent.agent_tasks.broker_session import ensure_broker_session
 from omnigent.agent_tasks.constants import (
     BROKER_BATCH_MAX_SIZE,
     BROKER_CANDIDATE_LIMIT,
@@ -50,14 +48,12 @@ from omnigent.agent_tasks.constants import (
 )
 from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import (
-    EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
 )
 from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
-from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.db.utils import now_epoch
-from omnigent.entities import AgentQueueItem, AgentQueueKey, Task, TaskEvent
+from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
@@ -233,9 +229,8 @@ class BrokerPackager(Packager):
     Scans ``awaiting_grouping`` events each tick, groups by (owner, host) —
     events from different hosts never share a batch, since each batch must be
     distributable to a host-compatible manager — excludes already-claimed
-    events, and for each group splits watcher-discovered external sessions
-    (one notice each) from routed business events (clustered by tag
-    similarity, oldest-first). The agent-idle check reads the broker's bound
+    events, and clusters the remainder by tag similarity, oldest-first. The
+    agent-idle check reads the broker's bound
     session from the role profile and looks up its raw status. The broker has
     no UI surface to boot its own session, so when the conversation/agent/
     host stores are wired the packager provisions one on demand.
@@ -280,7 +275,6 @@ class BrokerPackager(Packager):
         self._session_creator = session_creator
         self._app_state = app_state
         self._similarity_threshold = similarity_threshold
-        self._candidate_limit = candidate_limit
 
     async def _broker_conversation_id(self, owner_user_id: str) -> str | None:
         """Return the owner's broker conversation id without side effects."""
@@ -343,22 +337,15 @@ class BrokerPackager(Packager):
             unclaimed = [e for e in owner_events if e.id not in claimed]
             if not unclaimed:
                 continue
-            discovered = [
-                e for e in unclaimed if e.event_type == EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
-            ]
-            routed = [
-                e for e in unclaimed if e.event_type != EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
-            ]
-            # Each discovered external session is its own batch — the broker
-            # reads the transcript snippet and decides: adopt, create task, or FYI.
-            for disc in discovered:
-                batches.append(_PendingBatch(key=key, events=[disc], is_orphan=True))
-            # Routed events: cluster by tag similarity, then fill ONE notice per
+            # Cluster by tag similarity, then fill ONE notice per
             # poll up to ``batch_size``. Clusters are taken oldest-first; a cluster
             # that would overflow the remaining capacity is capped to its oldest
             # ``remaining`` events (the rest stay ``awaiting_grouping`` and are
             # re-clustered next poll). Similar events stay contiguous per cluster.
-            clusters = cluster_events_by_similarity(routed, threshold=self._similarity_threshold)
+            clusters = cluster_events_by_similarity(
+                unclaimed,
+                threshold=self._similarity_threshold,
+            )
             clusters.sort(key=lambda c: (c.events[0].created_at, c.events[0].id))
             included_clusters: list[AmbiguousEventCluster] = []
             included_events: list[TaskEvent] = []
@@ -408,20 +395,9 @@ class BrokerPackager(Packager):
                 len(batch.events),
             )
             return None
-        candidate_task_ids: list[str] = []
-        if not batch.is_orphan:
-            ranked = rank_tasks_for_events(
-                events=batch.events,
-                tasks=routable_tasks(self._task_store),
-                task_store=self._task_store,
-                limit=self._candidate_limit,
-            )
-            candidate_task_ids = [task.id for task, _score in ranked]
         notice = _format_broker_stall_notice(
             batch.events,
             clusters=batch.clusters,
-            candidate_task_ids=candidate_task_ids,
-            is_orphan=batch.is_orphan,
         )
         item = self._store.enqueue(
             uuid.uuid4().hex,
@@ -442,14 +418,9 @@ class BrokerPackager(Packager):
 class ManagerPackager(Packager):
     """Stage-1 packager for routed task events.
 
-    Scans ``routed`` events each tick — these are events the ingress scorer (or the
-    broker resolve path) already bound to a task, plus ``worker.execution.finished``
-    events the completion hook emits when a worker settles. They are grouped by
-    ``(owner, manager_conversation_id)`` — one queue per manager session, shared
-    by every task bound to that manager — and evaluated against the same batching
-    matrix as the broker. The agent-idle check reads the manager session status
-    directly. When a task has no manager session yet, the packager bootstraps one
-    on demand (mirroring the broker pattern) so routed events are never stranded.
+    Scans ``routed`` events each tick and groups them by their persisted
+    ``(owner, manager_conversation_id)`` destination — one queue per manager
+    session, shared by every task bound to that manager.
     """
 
     def __init__(
@@ -459,13 +430,6 @@ class ManagerPackager(Packager):
         task_store: TaskStore,
         status_reader: _StatusReader,
         *,
-        task_role_profile_store: TaskRoleProfileStore | None = None,
-        conversation_store: ConversationStore | None = None,
-        agent_store: AgentStore | None = None,
-        host_store: HostStore | None = None,
-        prompt_profile_store: PromptProfileStore | None = None,
-        session_creator: Any | None = None,
-        app_state: Any | None = None,
         poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
         batch_size: int = MANAGER_BATCH_MAX_SIZE,
         age_threshold_s: float = DEFAULT_PACKAGER_AGE_THRESHOLD_S,
@@ -479,118 +443,24 @@ class ManagerPackager(Packager):
         self._task_event_store = task_event_store
         self._task_store = task_store
         self._status_reader = status_reader
-        self._task_role_profile_store = task_role_profile_store
-        self._conversation_store = conversation_store
-        self._agent_store = agent_store
-        self._host_store = host_store
-        self._prompt_profile_store = prompt_profile_store
-        self._session_creator = session_creator
-        self._app_state = app_state
 
     @property
     def role(self) -> str:
         return TASK_MANAGER_ROLE
 
-    async def _ensure_manager_for_task(self, task: Task, owner: str) -> str | None:
-        """Bootstrap a manager session for a task that has none.
-
-        Mirrors the broker's ``_live_broker_conversation_id``: when the
-        packager's stores are wired, call ``bootstrap_task_manager`` to
-        attach-or-create. Returns the manager conversation id, or ``None``
-        when bootstrap is unavailable (no stores) or fails — in that case
-        the task's events stay ``routed`` and are retried next poll.
-        """
-        if (
-            self._task_role_profile_store is None
-            or self._conversation_store is None
-            or self._session_creator is None
-            or self._app_state is None
-        ):
-            return None
-        auth_user_id = None if owner == "__anonymous__" else owner
-        role_profile = await asyncio.to_thread(
-            load_manager_role_profile,
-            self._task_role_profile_store,
-            task,
-        )
-        if role_profile is None and self._host_store is not None and self._agent_store is not None:
-            try:
-                role_profile = await asyncio.to_thread(
-                    get_or_create_role_profile,
-                    role=task.manager_role_key,
-                    auth_user_id=auth_user_id,
-                    task_role_profile_store=self._task_role_profile_store,
-                    host_store=self._host_store,
-                    agent_store=self._agent_store,
-                    prompt_profile_store=self._prompt_profile_store,
-                )
-            except Exception:
-                _logger.exception(
-                    "manager packager: failed to provision role for task %s",
-                    task.id,
-                )
-                return None
-        if role_profile is None:
-            return None
-        params = resolve_bootstrap_params(
-            host_id=role_profile.host_id,
-            workspace=role_profile.workspace,
-            harness=role_profile.harness,
-            model=role_profile.model,
-            role_profile=role_profile,
-        )
-        try:
-            updated = await bootstrap_task_manager(
-                task=task,
-                task_store=self._task_store,
-                conversation_store=self._conversation_store,
-                params=params,
-                session_creator=self._session_creator,
-                app_state=self._app_state,
-                user_id=auth_user_id,
-            )
-            return updated.manager_conversation_id
-        except Exception:
-            _logger.exception(
-                "manager packager: failed to bootstrap manager for task %s",
-                task.id,
-            )
-            return None
-
     def _collect_pending(self) -> list[_PendingBatch]:
         events = self._task_event_store.list_events(state="routed")
         if not events:
             return []
-        # Resolve each event's task to its manager session. Tasks without one
-        # are collected for bootstrap so their events are not stranded.
-        manager_by_task: dict[str, str] = {}
         title_by_task: dict[str, str] = {}
-        needs_bootstrap: set[str] = set()
         for task_id in {event.task_id for event in events if event.task_id is not None}:
             task = self._task_store.get(task_id)
             if task is None:
                 continue
-            if task.manager_conversation_id is None:
-                needs_bootstrap.add(task_id)
-                continue
-            manager_by_task[task_id] = task.manager_conversation_id
             title_by_task[task_id] = task.title
-        # Bootstrap tasks with no manager session. This is async but
-        # ``_collect_pending`` is sync (called from the sync ``_scan_once``
-        # context via ``self._collect_pending()``). We schedule the bootstrap
-        # and let it run; next poll will pick up the events once the task
-        # has a manager_conversation_id.
-        if needs_bootstrap:
-            asyncio.ensure_future(
-                self._bootstrap_pending_tasks(needs_bootstrap)
-            )
-        # Group by (owner, manager session). Routed events always carry a
-        # task_id; any without one is not a manager concern and is skipped.
         grouped: dict[tuple[str, str], list[TaskEvent]] = {}
         for event in events:
-            if event.task_id is None:
-                continue
-            manager_conv_id = manager_by_task.get(event.task_id)
+            manager_conv_id = event.manager_conversation_id
             if manager_conv_id is None:
                 continue
             owner = event.owner_user_id or "__anonymous__"
@@ -657,22 +527,6 @@ class ManagerPackager(Packager):
                     )
                 )
         return batches
-
-    async def _bootstrap_pending_tasks(self, task_ids: set[str]) -> None:
-        """Bootstrap manager sessions for tasks that have none.
-
-        Called from ``_collect_pending`` when routed events are stranded on
-        tasks without a manager session. Each task is bootstrapped
-        independently — one failure does not block the rest. On success the
-        task's ``manager_conversation_id`` is set, and the next poll will
-        group its events normally.
-        """
-        for task_id in task_ids:
-            task = await asyncio.to_thread(self._task_store.get, task_id)
-            if task is None or task.manager_conversation_id is not None:
-                continue
-            owner = task.owner_user_id or "__anonymous__"
-            await self._ensure_manager_for_task(task, owner)
 
     async def _is_idle(self, key: AgentQueueKey) -> bool:
         if key.scope_id is None:

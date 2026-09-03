@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import asc, delete, desc, select
+from sqlalchemy import and_, asc, delete, desc, false, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.db.db_models import (
@@ -28,6 +28,7 @@ from omnigent.entities import (
     TaskEventRoutingAttempt,
     TaskEventSubscription,
 )
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_task.tags import decode_event_tags, encode_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
 
@@ -43,6 +44,7 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         created_at=row.created_at,
         tags=decode_event_tags(row.tags),
         task_id=row.task_id,
+        manager_conversation_id=row.manager_conversation_id,
         payload=row.payload,
         source=row.source,
         source_key=row.source_key,
@@ -105,6 +107,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         super().__init__(storage_location)
         self._engine = get_or_create_engine(storage_location)
         self._session = make_managed_session_maker(self._engine)
+        self._claim_session = make_managed_session_maker(self._engine, immediate=True)
 
     def create_event(
         self,
@@ -113,6 +116,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         title: str,
         *,
         task_id: str | None = None,
+        manager_conversation_id: str | None = None,
         payload: str | None = None,
         source: str | None = None,
         source_key: str | None = None,
@@ -126,6 +130,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         row = SqlTaskEvent(
             id=event_id,
             task_id=task_id,
+            manager_conversation_id=manager_conversation_id,
             event_type=event_type,
             title=title,
             payload=payload,
@@ -215,6 +220,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         event_id: str,
         *,
         task_id: str | None = _UNSET,
+        manager_conversation_id: str | None = _UNSET,
         state: str | None = None,
         routed_at: int | None = None,
         processed_at: int | None = None,
@@ -227,6 +233,12 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             changed = False
             if task_id is not _UNSET and row.task_id != task_id:
                 row.task_id = task_id
+                changed = True
+            if (
+                manager_conversation_id is not _UNSET
+                and row.manager_conversation_id != manager_conversation_id
+            ):
+                row.manager_conversation_id = manager_conversation_id
                 changed = True
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
                 row.owner_user_id = owner_user_id
@@ -246,6 +258,175 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 row.updated_at = now_epoch()
             session.flush()
             return _event_to_entity(row)
+
+    def reconcile_events_to_task(
+        self,
+        event_ids: list[str],
+        *,
+        task_id: str,
+        manager_conversation_id: str | None,
+    ) -> list[TaskEvent]:
+        unique_ids = list(dict.fromkeys(event_ids))
+        if not unique_ids:
+            return []
+        workspace_id = current_workspace_id()
+        routed_state = encode_task_event_state("routed")
+        with self._claim_session() as session:
+            rows = session.execute(
+                select(SqlTaskEvent).where(
+                    SqlTaskEvent.workspace_id == workspace_id,
+                    SqlTaskEvent.id.in_(unique_ids),
+                )
+            ).scalars().all()
+            rows_by_id = {row.id: row for row in rows}
+            if len(rows_by_id) != len(unique_ids):
+                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+            for event_id in unique_ids:
+                row = rows_by_id[event_id]
+                belongs_to_task = (
+                    row.task_id == task_id
+                    and row.manager_conversation_id == manager_conversation_id
+                ) or (
+                    row.task_id is None
+                    and manager_conversation_id is not None
+                    and row.manager_conversation_id == manager_conversation_id
+                )
+                if not belongs_to_task:
+                    raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+                if row.state != routed_state:
+                    raise OmnigentError(
+                        f"Cannot reconcile event in state {decode_task_event_state(row.state)!r}",
+                        code=ErrorCode.CONFLICT,
+                    )
+
+            manager_route = (
+                and_(
+                    SqlTaskEvent.task_id.is_(None),
+                    SqlTaskEvent.manager_conversation_id == manager_conversation_id,
+                )
+                if manager_conversation_id is not None
+                else false()
+            )
+            now = now_epoch()
+            result = session.execute(
+                update(SqlTaskEvent)
+                .where(
+                    SqlTaskEvent.workspace_id == workspace_id,
+                    SqlTaskEvent.id.in_(unique_ids),
+                    SqlTaskEvent.state == routed_state,
+                    or_(
+                        and_(
+                            SqlTaskEvent.task_id == task_id,
+                            SqlTaskEvent.manager_conversation_id
+                            == manager_conversation_id,
+                        ),
+                        manager_route,
+                    ),
+                )
+                .values(
+                    task_id=task_id,
+                    manager_conversation_id=manager_conversation_id,
+                    state=encode_task_event_state("reconciled"),
+                    processed_at=now,
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount != len(unique_ids):
+                raise OmnigentError(
+                    "Task event is already reconciled",
+                    code=ErrorCode.CONFLICT,
+                )
+            refreshed = session.execute(
+                select(SqlTaskEvent).where(
+                    SqlTaskEvent.workspace_id == workspace_id,
+                    SqlTaskEvent.id.in_(unique_ids),
+                ).execution_options(populate_existing=True)
+            ).scalars().all()
+            refreshed_by_id = {row.id: _event_to_entity(row) for row in refreshed}
+            return [refreshed_by_id[event_id] for event_id in unique_ids]
+
+    def route_events_to_manager(
+        self,
+        event_ids: list[str],
+        *,
+        manager_conversation_id: str,
+        owner_user_id: str,
+        routable_states: frozenset[str],
+    ) -> list[TaskEvent] | None:
+        unique_ids = list(dict.fromkeys(event_ids))
+        if not unique_ids:
+            return []
+        workspace_id = current_workspace_id()
+        routed_state = encode_task_event_state("routed")
+        routable_codes = [encode_task_event_state(state) for state in routable_states]
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlTaskEvent).where(
+                    SqlTaskEvent.workspace_id == workspace_id,
+                    SqlTaskEvent.id.in_(unique_ids),
+                )
+            ).scalars().all()
+            rows_by_id = {row.id: row for row in rows}
+            if len(rows_by_id) != len(unique_ids):
+                session.rollback()
+                return None
+
+            stalled_ids: list[str] = []
+            for event_id in unique_ids:
+                row = rows_by_id[event_id]
+                if (row.owner_user_id or "__anonymous__") != owner_user_id:
+                    session.rollback()
+                    return None
+                same_target = (
+                    row.state == routed_state
+                    and row.manager_conversation_id == manager_conversation_id
+                )
+                stalled = (
+                    row.state in routable_codes
+                    and row.manager_conversation_id is None
+                )
+                if same_target:
+                    continue
+                if not stalled:
+                    session.rollback()
+                    return None
+                stalled_ids.append(event_id)
+
+            if stalled_ids:
+                now = now_epoch()
+                result = session.execute(
+                    update(SqlTaskEvent)
+                    .where(
+                        SqlTaskEvent.workspace_id == workspace_id,
+                        SqlTaskEvent.id.in_(stalled_ids),
+                        SqlTaskEvent.state.in_(routable_codes),
+                        SqlTaskEvent.manager_conversation_id.is_(None),
+                        func.coalesce(
+                            SqlTaskEvent.owner_user_id, "__anonymous__"
+                        )
+                        == owner_user_id,
+                    )
+                    .values(
+                        task_id=None,
+                        manager_conversation_id=manager_conversation_id,
+                        state=routed_state,
+                        routed_at=now,
+                        updated_at=now,
+                    )
+                )
+                if result.rowcount != len(stalled_ids):
+                    session.rollback()
+                    return None
+
+            refreshed = session.execute(
+                select(SqlTaskEvent).where(
+                    SqlTaskEvent.workspace_id == workspace_id,
+                    SqlTaskEvent.id.in_(unique_ids),
+                )
+            ).scalars().all()
+            refreshed_by_id = {row.id: _event_to_entity(row) for row in refreshed}
+            return [refreshed_by_id[event_id] for event_id in event_ids]
 
     def get_event_tags(self, event_id: str) -> list[EventTag]:
         event = self.get_event(event_id)

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
 
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
-from omnigent.agent_tasks.items import resolve_task_item
+from omnigent.agent_tasks.items import create_task_item, resolve_task_item
 from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.task_packages import (
@@ -22,6 +24,7 @@ from omnigent.agent_tasks.task_packages import (
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
 from omnigent.entities.task_role_profile import TaskRoleProfile
+from omnigent.errors import OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -209,6 +212,244 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
     assert {link.event_id for link in item_store.list_events_for_item(item_b.id)} == {e3}
     for eid in (e1, e2, e3):
         assert event_store.get_event(eid).state == "reconciled"
+
+
+def test_create_item_rejects_event_assigned_to_another_task(stores) -> None:
+    task_store = stores["task"]
+    event_store = stores["event"]
+    first = task_store.create(_uid("assigned-first"), "First", "First goal")
+    second = task_store.create(_uid("assigned-second"), "Second", "Second goal")
+    event_id = _uid("assigned-event")
+    event_store.create_event(
+        event_id,
+        "build.failed",
+        "Assigned elsewhere",
+        task_id=first.id,
+        state="routed",
+    )
+
+    with pytest.raises(OmnigentError, match="Task event not found"):
+        create_task_item(
+            task=second,
+            task_item_store=stores["item"],
+            worker_store=stores["worker"],
+            task_event_store=event_store,
+            title="Steal event",
+            event_ids=[event_id],
+        )
+
+    assert stores["item"].list_items_for_task(second.id) == []
+
+
+def test_create_item_retry_does_not_duplicate_reconciled_event(stores) -> None:
+    task = stores["task"].create(
+        _uid("retry-task"),
+        "Retry task",
+        "Retry goal",
+        manager_conversation_id=_uid("retry-manager"),
+    )
+    event_id = _uid("retry-event")
+    stores["event"].create_event(
+        event_id,
+        "build.failed",
+        "Retry event",
+        task_id=task.id,
+        manager_conversation_id=task.manager_conversation_id,
+        state="routed",
+    )
+    create_task_item(
+        task=task,
+        task_item_store=stores["item"],
+        worker_store=stores["worker"],
+        task_event_store=stores["event"],
+        title="Investigate",
+        event_ids=[event_id],
+    )
+
+    with pytest.raises(OmnigentError):
+        create_task_item(
+            task=task,
+            task_item_store=stores["item"],
+            worker_store=stores["worker"],
+            task_event_store=stores["event"],
+            title="Duplicate",
+            event_ids=[event_id],
+        )
+
+    assert len(stores["item"].list_items_for_task(task.id)) == 1
+
+
+def test_concurrent_create_item_claims_event_once(stores) -> None:
+    task = stores["task"].create(
+        _uid("concurrent-claim-task"),
+        "Concurrent claim",
+        "Claim one event once",
+        manager_conversation_id=_uid("concurrent-claim-manager"),
+    )
+    event_id = _uid("concurrent-claim-event")
+    stores["event"].create_event(
+        event_id,
+        "build.failed",
+        "Concurrent event",
+        task_id=task.id,
+        manager_conversation_id=task.manager_conversation_id,
+        state="routed",
+    )
+    start = threading.Barrier(2, timeout=10)
+
+    def create(title: str) -> str:
+        start.wait()
+        try:
+            create_task_item(
+                task=task,
+                task_item_store=stores["item"],
+                worker_store=stores["worker"],
+                task_event_store=stores["event"],
+                title=title,
+                event_ids=[event_id],
+            )
+        except OmnigentError as exc:
+            return exc.code
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(create, ["First", "Second"], timeout=10))
+
+    assert sorted(outcomes) == ["conflict", "created"]
+    items = stores["item"].list_items_for_task(task.id)
+    assert len(items) == 1
+    assert [link.event_id for link in stores["item"].list_events_for_item(items[0].id)] == [
+        event_id
+    ]
+    assert stores["event"].get_event(event_id).state == "reconciled"
+
+
+def test_atomic_create_rolls_back_when_any_event_is_unclaimable(stores) -> None:
+    task = stores["task"].create(
+        _uid("atomic-rollback-task"),
+        "Atomic rollback",
+        "Do not partially reconcile",
+        manager_conversation_id=_uid("atomic-rollback-manager"),
+    )
+    routed_id = _uid("atomic-rollback-routed")
+    reconciled_id = _uid("atomic-rollback-reconciled")
+    for event_id, state in (
+        (routed_id, "routed"),
+        (reconciled_id, "reconciled"),
+    ):
+        stores["event"].create_event(
+            event_id,
+            "build.failed",
+            state,
+            task_id=task.id,
+            manager_conversation_id=task.manager_conversation_id,
+            state=state,
+        )
+
+    with pytest.raises(OmnigentError, match="Cannot reconcile event"):
+        create_task_item(
+            task=task,
+            task_item_store=stores["item"],
+            worker_store=stores["worker"],
+            task_event_store=stores["event"],
+            title="Must roll back",
+            event_ids=[routed_id, reconciled_id],
+        )
+
+    assert stores["item"].list_items_for_task(task.id) == []
+    assert stores["event"].get_event(routed_id).state == "routed"
+    assert stores["item"].get_item_for_event(routed_id) is None
+
+
+def test_atomic_create_rejects_event_claimed_by_fyi_cluster(stores) -> None:
+    task = stores["task"].create(
+        _uid("fyi-claim-task"),
+        "FYI claim",
+        "Do not steal FYI events",
+    )
+    event_id = _uid("fyi-claim-event")
+    stores["event"].create_event(
+        event_id,
+        "build.finished",
+        "Informational event",
+        task_id=task.id,
+        state="routed",
+    )
+    cluster_id = _uid("fyi-claim-cluster")
+    stores["item"].create_fyi_cluster(cluster_id, _uid("fyi-owner"), "FYI")
+    stores["item"].link_fyi_cluster_event(cluster_id, event_id)
+
+    with pytest.raises(OmnigentError, match="already reconciled"):
+        create_task_item(
+            task=task,
+            task_item_store=stores["item"],
+            worker_store=stores["worker"],
+            task_event_store=stores["event"],
+            title="Must not steal",
+            event_ids=[event_id],
+        )
+
+    assert stores["item"].list_items_for_task(task.id) == []
+    assert stores["event"].get_event(event_id).state == "routed"
+
+
+def test_package_reconcile_rejects_another_owners_unassigned_event(stores) -> None:
+    task = stores["task"].create(
+        _uid("owner-scope-task"),
+        "Owner scope",
+        "Keep events isolated",
+        state="pending",
+        owner_user_id="alice",
+    )
+    event_id = _uid("other-owner-unassigned-event")
+    stores["event"].create_event(
+        event_id,
+        "build.failed",
+        "Private event",
+        state="awaiting_grouping",
+        owner_user_id="bob",
+    )
+
+    with pytest.raises(OmnigentError):
+        reconcile_events_to_task(
+            task=task,
+            spec=PackageItemSpec(title="Must fail", event_ids=[event_id]),
+            task_item_store=stores["item"],
+            task_event_store=stores["event"],
+            worker_store=stores["worker"],
+        )
+
+    assert stores["item"].list_items_for_task(task.id) == []
+    assert stores["event"].get_event(event_id).state == "awaiting_grouping"
+
+
+def test_package_reconcile_rejects_event_routed_to_another_manager(stores) -> None:
+    task = stores["task"].create(
+        _uid("target-manager-task"),
+        "Target",
+        "Target goal",
+        state="pending",
+        manager_conversation_id=_uid("target-manager"),
+    )
+    event_id = _uid("other-manager-event")
+    stores["event"].create_event(
+        event_id,
+        "build.failed",
+        "Other manager event",
+        state="awaiting_grouping",
+        manager_conversation_id=_uid("other-manager"),
+    )
+
+    with pytest.raises(OmnigentError, match="Task event not found"):
+        reconcile_events_to_task(
+            task=task,
+            spec=PackageItemSpec(title="Steal event", event_ids=[event_id]),
+            task_item_store=stores["item"],
+            task_event_store=stores["event"],
+            worker_store=stores["worker"],
+        )
+
+    assert stores["item"].list_items_for_task(task.id) == []
 
 
 @pytest.mark.asyncio
@@ -406,6 +647,7 @@ def test_reject_task_package(stores) -> None:
         owner_user_id=_uid("owner"),
         title="Package to reject",
         goal="Package rejected",
+        manager_conversation_id=_uid("reject-manager"),
         items=[PackageItemSpec(title="Do work", event_ids=[reject_event_id])],
         task_store=task_store,
         task_item_store=item_store,
@@ -422,6 +664,11 @@ def test_reject_task_package(stores) -> None:
     released = event_store.get_event(reject_event_id)
     assert released is not None
     assert released.state == "awaiting_grouping"
+    assert released.task_id is None
+    assert released.manager_conversation_id is None
+    rejected_item = item_store.list_items_for_task(reject_task.id)[0]
+    assert item_store.list_events_for_item(rejected_item.id) == []
+    assert item_store.get_item_for_event(reject_event_id) is None
 
 
 def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:

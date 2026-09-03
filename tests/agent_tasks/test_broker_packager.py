@@ -280,7 +280,7 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(broker_setup: dict
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
-    assert "[System: please triage and route these events]" in items[0].payload
+    assert "[System: route these events to managers]" in items[0].payload
 
 
 @pytest.mark.asyncio
@@ -402,7 +402,7 @@ def test_defaults_are_configurable_constants() -> None:
 
 
 @pytest.mark.asyncio
-async def test_similar_events_packaged_into_one_notice_with_candidates(
+async def test_similar_events_packaged_without_task_selection_instructions(
     broker_setup: dict,
 ) -> None:
     event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
@@ -440,11 +440,16 @@ async def test_similar_events_packaged_into_one_notice_with_candidates(
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     payload = json.loads(items[0].payload)
-    assert "possible clusters waiting for route/reconcile" in payload["prompt"]
+    assert "route these events to managers" in payload["prompt"]
+    assert "Do not select or create tasks" in payload["prompt"]
     assert len(payload["clusters"]) == 1
     cluster_events = payload["clusters"][0]["events"]
     assert len(cluster_events) == 2
-    assert task_id in payload["candidate_task_ids"]
+    assert "candidate_task_ids" not in payload
+    assert task_id not in items[0].payload
+    assert "adopt" not in payload["prompt"].lower()
+    assert "fyi" not in payload["prompt"].lower()
+    assert "match-tasks" not in payload["prompt"].lower()
 
 
 
@@ -525,10 +530,9 @@ async def test_small_clusters_fill_into_one_notice(broker_setup: dict) -> None:
 
 
 @pytest.mark.asyncio
-async def test_discovered_session_is_packaged_as_orphan_style(
+async def test_discovered_session_uses_clustered_manager_routing_notice(
     broker_setup: dict,
 ) -> None:
-    """An external.session.discovered event is packaged one-per-notice."""
     from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
 
     event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
@@ -561,21 +565,19 @@ async def test_discovered_session_is_packaged_as_orphan_style(
     items = queue_store.list_items(_key(broker_setup["user_id"]))
     assert len(items) == 1
     notice = json.loads(items[0].payload)
-    # Discovered sessions use the orphan-style flat events list (no clusters).
-    assert "clusters" not in notice
+    assert len(notice["clusters"]) == 1
     assert "candidate_task_ids" not in notice
-    assert notice["events"][0]["event_type"] == "external.session.discovered"
-    # The prompt mentions the three triage outcomes.
-    assert "transcript_snippet" in notice["prompt"]
-    assert "propose-adoption" in notice["prompt"]
-    assert "fyi" in notice["prompt"].lower()
+    assert notice["clusters"][0]["events"][0]["event_type"] == "external.session.discovered"
+    assert "route these events to managers" in notice["prompt"]
+    assert "adopt" not in notice["prompt"].lower()
+    assert "fyi" not in notice["prompt"].lower()
+    assert "match-tasks" not in notice["prompt"].lower()
 
 
 @pytest.mark.asyncio
-async def test_discovered_session_is_isolated_from_routed_events(
+async def test_discovered_session_and_other_event_share_clustered_notice(
     broker_setup: dict,
 ) -> None:
-    """Discovered sessions and routed events produce separate notices."""
     from omnigent.agent_tasks.event_types import EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
 
     event_store: SqlAlchemyTaskEventStore = broker_setup["event_store"]
@@ -614,20 +616,15 @@ async def test_discovered_session_is_isolated_from_routed_events(
     await packager.scan_once()
 
     items = queue_store.list_items(_key(broker_setup["user_id"]))
-    assert len(items) == 2
-    # One notice has clusters (routed), the other has flat events (discovered).
-    has_clusters = [it for it in items if "clusters" in json.loads(it.payload)]
-    has_events = [
-        it
-        for it in items
-        if "events" in json.loads(it.payload) and "clusters" not in json.loads(it.payload)
-    ]
-    assert len(has_clusters) == 1
-    assert len(has_events) == 1
-    assert (
-        json.loads(has_events[0].payload)["events"][0]["event_type"]
-        == "external.session.discovered"
-    )
+    assert len(items) == 1
+    notice = json.loads(items[0].payload)
+    event_types = {
+        event["event_type"]
+        for cluster in notice["clusters"]
+        for event in cluster["events"]
+    }
+    assert event_types == {"build.finished", "external.session.discovered"}
+    assert "candidate_task_ids" not in notice
 
 
 @pytest.mark.asyncio

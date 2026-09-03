@@ -12,9 +12,14 @@ from pydantic import BaseModel, Field, field_validator
 
 from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
+from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.ingress import ingress_event
-from omnigent.agent_tasks.resolve import dismiss_task_event, resolve_task_event
+from omnigent.agent_tasks.resolve import (
+    ROUTABLE_STALLED_EVENT_STATES,
+    dismiss_task_event,
+    resolve_task_event,
+)
 from omnigent.db.enum_codecs import TASK_EVENT_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import EventTag, Task, TaskEvent, TaskEventRoutingAttempt
@@ -25,6 +30,7 @@ from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
@@ -118,6 +124,33 @@ class BatchResolveTaskEventsRequest(BaseModel):
         return cleaned
 
 
+class BatchRouteManagerTaskEventsRequest(BaseModel):
+    """Request body for ``POST /v1/task-events/batch-route-manager``."""
+
+    event_ids: list[str] = Field(min_length=1)
+    manager_conversation_id: str
+
+    @field_validator("event_ids")
+    @classmethod
+    def _clean_event_ids(cls, value: list[str]) -> list[str]:
+        cleaned = list(
+            dict.fromkeys(event_id.strip() for event_id in value if event_id.strip())
+        )
+        if not cleaned:
+            raise ValueError("event_ids must contain at least one id")
+        if len(cleaned) > 100:
+            raise ValueError("event_ids must contain at most 100 unique ids")
+        return cleaned
+
+    @field_validator("manager_conversation_id")
+    @classmethod
+    def _clean_manager_conversation_id(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("manager_conversation_id must be a non-empty string")
+        return cleaned
+
+
 def _event_to_response(event: TaskEvent) -> dict[str, Any]:
     return {
         "id": event.id,
@@ -133,6 +166,7 @@ def _event_to_response(event: TaskEvent) -> dict[str, Any]:
         "tags": tags_to_payload(event.tags or []),
         "state": event.state,
         "task_id": event.task_id,
+        "manager_conversation_id": event.manager_conversation_id,
         "created_at": event.created_at,
         "updated_at": event.updated_at,
         "routed_at": event.routed_at,
@@ -157,6 +191,7 @@ def create_task_events_router(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
+    manager_store: ManagerStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
@@ -366,11 +401,91 @@ def create_task_events_router(
             resolved.append(_event_to_response(updated))
         return {"object": "list", "data": resolved}
 
+    @router.post("/task-events/batch-route-manager")
+    async def batch_route_events_to_manager(
+        request: Request,
+        body: BatchRouteManagerTaskEventsRequest,
+    ) -> dict[str, Any]:
+        """Route stalled events directly to a first-class manager."""
+        user_id = require_user(request, auth_provider)
+        owner = _effective_user_id(user_id)
+        if manager_store is None:
+            raise OmnigentError(
+                "manager routing is not configured on this server",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        manager = await asyncio.to_thread(
+            manager_store.get,
+            body.manager_conversation_id,
+        )
+        conversation = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            body.manager_conversation_id,
+        )
+        if (
+            manager is None
+            or conversation is None
+            or conversation.parent_conversation_id is not None
+        ):
+            raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
+        if manager.owner_user_id != owner:
+            raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
+
+        events_by_id = {
+            event.id: event
+            for event in await asyncio.to_thread(task_event_store.get_events, body.event_ids)
+        }
+        events: list[TaskEvent] = []
+        for event_id in body.event_ids:
+            event = events_by_id.get(event_id)
+            if event is None or (event.owner_user_id or "__anonymous__") != owner:
+                raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+            source_host = event_host(event)
+            if (
+                source_host is not None
+                and conversation.host_id is not None
+                and source_host != conversation.host_id
+            ):
+                raise OmnigentError(
+                    f"Event {event.id} is not compatible with the manager host",
+                    code=ErrorCode.CONFLICT,
+                )
+            if event.state == "routed" and (
+                event.manager_conversation_id == body.manager_conversation_id
+            ):
+                events.append(event)
+                continue
+            if event.state not in ROUTABLE_STALLED_EVENT_STATES:
+                raise OmnigentError(
+                    f"Cannot route event in state {event.state!r}",
+                    code=ErrorCode.CONFLICT,
+                )
+            events.append(event)
+
+        routed = await asyncio.to_thread(
+            task_event_store.route_events_to_manager,
+            body.event_ids,
+            manager_conversation_id=body.manager_conversation_id,
+            owner_user_id=owner,
+            routable_states=ROUTABLE_STALLED_EVENT_STATES,
+        )
+        if routed is None:
+            raise OmnigentError(
+                "Task events changed while routing",
+                code=ErrorCode.CONFLICT,
+            )
+        return {"object": "list", "data": [_event_to_response(event) for event in routed]}
+
     @router.post("/task-events/{event_id}/dismiss")
     async def dismiss_event(request: Request, event_id: str) -> dict[str, Any]:
         """Dismiss a task event without routing it."""
-        require_user(request, auth_provider)
+        user_id = require_user(request, auth_provider)
         event = await _get_event_or_404(event_id)
+        if (
+            (event.owner_user_id or "__anonymous__") != _effective_user_id(user_id)
+            and not _is_admin(user_id)
+        ):
+            raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         updated = await dismiss_task_event(event=event, task_event_store=task_event_store)
         return _event_to_response(updated)
 

@@ -45,6 +45,78 @@ def test_create_event_and_get_by_source_dedupes(store: SqlAlchemyTaskEventStore)
     ]
 
 
+def test_manager_conversation_id_round_trips_and_updates(
+    store: SqlAlchemyTaskEventStore,
+) -> None:
+    event_id = _uid("event_manager")
+    first_manager = _uid("manager_first")
+    second_manager = _uid("manager_second")
+
+    created = store.create_event(
+        event_id,
+        "build.finished",
+        "Build passed",
+        manager_conversation_id=first_manager,
+    )
+    assert created.manager_conversation_id == first_manager
+    loaded = store.get_event(event_id)
+    assert loaded is not None
+    assert loaded.manager_conversation_id == first_manager
+
+    updated = store.update_event(
+        event_id,
+        manager_conversation_id=second_manager,
+    )
+    assert updated is not None
+    assert updated.manager_conversation_id == second_manager
+    assert store.list_events()[0].manager_conversation_id == second_manager
+
+
+def test_route_events_to_manager_is_atomic_ordered_and_idempotent(
+    store: SqlAlchemyTaskEventStore,
+) -> None:
+    first_id = _uid("atomic-first")
+    second_id = _uid("atomic-second")
+    manager_id = _uid("atomic-manager")
+    other_manager_id = _uid("atomic-other-manager")
+    for event_id in (first_id, second_id):
+        store.create_event(
+            event_id,
+            "build.failed",
+            "Build failed",
+            state="awaiting_grouping",
+            owner_user_id="owner",
+        )
+
+    routed = store.route_events_to_manager(
+        [second_id, first_id],
+        manager_conversation_id=manager_id,
+        owner_user_id="owner",
+        routable_states=frozenset({"awaiting_grouping"}),
+    )
+    assert routed is not None
+    assert [event.id for event in routed] == [second_id, first_id]
+    assert {event.manager_conversation_id for event in routed} == {manager_id}
+
+    repeated = store.route_events_to_manager(
+        [second_id, first_id],
+        manager_conversation_id=manager_id,
+        owner_user_id="owner",
+        routable_states=frozenset({"awaiting_grouping"}),
+    )
+    assert repeated == routed
+    assert (
+        store.route_events_to_manager(
+            [first_id],
+            manager_conversation_id=other_manager_id,
+            owner_user_id="owner",
+            routable_states=frozenset({"awaiting_grouping"}),
+        )
+        is None
+    )
+    assert store.get_event(first_id).manager_conversation_id == manager_id
+
+
 def test_routing_attempts_round_trip(store: SqlAlchemyTaskEventStore) -> None:
     event_id = _uid("event_route")
     attempt_id = _uid("attempt_1")

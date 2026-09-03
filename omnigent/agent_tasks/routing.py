@@ -72,6 +72,7 @@ async def route_event_to_task(
     updated = task_event_store.update_event(
         event.id,
         task_id=bootstrapped.id,
+        manager_conversation_id=bootstrapped.manager_conversation_id,
         state=ROUTED_EVENT_STATE,
         routed_at=routed_at,
     )

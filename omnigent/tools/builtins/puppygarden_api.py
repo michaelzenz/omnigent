@@ -18,6 +18,10 @@ from urllib.parse import unquote
 
 from omnigent.tools.base import Tool
 
+# Private runner-to-server identity header. It is not part of the tool schema,
+# so models cannot select another manager session when calling self endpoints.
+PUPPYGARDEN_CALLER_CONVERSATION_HEADER = "X-Omnigent-PuppyGarden-Caller-Conversation-Id"
+
 # Path prefixes that belong to the PuppyGarden task API surface. The runner
 # handler rejects anything outside these so a misbehaving model can't use this
 # tool as an arbitrary server proxy.

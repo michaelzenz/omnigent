@@ -16,7 +16,7 @@ export const STATIC_ROLE_CATALOG: RoleCatalogEntry[] = [
     defaultsKind: "per_user",
     profileRoleId: "broker",
     definition:
-      "You are a task broker. Read host.puppygarden.root from ~/.omnigent/config.yaml and follow <host.puppygarden.root>/docs/TASK_BROKER.md. When routing stalls, list the ambiguous inbox, auto-route confident active-task matches via batch-resolve, reconcile onto pending packages when appropriate, and create new pending task packages for uncertain cases.",
+      "You are a task broker. Read host.puppygarden.root from ~/.omnigent/config.yaml and follow <host.puppygarden.root>/docs/TASK_BROKER.md. When routing stalls, list first-class managers, select the best host-compatible manager by description, create one when none fits, and route the events there. Never create or manage tasks or task items.",
   },
   {
     id: "secretary",
@@ -29,4 +29,4 @@ export const STATIC_ROLE_CATALOG: RoleCatalogEntry[] = [
 ];
 
 export const MANAGER_ROLE_DEFINITION =
-  "You are a task manager for one managed task. Read host.puppygarden.root from ~/.omnigent/config.yaml and follow <host.puppygarden.root>/docs/TASK_MANAGER.md. Triage routed events into task items, reconcile the backlog, and dispatch workers after user approval.";
+  "You are a first-class task manager for a portfolio of managed tasks. Read host.puppygarden.root from ~/.omnigent/config.yaml and follow <host.puppygarden.root>/docs/TASK_MANAGER.md. Maintain your manager description, choose or create tasks for routed events, reconcile the backlog, and dispatch workers after user approval.";

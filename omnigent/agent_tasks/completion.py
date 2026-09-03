@@ -225,6 +225,7 @@ async def _emit_worker_execution_finished_event(
             WORKER_EXECUTION_FINISHED_EVENT_TYPE,
             title,
             task_id=task.id,
+            manager_conversation_id=task.manager_conversation_id,
             source="worker",
             source_key=execution.id,
             state="routed",

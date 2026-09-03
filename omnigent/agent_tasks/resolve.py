@@ -13,7 +13,7 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
-_ROUTE_TO_TASK_STATES = frozenset(
+ROUTABLE_STALLED_EVENT_STATES = frozenset(
     {
         "received",
         "awaiting_grouping",
@@ -26,6 +26,7 @@ _DISMISSABLE_STATES = frozenset(
         "awaiting_grouping",
         "pending_triage",
         "classified_fyi",
+        "routed",
     }
 )
 
@@ -68,7 +69,7 @@ async def resolve_task_event(
     The event lands in ``routed`` state; the manager packager picks it up on its
     next poll, so this no longer wakes the manager directly.
     """
-    if event.state not in _ROUTE_TO_TASK_STATES:
+    if event.state not in ROUTABLE_STALLED_EVENT_STATES:
         raise OmnigentError(
             f"Cannot route event in state {event.state!r}",
             code=ErrorCode.CONFLICT,

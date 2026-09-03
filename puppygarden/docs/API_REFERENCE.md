@@ -29,6 +29,7 @@ response then carries `deliveries: [{event_id, task_id}]`.
 | POST | `/v1/task-events/{id}/complete` |
 | POST | `/v1/task-events/{id}/dismiss` |
 | POST | `/v1/task-events/batch-resolve` |
+| POST | `/v1/task-events/batch-route-manager` |
 | POST | `/v1/task-events/{event_id}/reroute` |
 | GET | `/v1/task-events/ambiguous-inbox` |
 | POST | `/v1/task-events/match-tasks` |
@@ -42,6 +43,9 @@ response then carries `deliveries: [{event_id, task_id}]`.
 | POST | `/v1/agent-tasks/packages` |
 | GET | `/v1/agent-tasks` |
 | POST | `/v1/agent-tasks/batch` |
+| GET | `/v1/agent-tasks/managers` |
+| POST | `/v1/agent-tasks/managers` |
+| PATCH | `/v1/agent-tasks/managers/self` |
 | GET | `/v1/agent-tasks/{id}` |
 | PATCH | `/v1/agent-tasks/{id}` |
 | POST | `/v1/agent-tasks/{id}/move-to-queue-end` |
@@ -70,6 +74,21 @@ highest) through 3 (P3), defaulting to 2. Task responses include `priority` and
 `queue_rank`. Lists are ordered by `queue_rank DESC, id DESC`. Creating a task
 places it at the front; creating a task item bumps its parent to the front; the
 move endpoint places it at the end without changing audit timestamps.
+
+Managers are first-class records backed by top-level conversations.
+`GET /v1/agent-tasks/managers` returns the caller's managers with their
+descriptions, role keys, placement, capacity, and task portfolios, plus the
+manager role profiles available for creation. Create one with
+`POST /v1/agent-tasks/managers` using `role_key`, `description`, and an optional
+`title`. A manager updates its own routing description through
+`PATCH /v1/agent-tasks/managers/self`; caller identity is supplied by the
+`puppygarden_api` runtime, not in the request body.
+
+The broker routes stalled events directly with
+`POST /v1/task-events/batch-route-manager`, passing `event_ids` and
+`manager_conversation_id`. Event responses include both `task_id` and
+`manager_conversation_id`; directly routed events have no `task_id` until the
+manager reconciles them into a task.
 
 The dashboard task object includes `goal`, `created_at`, `priority`, and
 `queue_rank`. It also returns every nonterminal, non-cancelled task item in

@@ -17,13 +17,20 @@ import json
 
 import pytest
 
+from omnigent.runner.identity import (
+    RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
+    RUNNER_TUNNEL_TOKEN_HEADER,
+)
 from omnigent.runner.tool_dispatch import (
     _ALL_LOCAL_TOOLS,
     _NATIVE_RELAY_BUILTIN_TOOLS,
     _PUPPYGARDEN_API_TOOLS,
     _execute_puppygarden_api_tool,
 )
-from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool
+from omnigent.tools.builtins.puppygarden_api import (
+    PUPPYGARDEN_CALLER_CONVERSATION_HEADER,
+    PuppyGardenApiTool,
+)
 
 _TOOL_NAME = PuppyGardenApiTool.name()
 
@@ -116,6 +123,33 @@ async def test_patch_passes_body() -> None:
     method, url, kwargs = client.calls[0]
     assert (method, url) == ("PATCH", "/v1/agent-tasks/t1")
     assert kwargs["json"] == {"state": "idle"}
+
+
+@pytest.mark.asyncio
+async def test_manager_self_patch_forwards_runner_caller_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR, "tunnel-token")
+    client = _RecordingClient(_Resp(body={"conversation_id": "manager-1"}))
+    await _execute_puppygarden_api_tool(
+        _TOOL_NAME,
+        json.dumps(
+            {
+                "method": "PATCH",
+                "path": "/v1/agent-tasks/managers/self",
+                "body": {"description": "Owns release readiness."},
+            }
+        ),
+        server_client=client,
+        caller_conversation_id="manager-1",
+    )
+
+    method, url, kwargs = client.calls[0]
+    assert (method, url) == ("PATCH", "/v1/agent-tasks/managers/self")
+    assert kwargs["headers"] == {
+        PUPPYGARDEN_CALLER_CONVERSATION_HEADER: "manager-1",
+        RUNNER_TUNNEL_TOKEN_HEADER: "tunnel-token",
+    }
 
 
 @pytest.mark.asyncio

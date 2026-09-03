@@ -4003,6 +4003,7 @@ def server(
         SqlAlchemyConversationStore,
     )
     from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
     from omnigent.stores.model_settings_store.sqlalchemy_store import (
         SqlAlchemyModelSettingsStore,
     )
@@ -4066,6 +4067,7 @@ def server(
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     memory_store = SqlAlchemyMemoryStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
+    manager_store = SqlAlchemyManagerStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     task_event_store = SqlAlchemyTaskEventStore(db_uri)
     task_item_store = SqlAlchemyTaskItemStore(db_uri)
@@ -4236,6 +4238,7 @@ def server(
         scheduled_task_store=scheduled_task_store,
         memory_store=memory_store,
         project_store=project_store,
+        manager_store=manager_store,
         task_store=task_store,
         task_event_store=task_event_store,
         task_item_store=task_item_store,

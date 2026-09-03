@@ -123,6 +123,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.memory_store import MemoryStore
 from omnigent.stores.model_settings_store import ModelSettingsStore
 from omnigent.stores.permission_store import PermissionStore
@@ -1076,6 +1077,7 @@ def create_app(
     project_store: ProjectStore | None = None,
     memory_store: MemoryStore | None = None,
     task_store: TaskStore | None = None,
+    manager_store: ManagerStore | None = None,
     task_event_store: TaskEventStore | None = None,
     task_item_store: TaskItemStore | None = None,
     worker_store: WorkerStore | None = None,
@@ -1222,6 +1224,12 @@ def create_app(
     """
     if permission_store is not None and auth_provider is None:
         raise ValueError("auth_provider is required when permission_store is provided")
+    if manager_store is None and task_store is not None:
+        from omnigent.stores.manager_store.sqlalchemy_store import (
+            SqlAlchemyManagerStore,
+        )
+
+        manager_store = SqlAlchemyManagerStore(task_store.storage_location)
 
     from omnigent.server.server_config import load_branding_snapshot
 
@@ -1502,13 +1510,6 @@ def create_app(
                     task_event_store=task_event_store,
                     task_store=task_store,
                     status_reader=_PackagerStatusReaderSync(),
-                    task_role_profile_store=task_role_profile_store,
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    host_store=host_store,
-                    prompt_profile_store=prompt_profile_store,
-                    session_creator=_session_creator,
-                    app_state=app_inst.state,
                 )
             # Cancel stale manager queue items keyed by task_id (pre-rekey)
             # so events re-package under the correct manager_conversation_id key.
@@ -1820,6 +1821,7 @@ def create_app(
     app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
     app.state.project_store = project_store
+    app.state.manager_store = manager_store
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
@@ -2894,6 +2896,7 @@ def create_app(
                 task_asset_store,
                 agent_store,
                 conversation_store=conversation_store,
+                manager_store=manager_store,
                 task_role_profile_store=task_role_profile_store,
                 user_role_session_store=user_role_session_store,
                 host_store=host_store,
@@ -2917,6 +2920,7 @@ def create_app(
                 task_event_store,
                 worker_store,
                 conversation_store,
+                manager_store=manager_store,
                 task_role_profile_store=task_role_profile_store,
                 auth_provider=auth_provider,
                 permission_store=permission_store,

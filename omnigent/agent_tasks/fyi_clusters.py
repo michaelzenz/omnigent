@@ -34,6 +34,7 @@ def _generate_cluster_id() -> str:
 def _claimable_fyi_events(
     event_ids: list[str],
     *,
+    owner_user_id: str,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
 ) -> list[str]:
@@ -46,7 +47,13 @@ def _claimable_fyi_events(
         event = task_event_store.get_event(event_id)
         if event is None:
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-        if event.state not in AMBIGUOUS_EVENT_STATES:
+        if (event.owner_user_id or "__anonymous__") != owner_user_id:
+            raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+        is_owned_manager_route = (
+            event.state == "routed"
+            and event.manager_conversation_id is not None
+        )
+        if event.state not in AMBIGUOUS_EVENT_STATES and not is_owned_manager_route:
             continue
         claimed.append(event_id)
     return claimed
@@ -65,6 +72,7 @@ def create_fyi_cluster(
     """Create or extend a broker FYI cluster over orphan events."""
     claimed_ids = _claimable_fyi_events(
         event_ids,
+        owner_user_id=owner_user_id,
         task_event_store=task_event_store,
         task_item_store=task_item_store,
     )
@@ -74,6 +82,8 @@ def create_fyi_cluster(
     if cluster_id is not None:
         cluster = task_item_store.get_fyi_cluster(cluster_id)
         if cluster is None:
+            raise OmnigentError("FYI cluster not found", code=ErrorCode.NOT_FOUND)
+        if cluster.owner_user_id != owner_user_id:
             raise OmnigentError("FYI cluster not found", code=ErrorCode.NOT_FOUND)
         if cluster.state != FYI_CLUSTER_OPEN_STATE:
             raise OmnigentError(

@@ -34,6 +34,27 @@ class TaskItemStore(ABC):
         """Insert a new task item."""
 
     @abstractmethod
+    def create_item_with_event_claims(
+        self,
+        item_id: str,
+        task_id: str,
+        title: str,
+        event_ids: list[str],
+        *,
+        owner_user_id: str | None,
+        manager_conversation_id: str | None,
+        state: str = "draft",
+        description: str | None = None,
+        instructions: str | None = None,
+        internal_note: str | None = None,
+        worker_id: str | None = None,
+        created_by: str = "manager",
+        kind: str = "work",
+        allow_unassigned: bool = False,
+    ) -> TaskItem:
+        """Create an item and atomically claim its contributing events."""
+
+    @abstractmethod
     def get_item(self, item_id: str) -> TaskItem | None:
         """Return one task item by id."""
 
@@ -93,8 +114,30 @@ class TaskItemStore(ABC):
         """Link a task item to a contributing event."""
 
     @abstractmethod
+    def update_item_with_event_claims(
+        self,
+        task_item_id: str,
+        task_id: str,
+        event_ids: list[str],
+        *,
+        owner_user_id: str | None,
+        manager_conversation_id: str | None,
+        title: str | None = None,
+        description: str | None = _UNSET,
+        instructions: str | None = _UNSET,
+        internal_note: str | None = _UNSET,
+        relation: str = "triggered",
+        allow_unassigned: bool = False,
+    ) -> TaskItem:
+        """Update an existing item while atomically claiming events."""
+
+    @abstractmethod
     def list_events_for_item(self, task_item_id: str) -> list[TaskItemEvent]:
         """List events linked to a task item."""
+
+    @abstractmethod
+    def unlink_events(self, task_item_id: str) -> int:
+        """Remove all event links for an item and return the deleted count."""
 
     @abstractmethod
     def create_fyi_cluster(

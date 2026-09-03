@@ -15,7 +15,6 @@ from omnigent.agent_tasks.task_match import (
     internal_note_from_event_tags,
     task_tags_from_event_tags,
 )
-from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, TaskItem, TaskTag
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.task_event_store import TaskEventStore
@@ -23,9 +22,6 @@ from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
-
-_CLAIMABLE_EVENT_STATES = frozenset(AMBIGUOUS_EVENT_STATES)
-
 
 def _generate_task_id() -> str:
     return uuid.uuid4().hex
@@ -44,13 +40,34 @@ class PackageItemSpec:
     worker_id: str | None = None
 
 
+def _require_package_event_scope(
+    event: TaskEvent,
+    *,
+    task_id: str,
+    owner_user_id: str | None,
+    manager_conversation_id: str | None,
+) -> None:
+    if (event.owner_user_id or "__anonymous__") != (
+        owner_user_id or "__anonymous__"
+    ):
+        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+    task_matches = event.task_id is None or event.task_id == task_id
+    manager_matches = (
+        event.manager_conversation_id is None
+        or event.manager_conversation_id == manager_conversation_id
+    )
+    if not task_matches or not manager_matches:
+        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+
+
 def _bulk_claimable_events(
     event_ids: list[str],
     *,
+    task: Task,
     task_event_store: TaskEventStore,
     task_item_store: TaskItemStore,
 ) -> list[TaskEvent]:
-    """Return the claimable ambiguous events for ``event_ids`` in one read pass.
+    """Return claimable broker or direct-manager events in one read pass.
 
     Loads every referenced event in one query and the two claim sets (events
     already linked to a task item or an open FYI cluster) in two more, then
@@ -72,10 +89,28 @@ def _bulk_claimable_events(
     claimed_by_fyi = task_item_store.get_event_ids_claimed_by_fyi_clusters(unique_ids)
     claimable: list[TaskEvent] = []
     for eid in unique_ids:
+        event = events_by_id[eid]
+        _require_package_event_scope(
+            event,
+            task_id=task.id,
+            owner_user_id=task.owner_user_id,
+            manager_conversation_id=task.manager_conversation_id,
+        )
         if eid in claimed_by_items or eid in claimed_by_fyi:
             continue
-        event = events_by_id[eid]
-        if event.state in _CLAIMABLE_EVENT_STATES:
+        is_ambiguous = event.state in AMBIGUOUS_EVENT_STATES
+        is_direct_manager_route = (
+            event.state == "routed"
+            and (
+                event.task_id == task.id
+                or (
+                    event.task_id is None
+                    and event.manager_conversation_id is not None
+                    and event.manager_conversation_id == task.manager_conversation_id
+                )
+            )
+        )
+        if is_ambiguous or is_direct_manager_route:
             claimable.append(event)
     return claimable
 
@@ -113,6 +148,7 @@ def reconcile_events_to_task_batch(
         e.id: e
         for e in _bulk_claimable_events(
             all_event_ids,
+            task=task,
             task_event_store=task_event_store,
             task_item_store=task_item_store,
         )
@@ -138,22 +174,19 @@ def reconcile_events_to_task_batch(
                     f"Cannot extend item in state {existing.state!r}",
                     code=ErrorCode.CONFLICT,
                 )
-            updated = task_item_store.update_item(
+            item = task_item_store.update_item_with_event_claims(
                 spec.item_id,
+                task.id,
+                [event.id for event in events],
+                owner_user_id=task.owner_user_id,
+                manager_conversation_id=task.manager_conversation_id,
                 title=spec.title,
                 description=spec.description,
                 instructions=spec.instructions,
                 internal_note=spec.internal_note,
+                relation="triggered",
+                allow_unassigned=True,
             )
-            assert updated is not None
-            item = updated
-            for event in events:
-                task_item_store.link_event(item.id, event.id, relation="triggered")
-                task_event_store.update_event(
-                    event.id,
-                    state="reconciled",
-                    processed_at=now_epoch(),
-                )
             results.append(item)
         else:
             item = create_task_item(
@@ -169,6 +202,7 @@ def reconcile_events_to_task_batch(
                 created_by="broker",
                 worker_id=spec.worker_id,
                 event_ids=[event.id for event in events],
+                allow_unassigned_events=True,
             )
             results.append(item)
     return results
@@ -221,6 +255,21 @@ def create_task_package(
     resolved_internal_note = internal_note or (
         internal_note_from_event_tags(event_tags) if event_tags else None
     )
+    all_event_ids = list(
+        dict.fromkeys(event_id for item in items for event_id in item.event_ids)
+    )
+    events_by_id = {
+        event.id: event for event in task_event_store.get_events(all_event_ids)
+    }
+    if any(event_id not in events_by_id for event_id in all_event_ids):
+        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+    for event in events_by_id.values():
+        _require_package_event_scope(
+            event,
+            task_id=resolved_task_id,
+            owner_user_id=owner_user_id,
+            manager_conversation_id=manager_conversation_id,
+        )
 
     task = task_store.create(
         resolved_task_id,
@@ -295,7 +344,13 @@ def reject_task_package(
         for link in task_item_store.list_events_for_item(item.id):
             event = task_event_store.get_event(link.event_id)
             if event is not None and event.state == "reconciled":
-                task_event_store.update_event(link.event_id, state="awaiting_grouping")
+                task_event_store.update_event(
+                    link.event_id,
+                    task_id=None,
+                    manager_conversation_id=None,
+                    state="awaiting_grouping",
+                )
+        task_item_store.unlink_events(item.id)
         if item.state != "cancelled":
             task_item_store.update_item(item.id, state="cancelled")
 

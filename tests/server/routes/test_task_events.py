@@ -16,7 +16,9 @@ from omnigent.agent_tasks.agent_builtins import (
 from omnigent.entities import EventTag, TaskTag
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from tests.server.routes.agent_task_api import patch_host_session_launch, put_agent_role_profile
@@ -30,6 +32,29 @@ def _seed_live_host(db_uri: str, seed: str) -> str:
     host_id = _uid(seed)
     HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
     return host_id
+
+
+def _register_manager(
+    db_uri: str,
+    *,
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: str = "__anonymous__",
+    host_id: str | None = None,
+) -> None:
+    SqlAlchemyConversationStore(db_uri).create_conversation(
+        conversation_id=conversation_id,
+        title="Task event manager",
+        agent_id=agent_id,
+        host_id=host_id,
+        workspace="/tmp/task-event-manager",
+    )
+    SqlAlchemyManagerStore(db_uri).upsert(
+        conversation_id,
+        owner_user_id=owner_user_id,
+        role_key="manager:default",
+        description="Owns routed build events.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +123,205 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     assert task_resp.json()["manager_conversation_id"] is not None
 
 
+async def test_batch_route_manager_success_and_same_manager_idempotence(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    manager_agent_profile_id: str,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    manager_id = _uid("route-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=manager_id,
+        agent_id=manager_agent_profile_id,
+    )
+    event_id = _uid("route-manager-event")
+    task_event_store.create_event(
+        event_id,
+        "build.failed",
+        "Build failed",
+        state="awaiting_grouping",
+        owner_user_id="__anonymous__",
+    )
+
+    first = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+    )
+    assert first.status_code == 200, first.text
+    routed = first.json()["data"][0]
+    assert routed["state"] == "routed"
+    assert routed["task_id"] is None
+    assert routed["manager_conversation_id"] == manager_id
+
+    second = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+    )
+    assert second.status_code == 200
+    assert second.json()["data"][0] == routed
+
+
+async def test_batch_route_manager_enforces_manager_and_event_owner(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    manager_agent_profile_id: str,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    other_manager_id = _uid("other-owner-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=other_manager_id,
+        agent_id=manager_agent_profile_id,
+        owner_user_id="someone-else",
+    )
+    mine_event_id = _uid("mine-event")
+    task_event_store.create_event(
+        mine_event_id,
+        "build.failed",
+        "Mine",
+        state="awaiting_grouping",
+        owner_user_id="__anonymous__",
+    )
+    manager_denied = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={
+            "event_ids": [mine_event_id],
+            "manager_conversation_id": other_manager_id,
+        },
+    )
+    assert manager_denied.status_code == 404
+
+    mine_manager_id = _uid("mine-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=mine_manager_id,
+        agent_id=manager_agent_profile_id,
+    )
+    other_event_id = _uid("other-owner-event")
+    task_event_store.create_event(
+        other_event_id,
+        "build.failed",
+        "Theirs",
+        state="awaiting_grouping",
+        owner_user_id="someone-else",
+    )
+    event_denied = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={
+            "event_ids": [other_event_id],
+            "manager_conversation_id": mine_manager_id,
+        },
+    )
+    assert event_denied.status_code == 404
+
+
+async def test_batch_route_manager_rejects_invalid_state(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    manager_agent_profile_id: str,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    manager_id = _uid("invalid-state-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=manager_id,
+        agent_id=manager_agent_profile_id,
+    )
+    event_id = _uid("reconciled-event")
+    task_event_store.create_event(
+        event_id,
+        "build.finished",
+        "Already reconciled",
+        state="reconciled",
+        owner_user_id="__anonymous__",
+    )
+
+    resp = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+    )
+
+    assert resp.status_code == 409
+
+
+async def test_batch_route_manager_conflict_does_not_partially_route(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    manager_agent_profile_id: str,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    manager_id = _uid("atomic-manager")
+    other_manager_id = _uid("atomic-other-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=manager_id,
+        agent_id=manager_agent_profile_id,
+    )
+    routable_id = _uid("atomic-routable")
+    conflict_id = _uid("atomic-conflict")
+    task_event_store.create_event(
+        routable_id,
+        "build.failed",
+        "Routable",
+        state="awaiting_grouping",
+        owner_user_id="__anonymous__",
+    )
+    task_event_store.create_event(
+        conflict_id,
+        "build.failed",
+        "Already routed elsewhere",
+        state="routed",
+        manager_conversation_id=other_manager_id,
+        owner_user_id="__anonymous__",
+    )
+
+    resp = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={
+            "event_ids": [routable_id, conflict_id],
+            "manager_conversation_id": manager_id,
+        },
+    )
+
+    assert resp.status_code == 409
+    untouched = task_event_store.get_event(routable_id)
+    assert untouched is not None
+    assert untouched.state == "awaiting_grouping"
+    assert untouched.manager_conversation_id is None
+
+
+async def test_batch_route_manager_rejects_host_mismatch(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    manager_agent_profile_id: str,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    manager_id = _uid("host-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=manager_id,
+        agent_id=manager_agent_profile_id,
+        host_id="manager-host",
+    )
+    event_id = _uid("other-host-event")
+    task_event_store.create_event(
+        event_id,
+        "build.failed",
+        "Other host",
+        state="awaiting_grouping",
+        owner_user_id="__anonymous__",
+        source_offset="host:event-host",
+    )
+
+    resp = await client.post(
+        "/v1/task-events/batch-route-manager",
+        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+    )
+
+    assert resp.status_code == 409
+
+
 async def test_dismiss_event(
     client: httpx.AsyncClient,
     task_event_store: SqlAlchemyTaskEventStore,
@@ -112,6 +336,59 @@ async def test_dismiss_event(
     resp = await client.post(f"/v1/task-events/{event_id}/dismiss")
     assert resp.status_code == 200
     assert resp.json()["state"] == "dismissed"
+
+
+async def test_owned_routed_event_can_be_filed_as_fyi_or_dismissed(
+    client: httpx.AsyncClient,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    fyi_event_id = _uid("manager-routed-fyi")
+    dismiss_event_id = _uid("manager-routed-dismiss")
+    for event_id in (fyi_event_id, dismiss_event_id):
+        task_event_store.create_event(
+            event_id,
+            "build.finished",
+            "No action needed",
+            state="routed",
+            manager_conversation_id=_uid("owned-manager"),
+            owner_user_id="__anonymous__",
+        )
+
+    fyi = await client.post(
+        "/v1/task-events/fyi-clusters",
+        json={"event_ids": [fyi_event_id], "headline": "Informational build"},
+    )
+    dismissed = await client.post(f"/v1/task-events/{dismiss_event_id}/dismiss")
+
+    assert fyi.status_code == 200, fyi.text
+    assert task_event_store.get_event(fyi_event_id).state == "classified_fyi"
+    assert dismissed.status_code == 200
+    assert dismissed.json()["state"] == "dismissed"
+
+
+async def test_event_handling_rejects_another_owner(
+    client: httpx.AsyncClient,
+    task_event_store: SqlAlchemyTaskEventStore,
+) -> None:
+    event_id = _uid("other-owner-routed-event")
+    task_event_store.create_event(
+        event_id,
+        "build.finished",
+        "Their event",
+        state="routed",
+        manager_conversation_id=_uid("their-manager"),
+        owner_user_id="someone-else",
+    )
+
+    fyi = await client.post(
+        "/v1/task-events/fyi-clusters",
+        json={"event_ids": [event_id], "headline": "Not mine"},
+    )
+    dismissed = await client.post(f"/v1/task-events/{event_id}/dismiss")
+
+    assert fyi.status_code == 404
+    assert dismissed.status_code == 404
+    assert task_event_store.get_event(event_id).state == "routed"
 
 
 async def test_bootstrap_rejects_dead_manager_session(

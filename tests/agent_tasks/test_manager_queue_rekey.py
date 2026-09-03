@@ -71,6 +71,7 @@ def _event(setup: dict, *, seed: str, state: str) -> str:
         "build.finished",
         f"event {seed}",
         task_id=setup["task_id"],
+        manager_conversation_id=setup["manager_conv_id"],
         state=state,
         owner_user_id=setup["owner"],
     )

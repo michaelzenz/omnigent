@@ -70,6 +70,10 @@ from omnigent.runner.dynamic_file_memory import (
 from omnigent.runner.dynamic_file_memory import (
     discover as discover_file_memory,
 )
+from omnigent.runner.identity import (
+    RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
+    RUNNER_TUNNEL_TOKEN_HEADER,
+)
 from omnigent.runtime import pending_elicitations
 from omnigent.session_lifecycle import (
     CLOSED_LABEL_KEY,
@@ -98,7 +102,11 @@ from omnigent.tools.builtins.pi_file_tools import (
     build_pi_file_tools,
     execute_pi_file_tool,
 )
-from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool, is_task_api_path
+from omnigent.tools.builtins.puppygarden_api import (
+    PUPPYGARDEN_CALLER_CONVERSATION_HEADER,
+    PuppyGardenApiTool,
+    is_task_api_path,
+)
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
 from omnigent.tools.builtins.spawn import (
     # Shared contract values with the in-process sys_session_* tools. Imported
@@ -4140,6 +4148,7 @@ async def _execute_puppygarden_api_tool(
     arguments: str,
     *,
     server_client: httpx.AsyncClient | None,
+    caller_conversation_id: str | None = None,
 ) -> str:
     """
     Runner-local handler for ``puppygarden_api``.
@@ -4156,6 +4165,8 @@ async def _execute_puppygarden_api_tool(
         optional ``body`` / ``query`` objects.
     :param server_client: HTTP client pointed at the Omnigent server; ``None``
         returns an error string.
+    :param caller_conversation_id: Current execution conversation, sent in a
+        private identity header for manager self-service endpoints.
     :returns: Tool output JSON string — the server's JSON response, or an
         ``{"error": ...}`` object on failure.
     """
@@ -4178,6 +4189,13 @@ async def _execute_puppygarden_api_tool(
     body = args.get("body")
     query = args.get("query")
     kwargs: dict[str, Any] = {"timeout": 30.0}
+    if caller_conversation_id is not None:
+        kwargs["headers"] = {
+            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: caller_conversation_id,
+        }
+        tunnel_token = os.environ.get(RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR, "").strip()
+        if tunnel_token:
+            kwargs["headers"][RUNNER_TUNNEL_TOKEN_HEADER] = tunnel_token
     if isinstance(query, dict) and query:
         kwargs["params"] = query
     if isinstance(body, dict) and method in ("POST", "PUT", "PATCH"):
@@ -6277,6 +6295,7 @@ async def execute_tool(
                 tool_name,
                 arguments,
                 server_client=server_client,
+                caller_conversation_id=conversation_id,
             )
         elif _is_spec_local_python_tool(tool_name, agent_spec):
             output = await _execute_local_python_tool(

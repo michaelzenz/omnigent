@@ -22,6 +22,7 @@ from omnigent.entities import Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ _OWNER_BOOTSTRAP_LOCKS: dict[str, asyncio.Lock] = {}
 
 def _owner_bootstrap_lock(owner: str) -> asyncio.Lock:
     return _OWNER_BOOTSTRAP_LOCKS.setdefault(owner, asyncio.Lock())
+
+
+def _manager_description(task: Task) -> str:
+    return " ".join((task.description or task.goal or task.title).split())[:512]
 
 
 @dataclass(frozen=True)
@@ -213,6 +218,13 @@ async def bootstrap_task_manager(
     spawn duplicate managers — the loser re-reads the roster and attaches to
     the winner's session.
     """
+    manager_store: ManagerStore | None = getattr(app_state, "manager_store", None)
+    if manager_store is None:
+        from omnigent.stores.manager_store.sqlalchemy_store import (
+            SqlAlchemyManagerStore,
+        )
+
+        manager_store = SqlAlchemyManagerStore(task_store.storage_location)
     if task.manager_conversation_id is not None:
         existing = await asyncio.to_thread(
             conversation_store.get_conversation,
@@ -232,8 +244,8 @@ async def bootstrap_task_manager(
 
     # Attach-or-create runs under the per-owner lock: the first cold-start
     # bootstrap spawns, later ones re-read the roster and attach to it.
-    owner = user_id or task.owner_user_id or "__anonymous__"
-    async with _owner_bootstrap_lock(owner):
+    owner_user_id = user_id or task.owner_user_id or "__anonymous__"
+    async with _owner_bootstrap_lock(owner_user_id):
         return await _attach_or_create_manager(
             task=task,
             task_store=task_store,
@@ -242,8 +254,60 @@ async def bootstrap_task_manager(
             session_creator=session_creator,
             app_state=app_state,
             user_id=user_id,
-            owner=owner,
+            owner_user_id=owner_user_id,
+            manager_store=manager_store,
         )
+
+
+async def create_manager_session(
+    *,
+    params: BootstrapParams,
+    title: str,
+    role_key: str,
+    description: str,
+    owner_user_id: str,
+    manager_store: ManagerStore,
+    session_creator: Any,
+    app_state: Any,
+    user_id: str | None = None,
+) -> str:
+    """Create and register one top-level manager session."""
+    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
+    from omnigent.server.routes.sessions import _make_internal_request
+    from omnigent.server.schemas import SessionCreateRequest
+
+    body = SessionCreateRequest(
+        agent_id=params.agent_profile_id,
+        title=title,
+        host_id=params.host_id,
+        workspace=params.workspace,
+        harness_override=params.harness,
+        model_override=params.model,
+        labels=presentation_labels_for_harness(params.harness),
+        prompt_profile=(
+            {"mode": "fixed", "profile_id": params.prompt_profile_id}
+            if params.prompt_profile_id
+            else None
+        ),
+        project_id=await asyncio.to_thread(
+            ensure_puppygarden_project,
+            getattr(app_state, "project_store", None),
+            user_id,
+        ),
+    )
+    resp = await session_creator(
+        body=body,
+        request=_make_internal_request(app_state),
+        user_id=user_id,
+    )
+    await asyncio.to_thread(
+        manager_store.upsert,
+        resp.id,
+        owner_user_id=owner_user_id,
+        role_key=role_key,
+        description=description,
+    )
+    return resp.id
 
 
 async def _attach_or_create_manager(
@@ -255,12 +319,14 @@ async def _attach_or_create_manager(
     session_creator: Any,
     app_state: Any,
     user_id: str | None,
-    owner: str,
+    owner_user_id: str,
+    manager_store: ManagerStore,
 ) -> Task:
     """The unlocked attach-or-create body — caller holds the owner lock."""
     managers = await asyncio.to_thread(
         list_active_managers,
-        owner_user_id=owner,
+        owner_user_id=owner_user_id,
+        manager_store=manager_store,
         task_store=task_store,
         conversation_store=conversation_store,
     )
@@ -282,48 +348,27 @@ async def _attach_or_create_manager(
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
         return updated
 
-    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
-    from omnigent.server.routes.sessions import _make_internal_request
-    from omnigent.server.schemas import SessionCreateRequest
-
     _logger.info(
         "manager spawn: task %s gets a new manager session (candidates=%d, host=%s)",
         task.id,
         len(managers),
         params.host_id,
     )
-    body = SessionCreateRequest(
-        agent_id=params.agent_profile_id,
+    conversation_id = await create_manager_session(
+        params=params,
         title=f"Task manager: {task.title}",
-        host_id=params.host_id,
-        workspace=params.workspace,
-        harness_override=params.harness,
-        model_override=params.model,
-        # Carry the native wrapper label when the role is on a native harness so
-        # the composer's model picker opts the session in. Empty for the SDK
-        # harness — the dock surfaces its own switcher there.
-        labels=presentation_labels_for_harness(params.harness),
-        prompt_profile=(
-            {"mode": "fixed", "profile_id": params.prompt_profile_id}
-            if params.prompt_profile_id
-            else None
-        ),
-        project_id=await asyncio.to_thread(
-            ensure_puppygarden_project,
-            getattr(app_state, "project_store", None),
-            user_id,
-        ),
-    )
-    request = _make_internal_request(app_state)
-    resp = await session_creator(
-        body=body,
-        request=request,
+        owner_user_id=owner_user_id,
+        role_key=task.manager_role_key,
+        description=_manager_description(task),
+        manager_store=manager_store,
+        session_creator=session_creator,
+        app_state=app_state,
         user_id=user_id,
     )
     updated = await asyncio.to_thread(
         task_store.update,
         task.id,
-        manager_conversation_id=resp.id,
+        manager_conversation_id=conversation_id,
     )
     if updated is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)

@@ -7,12 +7,15 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from alembic import command
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from omnigent.db.utils import clear_engine_cache, get_or_create_engine
+from omnigent.db.utils import _build_alembic_config, clear_engine_cache, get_or_create_engine
 
 _PREVIOUS_HEAD = "b1c2d3e4f5a6"
+_MANAGERS_PREVIOUS_REVISION = "b6d7e8f9a0c1"
+_MANAGERS_REVISION = "c7d8e9f0a1b3"
 
 
 @pytest.fixture
@@ -31,6 +34,7 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     """All task routing tables exist after migrating to head."""
     tables = set(sa.inspect(db_engine).get_table_names())
     assert {
+        "managers",
         "tasks",
         "task_tags",
         "task_events",
@@ -46,6 +50,7 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     assert "priority" not in columns
     assert "summary" not in columns
     assert "source_internal_session_id" in columns
+    assert "manager_conversation_id" in columns
     assert "source_session_id" not in columns
     assert "selected_routing_attempt_id" not in columns
     assert "search_text" not in columns
@@ -64,6 +69,126 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     task_indexes = {index["name"] for index in sa.inspect(db_engine).get_indexes("tasks")}
     assert "ix_tasks_manager_role_key" in task_indexes
     assert "ix_tasks_agent_profile_id" not in task_indexes
+    event_indexes = {
+        index["name"] for index in sa.inspect(db_engine).get_indexes("task_events")
+    }
+    assert "ix_task_events_manager_state" in event_indexes
+
+    manager_columns = {
+        column["name"] for column in sa.inspect(db_engine).get_columns("managers")
+    }
+    assert {
+        "workspace_id",
+        "conversation_id",
+        "owner_user_id",
+        "role_key",
+        "description",
+        "created_at",
+        "updated_at",
+    } == manager_columns
+    manager_indexes = {
+        index["name"] for index in sa.inspect(db_engine).get_indexes("managers")
+    }
+    assert "ix_managers_owner" in manager_indexes
+
+
+def test_manager_backfill_detaches_shared_conversation_from_other_owners(
+    tmp_path: Path,
+) -> None:
+    uri = f"sqlite:///{tmp_path / 'manager-backfill.db'}"
+    engine = sa.create_engine(uri)
+    config = _build_alembic_config(uri)
+    manager_id = bytes.fromhex("abababababababababababababababab")
+    anonymous_task = bytes.fromhex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    alice_task = bytes.fromhex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    alice_event = bytes.fromhex("cccccccccccccccccccccccccccccccc")
+    try:
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.upgrade(config, _MANAGERS_PREVIOUS_REVISION)
+            tasks = sa.Table("tasks", sa.MetaData(), autoload_with=conn)
+            permissions = sa.Table(
+                "session_permissions",
+                sa.MetaData(),
+                autoload_with=conn,
+            )
+            events = sa.Table("task_events", sa.MetaData(), autoload_with=conn)
+            conn.execute(
+                tasks.insert(),
+                [
+                    {
+                        "id": anonymous_task,
+                        "manager_conversation_id": manager_id,
+                        "owner_user_id": None,
+                        "manager_role_key": "manager:default",
+                        "title": "Anonymous",
+                        "goal": "Anonymous goal",
+                        "state": 1,
+                        "created_at": 2,
+                    },
+                    {
+                        "id": alice_task,
+                        "manager_conversation_id": manager_id,
+                        "owner_user_id": "alice",
+                        "manager_role_key": "manager:default",
+                        "title": "Alice",
+                        "goal": "Alice goal",
+                        "state": 1,
+                        "created_at": 1,
+                    },
+                ],
+            )
+            conn.execute(
+                permissions.insert(),
+                {
+                    "user_id": "alice",
+                    "conversation_id": manager_id,
+                    "level": 4,
+                },
+            )
+            conn.execute(
+                events.insert(),
+                {
+                    "id": alice_event,
+                    "task_id": alice_task,
+                    "event_type": "build.failed",
+                    "title": "Alice event",
+                    "state": 5,
+                    "created_at": 1,
+                },
+            )
+            command.upgrade(config, _MANAGERS_REVISION)
+
+            manager_owner = conn.execute(
+                sa.text("SELECT owner_user_id FROM managers")
+            ).scalar_one()
+            bindings = dict(
+                conn.execute(
+                    sa.text(
+                        "SELECT id, manager_conversation_id FROM tasks "
+                        "WHERE id IN (:anonymous_task, :alice_task)"
+                    ),
+                    {
+                        "anonymous_task": anonymous_task,
+                        "alice_task": alice_task,
+                    },
+                )
+            )
+            event_manager, event_owner = conn.execute(
+                sa.text(
+                    "SELECT manager_conversation_id, owner_user_id FROM task_events "
+                    "WHERE id = :event_id"
+                ),
+                {"event_id": alice_event},
+            ).one()
+
+        assert manager_owner == "alice"
+        assert bindings[anonymous_task] is None
+        assert bindings[alice_task] == manager_id
+        assert event_manager == manager_id
+        assert event_owner == "alice"
+    finally:
+        engine.dispose()
 
 
 def test_role_definitions_are_global_and_sessions_per_user(db_engine: Engine) -> None:

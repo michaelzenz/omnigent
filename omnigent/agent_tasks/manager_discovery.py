@@ -15,6 +15,7 @@ from omnigent.agent_tasks.task_search import score_task_text
 from omnigent.entities import Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_store import TaskStore
 
 # A live task occupies capacity on its manager. Archived tasks free the slot;
@@ -29,7 +30,8 @@ class ManagerInfo:
     conversation_id: str
     host_id: str | None
     workspace: str | None
-    role_key: str | None
+    role_key: str
+    description: str
     title: str | None
     tasks: list[Task]
 
@@ -41,32 +43,32 @@ class ManagerInfo:
 def list_active_managers(
     *,
     owner_user_id: str,
+    manager_store: ManagerStore,
     task_store: TaskStore,
     conversation_store: ConversationStore,
 ) -> list[ManagerInfo]:
-    """Return manager sessions owning ≥1 of the owner's tasks, with portfolios.
+    """Return the owner's registered manager sessions with live portfolios.
 
     A manager's portfolio counts every task on it — including other owners',
     when a session is shared — since that is the real load against capacity.
     """
     managers: list[ManagerInfo] = []
-    for conversation_id in task_store.list_manager_conversation_ids(
-        owner_user_id=owner_user_id
-    ):
-        conv = conversation_store.get_conversation(conversation_id)
+    for manager in manager_store.list(owner_user_id=owner_user_id):
+        conv = conversation_store.get_conversation(manager.conversation_id)
         if conv is None:
             continue
         tasks = [
             task
-            for task in task_store.list_by_manager_conversation_id(conversation_id)
+            for task in task_store.list_by_manager_conversation_id(manager.conversation_id)
             if task.state in _LIVE_TASK_STATES
         ]
         managers.append(
             ManagerInfo(
-                conversation_id=conversation_id,
+                conversation_id=manager.conversation_id,
                 host_id=conv.host_id,
                 workspace=conv.workspace,
-                role_key=None,
+                role_key=manager.role_key,
+                description=manager.description,
                 title=conv.title,
                 tasks=tasks,
             )

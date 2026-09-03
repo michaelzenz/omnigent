@@ -12,7 +12,6 @@ import json
 import logging
 
 from omnigent.agent_tasks.event_types import (
-    EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE,
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
     WORKER_EXECUTION_FINISHED_EVENT_TYPE,
@@ -35,10 +34,9 @@ def _format_manager_notice(
 
     One notice per manager session per dispatch — possibly spanning several
     tasks when tasks share a manager — listing every routed event the manager
-    has not yet reconciled. Each event is labeled with its task id so a
-    multi-task manager knows which task to act on. Session events for the same
-    session are summarized as a single entry so the agent sees "3 turns
-    finished" rather than 3 copies.
+    has not yet reconciled. Events without a task are explicitly manager-routed
+    so the manager can select or create their task. Session events for the same
+    session are summarized as a single entry.
     """
     titles = task_titles or {}
     task_ids: list[str] = []
@@ -51,13 +49,19 @@ def _format_manager_notice(
         title = titles.get(task_id or "")
         return f"{title!r} ({task_id})" if title else (task_id or "?")
 
-    if len(task_ids) == 1:
+    unassigned_count = sum(1 for event in events if getattr(event, "task_id", None) is None)
+    if len(task_ids) == 1 and not unassigned_count:
         scope = f"task {_task_scope(task_ids[0])}"
     elif task_ids:
         scope = f"{len(task_ids)} tasks: " + ", ".join(_task_scope(t) for t in task_ids)
     else:
         scope = "this manager"
     lines = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
+    if unassigned_count:
+        lines.append(
+            f"[{unassigned_count} manager-routed event(s) have no task; "
+            "select an existing task or create one before reconciling them.]"
+        )
     # Group session events by source_key for summarization.
     session_groups: dict[str, list] = {}
     other_events: list = []
@@ -92,9 +96,9 @@ def _format_manager_notice(
 
 
 def _label(event) -> str:
-    """Task label prefix for one event line, e.g. ``[task:abc123] ``."""
+    """Routing label prefix for one event line."""
     task_id = getattr(event, "task_id", None)
-    return f"[task:{task_id}] " if task_id else ""
+    return f"[task:{task_id}] " if task_id else "[manager-routed; task unassigned] "
 
 
 def _format_session_batch_notice(events: list) -> str:
@@ -248,64 +252,29 @@ def _format_broker_stall_notice(
     events: list,
     *,
     clusters: list | None = None,
-    candidate_task_ids: list[str] | None = None,
-    is_orphan: bool = False,
 ) -> str:
     """Format the notice the broker packager hands the dispatcher.
 
-    Returns a JSON string the broker reads directly. A routed batch carries
-    ``clusters`` (each with its tags and full event entries, similar events kept
-    contiguous) plus ranked ``candidate_task_ids``, so it can reconcile/route
-    without a follow-up ``ambiguous-inbox``/``match-tasks`` call. An orphan batch
-    carries the adoption steps in the prompt and a flat ``events`` list (no
-    candidates).
+    Returns clustered events and directs the broker to select or create a
+    first-class manager. Task selection and reconciliation belong to managers.
     """
     from omnigent.agent_tasks.broker_inbox import event_notice_entry
 
-    if is_orphan:
-        is_discovered = events and events[0].event_type == EXTERNAL_SESSION_DISCOVERED_EVENT_TYPE
-        if is_discovered:
-            prompt = (
-                "[System: an external session was discovered by the watcher] "
-                "Read the transcript_snippet in the event payload to understand what "
-                "the session is working on. Decide one of three outcomes:\n"
-                "1. Adopt to an existing task — call "
-                "POST /v1/agent-tasks/sessions/{session_id}/adopt "
-                "with {\"task_id\": \"<id>\"}.\n"
-                "2. Adopt to a new task — create a new pending task via "
-                "POST /v1/agent-tasks/packages, then call adopt.\n"
-                "3. FYI cluster — call POST /v1/task-events/fyi-clusters.\n"
-                "User must accept the adoption before it takes effect."
-            )
-        else:
-            prompt = (
-                "[System: orphan session needs triage] "
-                "The event payload includes the session title, the user's "
-                "last message, and the agent's last response. Read them to "
-                "understand what the session is working on, then follow the "
-                "orphan session adoption section in your manual."
-            )
-        payload: dict[str, object] = {
-            "prompt": prompt,
-            "events": [event_notice_entry(e) for e in events],
-        }
-    else:
-        prompt = (
-            "[System: please triage and route these events] "
-            "The following are possible clusters waiting for route/reconcile. "
-            "You may split a cluster into subclusters and route each to the "
-            "correct manager. Events in one batch share the same host when the "
-            "host is known — distribute them to a manager on a compatible host."
-        )
-        payload = {
-            "prompt": prompt,
-            "clusters": [
-                {
-                    "tags": c.tags,
-                    "events": [event_notice_entry(e) for e in c.events],
-                }
-                for c in (clusters or [])
-            ],
-            "candidate_task_ids": candidate_task_ids or [],
-        }
+    prompt = (
+        "[System: route these events to managers] "
+        "List the active managers and compare their descriptions with each "
+        "cluster. Route each cluster to the best host-compatible manager. "
+        "If none fits, create a manager with an accurate scope description, "
+        "then route the cluster to it. Do not select or create tasks."
+    )
+    payload: dict[str, object] = {
+        "prompt": prompt,
+        "clusters": [
+            {
+                "tags": c.tags,
+                "events": [event_notice_entry(e) for e in c.events],
+            }
+            for c in (clusters or [])
+        ],
+    }
     return json.dumps(payload, separators=(",", ":"))

@@ -27,13 +27,13 @@ All manuals are inside <host.puppygarden.root>/docs/
 * Automations — use `sys_scheduled_task_create` for recurring agent sessions (RRULE schedule, catch-up toggle, cost control)
 
 ## Roles/Components
-* Router: a score based routing program, if there is clear winner, route the event to the corresponding task and let manager handle it
-* Manager: Manager and task is 1:1 mapping, manager receives events, reconcile into taskItems and select a worker to assign it, make it a proposal for user to review
+* Router: a score-based routing program; when there is a clear winner, route the event to the corresponding task's manager
+* Manager: a first-class, long-lived agent that owns a portfolio of tasks, maintains a routing description, reconciles events into taskItems, and selects workers
 * Worker: works on taskItems, no special duty right now.
-* Broker: when router cannot pick the winner, surface to broker, which will route to an active task or create new task for the event. While the task does not have active manager, broker also take some duty of manager: it reconcile the event into taskItems, merge/split taskItems, manage the tasks.
+* Broker: when the router cannot pick a destination, list managers, select one by description, create one when none fits, and route the event. It never manages tasks or taskItems.
 
 ## Conecepts
 
 * TaskEvent: like raw events, for example a slack message, a pr comment, a doc mention
 * TaskItem: TaskEvents are just raw events, they got reconcile into TaskItem, for example multiple comment on same pr reconcile to same TaskItem, which is the execution unit containing instructions that actually get executed by workers.
-* Task: the grouping unit, it has the goal which manager should steer towards to. it also has richest info so usually the system need to first find the right task for the taskEvent, then reconcile into an actual taskItem. Active task means there is already a manager spin up, pending task means this is just suggestion yet, it's still managed by broker
+* Task: the grouping unit with a goal that its manager steers toward. A manager chooses or creates the task after receiving an event, then reconciles the event into a taskItem. Active tasks are user-confirmed; pending tasks are manager proposals awaiting confirmation.

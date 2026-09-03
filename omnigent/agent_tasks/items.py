@@ -90,6 +90,7 @@ def create_task_item(
     event_ids: list[str] | None = None,
     task_event_store: TaskEventStore | None = None,
     task_store=None,
+    allow_unassigned_events: bool = False,
 ) -> TaskItem:
     """Create a task item and optionally link contributing events."""
     if kind == "human_action":
@@ -109,8 +110,33 @@ def create_task_item(
             f"Unknown task item kind {kind!r}",
             code=ErrorCode.INVALID_INPUT,
         )
+    if worker_id is not None:
+        worker = worker_store.get_worker(worker_id)
+        # A worker lane may serve any task of the same owner.
+        if worker is None:
+            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+        if task_store is not None:
+            _require_worker_owner_scope(worker, task.owner_user_id, task_store=task_store)
+    item_id = _generate_item_id()
+    if event_ids:
+        return task_item_store.create_item_with_event_claims(
+            item_id,
+            task.id,
+            title,
+            event_ids,
+            owner_user_id=task.owner_user_id,
+            manager_conversation_id=task.manager_conversation_id,
+            state=state,
+            description=description,
+            instructions=instructions,
+            internal_note=internal_note,
+            worker_id=worker_id,
+            created_by=created_by,
+            kind=kind,
+            allow_unassigned=allow_unassigned_events,
+        )
     item = task_item_store.create_item(
-        _generate_item_id(),
+        item_id,
         task.id,
         title,
         state=state,
@@ -121,21 +147,10 @@ def create_task_item(
         kind=kind,
     )
     if worker_id is not None:
-        worker = worker_store.get_worker(worker_id)
-        # A worker lane may serve any task of the same owner.
-        if worker is None:
-            raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-        if task_store is not None:
-            _require_worker_owner_scope(worker, task.owner_user_id, task_store=task_store)
-        item = task_item_store.update_item(item.id, worker_id=worker_id)
-    if event_ids and task_event_store is not None:
-        for event_id in event_ids:
-            task_item_store.link_event(item.id, event_id)
-            task_event_store.update_event(
-                event_id,
-                state="reconciled",
-                processed_at=now_epoch(),
-            )
+        updated_item = task_item_store.update_item(item.id, worker_id=worker_id)
+        if updated_item is None:
+            raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+        item = updated_item
     return item
 
 
@@ -255,6 +270,7 @@ def complete_human_action(
             HUMAN_ACTION_DONE_EVENT_TYPE,
             f"Human action done: {item.title}",
             task_id=task.id,
+            manager_conversation_id=task.manager_conversation_id,
             source="user",
             source_key=item.id,
             state="routed",
@@ -428,24 +444,11 @@ def reconcile_events(
     task_event_store: TaskEventStore,
 ) -> list[TaskEvent]:
     """Mark routed events reconciled without creating items."""
-    reconciled: list[TaskEvent] = []
-    for event_id in event_ids:
-        event = task_event_store.get_event(event_id)
-        if event is None or event.task_id != task.id:
-            raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-        if event.state != "routed":
-            raise OmnigentError(
-                f"Cannot reconcile event in state {event.state!r}",
-                code=ErrorCode.CONFLICT,
-            )
-        updated = task_event_store.update_event(
-            event_id,
-            state="reconciled",
-            processed_at=now_epoch(),
-        )
-        if updated is not None:
-            reconciled.append(updated)
-    return reconciled
+    return task_event_store.reconcile_events_to_task(
+        event_ids,
+        task_id=task.id,
+        manager_conversation_id=task.manager_conversation_id,
+    )
 
 
 def patch_task_item(
@@ -494,4 +497,6 @@ def patch_task_item(
                 task_store=task_store,
             )
         updated = task_item_store.update_item(item.id, worker_id=worker_id)
+        if updated is None:
+            raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
     return updated

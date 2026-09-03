@@ -12,6 +12,18 @@ from dataclasses import dataclass
 
 
 @dataclass
+class Manager:
+    """A first-class task manager bound to one conversation."""
+
+    conversation_id: str
+    owner_user_id: str
+    role_key: str
+    description: str
+    created_at: int
+    updated_at: int
+
+
+@dataclass
 class Task:
     """
     A managed task persisted in the ``tasks`` table.
@@ -73,6 +85,7 @@ class TaskEvent:
     :param created_at: Unix epoch seconds at row creation.
     :param tags: Immutable ingress tags used for routing. ``None`` when unset.
     :param task_id: Routed task, or ``None`` before routing completes.
+    :param manager_conversation_id: Manager selected during routing, or ``None``.
     :param payload: JSON payload string. ``None`` when unset.
     :param source: Event source, e.g. ``"github"`` or ``"ci"``. ``None`` when unset.
     :param source_key: Stable dedupe key within ``source`` (external ingress id or
@@ -96,6 +109,7 @@ class TaskEvent:
     owner_user_id: str | None = None
     tags: list[EventTag] | None = None
     task_id: str | None = None
+    manager_conversation_id: str | None = None
     payload: str | None = None
     source: str | None = None
     source_key: str | None = None

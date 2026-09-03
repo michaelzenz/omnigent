@@ -19,13 +19,17 @@ from omnigent.agent_tasks.agent_builtins import (
 from omnigent.agent_tasks.broker_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag
+from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
 from tests.server.routes.agent_task_api import (
     agent_role_profile_url,
     agent_role_session_reset_url,
@@ -393,6 +397,302 @@ def _seed_live_host(db_uri: str, seed: str) -> str:
     host_id = _uid(seed)
     HostStore(db_uri).upsert_on_connect(host_id, seed, RESERVED_USER_LOCAL)
     return host_id
+
+
+def _register_manager(
+    db_uri: str,
+    *,
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: str = "__anonymous__",
+    role_key: str = "manager:default",
+    description: str = "Owns upload reliability.",
+    parent_conversation_id: str | None = None,
+    tunnel_token: str | None = None,
+) -> None:
+    SqlAlchemyConversationStore(db_uri).create_conversation(
+        conversation_id=conversation_id,
+        title="Upload manager",
+        parent_conversation_id=parent_conversation_id,
+        agent_id=agent_id,
+        runner_id=token_bound_runner_id(tunnel_token) if tunnel_token else None,
+        host_id=_uid("manager-api-host"),
+        workspace="/tmp/manager-api",
+    )
+    SqlAlchemyManagerStore(db_uri).upsert(
+        conversation_id,
+        owner_user_id=owner_user_id,
+        role_key=role_key,
+        description=description,
+    )
+
+
+async def test_list_managers_includes_zero_task_manager_metadata(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    conversation_id = _uid("zero-task-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=conversation_id,
+        agent_id=task_manager_agent_id,
+        role_key="manager:uploads",
+        description="Owns all upload workflows.",
+    )
+
+    resp = await client.get("/v1/agent-tasks/managers")
+
+    assert resp.status_code == 200
+    manager = next(
+        row for row in resp.json()["managers"] if row["conversation_id"] == conversation_id
+    )
+    assert manager["description"] == "Owns all upload workflows."
+    assert manager["role_key"] == "manager:uploads"
+    assert manager["capacity"] > 0
+    assert manager["task_count"] == 0
+    assert manager["tasks"] == []
+
+
+async def test_create_manager_registers_top_level_manager_role(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_workspace_validation(monkeypatch)
+    _seed_live_host(db_uri, "create-manager-host")
+    profile = await client.get(agent_role_profile_url("manager:default"))
+    assert profile.status_code == 200
+
+    resp = await client.post(
+        "/v1/agent-tasks/managers",
+        json={
+            "role_key": "manager:default",
+            "description": "Owns release readiness.",
+            "title": "Release manager",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role_key"] == "manager:default"
+    assert body["description"] == "Owns release readiness."
+    assert body["task_count"] == 0
+    conversation = SqlAlchemyConversationStore(db_uri).get_conversation(
+        body["conversation_id"]
+    )
+    assert conversation is not None
+    assert conversation.parent_conversation_id is None
+    stored = SqlAlchemyManagerStore(db_uri).get(body["conversation_id"])
+    assert stored is not None
+    assert stored.owner_user_id == "__anonymous__"
+    assert stored.role_key == "manager:default"
+
+
+async def test_update_manager_self_updates_only_owned_caller(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    tunnel_token = "manager-self-token"
+    caller_id = _uid("caller-manager")
+    other_id = _uid("other-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=caller_id,
+        agent_id=task_manager_agent_id,
+        description="Caller old scope.",
+        tunnel_token=tunnel_token,
+    )
+    _register_manager(
+        db_uri,
+        conversation_id=other_id,
+        agent_id=task_manager_agent_id,
+        description="Other scope.",
+    )
+
+    resp = await client.patch(
+        "/v1/agent-tasks/managers/self",
+        headers={
+            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: caller_id,
+            RUNNER_TUNNEL_TOKEN_HEADER: tunnel_token,
+        },
+        json={"description": "Caller new scope."},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["conversation_id"] == caller_id
+    assert resp.json()["description"] == "Caller new scope."
+    store = SqlAlchemyManagerStore(db_uri)
+    caller = store.get(caller_id)
+    other = store.get(other_id)
+    assert caller is not None
+    assert other is not None
+    assert caller.description == "Caller new scope."
+    assert other.description == "Other scope."
+
+
+async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_identity(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    missing = await client.patch(
+        "/v1/agent-tasks/managers/self",
+        json={"description": "No caller."},
+    )
+    assert missing.status_code == 401
+
+    spoofed = await client.patch(
+        "/v1/agent-tasks/managers/self",
+        headers={
+            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: _uid("unknown-manager"),
+            RUNNER_TUNNEL_TOKEN_HEADER: "unknown-token",
+        },
+        json={"description": "Spoofed caller."},
+    )
+    assert spoofed.status_code == 403
+
+    bound_id = _uid("token-bound-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=bound_id,
+        agent_id=task_manager_agent_id,
+        tunnel_token="correct-token",
+    )
+    wrong_token = await client.patch(
+        "/v1/agent-tasks/managers/self",
+        headers={
+            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: bound_id,
+            RUNNER_TUNNEL_TOKEN_HEADER: "wrong-token",
+        },
+        json={"description": "Wrong runner."},
+    )
+    assert wrong_token.status_code == 403
+
+    cross_owner_id = _uid("cross-owner-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=cross_owner_id,
+        agent_id=task_manager_agent_id,
+        owner_user_id="someone-else",
+        tunnel_token="cross-owner-token",
+    )
+    cross_owner = await client.patch(
+        "/v1/agent-tasks/managers/self",
+        headers={
+            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: cross_owner_id,
+            RUNNER_TUNNEL_TOKEN_HEADER: "cross-owner-token",
+        },
+        json={"description": "Cross-owner caller."},
+    )
+    assert cross_owner.status_code == 403
+
+    parent_id = _uid("parent-manager")
+    SqlAlchemyConversationStore(db_uri).create_conversation(
+        conversation_id=parent_id,
+        title="Parent",
+        agent_id=task_manager_agent_id,
+    )
+    child_id = _uid("child-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=child_id,
+        agent_id=task_manager_agent_id,
+        parent_conversation_id=parent_id,
+        tunnel_token="child-token",
+    )
+    child = await client.patch(
+        "/v1/agent-tasks/managers/self",
+        headers={
+            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: child_id,
+            RUNNER_TUNNEL_TOKEN_HEADER: "child-token",
+        },
+        json={"description": "Child caller."},
+    )
+    assert child.status_code == 403
+
+
+async def test_task_bindings_reject_foreign_first_class_manager(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    foreign_manager_id = _uid("foreign-binding-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=foreign_manager_id,
+        agent_id=task_manager_agent_id,
+        owner_user_id="someone-else",
+    )
+    created = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "Owned task", "goal": "Stay owner-isolated"},
+    )
+    assert created.status_code == 200
+
+    patched = await client.patch(
+        f"/v1/agent-tasks/{created.json()['id']}",
+        json={"manager_conversation_id": foreign_manager_id},
+    )
+    assert patched.status_code == 404
+
+    packaged = await client.post(
+        "/v1/agent-tasks/packages",
+        json={
+            "title": "Foreign package",
+            "goal": "Must not bind",
+            "manager_conversation_id": foreign_manager_id,
+            "items": [
+                {
+                    "title": "Rejected item",
+                    "event_ids": [_uid("foreign-package-event")],
+                }
+            ],
+        },
+    )
+    assert packaged.status_code == 404
+
+
+async def test_ack_manager_routed_event_assigns_task_and_preserves_manager(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    task_manager_agent_id: str,
+) -> None:
+    manager_id = _uid("reconcile-manager")
+    _register_manager(
+        db_uri,
+        conversation_id=manager_id,
+        agent_id=task_manager_agent_id,
+    )
+    task_id = _uid("reconcile-task")
+    SqlAlchemyTaskStore(db_uri).create(
+        task_id,
+        "Reconcile task",
+        "Assign the routed event",
+        owner_user_id="__anonymous__",
+        manager_conversation_id=manager_id,
+    )
+    event_id = _uid("manager-routed-reconcile-event")
+    SqlAlchemyTaskEventStore(db_uri).create_event(
+        event_id,
+        "build.finished",
+        "Build completed",
+        manager_conversation_id=manager_id,
+        state="routed",
+        owner_user_id="__anonymous__",
+    )
+
+    resp = await client.post(
+        f"/v1/agent-tasks/{task_id}/ack",
+        json={"event_ids": [event_id]},
+    )
+
+    assert resp.status_code == 200
+    event = resp.json()["data"][0]
+    assert event["state"] == "reconciled"
+    assert event["task_id"] == task_id
+    assert event["manager_conversation_id"] == manager_id
 
 
 async def test_list_role_profiles_includes_system_roles(

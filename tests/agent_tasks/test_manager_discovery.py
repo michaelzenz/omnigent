@@ -16,6 +16,7 @@ from omnigent.db.utils import generate_agent_id
 from omnigent.entities import Task
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 
@@ -28,6 +29,7 @@ def discovery_setup(db_uri: str) -> dict:
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
+    manager_store = SqlAlchemyManagerStore(db_uri)
     manager_agent_id = generate_agent_id()
     agent_store.create(
         manager_agent_id, name="task-manager-agent", bundle_location="test:///bundle"
@@ -38,10 +40,17 @@ def discovery_setup(db_uri: str) -> dict:
         host_id=_uid("host_a"),
         workspace="/tmp/mgr",
     )
+    manager_store.upsert(
+        manager_conv.id,
+        owner_user_id="user-1",
+        role_key="manager:uploads",
+        description="Owns S3 upload reliability.",
+    )
     return {
         "agent_store": agent_store,
         "task_store": task_store,
         "conversation_store": conversation_store,
+        "manager_store": manager_store,
         "manager_conv": manager_conv,
         "manager_agent_id": manager_agent_id,
     }
@@ -97,6 +106,7 @@ def _probe(seed: str, *, title: str = "probe", goal: str = "probe goal") -> Task
 def _managers(setup: dict, owner: str = "user-1"):
     return list_active_managers(
         owner_user_id=owner,
+        manager_store=setup["manager_store"],
         task_store=setup["task_store"],
         conversation_store=setup["conversation_store"],
     )
@@ -117,6 +127,8 @@ def test_list_active_managers_groups_tasks_per_manager(discovery_setup: dict) ->
     assert managers[0].conversation_id == conv_id
     assert managers[0].task_count == 2
     assert managers[0].host_id == _uid("host_a")
+    assert managers[0].role_key == "manager:uploads"
+    assert managers[0].description == "Owns S3 upload reliability."
 
 
 def test_list_active_managers_scopes_by_owner(discovery_setup: dict) -> None:
@@ -127,11 +139,20 @@ def test_list_active_managers_scopes_by_owner(discovery_setup: dict) -> None:
 
     mine = _managers(discovery_setup, "user-1")
     theirs = _managers(discovery_setup, "user-2")
-    # Both owners see the manager their tasks are bound to; the portfolio
-    # includes every task on that manager, regardless of owner.
-    assert len(mine) == 1 and len(theirs) == 1
-    assert mine[0].conversation_id == theirs[0].conversation_id == conv_id
+    assert len(mine) == 1
+    assert theirs == []
     assert {t.id for t in mine[0].tasks} == {_uid("t_mine"), _uid("t_theirs")}
+
+
+def test_list_active_managers_includes_registered_manager_with_zero_tasks(
+    discovery_setup: dict,
+) -> None:
+    managers = _managers(discovery_setup)
+
+    assert len(managers) == 1
+    assert managers[0].conversation_id == discovery_setup["manager_conv"].id
+    assert managers[0].task_count == 0
+    assert managers[0].tasks == []
 
 
 # ── choose_manager_for_task ────────────────────────────────────────
@@ -146,6 +167,12 @@ def test_choose_prefers_relevant_manager(discovery_setup: dict) -> None:
         agent_id=discovery_setup["manager_agent_id"],
         host_id=_uid("host_a"),
         workspace="/tmp/mgr_b",
+    )
+    discovery_setup["manager_store"].upsert(
+        billing_conv.id,
+        owner_user_id="user-1",
+        role_key="manager:billing",
+        description="Owns billing exports.",
     )
     _create_task(task_store, "t_s3", title="S3 uploads", manager_conversation_id=s3_conv.id)
     _create_task(
@@ -337,7 +364,7 @@ async def test_concurrent_bootstraps_spawn_one_manager(discovery_setup: dict) ->
     task_a = _create_task(task_store, "t_race_a", title="First", goal="first goal")
     task_b = _create_task(task_store, "t_race_b", title="Second", goal="second goal")
     params = resolve_bootstrap_params(
-        host_id=_uid("host_a"),
+        host_id=_uid("host_b"),
         workspace="~/",
         harness=None,
         model=None,

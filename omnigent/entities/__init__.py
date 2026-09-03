@@ -57,6 +57,7 @@ from omnigent.entities.ssh_connection import SshConnectionProfile, SshSettings
 from omnigent.entities.task import (
     EventTag,
     FyiCluster,
+    Manager,
     Task,
     TaskAsset,
     TaskEvent,
@@ -100,6 +101,7 @@ __all__ = [
     "FyiCluster",
     "ItemData",
     "LoadedAgent",
+    "Manager",
     "MemoryCategory",
     "MessageData",
     "NativeToolData",
