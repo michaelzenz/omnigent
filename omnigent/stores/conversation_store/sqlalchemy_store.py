@@ -4067,6 +4067,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                         [
                             encode_session_live_status("running"),
                             encode_session_live_status("waiting"),
+                            encode_session_live_status("failed"),
                         ]
                     ),
                 )

@@ -1515,13 +1515,15 @@ class ConversationStore(ABC):
     @abstractmethod
     def reset_mid_turn_sessions_to_idle(self) -> int:
         """
-        Bulk-reset all sessions in ``running`` or ``waiting`` to ``idle``.
+        Bulk-reset all sessions in ``running``, ``waiting``, or ``failed`` to ``idle``.
 
         Called once on server startup. After a restart no runner tunnel is
-        connected, so any ``running``/``waiting`` status left in the DB is
-        stale — the runner will re-report its actual status when it
-        reconnects. Without this reset the packager and dispatcher trust
-        the stale status and hold events indefinitely.
+        connected, so any non-idle status left in the DB is stale — the runner
+        will re-report its actual status when it reconnects. Without this
+        reset the packager and dispatcher trust the stale status and hold
+        events indefinitely. A ``failed`` session is included because the
+        gate treats ``failed`` as a permanent ABANDON, so a crashed manager
+        or broker session would never recover after a restart.
 
         :returns: Number of sessions reset to idle.
         """

@@ -1502,6 +1502,13 @@ def create_app(
                     task_event_store=task_event_store,
                     task_store=task_store,
                     status_reader=_PackagerStatusReaderSync(),
+                    task_role_profile_store=task_role_profile_store,
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    host_store=host_store,
+                    prompt_profile_store=prompt_profile_store,
+                    session_creator=_session_creator,
+                    app_state=app_inst.state,
                 )
             # Cancel stale manager queue items keyed by task_id (pre-rekey)
             # so events re-package under the correct manager_conversation_id key.
@@ -1524,13 +1531,15 @@ def create_app(
             configure_broker_packager(_broker_packager)
 
             # After a restart no runner tunnel is connected, so any
-            # ``running``/``waiting`` live_status in the DB is stale. Reset
-            # them to ``idle`` so the packager and dispatcher don't hold
-            # events waiting for a session that will never report back.
+            # ``running``/``waiting``/``failed`` live_status in the DB is stale.
+            # Reset them to ``idle`` so the packager and dispatcher don't hold
+            # events waiting for a session that will never report back. A
+            # ``failed`` session is included because the gate treats it as a
+            # permanent ABANDON, so a crashed manager/broker would never recover.
             reset_count = conversation_store.reset_mid_turn_sessions_to_idle()
             if reset_count:
                 _logger.info(
-                    "startup: reset %d stale running/waiting sessions to idle",
+                    "startup: reset %d stale running/waiting/failed sessions to idle",
                     reset_count,
                 )
         else:
