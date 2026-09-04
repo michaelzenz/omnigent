@@ -285,7 +285,7 @@ def create_scheduled_tasks_router(
                 "host_id required when workspace is set",
                 code=ErrorCode.INVALID_INPUT,
             )
-        canonical_workspace = await validate_existing_host_workspace(
+        validation = await validate_existing_host_workspace(
             user_id=user_id,
             host_id=host_id,
             workspace=workspace,
@@ -294,7 +294,7 @@ def create_scheduled_tasks_router(
             host_store=getattr(request.app.state, "host_store", None),
             host_registry=getattr(request.app.state, "host_registry", None),
         )
-        return canonical_workspace, validated_model, validated_effort
+        return validation.canonical_path, validated_model, validated_effort
 
     def _require_owned(scheduled_task_id: str, owner: str | None) -> ScheduledTask:
         """Load a task the caller owns, or raise 404.

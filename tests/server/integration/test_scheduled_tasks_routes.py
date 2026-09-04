@@ -20,6 +20,7 @@ from omnigent.native_coding_agents import CLAUDE_NATIVE_AGENT_NAME
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.routes import scheduled_tasks as scheduled_tasks_routes
+from omnigent.server.routes._workspace_validation import WorkspaceValidationResult
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -35,7 +36,7 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def _stub_host_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _validate_workspace(**kwargs: object) -> str:
+    async def _validate_workspace(**kwargs: object) -> WorkspaceValidationResult:
         workspace = kwargs["workspace"]
         if not isinstance(workspace, str) or not workspace.startswith("/"):
             from omnigent.errors import ErrorCode, OmnigentError
@@ -44,7 +45,7 @@ def _stub_host_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
                 "workspace must be an absolute path starting with /",
                 code=ErrorCode.INVALID_INPUT,
             )
-        return workspace
+        return WorkspaceValidationResult(canonical_path=workspace)
 
     monkeypatch.setattr(
         scheduled_tasks_routes,

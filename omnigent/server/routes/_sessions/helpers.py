@@ -119,6 +119,7 @@ from omnigent.server.routes._host_worktree import CreatedWorktree
 from omnigent.server.routes._session_create_validation import (
     validate_existing_host_workspace,
 )
+from omnigent.server.routes._workspace_validation import WorkspaceValidationResult
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
 # leaf module; import them here so this module and its re-exporters see the same
@@ -4807,7 +4808,7 @@ async def _validate_session_workspace(
     agent: Any,
     agent_cache: AgentCache | None,
     request: Request,
-) -> str:
+) -> WorkspaceValidationResult:
     """
     Validate a session's workspace against the agent's os_env boundary.
 
@@ -4835,10 +4836,8 @@ async def _validate_session_workspace(
         spec; ``None`` is treated as a server config error.
     :param request: FastAPI request; ``request.app.state``
         carries the host registry and host store.
-    :returns: The canonicalized workspace path that should be
-        stored on the session row, e.g.
-        ``"/Users/corey/universe/src/foo"`` (realpath; symlinks
-        already resolved by the host).
+    :returns: :class:`WorkspaceValidationResult` with the canonical
+        workspace path and detected git branch.
     :raises OmnigentError: With ``ErrorCode.INVALID_INPUT`` on
         any validation failure (offline host, missing path,
         outside boundary, missing subdir). With

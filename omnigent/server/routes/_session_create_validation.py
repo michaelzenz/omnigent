@@ -197,10 +197,11 @@ async def validate_existing_host_workspace(
     agent_cache: AgentCache | None,
     host_store: Any | None,
     host_registry: Any | None,
-) -> str:
+) -> WorkspaceValidationResult:
     """Validate a connected-host workspace against the agent's os_env boundary."""
     from omnigent.server.routes._workspace_validation import (
         WorkspaceValidationError,
+        WorkspaceValidationResult,
         validate_workspace,
     )
 

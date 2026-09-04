@@ -8907,8 +8907,9 @@ async def _create_session_from_existing_agent(
     # With git worktree creation, the validated path is the source
     # repo; the worktree it produces becomes the stored workspace.
     canonical_workspace: str | None = body.workspace
+    detected_git_branch: str | None = None
     if body.host_id is not None:
-        canonical_workspace = await _validate_session_workspace(
+        validation = await _validate_session_workspace(
             user_id=user_id,
             host_id=body.host_id,
             workspace=body.workspace,
@@ -8916,6 +8917,8 @@ async def _create_session_from_existing_agent(
             agent_cache=agent_cache,
             request=request,
         )
+        canonical_workspace = validation.canonical_path
+        detected_git_branch = validation.git_branch
 
     # Git worktree options (optional). Two modes on body.git:
     #  - create (default): make a worktree; it becomes the stored
@@ -8954,6 +8957,10 @@ async def _create_session_from_existing_agent(
             git_branch = body.git.branch_name
             # The background task signals completion via the worktree_status
             # cache/SSE events; the runner launch is deferred to the task.
+    else:
+        # No explicit git options — use the branch detected during
+        # workspace validation so the UI always shows the current branch.
+        git_branch = detected_git_branch
 
     # Native-terminal pass-through args.
     #

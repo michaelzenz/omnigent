@@ -387,6 +387,7 @@ class HostStatResultFrame:
     type: str | None = None
     canonical_path: str | None = None
     error: str | None = None
+    git_branch: str | None = None
 
 
 @dataclass
@@ -1178,6 +1179,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "type": frame.type,
                 "canonical_path": frame.canonical_path,
                 "error": frame.error,
+                "git_branch": frame.git_branch,
             }
         )
     if isinstance(frame, HostListDirFrame):
@@ -1777,6 +1779,7 @@ def _decode_stat_result(msg: _JsonObject) -> HostStatResultFrame:
         type=_optional_nullable_str(msg, "type"),
         canonical_path=_optional_nullable_str(msg, "canonical_path"),
         error=_optional_nullable_str(msg, "error"),
+        git_branch=_optional_nullable_str(msg, "git_branch"),
     )
 
 

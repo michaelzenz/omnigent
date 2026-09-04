@@ -799,13 +799,14 @@ def create_hosts_router(
 
             spec_cwd = await _resolve_agent_spec_cwd(target.conv, agent_store, agent_cache)
             try:
-                workspace = await validate_workspace(
+                workspace_result = await validate_workspace(
                     host_registry=host_registry,
                     host_id=host_id,
                     workspace=body.workspace,
                     spec_cwd=spec_cwd,
                     host_name_for_errors=target.host.name,
                 )
+                workspace = workspace_result.canonical_path
             except WorkspaceValidationError as exc:
                 raise HTTPException(status_code=400, detail=exc.message) from exc
         else:

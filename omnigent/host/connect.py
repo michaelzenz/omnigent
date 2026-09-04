@@ -2062,12 +2062,30 @@ class HostProcess:
             entry_type = "file"
         else:
             entry_type = "other"
+        git_branch: str | None = None
+        if entry_type == "directory":
+            try:
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=canonical,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if branch_result.returncode == 0:
+                    name = branch_result.stdout.strip()
+                    if name and name != "HEAD":
+                        git_branch = name
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         return HostStatResultFrame(
             request_id=frame.request_id,
             status="ok",
             exists=True,
             type=entry_type,
             canonical_path=canonical,
+            git_branch=git_branch,
         )
 
     def _handle_list_dir(self, frame: HostListDirFrame) -> HostListDirResultFrame:

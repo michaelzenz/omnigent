@@ -28,12 +28,29 @@ import asyncio
 import logging
 import re
 import secrets
+from dataclasses import dataclass
 from typing import Any
 
 from omnigent.host.frames import HostStatFrame, encode_host_frame
 from omnigent.server.host_registry import HostConnection, HostRegistry
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WorkspaceValidationResult:
+    """Result of workspace validation.
+
+    :param canonical_path: Realpath-resolved workspace to store
+        on the session row.
+    :param git_branch: Current git branch at the workspace path,
+        or ``None`` when the path is not a git repo. Detected by the
+        host during the stat round-trip at no extra cost.
+    """
+
+    canonical_path: str
+    git_branch: str | None = None
+
 
 # Treat these spec cwd values as "relative" — the agent doesn't pin
 # a specific directory and the workspace is unconstrained.
@@ -195,7 +212,7 @@ async def validate_workspace(
     workspace: str,
     spec_cwd: str | None,
     host_name_for_errors: str | None = None,
-) -> str:
+) -> WorkspaceValidationResult:
     """
     Run all session-create validation steps and return the
     canonical workspace path.
@@ -217,9 +234,8 @@ async def validate_workspace(
     :param host_name_for_errors: Optional human-readable host
         name to interpolate into error messages, e.g.
         ``"corey-laptop"``. ``None`` falls back to ``host_id``.
-    :returns: The canonical workspace path that should be stored
-        on the session row, e.g.
-        ``"/Users/corey/universe/src/foo"`` (already realpath).
+    :returns: :class:`WorkspaceValidationResult` with the canonical
+        workspace path and the detected git branch (or ``None``).
     :raises WorkspaceValidationError: On any validation failure.
         The exception message is suitable for surfacing to the
         API caller verbatim.
@@ -315,4 +331,7 @@ async def validate_workspace(
                 f"agent expects subdirectory '{subdir}' which is not present at {workspace}"
             )
 
-    return canonical_workspace
+    return WorkspaceValidationResult(
+        canonical_path=canonical_workspace,
+        git_branch=workspace_stat.get("git_branch"),
+    )

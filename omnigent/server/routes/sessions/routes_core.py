@@ -2249,7 +2249,7 @@ def register_core_routes(
                     f"agent {conv_for_workspace.agent_id!r} not found",
                     code=ErrorCode.NOT_FOUND,
                 )
-            canonical_workspace = await _validate_session_workspace(
+            validation = await _validate_session_workspace(
                 user_id=user_id,
                 host_id=conv_for_workspace.host_id,
                 workspace=workspace_value,
@@ -2257,6 +2257,7 @@ def register_core_routes(
                 agent_cache=agent_cache,
                 request=request,
             )
+            canonical_workspace = validation.canonical_path
             updated_conv = await asyncio.to_thread(
                 conversation_store.set_conversation_workspace,
                 session_id,
