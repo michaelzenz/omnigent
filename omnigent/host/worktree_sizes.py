@@ -30,13 +30,14 @@ _DU_TIMEOUT_S = 300.0  # 5 minutes per worktree
 
 
 def _worktree_has_dirty_files(path: str) -> bool:
-    """Check if a worktree has modified or staged tracked files.
+    """Check if a worktree has modified, staged, or untracked (non-ignored) files.
 
-    Untracked files don't count — a fresh worktree with no commits
-    would otherwise always look dirty.
+    Ignored files (e.g. ``__pycache__``) don't count — they don't conflict
+    with branch switching and are present after almost every session.
+    This matches the ``_worktree_is_clean`` gate used by the reuse path.
     """
     result = _run_git(
-        ["status", "--porcelain=v1", "--untracked-files=no"],
+        ["status", "--porcelain=v1", "--untracked-files=all"],
         cwd=path,
     )
     if result.returncode != 0:

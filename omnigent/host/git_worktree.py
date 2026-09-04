@@ -392,8 +392,6 @@ def _worktree_is_clean(path: str) -> bool:
                 "status",
                 "--porcelain=v1",
                 "--untracked-files=all",
-                "--ignored=matching",
-                "--ignore-submodules=none",
             ],
             cwd=path,
         )
