@@ -134,7 +134,7 @@ def create_external_session_watcher_router(
                 event_id,
                 EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
                 title,
-                payload=json.dumps(event_payload),
+                payload=json.dumps(event_payload, ensure_ascii=False),
                 source="external_session_watcher",
                 source_key=body.session_hint,
                 source_offset=f"host:{poller_host_id}" if poller_host_id else None,

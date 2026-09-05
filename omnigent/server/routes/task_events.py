@@ -269,7 +269,7 @@ def create_task_events_router(
                 event_id,
                 body.event_type,
                 body.title,
-                payload=json.dumps(body.payload),
+                payload=json.dumps(body.payload, ensure_ascii=False),
                 source=body.source,
                 source_key=body.source_key,
                 source_offset=body.source_offset,

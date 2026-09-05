@@ -215,7 +215,8 @@ async def _emit_worker_execution_finished_event(
             "result_summary": execution.result_summary,
             "error": execution.error,
             "output": output,
-        }
+        },
+        ensure_ascii=False,
     )
     title = f"Worker execution {execution.status} for item {item_title}"
     owner = task.owner_user_id or "__anonymous__"

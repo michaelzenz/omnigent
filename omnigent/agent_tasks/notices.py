@@ -277,4 +277,4 @@ def _format_broker_stall_notice(
             for c in (clusters or [])
         ],
     }
-    return json.dumps(payload, separators=(",", ":"))
+    return json.dumps(payload, ensure_ascii=False, indent=2)

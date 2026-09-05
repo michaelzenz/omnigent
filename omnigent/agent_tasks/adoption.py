@@ -201,7 +201,7 @@ def propose_external_session_adoption(
         f"Adopt external session: {session_hint}",
         source_key=session_hint,
         source="broker",
-        payload=json.dumps(payload),
+        payload=json.dumps(payload, ensure_ascii=False),
         task_id=task.id,
         state="received",
         owner_user_id=owner_user_id,
@@ -328,7 +328,7 @@ def emit_turn_finished_event_unbound(
         "status": "idle",
         "last_user_message": last_user_message,
         "last_agent_response": last_agent_response,
-    })
+    }, ensure_ascii=False)
     title = f"Session turn finished: {session_title}"
     try:
         _context.task_event_store.create_event(
@@ -415,7 +415,7 @@ def emit_turn_finished_event(
         "status": status,
         "last_user_message": last_user_message,
         "last_agent_response": last_agent_response,
-    })
+    }, ensure_ascii=False)
     title = f"Session turn finished: {session_title}"
 
     for manager_id, owner in manager_owner.items():

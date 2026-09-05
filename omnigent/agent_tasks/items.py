@@ -248,7 +248,10 @@ def complete_human_action(
             source="user",
             source_key=item.id,
             state="routed",
-            payload=json.dumps({"item_id": item.id, "item_title": item.title, "kind": item.kind}),
+            payload=json.dumps(
+                {"item_id": item.id, "item_title": item.title, "kind": item.kind},
+                ensure_ascii=False,
+            ),
             owner_user_id=task.owner_user_id or "__anonymous__",
         )
         task_event_store.update_event(event.id, routed_at=now_epoch())
@@ -374,7 +377,7 @@ async def resolve_task_item(
             ),
             kind="item.dispatch",
             source_ids=[item.id],
-            payload=json.dumps(queue_payload),
+            payload=json.dumps(queue_payload, ensure_ascii=False),
         )
         task = sync_task_activity_state(
             task,
