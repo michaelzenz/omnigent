@@ -628,10 +628,10 @@ async def _maybe_adopt_session(session_id: str) -> None:
             if worker.state == "deleted":
                 # User dismissed adoption or task was deleted — stop tracking.
                 return
-            # Bound session — emit a turn-finished event to its manager(s).
+            # Bound session — broadcast a turn-finished event to the
+            # deduped set of managers governing the session's workers.
             emit_turn_finished_event(
                 session_id=session_id,
-                worker=worker,
                 status="idle",
             )
             return
