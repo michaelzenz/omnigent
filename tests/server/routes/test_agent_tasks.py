@@ -451,7 +451,6 @@ async def test_list_managers_includes_zero_task_manager_metadata(
     assert manager["role_key"] == "manager:uploads"
     assert manager["capacity"] > 0
     assert manager["task_count"] == 0
-    assert manager["tasks"] == []
 
 
 async def test_create_manager_registers_top_level_manager_role(

@@ -976,14 +976,6 @@ def _manager_to_response(manager: ManagerInfo) -> dict[str, Any]:
         "role_key": manager.role_key,
         "task_count": manager.task_count,
         "capacity": MANAGER_TASK_CAPACITY,
-        "tasks": [
-            {
-                "task_id": task.id,
-                "title": task.title,
-                "state": task.state,
-            }
-            for task in manager.tasks
-        ],
     }
 
 
