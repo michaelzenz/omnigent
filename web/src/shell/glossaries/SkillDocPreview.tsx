@@ -7,6 +7,7 @@ import { Link } from "@tiptap/extension-link";
 import { Markdown } from "@tiptap/markdown";
 import { GitHubAlertBlockquote } from "@/shell/TipTapGitHubAlert";
 import { HtmlPassthrough } from "@/shell/TipTapHtmlPassthrough";
+import { cn } from "@/lib/utils";
 import {
   installMarkdownParserPatch,
   installMarkdownSerializerPatch,
@@ -25,7 +26,11 @@ interface FrontmatterEntry {
   value: string;
 }
 
-function splitFrontmatter(content: string): { entries: FrontmatterEntry[]; body: string; prefix: string } {
+function splitFrontmatter(content: string): {
+  entries: FrontmatterEntry[];
+  body: string;
+  prefix: string;
+} {
   if (!content.startsWith("---")) return { entries: [], body: content, prefix: "" };
   const end = content.indexOf("\n---", 3);
   if (end === -1) return { entries: [], body: content, prefix: "" };
@@ -38,7 +43,10 @@ function splitFrontmatter(content: string): { entries: FrontmatterEntry[]; body:
     if (colon === -1) continue;
     const key = line.slice(0, colon).trim();
     let value = line.slice(colon + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     entries.push({ key, value });
@@ -49,9 +57,11 @@ function splitFrontmatter(content: string): { entries: FrontmatterEntry[]; body:
 interface SkillDocPreviewProps {
   content: string;
   onChange: (content: string) => void;
+  /** Merged onto the outer container; overrides the default min height. */
+  className?: string;
 }
 
-export function SkillDocPreview({ content, onChange }: SkillDocPreviewProps) {
+export function SkillDocPreview({ content, onChange, className }: SkillDocPreviewProps) {
   const { entries, body, prefix } = useMemo(() => splitFrontmatter(content), [content]);
   const prefixRef = useRef(prefix);
   prefixRef.current = prefix;
@@ -114,7 +124,7 @@ export function SkillDocPreview({ content, onChange }: SkillDocPreviewProps) {
   useEffect(() => () => editor?.destroy(), [editor]);
 
   return (
-    <div className="flex min-h-[32rem] flex-col">
+    <div className={cn("flex min-h-[32rem] flex-col", className)}>
       {entries.length > 0 && (
         <dl className="flex flex-wrap gap-x-6 gap-y-1.5 border-b border-border bg-muted/30 px-4 py-3">
           {entries.map((entry) => (

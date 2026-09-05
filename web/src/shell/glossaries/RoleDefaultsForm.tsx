@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2Icon } from "lucide-react";
+import { EyeIcon, Loader2Icon, PencilIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -15,6 +16,7 @@ import {
   useUpdateRolePrompt,
 } from "@/hooks/useAgentRoleProfile";
 import { useOmniHarnessModelOptions } from "@/hooks/useModelSettings";
+import { SkillDocPreview } from "./SkillDocPreview";
 
 const MODEL_DEFAULT_VALUE = "__default__";
 
@@ -28,6 +30,7 @@ export function RoleDefaultsForm({ roleId }: { roleId: string }) {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState<SaveStatus>("idle");
+  const [markdownMode, setMarkdownMode] = useState(false);
   const nameBaseline = useRef("");
   const promptBaseline = useRef("");
   const nameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,18 +165,42 @@ export function RoleDefaultsForm({ roleId }: { roleId: string }) {
           </Select>
         </label>
       </div>
-      <label className="block space-y-1.5 text-xs text-muted-foreground">
-        Manual
-        <Textarea
-          value={prompt}
-          rows={10}
-          className="resize-y font-mono text-xs"
-          onChange={(event) => {
-            setPrompt(event.target.value);
-            savePrompt(event.target.value);
-          }}
-        />
-      </label>
+      <div className="space-y-1.5 text-xs text-muted-foreground">
+        <div className="flex items-center">
+          <span>Manual</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto"
+            aria-label={markdownMode ? "Edit as plain text" : "Render as markdown"}
+            data-testid={`glossary-role-manual-mode-${roleId}`}
+            onClick={() => setMarkdownMode((prev) => !prev)}
+          >
+            {markdownMode ? <PencilIcon /> : <EyeIcon />}
+          </Button>
+        </div>
+        {markdownMode ? (
+          <SkillDocPreview
+            content={prompt}
+            onChange={(value) => {
+              setPrompt(value);
+              savePrompt(value);
+            }}
+            className="min-h-96 text-sm"
+          />
+        ) : (
+          <Textarea
+            value={prompt}
+            rows={10}
+            className="resize-y font-mono text-xs"
+            onChange={(event) => {
+              setPrompt(event.target.value);
+              savePrompt(event.target.value);
+            }}
+          />
+        )}
+      </div>
       <p className="text-xs text-muted-foreground" aria-live="polite">
         {status === "pending" && "Unsaved changes…"}
         {status === "saving" && "Saving…"}
