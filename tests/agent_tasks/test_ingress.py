@@ -13,6 +13,7 @@ from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
 from omnigent.entities.task_role_profile import TaskRoleProfile
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -76,12 +77,34 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
     conversation_store = SqlAlchemyConversationStore(db_uri)
     secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
+    manager_conv = conversation_store.create_conversation(
+        title="Manager",
+        agent_id=manager_agent_id,
+        host_id=_uid("host_ingress"),
+        workspace="/tmp/ingress-test",
+    )
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager = manager_store.upsert(
+        _uid("mgr_ingress"),
+        owner_user_id="__anonymous__",
+        role_key="manager:default",
+        description="Ingress test manager",
+        conversation_id=manager_conv.id,
+        title="Task manager: Ingress test manager",
+        host_id=_uid("host_ingress"),
+        workspace="/tmp/ingress-test",
+        harness="cursor",
+        agent_profile_id=manager_agent_id,
+    )
     task_id = _uid("ingress_task")
     task_store.create(
         task_id,
         "Upload retries",
         "uploads retry to success",
         internal_note="flaky upload retries repo:omnigent-fork",
+        manager_id=manager.id,
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="omnigent-fork")],
     )
     return {
@@ -90,6 +113,9 @@ def stores(db_uri: str, manager_agent_id: str) -> dict:
         "conversation_store": conversation_store,
         "secretary_store": secretary_store,
         "worker_store": worker_store,
+        "manager_store": manager_store,
+        "manager": manager,
+        "manager_conv_id": manager_conv.id,
         "task_id": task_id,
         "agent_profile_id": manager_agent_id,
     }
@@ -119,7 +145,6 @@ async def test_ingress_auto_routes_clear_match(db_uri: str, stores: dict) -> Non
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        role_profile=profile,
         session_creator=_mock_session_creator(stores["conversation_store"]),
         app_state=SimpleNamespace(),
     )
@@ -151,7 +176,6 @@ async def test_ingress_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) 
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
-        task_role_profile_store=secretary_store,
         owner_user_id="__anonymous__",
     )
     assert updated.state == "awaiting_grouping"
@@ -199,7 +223,6 @@ async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) ->
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        role_profile=profile,
         session_creator=_mock_session_creator(stores["conversation_store"]),
         app_state=SimpleNamespace(),
     )
@@ -219,6 +242,7 @@ async def test_ingress_fans_out_to_subscribers(db_uri: str, stores: dict) -> Non
         other_task_id,
         "Review queue",
         "reviews stay current",
+        manager_id=stores["manager"].id,
     )
     for task_id in (stores["task_id"], other_task_id):
         event_store.create_subscription(
@@ -249,7 +273,6 @@ async def test_ingress_fans_out_to_subscribers(db_uri: str, stores: dict) -> Non
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        role_profile=profile,
         session_creator=_mock_session_creator(stores["conversation_store"]),
         app_state=SimpleNamespace(),
     )
@@ -310,15 +333,34 @@ async def test_ingress_skips_subscriptions_without_live_task(db_uri: str, stores
 async def test_ingress_fanout_continues_past_failed_subscriber(db_uri: str, stores: dict) -> None:
     event_store: SqlAlchemyTaskEventStore = stores["event_store"]
     task_store: SqlAlchemyTaskStore = stores["task_store"]
-    # Broken subscriber: its manager conversation id points nowhere, so
-    # bootstrap raises CONFLICT when the fan-out tries to route to it.
+    # Broken subscriber: session creation for its manager raises, so the
+    # fan-out's route attempt fails and the child event settles failed.
     broken_task_id = _uid("ingress_task_broken")
-    task_store.create(
-        broken_task_id,
-        "Broken task",
-        "unreachable",
-        manager_conversation_id=_uid("missing_conversation"),
+    broken_task = task_store.create(broken_task_id, "Broken task", "unreachable")
+
+    # A manager row whose session pointer is dead: healing it requires a
+    # spawn, and the spawn raises — the fan-out's route attempt fails and
+    # the child event settles failed while the healthy subscriber routes.
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    dead_manager = manager_store.upsert(
+        _uid("mgr_dead"),
+        owner_user_id="__anonymous__",
+        role_key="manager:default",
+        description="BrokenX",
+        conversation_id=_uid("conv_deleted"),
     )
+    task_store.update(broken_task.id, manager_id=dead_manager.id)
+
+    async def _raising_session_creator(*, body: Any, request: Any, user_id: Any, **kwargs: Any):
+        if "BrokenX" in (body.title or ""):
+            raise OmnigentError("host unreachable", code=ErrorCode.INTERNAL_ERROR)
+        return await _mock_session_creator(stores["conversation_store"])(
+            body=body, request=request, user_id=user_id, **kwargs
+        )
+
+    fanout_session_creator = _raising_session_creator
     event_store.create_subscription(
         _uid("sub_broken"),
         broken_task_id,
@@ -353,9 +395,8 @@ async def test_ingress_fanout_continues_past_failed_subscriber(db_uri: str, stor
         task_event_store=event_store,
         worker_store=stores["worker_store"],
         conversation_store=stores["conversation_store"],
-        role_profile=profile,
-        session_creator=_mock_session_creator(stores["conversation_store"]),
-        app_state=SimpleNamespace(),
+        session_creator=fanout_session_creator,
+        app_state=SimpleNamespace(manager_store=manager_store),
     )
     assert updated.state == "broadcast"
     deliveries = event_store.list_deliveries_for_event(event_id)

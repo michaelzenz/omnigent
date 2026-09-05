@@ -30,7 +30,7 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
         "Demo task",
         "demo goal",
         state="active",
-        manager_conversation_id=_uid("mgr_conv"),
+        manager_id=_uid("mgr_conv"),
     )
     task = task_store.get(task_id)
     assert task is not None
@@ -73,7 +73,7 @@ def test_dashboard_includes_task_assets(db_uri: str) -> None:
         "Asset task",
         "asset goal",
         state="active",
-        manager_conversation_id=_uid("mgr_conv_assets"),
+        manager_id=_uid("mgr_conv_assets"),
     )
     task = task_store.get(task_id)
     assert task is not None
@@ -108,7 +108,7 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
         "Lane task",
         "lane goal",
         state="active",
-        manager_conversation_id=_uid("mgr_conv2"),
+        manager_id=_uid("mgr_conv2"),
     )
     task = task_store.get(task_id)
     assert task is not None

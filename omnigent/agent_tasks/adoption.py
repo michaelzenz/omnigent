@@ -12,7 +12,6 @@ from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
-from omnigent.agent_tasks.session_task import task_for_session
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent, Worker
@@ -23,6 +22,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
@@ -83,6 +83,7 @@ class SessionAdoptionContext:
     worker_store: WorkerStore
     conversation_store: ConversationStore
     task_item_store: TaskItemStore
+    manager_store: ManagerStore | None = None
     task_role_profile_store: TaskRoleProfileStore | None = None
     host_store: HostStore | None = None
     runner_router: RunnerRouter | None = None
@@ -228,7 +229,6 @@ async def adopt_external_session(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    params: Any | None = None,
     proposal_event: TaskEvent | None = None,
     session_creator: Any | None = None,
     app_state: Any | None = None,
@@ -262,7 +262,6 @@ async def adopt_external_session(
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
-        params=params,
         session_creator=session_creator,
         app_state=app_state,
         user_id=user_id,
@@ -387,7 +386,7 @@ def emit_turn_finished_event(
             SESSION_TURN_FINISHED_EVENT_TYPE,
             title,
             task_id=task.id,
-            manager_conversation_id=task.manager_conversation_id,
+            manager_id=task.manager_id,
             source="adoption",
             source_key=session_id,
             state="routed",

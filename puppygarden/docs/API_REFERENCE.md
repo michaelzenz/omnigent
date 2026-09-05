@@ -77,7 +77,7 @@ move endpoint places it at the end without changing audit timestamps.
 
 Managers are first-class records backed by top-level conversations.
 `GET /v1/agent-tasks/managers` returns the caller's managers with their
-descriptions, role keys, placement, capacity, and task portfolios, plus the
+descriptions, role keys, placement, capacity, and task counts, plus the
 manager role profiles available for creation. Create one with
 `POST /v1/agent-tasks/managers` using `role_key`, `description`, and an optional
 `title`. A manager updates its own routing description through

@@ -29,7 +29,7 @@ def _to_entity(row: SqlTask) -> Task:
     return Task(
         id=row.id,
         manager_role_key=row.manager_role_key,
-        manager_conversation_id=row.manager_conversation_id,
+        manager_id=row.manager_id,
         owner_user_id=row.owner_user_id,
         title=row.title,
         description=row.description,
@@ -61,7 +61,7 @@ class SqlAlchemyTaskStore(TaskStore):
         manager_role_key: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        manager_conversation_id: str | None = None,
+        manager_id: str | None = None,
         state: str = "idle",
         priority: int = 2,
         tags: list[TaskTag] | None = None,
@@ -70,7 +70,7 @@ class SqlAlchemyTaskStore(TaskStore):
         row = SqlTask(
             id=task_id,
             manager_role_key=manager_role_key or MANAGER_DEFAULT_ROLE_KEY,
-            manager_conversation_id=manager_conversation_id,
+            manager_id=manager_id,
             owner_user_id=owner_user_id,
             title=title,
             description=description,
@@ -108,12 +108,12 @@ class SqlAlchemyTaskStore(TaskStore):
                 return None
             return _to_entity(row)
 
-    def get_by_manager_conversation_id(self, conversation_id: str) -> Task | None:
+    def get_by_manager_id(self, manager_id: str) -> Task | None:
         with self._session() as session:
             stmt = (
                 select(SqlTask)
                 .where(SqlTask.workspace_id == current_workspace_id())
-                .where(SqlTask.manager_conversation_id == conversation_id)
+                .where(SqlTask.manager_id == manager_id)
             )
             row = session.execute(stmt).scalars().first()
             if row is None:
@@ -148,19 +148,19 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
-    def list_by_manager_conversation_id(self, conversation_id: str) -> list[Task]:
+    def list_by_manager_id(self, manager_id: str) -> list[Task]:
         with self._session() as session:
             stmt = (
                 select(SqlTask)
                 .where(SqlTask.workspace_id == current_workspace_id())
-                .where(SqlTask.manager_conversation_id == conversation_id)
+                .where(SqlTask.manager_id == manager_id)
                 .where(SqlTask.state != encode_task_state("archived"))
                 .order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
             )
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
-    def list_manager_conversation_ids(
+    def list_manager_ids(
         self, *, owner_user_id: str | None = None
     ) -> list[str]:
         with self._session() as session:
@@ -169,9 +169,9 @@ class SqlAlchemyTaskStore(TaskStore):
                 for state in ("active", "idle", "pending", "agent-resolved")
             ]
             stmt = (
-                select(SqlTask.manager_conversation_id)
+                select(SqlTask.manager_id)
                 .where(SqlTask.workspace_id == current_workspace_id())
-                .where(SqlTask.manager_conversation_id.is_not(None))
+                .where(SqlTask.manager_id.is_not(None))
                 .where(SqlTask.state.in_(live))
                 .distinct()
             )
@@ -186,7 +186,7 @@ class SqlAlchemyTaskStore(TaskStore):
         title: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        manager_conversation_id: str | None = _UNSET,
+        manager_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
         manager_role_key: str | None = None,
         state: str | None = None,
@@ -210,10 +210,10 @@ class SqlAlchemyTaskStore(TaskStore):
             if goal is not None and row.goal != goal:
                 row.goal = goal
                 changed = True
-            if manager_conversation_id is not _UNSET and (
-                row.manager_conversation_id != manager_conversation_id
+            if manager_id is not _UNSET and (
+                row.manager_id != manager_id
             ):
-                row.manager_conversation_id = manager_conversation_id
+                row.manager_id = manager_id
                 changed = True
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
                 row.owner_user_id = owner_user_id

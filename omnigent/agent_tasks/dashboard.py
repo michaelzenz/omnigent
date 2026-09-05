@@ -87,7 +87,7 @@ def build_task_dashboard(
             "created_at": task.created_at,
             "priority": task.priority,
             "queue_rank": task.queue_rank,
-            "manager_conversation_id": task.manager_conversation_id,
+            "manager_id": task.manager_id,
         },
         "derived": {
             "has_running_workers": has_running_workers,

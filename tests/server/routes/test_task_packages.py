@@ -207,7 +207,7 @@ async def test_accept_package_promotes_pending_task(
     accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["state"] == "idle"
-    assert accepted.json()["manager_conversation_id"] is not None
+    assert accepted.json()["manager_id"] is not None
 
     locked = await client.patch(
         f"/v1/agent-tasks/{task_id}",
@@ -248,7 +248,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
     task_id = created.json()["id"]
     accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
     assert accepted.status_code == 200, accepted.text
-    assert accepted.json()["manager_conversation_id"] is not None
+    assert accepted.json()["manager_id"] is not None
 
     item_store = SqlAlchemyTaskItemStore(db_uri)
     item = item_store.list_items_for_task(task_id, state="pending")[0]
@@ -278,7 +278,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
     assert activated is not None
     # The task is idle with a queued backlog rather than active until a worker runs.
     assert activated.state == "idle"
-    assert activated.manager_conversation_id is not None
+    assert activated.manager_id is not None
 
 
 async def test_resolve_inbox_item_requires_accepted_package(

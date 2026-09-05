@@ -44,7 +44,7 @@ def _event_to_entity(row: SqlTaskEvent) -> TaskEvent:
         created_at=row.created_at,
         tags=decode_event_tags(row.tags),
         task_id=row.task_id,
-        manager_conversation_id=row.manager_conversation_id,
+        manager_id=row.manager_id,
         payload=row.payload,
         source=row.source,
         source_key=row.source_key,
@@ -116,7 +116,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         title: str,
         *,
         task_id: str | None = None,
-        manager_conversation_id: str | None = None,
+        manager_id: str | None = None,
         payload: str | None = None,
         source: str | None = None,
         source_key: str | None = None,
@@ -130,7 +130,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         row = SqlTaskEvent(
             id=event_id,
             task_id=task_id,
-            manager_conversation_id=manager_conversation_id,
+            manager_id=manager_id,
             event_type=event_type,
             title=title,
             payload=payload,
@@ -220,7 +220,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         event_id: str,
         *,
         task_id: str | None = _UNSET,
-        manager_conversation_id: str | None = _UNSET,
+        manager_id: str | None = _UNSET,
         state: str | None = None,
         routed_at: int | None = None,
         processed_at: int | None = None,
@@ -235,10 +235,10 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 row.task_id = task_id
                 changed = True
             if (
-                manager_conversation_id is not _UNSET
-                and row.manager_conversation_id != manager_conversation_id
+                manager_id is not _UNSET
+                and row.manager_id != manager_id
             ):
-                row.manager_conversation_id = manager_conversation_id
+                row.manager_id = manager_id
                 changed = True
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
                 row.owner_user_id = owner_user_id
@@ -264,7 +264,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         event_ids: list[str],
         *,
         task_id: str,
-        manager_conversation_id: str | None,
+        manager_id: str | None,
     ) -> list[TaskEvent]:
         unique_ids = list(dict.fromkeys(event_ids))
         if not unique_ids:
@@ -285,11 +285,11 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 row = rows_by_id[event_id]
                 belongs_to_task = (
                     row.task_id == task_id
-                    and row.manager_conversation_id == manager_conversation_id
+                    and row.manager_id == manager_id
                 ) or (
                     row.task_id is None
-                    and manager_conversation_id is not None
-                    and row.manager_conversation_id == manager_conversation_id
+                    and manager_id is not None
+                    and row.manager_id == manager_id
                 )
                 if not belongs_to_task:
                     raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
@@ -302,9 +302,9 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             manager_route = (
                 and_(
                     SqlTaskEvent.task_id.is_(None),
-                    SqlTaskEvent.manager_conversation_id == manager_conversation_id,
+                    SqlTaskEvent.manager_id == manager_id,
                 )
-                if manager_conversation_id is not None
+                if manager_id is not None
                 else false()
             )
             now = now_epoch()
@@ -317,15 +317,15 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                     or_(
                         and_(
                             SqlTaskEvent.task_id == task_id,
-                            SqlTaskEvent.manager_conversation_id
-                            == manager_conversation_id,
+                            SqlTaskEvent.manager_id
+                            == manager_id,
                         ),
                         manager_route,
                     ),
                 )
                 .values(
                     task_id=task_id,
-                    manager_conversation_id=manager_conversation_id,
+                    manager_id=manager_id,
                     state=encode_task_event_state("reconciled"),
                     processed_at=now,
                     updated_at=now,
@@ -350,7 +350,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         self,
         event_ids: list[str],
         *,
-        manager_conversation_id: str,
+        manager_id: str,
         owner_user_id: str,
         routable_states: frozenset[str],
     ) -> list[TaskEvent] | None:
@@ -380,11 +380,11 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                     return None
                 same_target = (
                     row.state == routed_state
-                    and row.manager_conversation_id == manager_conversation_id
+                    and row.manager_id == manager_id
                 )
                 stalled = (
                     row.state in routable_codes
-                    and row.manager_conversation_id is None
+                    and row.manager_id is None
                 )
                 if same_target:
                     continue
@@ -401,7 +401,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                         SqlTaskEvent.workspace_id == workspace_id,
                         SqlTaskEvent.id.in_(stalled_ids),
                         SqlTaskEvent.state.in_(routable_codes),
-                        SqlTaskEvent.manager_conversation_id.is_(None),
+                        SqlTaskEvent.manager_id.is_(None),
                         func.coalesce(
                             SqlTaskEvent.owner_user_id, "__anonymous__"
                         )
@@ -409,7 +409,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                     )
                     .values(
                         task_id=None,
-                        manager_conversation_id=manager_conversation_id,
+                        manager_id=manager_id,
                         state=routed_state,
                         routed_at=now,
                         updated_at=now,

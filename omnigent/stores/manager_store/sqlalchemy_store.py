@@ -24,10 +24,18 @@ def _normalized_owner(owner_user_id: str | None) -> str:
 
 def _to_entity(row: SqlManager) -> Manager:
     return Manager(
+        id=row.id,
         conversation_id=row.conversation_id,
         owner_user_id=row.owner_user_id,
         role_key=row.role_key,
+        title=row.title,
         description=row.description,
+        host_id=row.host_id,
+        workspace=row.workspace,
+        harness=row.harness,
+        model=row.model,
+        agent_profile_id=row.agent_profile_id,
+        prompt_profile_id=row.prompt_profile_id,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -44,9 +52,18 @@ class SqlAlchemyManagerStore(ManagerStore):
             query_name_prefix="omnigent.manager_store",
         )
 
-    def get(self, conversation_id: str) -> Manager | None:
+    def get(self, manager_id: str) -> Manager | None:
+        with self._session("select_manager_by_id") as session:
+            row = session.get(SqlManager, (current_workspace_id(), manager_id))
+            return _to_entity(row) if row is not None else None
+
+    def get_by_conversation_id(self, conversation_id: str) -> Manager | None:
         with self._session("select_manager_by_conversation") as session:
-            row = session.get(SqlManager, (current_workspace_id(), conversation_id))
+            stmt = select(SqlManager).where(
+                SqlManager.workspace_id == current_workspace_id(),
+                SqlManager.conversation_id == conversation_id,
+            )
+            row = session.execute(stmt).scalars().first()
             return _to_entity(row) if row is not None else None
 
     def list(self, *, owner_user_id: str | None) -> list[Manager]:
@@ -57,50 +74,82 @@ class SqlAlchemyManagerStore(ManagerStore):
                     SqlManager.workspace_id == current_workspace_id(),
                     SqlManager.owner_user_id == _normalized_owner(owner_user_id),
                 )
-                .order_by(asc(SqlManager.created_at), asc(SqlManager.conversation_id))
+                .order_by(asc(SqlManager.created_at), asc(SqlManager.id))
             )
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def upsert(
         self,
-        conversation_id: str,
+        manager_id: str,
         *,
         owner_user_id: str | None,
         role_key: str,
         description: str,
+        conversation_id: str | None,
+        title: str | None = None,
+        host_id: str | None = None,
+        workspace: str | None = None,
+        harness: str | None = None,
+        model: str | None = None,
+        agent_profile_id: str | None = None,
+        prompt_profile_id: str | None = None,
     ) -> Manager:
         owner_user_id = _normalized_owner(owner_user_id)
         with self._session("upsert_manager") as session:
-            row = session.get(SqlManager, (current_workspace_id(), conversation_id))
+            row = session.get(SqlManager, (current_workspace_id(), manager_id))
             now = now_epoch()
             if row is None:
                 row = SqlManager(
+                    id=manager_id,
                     conversation_id=conversation_id,
                     owner_user_id=owner_user_id,
                     role_key=role_key,
+                    title=title,
                     description=description,
+                    host_id=host_id,
+                    workspace=workspace,
+                    harness=harness,
+                    model=model,
+                    agent_profile_id=agent_profile_id,
+                    prompt_profile_id=prompt_profile_id,
                     created_at=now,
                     updated_at=now,
                 )
                 session.add(row)
             else:
+                row.conversation_id = conversation_id
                 row.owner_user_id = owner_user_id
                 row.role_key = role_key
+                row.title = title
                 row.description = description
+                row.host_id = host_id
+                row.workspace = workspace
+                row.harness = harness
+                row.model = model
+                row.agent_profile_id = agent_profile_id
+                row.prompt_profile_id = prompt_profile_id
                 row.updated_at = now
             session.flush()
             return _to_entity(row)
 
     def update(
         self,
-        conversation_id: str,
+        manager_id: str,
         *,
         owner_user_id: Any = _UNSET,
         role_key: str | None = None,
         description: str | None = None,
+        conversation_id: Any = _UNSET,
+        title: Any = _UNSET,
+        host_id: Any = _UNSET,
+        workspace: Any = _UNSET,
+        harness: Any = _UNSET,
+        model: Any = _UNSET,
+        agent_profile_id: Any = _UNSET,
+        prompt_profile_id: Any = _UNSET,
     ) -> Manager | None:
         with self._session("update_manager") as session:
-            row = session.get(SqlManager, (current_workspace_id(), conversation_id))
+            row = session.get(SqlManager, (current_workspace_id(), manager_id))
             if row is None:
                 return None
             changed = False
@@ -112,6 +161,19 @@ class SqlAlchemyManagerStore(ManagerStore):
             if normalized_owner is not _UNSET and row.owner_user_id != normalized_owner:
                 row.owner_user_id = normalized_owner
                 changed = True
+            for column, value in (
+                ("conversation_id", conversation_id),
+                ("title", title),
+                ("host_id", host_id),
+                ("workspace", workspace),
+                ("harness", harness),
+                ("model", model),
+                ("agent_profile_id", agent_profile_id),
+                ("prompt_profile_id", prompt_profile_id),
+            ):
+                if value is not _UNSET and getattr(row, column) != value:
+                    setattr(row, column, value)
+                    changed = True
             if role_key is not None and row.role_key != role_key:
                 row.role_key = role_key
                 changed = True
@@ -122,3 +184,12 @@ class SqlAlchemyManagerStore(ManagerStore):
                 row.updated_at = now_epoch()
             session.flush()
             return _to_entity(row)
+
+    def delete(self, manager_id: str) -> bool:
+        with self._session("delete_manager") as session:
+            row = session.get(SqlManager, (current_workspace_id(), manager_id))
+            if row is None:
+                return False
+            session.delete(row)
+            session.flush()
+            return True

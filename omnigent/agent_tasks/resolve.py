@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.entities import Task, TaskEvent
-from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -55,11 +53,6 @@ async def resolve_task_event(
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
     task: Task,
-    host_id: str | None = None,
-    workspace: str | None = None,
-    harness: str | None = None,
-    model: str | None = None,
-    role_profile: TaskRoleProfile | None = None,
     session_creator: Any | None = None,
     app_state: Any | None = None,
     user_id: str | None = None,
@@ -75,20 +68,12 @@ async def resolve_task_event(
             code=ErrorCode.CONFLICT,
         )
 
-    params = resolve_bootstrap_params(
-        host_id=host_id,
-        workspace=workspace,
-        harness=harness,
-        model=model,
-        role_profile=role_profile,
-    )
     return await route_event_to_task(
         event=event,
         task=task,
         task_store=task_store,
         task_event_store=task_event_store,
         conversation_store=conversation_store,
-        params=params,
         routing_reason="broker-resolve",
         session_creator=session_creator,
         app_state=app_state,

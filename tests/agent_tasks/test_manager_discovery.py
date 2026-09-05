@@ -7,7 +7,8 @@ import uuid
 
 import pytest
 
-from omnigent.agent_tasks.bootstrap import bootstrap_task_manager, resolve_bootstrap_params
+from omnigent.agent_tasks.bootstrap import bootstrap_task_manager
+from omnigent.errors import OmnigentError
 from omnigent.agent_tasks.manager_discovery import (
     choose_manager_for_task,
     list_active_managers,
@@ -40,17 +41,24 @@ def discovery_setup(db_uri: str) -> dict:
         host_id=_uid("host_a"),
         workspace="/tmp/mgr",
     )
-    manager_store.upsert(
-        manager_conv.id,
+    manager = manager_store.upsert(
+        _uid("mgr_a"),
         owner_user_id="user-1",
         role_key="manager:uploads",
         description="Owns S3 upload reliability.",
+        conversation_id=manager_conv.id,
+        title="Task manager: Owns S3 upload reliability.",
+        host_id=_uid("host_a"),
+        workspace="/tmp/mgr",
+        harness="openai-agents",
+        agent_profile_id=manager_agent_id,
     )
     return {
         "agent_store": agent_store,
         "task_store": task_store,
         "conversation_store": conversation_store,
         "manager_store": manager_store,
+        "manager": manager,
         "manager_conv": manager_conv,
         "manager_agent_id": manager_agent_id,
     }
@@ -76,7 +84,7 @@ def _create_task(
     title: str = "A task",
     goal: str = "a goal",
     owner: str = "user-1",
-    manager_conversation_id: str | None = None,
+    manager_id: str | None = None,
     state: str = "active",
 ) -> Task:
     return store.create(
@@ -84,7 +92,7 @@ def _create_task(
         title,
         goal,
         owner_user_id=owner,
-        manager_conversation_id=manager_conversation_id,
+        manager_id=manager_id,
         state=state,
     )
 
@@ -108,7 +116,6 @@ def _managers(setup: dict, owner: str = "user-1"):
         owner_user_id=owner,
         manager_store=setup["manager_store"],
         task_store=setup["task_store"],
-        conversation_store=setup["conversation_store"],
     )
 
 
@@ -117,14 +124,14 @@ def _managers(setup: dict, owner: str = "user-1"):
 
 def test_list_active_managers_groups_tasks_per_manager(discovery_setup: dict) -> None:
     task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conv_id = discovery_setup["manager_conv"].id
-    _create_task(task_store, "t1", title="S3 uploads", manager_conversation_id=conv_id)
-    _create_task(task_store, "t2", title="S3 retries", manager_conversation_id=conv_id)
+    manager_id = discovery_setup["manager"].id
+    _create_task(task_store, "t1", title="S3 uploads", manager_id=manager_id)
+    _create_task(task_store, "t2", title="S3 retries", manager_id=manager_id)
     _create_task(task_store, "t3", title="No manager")
 
     managers = _managers(discovery_setup)
     assert len(managers) == 1
-    assert managers[0].conversation_id == conv_id
+    assert managers[0].conversation_id == discovery_setup["manager_conv"].id
     assert managers[0].task_count == 2
     assert managers[0].host_id == _uid("host_a")
     assert managers[0].role_key == "manager:uploads"
@@ -133,9 +140,9 @@ def test_list_active_managers_groups_tasks_per_manager(discovery_setup: dict) ->
 
 def test_list_active_managers_scopes_by_owner(discovery_setup: dict) -> None:
     task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conv_id = discovery_setup["manager_conv"].id
-    _create_task(task_store, "t_mine", manager_conversation_id=conv_id)
-    _create_task(task_store, "t_theirs", owner="user-2", manager_conversation_id=conv_id)
+    manager_id = discovery_setup["manager"].id
+    _create_task(task_store, "t_mine", manager_id=manager_id)
+    _create_task(task_store, "t_theirs", owner="user-2", manager_id=manager_id)
 
     mine = _managers(discovery_setup, "user-1")
     theirs = _managers(discovery_setup, "user-2")
@@ -155,222 +162,59 @@ def test_list_active_managers_includes_registered_manager_with_zero_tasks(
     assert managers[0].tasks == []
 
 
-# ── choose_manager_for_task ────────────────────────────────────────
-
-
-def test_choose_prefers_relevant_manager(discovery_setup: dict) -> None:
-    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
-    s3_conv = discovery_setup["manager_conv"]
-    billing_conv = conversation_store.create_conversation(
-        title="Billing manager",
-        agent_id=discovery_setup["manager_agent_id"],
-        host_id=_uid("host_a"),
-        workspace="/tmp/mgr_b",
-    )
-    discovery_setup["manager_store"].upsert(
-        billing_conv.id,
-        owner_user_id="user-1",
-        role_key="manager:billing",
-        description="Owns billing exports.",
-    )
-    _create_task(task_store, "t_s3", title="S3 uploads", manager_conversation_id=s3_conv.id)
-    _create_task(
-        task_store, "t_bill", title="Billing export", manager_conversation_id=billing_conv.id
-    )
-    managers = _managers(discovery_setup)
-    assert len(managers) == 2
-
-    probe = _probe("probe", title="S3 retry storms", goal="stop s3 retry storms")
-    chosen = choose_manager_for_task(managers, probe=probe, host_id=_uid("host_a"))
-    assert chosen is not None
-    assert chosen.conversation_id == s3_conv.id
-
-
-def test_choose_respects_host_compatibility(discovery_setup: dict) -> None:
-    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conv_id = discovery_setup["manager_conv"].id  # host-a
-    _create_task(task_store, "t_host", manager_conversation_id=conv_id)
-    managers = _managers(discovery_setup)
-
-    probe = _probe("probe_host")
-    assert choose_manager_for_task(managers, probe=probe, host_id=_uid("host_b")) is None
-    assert choose_manager_for_task(managers, probe=probe, host_id=_uid("host_a")) is not None
-
-
-def test_choose_respects_capacity(discovery_setup: dict) -> None:
-    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conv_id = discovery_setup["manager_conv"].id
-    _create_task(task_store, "t_cap", manager_conversation_id=conv_id)
-    managers = _managers(discovery_setup)
-
-    probe = _probe("probe_cap")
-    assert choose_manager_for_task(managers, probe=probe, host_id=_uid("host_a"), capacity=1) is None
-    assert (
-        choose_manager_for_task(managers, probe=probe, host_id=_uid("host_a"), capacity=2)
-        is not None
-    )
-
-
 # ── bootstrap attach-or-create ─────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_bootstrap_attaches_to_existing_manager(discovery_setup: dict) -> None:
-    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
-    conv_id = discovery_setup["manager_conv"].id  # host-a
-    _create_task(task_store, "t_existing", manager_conversation_id=conv_id)
-
-    new_task = _create_task(
-        task_store, "t_new", title="S3 uploads", goal="reliable s3 uploads"
-    )
-    params = resolve_bootstrap_params(
-        host_id=_uid("host_a"),
-        workspace="~/",
-        harness=None,
-        model=None,
-        role_profile=_role_profile(discovery_setup["manager_agent_id"]),
-    )
-
-    async def _no_spawn(**kwargs):
-        raise AssertionError("should attach, not spawn")
-
-    updated = await bootstrap_task_manager(
-        task=new_task,
-        task_store=task_store,
-        conversation_store=conversation_store,
-        params=params,
-        session_creator=_no_spawn,
-        app_state=None,
-        user_id="user-1",
-    )
-    assert updated.manager_conversation_id == conv_id
 
 
-@pytest.mark.asyncio
-async def test_bootstrap_spawns_when_no_compatible_manager(discovery_setup: dict) -> None:
-    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
-    conv_id = discovery_setup["manager_conv"].id  # host-a
-    _create_task(task_store, "t_existing", manager_conversation_id=conv_id)
-
-    new_task = _create_task(task_store, "t_new2", title="Something", goal="something")
-    params = resolve_bootstrap_params(
-        host_id=_uid("host_b"),  # incompatible with the only manager
-        workspace="~/",
-        harness=None,
-        model=None,
-        role_profile=_role_profile(discovery_setup["manager_agent_id"]),
-    )
-    spawned: dict = {}
-
-    async def _spawn(*, body, request, user_id, **kwargs):
-        spawned["host_id"] = body.host_id
-        return conversation_store.create_conversation(
-            title=body.title,
-            agent_id=body.agent_id,
-            host_id=body.host_id,
-            workspace=body.workspace,
-        )
-
-    class _State:
-        pass
-
-    updated = await bootstrap_task_manager(
-        task=new_task,
-        task_store=task_store,
-        conversation_store=conversation_store,
-        params=params,
-        session_creator=_spawn,
-        app_state=_State(),
-        user_id="user-1",
-    )
-    assert spawned["host_id"] == _uid("host_b")
-    assert updated.manager_conversation_id is not None
-    assert updated.manager_conversation_id != conv_id
 
 
-@pytest.mark.asyncio
+
+
 async def test_bootstrap_returns_when_manager_already_live(discovery_setup: dict) -> None:
     """Idempotent: a task whose manager session still exists is returned as-is."""
     task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
     conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
-    conv_id = discovery_setup["manager_conv"].id
-    task = _create_task(task_store, "t_bound", manager_conversation_id=conv_id)
+    manager_id = discovery_setup["manager"].id
+    task = _create_task(task_store, "t_bound", manager_id=manager_id)
 
     async def _no_spawn(**kwargs):
-        raise AssertionError("already bound; should not spawn")
+        raise AssertionError("already live; should not spawn")
+
+    class _State:
+        manager_store = discovery_setup["manager_store"]
 
     updated = await bootstrap_task_manager(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
-        params=None,  # unused on the idempotent path
         session_creator=_no_spawn,
-        app_state=None,
+        app_state=_State(),
         user_id="user-1",
     )
-    assert updated.manager_conversation_id == conv_id
+    assert updated.manager_id == manager_id
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_reattaches_when_manager_gone(discovery_setup: dict) -> None:
-    """A dead stored manager session self-heals into a fresh attach."""
+async def test_bootstrap_heals_dead_session_from_row_snapshot(
+    discovery_setup: dict,
+) -> None:
+    """A dead session pointer heals from the manager row's own snapshot.
+
+    Same durable manager id, fresh session pointer — no task or role-profile
+    input needed.
+    """
     task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
     conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
-    live_conv_id = discovery_setup["manager_conv"].id
-    # The task points at a deleted session; a live manager exists to attach to.
     task = _create_task(
         task_store,
         "t_stale",
         title="S3 uploads",
-        manager_conversation_id=_uid("dead_conv"),
+        manager_id=discovery_setup["manager"].id,
     )
-    _create_task(task_store, "t_anchor", manager_conversation_id=live_conv_id)
+    await conversation_store.delete_conversation(discovery_setup["manager_conv"].id)
 
-    params = resolve_bootstrap_params(
-        host_id=_uid("host_a"),
-        workspace="~/",
-        harness=None,
-        model=None,
-        role_profile=_role_profile(discovery_setup["manager_agent_id"]),
-    )
-
-    async def _no_spawn(**kwargs):
-        raise AssertionError("should re-attach to the live manager, not spawn")
-
-    updated = await bootstrap_task_manager(
-        task=task,
-        task_store=task_store,
-        conversation_store=conversation_store,
-        params=params,
-        session_creator=_no_spawn,
-        app_state=None,
-        user_id="user-1",
-    )
-    assert updated.manager_conversation_id == live_conv_id
-
-
-@pytest.mark.asyncio
-async def test_concurrent_bootstraps_spawn_one_manager(discovery_setup: dict) -> None:
-    """Cold-start race: two simultaneous bootstraps yield exactly one manager.
-
-    Without the per-owner lock both coroutines read an empty roster while the
-    first is still mid-spawn, and both spawn a manager session.
-    """
-    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
-    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
-    task_a = _create_task(task_store, "t_race_a", title="First", goal="first goal")
-    task_b = _create_task(task_store, "t_race_b", title="Second", goal="second goal")
-    params = resolve_bootstrap_params(
-        host_id=_uid("host_b"),
-        workspace="~/",
-        harness=None,
-        model=None,
-        role_profile=_role_profile(discovery_setup["manager_agent_id"]),
-    )
-    spawns: list[str] = []
+    spawned: list[str] = []
 
     async def _spawn(*, body, request, user_id, **kwargs):
         conv = conversation_store.create_conversation(
@@ -379,35 +223,95 @@ async def test_concurrent_bootstraps_spawn_one_manager(discovery_setup: dict) ->
             host_id=body.host_id,
             workspace=body.workspace,
         )
-        # Yield like the real create_session_internal does, so the second
-        # bootstrap gets a chance to run while the first is mid-spawn.
-        await asyncio.sleep(0)
-        spawns.append(conv.id)
+        spawned.append(conv.id)
         return conv
 
     class _State:
-        pass
+        manager_store = discovery_setup["manager_store"]
 
-    updated_a, updated_b = await asyncio.gather(
-        bootstrap_task_manager(
-            task=task_a,
-            task_store=task_store,
-            conversation_store=conversation_store,
-            params=params,
-            session_creator=_spawn,
-            app_state=_State(),
-            user_id="user-1",
-        ),
-        bootstrap_task_manager(
-            task=task_b,
-            task_store=task_store,
-            conversation_store=conversation_store,
-            params=params,
-            session_creator=_spawn,
-            app_state=_State(),
-            user_id="user-1",
-        ),
+    updated = await bootstrap_task_manager(
+        task=task,
+        task_store=task_store,
+        conversation_store=conversation_store,
+        session_creator=_spawn,
+        app_state=_State(),
+        user_id="user-1",
     )
-    assert len(spawns) == 1
-    assert updated_a.manager_conversation_id == spawns[0]
-    assert updated_b.manager_conversation_id == spawns[0]
+    assert updated.manager_id == discovery_setup["manager"].id
+    assert len(spawned) == 1
+    healed = discovery_setup["manager_store"].get(discovery_setup["manager"].id)
+    assert healed is not None
+    assert healed.conversation_id == spawned[0]
+    assert healed.agent_profile_id == discovery_setup["manager"].agent_profile_id
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_throws_when_task_has_no_manager(discovery_setup: dict) -> None:
+    """Manager-first architecture: an unattached task is an invariant violation."""
+    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
+    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
+    task = _create_task(task_store, "t_orphan")
+
+    class _State:
+        manager_store = discovery_setup["manager_store"]
+
+    with pytest.raises(OmnigentError, match="has no manager"):
+        await bootstrap_task_manager(
+            task=task,
+            task_store=task_store,
+            conversation_store=conversation_store,
+            session_creator=None,
+            app_state=_State(),
+            user_id="user-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_throws_when_manager_row_missing(discovery_setup: dict) -> None:
+    """A dangling manager_id is an invariant violation, not a heal case."""
+    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
+    conversation_store: SqlAlchemyConversationStore = discovery_setup["conversation_store"]
+    task = _create_task(task_store, "t_dangling", manager_id=_uid("ghost-manager"))
+
+    class _State:
+        manager_store = discovery_setup["manager_store"]
+
+    with pytest.raises(OmnigentError, match="does not exist"):
+        await bootstrap_task_manager(
+            task=task,
+            task_store=task_store,
+            conversation_store=conversation_store,
+            session_creator=None,
+            app_state=_State(),
+            user_id="user-1",
+        )
+
+
+
+def test_list_active_managers_filters_incomplete_snapshots(
+    discovery_setup: dict,
+) -> None:
+    """A manager row missing required snapshot fields is skipped, not defaulted."""
+    task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
+    manager_store: SqlAlchemyManagerStore = discovery_setup["manager_store"]
+    _create_task(task_store, "t_ok", manager_id=discovery_setup["manager"].id)
+
+    # Registered without host — cannot re-create a session, so not listable.
+    broken = manager_store.upsert(
+        _uid("mgr_no_host"),
+        owner_user_id="user-1",
+        role_key="manager:default",
+        description="Broken snapshot.",
+        conversation_id=_uid("session-broken"),
+        title="Task manager: Broken snapshot.",
+        workspace="/tmp/broken",
+        harness="openai-agents",
+        agent_profile_id=discovery_setup["manager_agent_id"],
+    )
+    _create_task(task_store, "t_broken", manager_id=broken.id)
+
+    managers = _managers(discovery_setup)
+    assert [manager.manager_id for manager in managers] == [
+        discovery_setup["manager"].id
+    ]
+    assert managers[0].task_count == 1

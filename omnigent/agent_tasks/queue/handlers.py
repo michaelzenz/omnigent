@@ -28,7 +28,7 @@ from omnigent.agent_tasks.queue.dispatcher import (
     RoleDispatchHandler,
 )
 from omnigent.agent_tasks.task_activity import sync_task_activity_state
-from omnigent.entities import AgentQueueItem
+from omnigent.entities import AgentQueueItem, Manager
 from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
@@ -190,13 +190,17 @@ class BrokerDispatchHandler(RoleDispatchHandler):
 
 
 class ManagerDispatchHandler(RoleDispatchHandler):
-    """Deliver manager notices to a manager session.
+    """Deliver manager notices to a manager's current session.
 
-    The queue's ``scope_id`` *is* the manager conversation id (one queue per
-    manager session, shared by every task bound to it), so the target resolves
-    directly — no task lookup. The handler caches the conversation on the queue
-    row for the status feed's reverse look-up, the same way the broker handler
-    does.
+    The queue's ``scope_id`` is the durable manager id (one queue per
+    manager, shared by every task bound to it), mirroring the worker pattern
+    (scope = worker id). The session is resolved through the manager row's
+    ``conversation_id`` pointer and cached on the queue row for the status
+    feed's reverse look-up.
+
+    A dead session pointer heals in place: a fresh session is created for
+    the same manager id, so the manager's queue, in-flight items, tasks, and
+    identity all survive the swap.
     """
 
     def __init__(
@@ -206,27 +210,73 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         runner_router: RunnerRouter | None,
         *,
         app_state: Any | None = None,
+        manager_store: ManagerStore | None = None,
+        session_creator: Any | None = None,
     ) -> None:
         self._store = store
         self._conversation_store = conversation_store
         self._runner_router = runner_router
         self._app_state = app_state
+        self._manager_store = manager_store
+        self._session_creator = session_creator
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         if item.key.scope_id is None:
             raise DispatchFailed("manager item has no manager scope")
-        conv = await asyncio.to_thread(
-            self._conversation_store.get_conversation,
+        if self._manager_store is None:
+            raise DispatchFailed("manager persistence is not configured")
+        manager = await asyncio.to_thread(
+            self._manager_store.get,
             item.key.scope_id,
         )
+        if manager is None:
+            raise DispatchFailed(f"manager {item.key.scope_id} not registered")
+        session_id = manager.conversation_id
+        conv = (
+            await asyncio.to_thread(
+                self._conversation_store.get_conversation,
+                session_id,
+            )
+            if session_id is not None
+            else None
+        )
         if conv is None:
-            raise DispatchFailed(f"manager conversation {item.key.scope_id} missing")
-        self._store.set_queue_conversation(item.key, item.key.scope_id)
+            # Heal: same durable manager, fresh session. The queue row (with
+            # any in-flight item) survives; only the session pointer moves.
+            _logger.info(
+                "manager dispatch: session for manager %s is gone; re-creating",
+                manager.id,
+            )
+            session_id = await self._recreate_session(manager)
+            conv = await asyncio.to_thread(
+                self._conversation_store.get_conversation,
+                session_id,
+            )
+            if conv is None:
+                raise DispatchFailed(
+                    f"manager {manager.id} session re-creation failed"
+                )
+        self._store.set_queue_conversation(item.key, session_id)
         harness = conv.harness_override or "cursor-native"
         return DispatchTarget(
-            session_id=item.key.scope_id,
+            session_id=session_id,
             harness=harness,
         )
+
+    async def _recreate_session(self, manager: Manager) -> str:
+        """Re-create the manager's session from its own stored snapshot."""
+        from omnigent.agent_tasks.bootstrap import ensure_manager_session
+
+        healed = await ensure_manager_session(
+            manager,
+            manager_store=self._manager_store,
+            conversation_store=self._conversation_store,
+            session_creator=self._session_creator,
+            app_state=self._app_state,
+        )
+        if healed.conversation_id is None:
+            raise DispatchFailed(f"manager {manager.id} session re-creation failed")
+        return healed.conversation_id
 
     async def deliver(self, item: AgentQueueItem, target: DispatchTarget) -> None:
         from omnigent.usage_ledger import MANAGER_PURPOSE
@@ -385,13 +435,12 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             task=task,
             task_store=self._task_store,
             conversation_store=self._conversation_store,
-            role_profile=manager_role_profile,
-            host_id=_opt_str("host_id"),
-            workspace=_opt_str("workspace"),
-            harness=_opt_str("harness"),
-            model=_opt_str("model"),
             session_creator=self._session_creator,
             app_state=self._app_state,
+            user_id=(
+                None if item.key.owner_user_id == "__anonymous__"
+                else item.key.owner_user_id
+            ),
         )
         params = resolve_dispatch_params(
             payload=payload,

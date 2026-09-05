@@ -51,7 +51,7 @@ def _claimable_fyi_events(
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         is_owned_manager_route = (
             event.state == "routed"
-            and event.manager_conversation_id is not None
+            and event.manager_id is not None
         )
         if event.state not in AMBIGUOUS_EVENT_STATES and not is_owned_manager_route:
             continue

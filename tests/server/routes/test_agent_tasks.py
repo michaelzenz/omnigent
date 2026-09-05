@@ -180,7 +180,7 @@ async def test_create_task_requires_goal_and_supported_state(
         json={
             "title": "Invalid manager session",
             "goal": "Never created",
-            "manager_conversation_id": _uid("manager"),
+            "manager_id": _uid("manager"),
         },
     )
     assert manager_session.status_code == 422
@@ -229,7 +229,7 @@ async def test_create_active_task_bootstraps_manager(
     )
     assert created.status_code == 200, created.text
     assert created.json()["state"] == "active"
-    assert created.json()["manager_conversation_id"] is not None
+    assert created.json()["manager_id"] is not None
 
 
 async def test_role_profile_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
@@ -451,7 +451,6 @@ async def test_list_managers_includes_zero_task_manager_metadata(
     assert manager["role_key"] == "manager:uploads"
     assert manager["capacity"] > 0
     assert manager["task_count"] == 0
-    assert manager["tasks"] == []
 
 
 async def test_create_manager_registers_top_level_manager_role(
@@ -633,7 +632,7 @@ async def test_task_bindings_reject_foreign_first_class_manager(
 
     patched = await client.patch(
         f"/v1/agent-tasks/{created.json()['id']}",
-        json={"manager_conversation_id": foreign_manager_id},
+        json={"manager_id": foreign_manager_id},
     )
     assert patched.status_code == 404
 
@@ -642,7 +641,7 @@ async def test_task_bindings_reject_foreign_first_class_manager(
         json={
             "title": "Foreign package",
             "goal": "Must not bind",
-            "manager_conversation_id": foreign_manager_id,
+            "manager_id": foreign_manager_id,
             "items": [
                 {
                     "title": "Rejected item",
@@ -671,14 +670,14 @@ async def test_ack_manager_routed_event_assigns_task_and_preserves_manager(
         "Reconcile task",
         "Assign the routed event",
         owner_user_id="__anonymous__",
-        manager_conversation_id=manager_id,
+        manager_id=manager_id,
     )
     event_id = _uid("manager-routed-reconcile-event")
     SqlAlchemyTaskEventStore(db_uri).create_event(
         event_id,
         "build.finished",
         "Build completed",
-        manager_conversation_id=manager_id,
+        manager_id=manager_id,
         state="routed",
         owner_user_id="__anonymous__",
     )
@@ -692,7 +691,7 @@ async def test_ack_manager_routed_event_assigns_task_and_preserves_manager(
     event = resp.json()["data"][0]
     assert event["state"] == "reconciled"
     assert event["task_id"] == task_id
-    assert event["manager_conversation_id"] == manager_id
+    assert event["manager_id"] == manager_id
 
 
 async def test_list_role_profiles_includes_system_roles(
@@ -1097,7 +1096,7 @@ async def test_secretary_profile_and_bootstrap(
     task_id = created.json()["id"]
     bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
     assert bootstrap_resp.status_code == 200
-    assert bootstrap_resp.json()["manager_conversation_id"] is not None
+    assert bootstrap_resp.json()["manager_id"] is not None
 
 
 async def _put_secretary_profile(

@@ -378,7 +378,7 @@ async def test_worker_completion_hook(
         host_id=_uid("host_mgr"),
         workspace="/tmp/mgr",
     )
-    task_store.update(task_id, manager_conversation_id=manager_conv.id)
+    task_store.update(task_id, manager_id=manager_conv.id)
     event_store.create_event(
         event_id=event_id,
         event_type="build.finished",

@@ -13,14 +13,39 @@ from dataclasses import dataclass
 
 @dataclass
 class Manager:
-    """A first-class task manager bound to one conversation."""
+    """A first-class task manager; the durable identity behind one agent queue.
 
-    conversation_id: str
+    The row is self-describing: everything needed to (re)create its session
+    lives here, so healing never depends on the task or role profile that
+    happened to trigger it.
+
+    :param id: Durable manager id (uuid). Queue scope and every task/event
+        reference key off this, never off the session.
+    :param conversation_id: The manager's current session, or ``None`` before
+        bootstrap. Swappable — re-pointed when the session is recreated.
+    :param title: Session title used for every (re)creation.
+    :param owner_user_id: Owning user; sessions are created under this identity.
+    :param role_key: Glossary manager template key, e.g. ``"manager:default"``.
+    :param description: Routing description maintained by the manager itself.
+    :param host_id/workspace/harness/model/agent_profile_id/prompt_profile_id:
+        Execution snapshot taken at spawn — the session is re-created from
+        these exact values, immune to later role-profile edits.
+    """
+
+    id: str
+    conversation_id: str | None
     owner_user_id: str
     role_key: str
     description: str
     created_at: int
     updated_at: int
+    title: str | None = None
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    model: str | None = None
+    agent_profile_id: str | None = None
+    prompt_profile_id: str | None = None
 
 
 @dataclass
@@ -37,7 +62,7 @@ class Task:
     :param internal_note: Agent-facing routing context maintained by the manager.
     :param goal: The endstate this task should land on. Required for every task.
     :param state: One of ``"active"``, ``"pending"``, ``"idle"``, ``"archived"``.
-    :param manager_conversation_id: Manager session for this task, or ``None``
+    :param manager_id: Durable manager owning this task, or ``None``
         before bootstrap.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
@@ -52,7 +77,7 @@ class Task:
     state: str
     created_at: int
     goal: str
-    manager_conversation_id: str | None = None
+    manager_id: str | None = None
     updated_at: int | None = None
     priority: int = 2
     queue_rank: int = 0
@@ -85,7 +110,7 @@ class TaskEvent:
     :param created_at: Unix epoch seconds at row creation.
     :param tags: Immutable ingress tags used for routing. ``None`` when unset.
     :param task_id: Routed task, or ``None`` before routing completes.
-    :param manager_conversation_id: Manager selected during routing, or ``None``.
+    :param manager_id: Durable manager selected during routing, or ``None``.
     :param payload: JSON payload string. ``None`` when unset.
     :param source: Event source, e.g. ``"github"`` or ``"ci"``. ``None`` when unset.
     :param source_key: Stable dedupe key within ``source`` (external ingress id or
@@ -109,7 +134,7 @@ class TaskEvent:
     owner_user_id: str | None = None
     tags: list[EventTag] | None = None
     task_id: str | None = None
-    manager_conversation_id: str | None = None
+    manager_id: str | None = None
     payload: str | None = None
     source: str | None = None
     source_key: str | None = None

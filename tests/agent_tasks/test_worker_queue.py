@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import uuid
 from types import SimpleNamespace
+
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from unittest.mock import AsyncMock
 
 import pytest
@@ -112,11 +114,17 @@ def worker_setup(db_uri: str) -> dict:
         "Worker task",
         "worker goal",
         owner_user_id="user-w",
-        manager_conversation_id=manager_conv.id,
+        manager_id=manager_conv.id,
     )
     worker = worker_store.create_worker(
         _uid("worker"),
         task_id,
+        provider_name="internal-test",
+        provider_configuration=json.dumps({
+            "kind": "internal",
+            "configuration": {"agent_id": worker_agent_id},
+            "launch": {"host_id": _uid("host"), "workspace": "/tmp/worker"},
+        }),
     )
     item = item_store.create_item(
         _uid("item"),
@@ -138,6 +146,7 @@ def worker_setup(db_uri: str) -> dict:
             parent_conversation_id=getattr(body, "parent_session_id", None),
         )
 
+    manager_store = SqlAlchemyManagerStore(db_uri)
     handler = WorkerDispatchHandler(
         store=queue_store,
         task_store=task_store,
@@ -150,7 +159,7 @@ def worker_setup(db_uri: str) -> dict:
         runner_router=None,
         ensure_runner=ensure_runner,
         session_creator=_mock_session_creator,
-        app_state=SimpleNamespace(),
+        app_state=SimpleNamespace(manager_store=manager_store),
     )
     return {
         "handler": handler,
@@ -196,7 +205,7 @@ async def test_resolve_target_uses_prior_session_harness(worker_setup: dict) -> 
         workspace="/tmp/prev",
     )
     conversation_store.update_conversation(prev_conv.id, harness_override="claude-native")
-    worker_store.update_worker(worker.id, session_id=prev_conv.id)
+    worker_store.update_worker(worker.id, target_id=prev_conv.id)
     key = AgentQueueKey(role="worker", owner_user_id=worker_setup["owner"], scope_id=worker.id)
     target = await handler.resolve_target(_queue_item(key, source_id=worker_setup["item"].id))
     assert target.session_id == prev_conv.id
@@ -327,13 +336,21 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
         host_id=_uid("host"),
         workspace="/tmp/mgr",
     )
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager = manager_store.upsert(
+        _uid("mgr"),
+        owner_user_id="user-accept",
+        role_key="manager:default",
+        description="Accept manager",
+        conversation_id=manager_conv.id,
+    )
     task_id = _uid("task_accept")
     task = task_store.create(
         task_id,
         "Accept task",
         "accept goal",
         owner_user_id="user-accept",
-        manager_conversation_id=manager_conv.id,
+        manager_id=manager.id,
     )
     item = item_store.create_item(
         _uid("inbox_item"),
@@ -349,6 +366,14 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
     )
     item = item_store.update_item(item.id, worker_id=worker.id)
     assert item is not None
+
+    async def _accept_session_creator(*, body, request, user_id, **kwargs):
+        return await conversation_store.create_conversation(
+            title=body.title or "Manager",
+            agent_id=body.agent_id,
+            host_id=body.host_id,
+            workspace=body.workspace,
+        )
 
     updated, execution = await resolve_task_item(
         item=item,
@@ -366,6 +391,8 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
         },
         agent_queue_store=queue_store,
         owner_user_id="user-accept",
+        session_creator=_accept_session_creator,
+        app_state=SimpleNamespace(manager_store=manager_store),
     )
     assert updated.state == "queued"
     assert execution is None
@@ -408,7 +435,7 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
         "Legacy task",
         "legacy goal",
         owner_user_id="user-legacy",
-        manager_conversation_id=manager_conv.id,
+        manager_id=manager_conv.id,
     )
     item = item_store.create_item(
         _uid("legacy_item"),
@@ -432,7 +459,7 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
             host_id=body.host_id,
             workspace=body.workspace,
             kind="sub_agent",
-            parent_conversation_id=task.manager_conversation_id,
+            parent_conversation_id=task.manager_id,
         )
 
     updated, execution = await resolve_task_item(
@@ -450,7 +477,7 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
             "workspace": "/tmp/omnigent-legacy",
         },
         session_creator=_mock_session_creator,
-        app_state=SimpleNamespace(),
+        app_state=SimpleNamespace(manager_store=SqlAlchemyManagerStore(db_uri)),
     )
     # No queue store wired → legacy synchronous dispatch path.
     assert execution is not None
@@ -494,7 +521,7 @@ async def test_shared_worker_lane_carries_other_task_items(worker_setup: dict) -
         "Other task",
         "other goal",
         owner_user_id=worker_setup["owner"],
-        manager_conversation_id=worker_setup["manager_conv_id"],
+        manager_id=worker_setup["manager_conv_id"],
     )
     other_item = item_store.create_item(
         _uid("item_other"),
@@ -536,7 +563,7 @@ async def test_completion_resolves_task_from_execution(worker_setup: dict) -> No
         "Completion task",
         "comp goal",
         owner_user_id=worker_setup["owner"],
-        manager_conversation_id=worker_setup["manager_conv_id"],
+        manager_id=worker_setup["manager_conv_id"],
     )
     other_item = item_store.create_item(
         _uid("item_comp"),

@@ -27,7 +27,7 @@ class TaskStore(ABC):
         manager_role_key: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        manager_conversation_id: str | None = None,
+        manager_id: str | None = None,
         state: str = "idle",
         priority: int = 2,
         tags: list[TaskTag] | None = None,
@@ -39,8 +39,8 @@ class TaskStore(ABC):
         """Return a task by id, or ``None`` if not found."""
 
     @abstractmethod
-    def get_by_manager_conversation_id(self, conversation_id: str) -> Task | None:
-        """Return the task whose manager session matches *conversation_id*."""
+    def get_by_manager_id(self, manager_id: str) -> Task | None:
+        """Return the task owned by the manager with the given durable id."""
 
     @abstractmethod
     def list(
@@ -56,14 +56,14 @@ class TaskStore(ABC):
         ``created_at``), newest first. No state filter — recency only."""
 
     @abstractmethod
-    def list_by_manager_conversation_id(self, conversation_id: str) -> list[Task]:
-        """List every task bound to one manager session."""
+    def list_by_manager_id(self, manager_id: str) -> list[Task]:
+        """List every task bound to one manager."""
 
     @abstractmethod
-    def list_manager_conversation_ids(
+    def list_manager_ids(
         self, *, owner_user_id: str | None = None
     ) -> list[str]:
-        """Distinct manager session ids across live tasks, optionally per owner."""
+        """Distinct manager ids across live tasks, optionally per owner."""
 
     @abstractmethod
     def update(
@@ -73,7 +73,7 @@ class TaskStore(ABC):
         title: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        manager_conversation_id: str | None = _UNSET,
+        manager_id: str | None = _UNSET,
         owner_user_id: str | None = _UNSET,
         manager_role_key: str | None = None,
         state: str | None = None,

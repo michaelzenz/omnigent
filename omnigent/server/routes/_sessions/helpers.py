@@ -615,11 +615,13 @@ async def _maybe_adopt_session(session_id: str) -> None:
 
         if conv.labels.get(ROLE_LABEL) is not None:
             return
-        # Manager sessions are system sessions bound to a task via
-        # manager_conversation_id — same loop risk.
-        if ctx.task_store is not None and ctx.task_store.get_by_manager_conversation_id(
-            session_id
-        ) is not None:
+        # Manager sessions are system sessions bound to a task via the
+        # manager row's conversation pointer — same loop risk.
+        if (
+            ctx.task_store is not None
+            and ctx.manager_store is not None
+            and ctx.manager_store.get_by_conversation_id(session_id) is not None
+        ):
             return
         worker = ctx.worker_store.get_by_target_id(session_id)
         if worker is not None:

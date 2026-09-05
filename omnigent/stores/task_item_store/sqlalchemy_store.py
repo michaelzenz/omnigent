@@ -82,21 +82,21 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         event: SqlTaskEvent,
         *,
         task_id: str,
-        manager_conversation_id: str | None,
+        manager_id: str | None,
         allow_unassigned: bool,
     ) -> bool:
         if event.task_id == task_id:
-            return event.manager_conversation_id == manager_conversation_id
+            return event.manager_id == manager_id
         if (
             event.task_id is None
-            and manager_conversation_id is not None
-            and event.manager_conversation_id == manager_conversation_id
+            and manager_id is not None
+            and event.manager_id == manager_id
         ):
             return True
         return (
             allow_unassigned
             and event.task_id is None
-            and event.manager_conversation_id is None
+            and event.manager_id is None
         )
 
     def _claim_events(
@@ -105,7 +105,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         *,
         task_id: str,
         owner_user_id: str | None,
-        manager_conversation_id: str | None,
+        manager_id: str | None,
         event_ids: list[str],
         allow_unassigned: bool,
     ) -> tuple[list[str], int]:
@@ -129,7 +129,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             if not self._event_assignment_is_acceptable(
                 rows_by_id[event_id],
                 task_id=task_id,
-                manager_conversation_id=manager_conversation_id,
+                manager_id=manager_id,
                 allow_unassigned=allow_unassigned,
             ):
                 raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
@@ -183,15 +183,15 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         manager_route = (
             and_(
                 SqlTaskEvent.task_id.is_(None),
-                SqlTaskEvent.manager_conversation_id == manager_conversation_id,
+                SqlTaskEvent.manager_id == manager_id,
             )
-            if manager_conversation_id is not None
+            if manager_id is not None
             else false()
         )
         legacy_unassigned = (
             and_(
                 SqlTaskEvent.task_id.is_(None),
-                SqlTaskEvent.manager_conversation_id.is_(None),
+                SqlTaskEvent.manager_id.is_(None),
             )
             if allow_unassigned
             else false()
@@ -227,8 +227,8 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 or_(
                     and_(
                         SqlTaskEvent.task_id == task_id,
-                        SqlTaskEvent.manager_conversation_id
-                        == manager_conversation_id,
+                        SqlTaskEvent.manager_id
+                        == manager_id,
                     ),
                     manager_route,
                     legacy_unassigned,
@@ -238,7 +238,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             )
             .values(
                 task_id=task_id,
-                manager_conversation_id=manager_conversation_id,
+                manager_id=manager_id,
                 state=encode_task_event_state("reconciled"),
                 processed_at=now,
                 updated_at=now,
@@ -293,7 +293,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         event_ids: list[str],
         *,
         owner_user_id: str | None,
-        manager_conversation_id: str | None,
+        manager_id: str | None,
         state: str = "draft",
         description: str | None = None,
         instructions: str | None = None,
@@ -310,7 +310,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 session,
                 task_id=task_id,
                 owner_user_id=owner_user_id,
-                manager_conversation_id=manager_conversation_id,
+                manager_id=manager_id,
                 event_ids=event_ids,
                 allow_unassigned=allow_unassigned,
             )
@@ -501,7 +501,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         event_ids: list[str],
         *,
         owner_user_id: str | None,
-        manager_conversation_id: str | None,
+        manager_id: str | None,
         title: str | None = None,
         description: str | None = _UNSET,
         instructions: str | None = _UNSET,
@@ -527,7 +527,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 session,
                 task_id=task_id,
                 owner_user_id=owner_user_id,
-                manager_conversation_id=manager_conversation_id,
+                manager_id=manager_id,
                 event_ids=event_ids,
                 allow_unassigned=allow_unassigned,
             )
