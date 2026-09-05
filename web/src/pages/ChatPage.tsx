@@ -299,7 +299,7 @@ import { ResumeWithDirectoryDialog } from "@/shell/ResumeWithDirectoryDialog";
 import { ReconnectSessionDialog } from "@/shell/ReconnectSessionDialog";
 import { useTerminalFirst } from "@/shell/TerminalFirstContext";
 import { useForkDialog } from "@/shell/ForkDialogContext";
-import { supportsEffortControl } from "@/lib/sessionCapabilities";
+import { supportsCompactControl, supportsEffortControl } from "@/lib/sessionCapabilities";
 import {
   CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES,
   claudePermissionModeLabel,
@@ -1651,6 +1651,7 @@ export function ChatPage() {
     llmModel ?? selectedModel,
   );
   const showEffort = shouldShowEffortPicker(capabilitySource) && effortLevels.length > 0;
+  const showCompact = shouldShowCompactControl(capabilitySource);
 
   // When inside a session, only show the bound agent — the session is
   // tied 1:1 to its runner and can't be reassigned. Show all agents on
@@ -1699,6 +1700,7 @@ export function ChatPage() {
       readOnlyReason={readOnlyReason}
       effortLevels={effortLevels}
       showEffort={showEffort}
+      showCompact={showCompact}
       showModels={modelPickerKind !== null}
       modelPickerKind={modelPickerKind}
       codexModelOptions={codexModelOptions}
@@ -1961,6 +1963,8 @@ interface MainAgentSurfaceProps {
   effortLevels: readonly string[];
   /** Show effort controls. */
   showEffort: boolean;
+  /** Show the composer's ``/compact`` built-in (native wrappers + onih-pi). */
+  showCompact?: boolean;
   /** Whether the picker dropdown should include a Models section. */
   showModels: boolean;
   /** Native model picker family, when present. */
@@ -2123,6 +2127,7 @@ export function MainAgentSurface({
   readOnlyReason,
   effortLevels,
   showEffort,
+  showCompact,
   showModels,
   modelPickerKind,
   codexModelOptions,
@@ -2785,6 +2790,7 @@ export function MainAgentSurface({
             onClearAllQuotes={() => setReplyQuotes([])}
             effortLevels={effortLevels}
             showEffort={showEffort}
+            showCompact={showCompact}
             showModels={showModels}
             modelPickerKind={modelPickerKind}
             codexModelOptions={codexModelOptions}
@@ -5436,6 +5442,13 @@ interface ComposerProps {
   effortLevels: readonly string[];
   /** Show `/effort` and the Effort picker section. */
   showEffort: boolean;
+  /**
+   * Show the ``/compact`` built-in. Computed by the parent from the
+   * session's labels/agent name (native wrappers + onih-pi); when omitted,
+   * falls back to the wrapper-label signal so existing callers keep their
+   * behavior.
+   */
+  showCompact?: boolean;
   /** Whether the picker dropdown should include a Models section. */
   showModels: boolean;
   /** Native model picker family, when present. */
@@ -6220,6 +6233,7 @@ export function Composer({
   onClearAllQuotes,
   effortLevels,
   showEffort,
+  showCompact: showCompactControl,
   showModels,
   modelPickerKind,
   codexModelOptions,
@@ -6460,10 +6474,12 @@ export function Composer({
   // it each turn; native wrappers expose it only when they have a picker
   // path that the runner can propagate without blocking the vendor TUI.
   const showModel = !isNativeWrapper || showModels;
-  // /compact is only functional for native wrappers (claude-native,
-  // codex-native) which inject the slash command into the terminal.
-  // SDK harnesses (openai-agents-sdk, claude-sdk) don't support it yet.
-  const showCompact = isNativeWrapper;
+  // /compact is functional for native wrappers (the runner injects the slash
+  // command into the vendor TUI, which compacts its own context) and for
+  // onih-pi (the server's compact dispatch forwards to Pi's own compactor
+  // via the runner's /compact-harness endpoint). SDK harnesses
+  // (openai-agents-sdk, claude-sdk) don't support it yet.
+  const showCompact = showCompactControl ?? isNativeWrapper;
   const slashCommands = useMemo(
     () => buildSlashCommandMap(skills, showEffort, showModel, showCompact),
     [skills, showEffort, showModel, showCompact],
@@ -7979,6 +7995,18 @@ export function shouldShowEffortPicker(
     | undefined,
 ): boolean {
   return supportsEffortControl(conv);
+}
+
+export function shouldShowCompactControl(
+  conv:
+    | {
+        labels?: Record<string, string | null> | null;
+        agentName?: string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  return supportsCompactControl(conv);
 }
 
 export function shouldShowCodexPlanModeControl(

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { effortLevelsForConv, shouldShowEffortPicker, shouldShowModelPicker } from "./ChatPage";
+import {
+  effortLevelsForConv,
+  shouldShowCompactControl,
+  shouldShowEffortPicker,
+  shouldShowModelPicker,
+} from "./ChatPage";
 
 // These pin the label-driven composer capability gates (effort levels, model
 // picker, effort picker). They fail closed on missing labels, so a refactor
@@ -115,5 +120,34 @@ describe("shouldShowEffortPicker", () => {
     expect(shouldShowEffortPicker({ labels: { "omnigent.wrapper": "kiro-native-ui" } })).toBe(
       false,
     );
+  });
+});
+
+describe("shouldShowCompactControl", () => {
+  it("shows /compact for native wrappers (the runner injects it into the TUI)", () => {
+    expect(shouldShowCompactControl({ labels: { "omnigent.wrapper": NATIVE } })).toBe(true);
+    expect(shouldShowCompactControl({ labels: { "omnigent.wrapper": "codex-native-ui" } })).toBe(
+      true,
+    );
+    expect(shouldShowCompactControl({ labels: { "omnigent.wrapper": "pi-native-ui" } })).toBe(true);
+  });
+
+  it("shows /compact for onih-pi (the runner forwards to Pi's own compactor)", () => {
+    // WHY: onih-pi sessions carry omnigent.ui=terminal but no omnigent.wrapper
+    // label, so a wrapper-label-only gate hid /compact even though the server
+    // routes it to Pi's compact RPC via /compact-harness. Fork/switch-suffixed
+    // names must match too.
+    expect(shouldShowCompactControl({ labels: {}, agentName: "onih-pi" })).toBe(true);
+    expect(shouldShowCompactControl({ labels: {}, agentName: "onih-pi (fork abc123)" })).toBe(true);
+  });
+
+  it("hides /compact for other onih targets and missing identity (fail closed)", () => {
+    // WHY: onih-openai-agents has no harness compaction path; a loosened gate
+    // would offer a /compact that 500s (agent declares no LLM model for
+    // server-side compaction).
+    expect(shouldShowCompactControl({ labels: {}, agentName: "onih-openai-agents" })).toBe(false);
+    expect(shouldShowCompactControl({ labels: {} })).toBe(false);
+    expect(shouldShowCompactControl(null)).toBe(false);
+    expect(shouldShowCompactControl(undefined)).toBe(false);
   });
 });
