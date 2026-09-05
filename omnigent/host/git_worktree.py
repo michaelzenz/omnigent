@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -263,18 +264,22 @@ def _resolve_worktree_path(repo_root: str) -> Path:
     """Compute a unique Omnigent worktree directory path.
 
     Places the worktree at
-    ``~/.omnigent/worktrees/<repo-name>/<repo-name>-<timestamp>``, using
-    nanosecond precision for collision-free uniqueness without a suffix
-    loop.
+    ``~/.omnigent/worktrees/<repo-name>/<repo-name>-<uuid>-<timestamp>``.
+    The second-level timestamp can collide within one second, so a random
+    uuid segment provides collision-free uniqueness without a suffix loop.
 
     :param repo_root: Absolute path of the repository's main work tree,
         e.g. ``"/Users/alice/myrepo"``.
     :returns: A path that does not yet exist, e.g.
-        ``Path("/Users/alice/.omnigent/worktrees/myrepo/myrepo-1709123456789012345")
+        ``Path("/Users/alice/.omnigent/worktrees/myrepo/myrepo-1a2b3c4d-1709123456")``
     """
     base_dir = Path.home() / ".omnigent" / "worktrees"
     repo_name = _sanitize_repo_name(Path(repo_root).name)
-    return base_dir / repo_name / f"{repo_name}-{time.time_ns()}"
+    return (
+        base_dir
+        / repo_name
+        / f"{repo_name}-{uuid.uuid4().hex[:8]}-{int(time.time())}"
+    )
 
 
 def _ensure_base_resolvable(repo_root: str, base_branch: str) -> None:

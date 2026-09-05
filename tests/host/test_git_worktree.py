@@ -9,6 +9,7 @@ root resolution, or removal ordering fails loud here.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -151,9 +152,11 @@ def test_create_worktree_uses_omnigent_worktree_root(git_repo: Path) -> None:
     """A new worktree lands under ``~/.omnigent/worktrees/<repo-name>/``."""
     created = create_worktree(repo_path=str(git_repo), branch_name="feature/login")
     expected_parent = Path.home() / ".omnigent" / "worktrees" / "myrepo"
-    # Path proves the grouped layout: <repo-name>/<repo-name>-<timestamp>.
+    # Path proves the grouped layout: <repo-name>/<repo-name>-<uuid>-<timestamp>.
     assert Path(created.worktree_path).parent == expected_parent
     assert Path(created.worktree_path).name.startswith("myrepo-")
+    name = Path(created.worktree_path).name
+    assert re.fullmatch(r"myrepo-[0-9a-f]{8}-\d{10}", name), name
     assert Path(created.worktree_path).is_dir()
     # The branch is actually checked out in the worktree (not just the dir made).
     assert _current_branch(Path(created.worktree_path)) == "feature/login"
