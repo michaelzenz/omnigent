@@ -10,7 +10,6 @@ from typing import Any, Literal
 
 from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
-    resolve_bootstrap_params,
 )
 from omnigent.agent_tasks.dispatch import dispatch_worker_for_item, resolve_dispatch_params
 from omnigent.agent_tasks.event_types import HUMAN_ACTION_DONE_EVENT_TYPE
@@ -125,7 +124,7 @@ def create_task_item(
             title,
             event_ids,
             owner_user_id=task.owner_user_id,
-            manager_conversation_id=task.manager_conversation_id,
+            manager_id=task.manager_id,
             state=state,
             description=description,
             instructions=instructions,
@@ -159,45 +158,20 @@ async def ensure_task_manager_for_dispatch(
     task: Task,
     task_store: TaskStore,
     conversation_store: ConversationStore,
-    role_profile: TaskRoleProfile | None = None,
-    host_id: str | None = None,
-    workspace: str | None = None,
-    harness: str | None = None,
-    model: str | None = None,
     session_creator: Any | None = None,
     app_state: Any | None = None,
     user_id: str | None = None,
 ) -> Task:
-    """Ensure a manager session exists before dispatch."""
+    """Ensure the task's manager has a live session before dispatch."""
     if task.state == "pending":
         raise OmnigentError(
             "Accept the task package before dispatching work",
             code=ErrorCode.CONFLICT,
         )
-    if task.manager_conversation_id is not None:
-        existing = await asyncio.to_thread(
-            conversation_store.get_conversation,
-            task.manager_conversation_id,
-        )
-        if existing is None:
-            raise OmnigentError(
-                "Manager session is missing; clear manager_conversation_id before re-bootstrap",
-                code=ErrorCode.CONFLICT,
-            )
-        return task
-
-    params = resolve_bootstrap_params(
-        host_id=host_id,
-        workspace=workspace,
-        harness=harness,
-        model=model,
-        role_profile=role_profile,
-    )
     return await bootstrap_task_manager(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
-        params=params,
         session_creator=session_creator,
         app_state=app_state,
         user_id=user_id,
@@ -270,7 +244,7 @@ def complete_human_action(
             HUMAN_ACTION_DONE_EVENT_TYPE,
             f"Human action done: {item.title}",
             task_id=task.id,
-            manager_conversation_id=task.manager_conversation_id,
+            manager_id=task.manager_id,
             source="user",
             source_key=item.id,
             state="routed",
@@ -346,11 +320,6 @@ async def resolve_task_item(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
-        role_profile=role_profile,
-        host_id=str(payload.get("host_id")) if payload.get("host_id") is not None else None,
-        workspace=str(payload.get("workspace")) if payload.get("workspace") is not None else None,
-        harness=str(payload.get("harness")) if payload.get("harness") is not None else None,
-        model=str(payload.get("model")) if payload.get("model") is not None else None,
         session_creator=session_creator,
         app_state=app_state,
         user_id=user_id,
@@ -447,7 +416,7 @@ def reconcile_events(
     return task_event_store.reconcile_events_to_task(
         event_ids,
         task_id=task.id,
-        manager_conversation_id=task.manager_conversation_id,
+        manager_id=task.manager_id,
     )
 
 

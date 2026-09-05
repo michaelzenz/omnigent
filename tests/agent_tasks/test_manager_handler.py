@@ -15,6 +15,7 @@ from omnigent.entities import AgentQueueItem, AgentQueueKey
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 
@@ -59,18 +60,27 @@ def handler_setup(db_uri: str) -> dict:
         host_id=_uid("host_mgr"),
         workspace="/tmp/mgr",
     )
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager = manager_store.upsert(
+        _uid("mgr"),
+        owner_user_id="user-1",
+        role_key="manager:default",
+        description="Handler manager",
+        conversation_id=manager_conv.id,
+    )
     task_id = _uid("task_one")
     task_store.create(
         task_id,
         "Handler task",
         "handler goal",
         owner_user_id="user-1",
-        manager_conversation_id=manager_conv.id,
+        manager_id=manager.id,
     )
     handler = ManagerDispatchHandler(
         store=queue_store,
         conversation_store=conversation_store,
         runner_router=None,
+        manager_store=manager_store,
     )
     return {
         "handler": handler,
@@ -78,9 +88,12 @@ def handler_setup(db_uri: str) -> dict:
         "task_store": task_store,
         "conversation_store": conversation_store,
         "agent_store": agent_store,
+        "manager_store": manager_store,
         "task_id": task_id,
+        "manager_id": manager.id,
         "manager_conv_id": manager_conv.id,
         "owner": "user-1",
+        "db_uri": db_uri,
     }
 
 
@@ -90,10 +103,10 @@ async def test_resolve_target_returns_manager_session(handler_setup: dict) -> No
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["manager_conv_id"],
+        scope_id=handler_setup["manager_id"],
     )
     target = await handler.resolve_target(_item(key))
-    assert target.session_id == handler_setup["manager_conv_id"]
+    assert target.session_id == handler_setup["manager_conv_id"]  # session, not scope
 
 
 @pytest.mark.asyncio
@@ -103,7 +116,7 @@ async def test_resolve_target_caches_conversation_on_queue(handler_setup: dict) 
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["manager_conv_id"],
+        scope_id=handler_setup["manager_id"],
     )
     # Enqueue so the queue row exists.
     queue_store.enqueue(_uid("e"), key, "notice", payload="x")
@@ -167,7 +180,7 @@ async def test_deliver_calls_wake_parent(handler_setup: dict) -> None:
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["manager_conv_id"],
+        scope_id=handler_setup["manager_id"],
     )
     item = _item(key, payload="[System: triage me]")
     target = DispatchTarget(session_id=conv_id, harness="cursor-native")
@@ -187,7 +200,7 @@ async def test_deliver_fails_when_wake_returns_false(handler_setup: dict) -> Non
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["manager_conv_id"],
+        scope_id=handler_setup["manager_id"],
     )
     item = _item(key)
     target = DispatchTarget(session_id=conv_id)
@@ -206,7 +219,7 @@ async def test_deliver_fails_without_payload(handler_setup: dict) -> None:
     key = AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=handler_setup["owner"],
-        scope_id=handler_setup["manager_conv_id"],
+        scope_id=handler_setup["manager_id"],
     )
     item = _item(key, payload="")
     target = DispatchTarget(session_id=handler_setup["manager_conv_id"])

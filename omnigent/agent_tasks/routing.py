@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from omnigent.agent_tasks.bootstrap import BootstrapParams, bootstrap_task_manager
+from omnigent.agent_tasks.bootstrap import bootstrap_task_manager
 from omnigent.db.utils import now_epoch
 from omnigent.entities import Task, TaskEvent
 from omnigent.errors import ErrorCode, OmnigentError
@@ -43,7 +43,6 @@ async def route_event_to_task(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
     conversation_store: ConversationStore,
-    params: BootstrapParams,
     routing_reason: str | None = None,
     routing_score: float | None = None,
     session_creator: Any | None = None,
@@ -63,7 +62,6 @@ async def route_event_to_task(
         task=task,
         task_store=task_store,
         conversation_store=conversation_store,
-        params=params,
         session_creator=session_creator,
         app_state=app_state,
         user_id=user_id,
@@ -72,7 +70,7 @@ async def route_event_to_task(
     updated = task_event_store.update_event(
         event.id,
         task_id=bootstrapped.id,
-        manager_conversation_id=bootstrapped.manager_conversation_id,
+        manager_id=bootstrapped.manager_id,
         state=ROUTED_EVENT_STATE,
         routed_at=routed_at,
     )

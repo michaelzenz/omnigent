@@ -14,11 +14,8 @@ from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_WORKSPACE,
     resolve_task_harness,
 )
-from omnigent.agent_tasks.manager_discovery import (
-    choose_manager_for_task,
-    list_active_managers,
-)
-from omnigent.entities import Task
+from omnigent.agent_tasks.manager_discovery import list_active_managers
+from omnigent.entities import Manager, Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.conversation_store import ConversationStore
@@ -36,10 +33,6 @@ _OWNER_BOOTSTRAP_LOCKS: dict[str, asyncio.Lock] = {}
 
 def _owner_bootstrap_lock(owner: str) -> asyncio.Lock:
     return _OWNER_BOOTSTRAP_LOCKS.setdefault(owner, asyncio.Lock())
-
-
-def _manager_description(task: Task) -> str:
-    return " ".join((task.description or task.goal or task.title).split())[:512]
 
 
 @dataclass(frozen=True)
@@ -194,20 +187,22 @@ async def bootstrap_task_manager(
     task: Task,
     task_store: TaskStore,
     conversation_store: ConversationStore,
-    params: BootstrapParams,
     session_creator: Any,
     app_state: Any,
     user_id: str | None = None,
 ) -> Task:
     """
-    Ensure ``task`` has a live manager conversation.
+    Ensure ``task`` is bound to a live manager.
 
     Attach-or-create: the task first joins the best host-compatible manager
-    with capacity (one manager owns a portfolio of tasks); a new manager
-    session is spawned only when no existing manager fits.
+    with capacity (one manager owns a portfolio of tasks); a new manager is
+    created only when none fits.
 
-    Idempotent when ``manager_conversation_id`` points at an existing
-    conversation; a missing session falls through to re-run attach-or-create.
+    Idempotent when ``manager_id`` points at a manager whose session exists.
+    A manager row whose session pointer is dead is healed in place — a fresh
+    session is created for the same durable id — so the manager's identity,
+    tasks, and queue all survive. A task with no manager falls through to
+    attach-or-create.
 
     The session is created through ``create_session_internal`` (the same path
     as ``POST /v1/sessions``) so workspace validation, runner launch,
@@ -216,7 +211,7 @@ async def bootstrap_task_manager(
     Concurrent bootstraps for the same owner serialize on a per-owner lock,
     so a cold-start burst (two rapid creates, two package accepts) can never
     spawn duplicate managers — the loser re-reads the roster and attaches to
-    the winner's session.
+    the winner's manager.
     """
     manager_store: ManagerStore | None = getattr(app_state, "manager_store", None)
     if manager_store is None:
@@ -225,56 +220,157 @@ async def bootstrap_task_manager(
         )
 
         manager_store = SqlAlchemyManagerStore(task_store.storage_location)
-    if task.manager_conversation_id is not None:
-        existing = await asyncio.to_thread(
-            conversation_store.get_conversation,
-            task.manager_conversation_id,
+    if task.manager_id is None:
+        raise OmnigentError(
+            f"task {task.id} has no manager; create one via "
+            "POST /agent-tasks/managers and attach it",
+            code=ErrorCode.CONFLICT,
         )
-        if existing is not None:
-            return task
-        # The stored manager session is gone — fall through to re-run
-        # attach-or-create rather than stranding the task in CONFLICT. With
-        # N tasks sharing one manager, a dead session must not block the
-        # whole portfolio.
-        _logger.info(
-            "manager bootstrap: stored manager %s for task %s is gone; re-attaching",
-            task.manager_conversation_id,
-            task.id,
-        )
-
-    # Attach-or-create runs under the per-owner lock: the first cold-start
-    # bootstrap spawns, later ones re-read the roster and attach to it.
+    # The liveness check + heal runs under the per-owner lock: concurrent
+    # bootstraps for one owner must not double-heal a dead session pointer.
+    # The heal re-reads the row inside the lock so the loser of a race
+    # observes the winner's fresh pointer.
     owner_user_id = user_id or task.owner_user_id or "__anonymous__"
     async with _owner_bootstrap_lock(owner_user_id):
-        return await _attach_or_create_manager(
-            task=task,
-            task_store=task_store,
+        manager = await asyncio.to_thread(manager_store.get, task.manager_id)
+        if manager is None:
+            raise OmnigentError(
+                f"task {task.id} references manager {task.manager_id} "
+                "which does not exist",
+                code=ErrorCode.NOT_FOUND,
+            )
+        await ensure_manager_session(
+            manager,
+            manager_store=manager_store,
             conversation_store=conversation_store,
-            params=params,
             session_creator=session_creator,
             app_state=app_state,
-            user_id=user_id,
-            owner_user_id=owner_user_id,
-            manager_store=manager_store,
         )
+        return task
 
 
-async def create_manager_session(
+async def _session_request_for_manager(
+    manager: Manager,
+    *,
+    app_state: Any,
+) -> Any:
+    """Build a ``SessionCreateRequest`` purely from the manager row.
+
+    The row's execution snapshot (title, host, workspace, harness, model,
+    agent/prompt profiles) is the single source of truth for re-creation —
+    immune to role-profile edits and independent of any task.
+    """
+    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
+    from omnigent.server.schemas import SessionCreateRequest
+
+    if not manager.agent_profile_id:
+        raise OmnigentError(
+            f"manager {manager.id} has no agent profile snapshot; cannot re-create its session",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+    return SessionCreateRequest(
+        agent_id=manager.agent_profile_id,
+        title=manager.title or "Task manager",
+        host_id=manager.host_id,
+        workspace=manager.workspace,
+        harness_override=manager.harness,
+        model_override=manager.model,
+        labels=presentation_labels_for_harness(manager.harness),
+        prompt_profile=(
+            {"mode": "fixed", "profile_id": manager.prompt_profile_id}
+            if manager.prompt_profile_id
+            else None
+        ),
+        project_id=await asyncio.to_thread(
+            ensure_puppygarden_project,
+            getattr(app_state, "project_store", None),
+            None if manager.owner_user_id == "__anonymous__" else manager.owner_user_id,
+        ),
+    )
+
+
+async def ensure_manager_session(
+    manager: Manager,
+    *,
+    manager_store: ManagerStore,
+    conversation_store: ConversationStore,
+    session_creator: Any,
+    app_state: Any,
+) -> Manager:
+    """Ensure the manager's session is live, healing the pointer if not.
+
+    The single heal implementation: a dead or missing session is re-created
+    purely from the manager row's stored snapshot — same durable id, same
+    execution params. Callers holding a stale ``manager`` must re-read the
+    returned row for the fresh pointer.
+
+    Caller is responsible for serialization (the bootstrap owner lock, or
+    the dispatcher's single-flight delivery).
+    """
+    from omnigent.server.routes.sessions import _make_internal_request
+
+    if manager_store is None or session_creator is None or app_state is None:
+        raise OmnigentError(
+            "manager persistence is not configured on this server",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+    session_id = manager.conversation_id
+    if session_id is not None and await asyncio.to_thread(
+        conversation_store.get_conversation, session_id
+    ):
+        return manager
+
+    _logger.info(
+        "manager heal: session for manager %s is gone; re-creating from stored snapshot",
+        manager.id,
+    )
+    body = await _session_request_for_manager(manager, app_state=app_state)
+    resp = await session_creator(
+        body=body,
+        request=_make_internal_request(app_state),
+        user_id=None if manager.owner_user_id == "__anonymous__" else manager.owner_user_id,
+    )
+    updated = await asyncio.to_thread(
+        manager_store.update,
+        manager.id,
+        conversation_id=resp.id,
+    )
+    if updated is None:
+        raise OmnigentError(
+            "manager row disappeared during heal",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+    return updated
+
+
+async def spawn_manager_session(
     *,
     params: BootstrapParams,
-    title: str,
-    role_key: str,
-    description: str,
     owner_user_id: str,
+    role_key: str,
+    title: str,
+    description: str,
     manager_store: ManagerStore,
     session_creator: Any,
     app_state: Any,
     user_id: str | None = None,
-) -> str:
-    """Create and register one top-level manager session."""
-    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
+) -> Manager:
+    """Create one manager session and register its durable, self-describing row.
+
+    The execution snapshot (host, workspace, harness, model, agent/prompt
+    profiles) is stored on the row at spawn so every later heal re-creates
+    the session from the row alone.
+
+    :returns: the durable manager row bound to the new session.
+    """
     from omnigent.server.routes.sessions import _make_internal_request
     from omnigent.server.schemas import SessionCreateRequest
+
+    if session_creator is None or app_state is None:
+        raise OmnigentError(
+            "manager persistence is not configured on this server",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
 
     body = SessionCreateRequest(
         agent_id=params.agent_profile_id,
@@ -283,7 +379,6 @@ async def create_manager_session(
         workspace=params.workspace,
         harness_override=params.harness,
         model_override=params.model,
-        labels=presentation_labels_for_harness(params.harness),
         prompt_profile=(
             {"mode": "fixed", "profile_id": params.prompt_profile_id}
             if params.prompt_profile_id
@@ -300,76 +395,18 @@ async def create_manager_session(
         request=_make_internal_request(app_state),
         user_id=user_id,
     )
-    await asyncio.to_thread(
+    return await asyncio.to_thread(
         manager_store.upsert,
-        resp.id,
+        uuid.uuid4().hex,
         owner_user_id=owner_user_id,
         role_key=role_key,
+        title=title,
         description=description,
+        conversation_id=resp.id,
+        host_id=params.host_id,
+        workspace=params.workspace,
+        harness=params.harness,
+        model=params.model,
+        agent_profile_id=params.agent_profile_id,
+        prompt_profile_id=params.prompt_profile_id,
     )
-    return resp.id
-
-
-async def _attach_or_create_manager(
-    *,
-    task: Task,
-    task_store: TaskStore,
-    conversation_store: ConversationStore,
-    params: BootstrapParams,
-    session_creator: Any,
-    app_state: Any,
-    user_id: str | None,
-    owner_user_id: str,
-    manager_store: ManagerStore,
-) -> Task:
-    """The unlocked attach-or-create body — caller holds the owner lock."""
-    managers = await asyncio.to_thread(
-        list_active_managers,
-        owner_user_id=owner_user_id,
-        manager_store=manager_store,
-        task_store=task_store,
-        conversation_store=conversation_store,
-    )
-    chosen = choose_manager_for_task(managers, probe=task, host_id=params.host_id)
-    if chosen is not None:
-        _logger.info(
-            "manager attach: task %s -> manager %s (candidates=%d, host=%s)",
-            task.id,
-            chosen.conversation_id,
-            len(managers),
-            params.host_id,
-        )
-        updated = await asyncio.to_thread(
-            task_store.update,
-            task.id,
-            manager_conversation_id=chosen.conversation_id,
-        )
-        if updated is None:
-            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-        return updated
-
-    _logger.info(
-        "manager spawn: task %s gets a new manager session (candidates=%d, host=%s)",
-        task.id,
-        len(managers),
-        params.host_id,
-    )
-    conversation_id = await create_manager_session(
-        params=params,
-        title=f"Task manager: {task.title}",
-        owner_user_id=owner_user_id,
-        role_key=task.manager_role_key,
-        description=_manager_description(task),
-        manager_store=manager_store,
-        session_creator=session_creator,
-        app_state=app_state,
-        user_id=user_id,
-    )
-    updated = await asyncio.to_thread(
-        task_store.update,
-        task.id,
-        manager_conversation_id=conversation_id,
-    )
-    if updated is None:
-        raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-    return updated

@@ -120,7 +120,7 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     assert resolved["task_id"] == task_id
 
     task_resp = await client.get(f"/v1/agent-tasks/{task_id}")
-    assert task_resp.json()["manager_conversation_id"] is not None
+    assert task_resp.json()["manager_id"] is not None
 
 
 async def test_batch_route_manager_success_and_same_manager_idempotence(
@@ -146,17 +146,17 @@ async def test_batch_route_manager_success_and_same_manager_idempotence(
 
     first = await client.post(
         "/v1/task-events/batch-route-manager",
-        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+        json={"event_ids": [event_id], "manager_id": manager_id},
     )
     assert first.status_code == 200, first.text
     routed = first.json()["data"][0]
     assert routed["state"] == "routed"
     assert routed["task_id"] is None
-    assert routed["manager_conversation_id"] == manager_id
+    assert routed["manager_id"] == manager_id
 
     second = await client.post(
         "/v1/task-events/batch-route-manager",
-        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+        json={"event_ids": [event_id], "manager_id": manager_id},
     )
     assert second.status_code == 200
     assert second.json()["data"][0] == routed
@@ -187,7 +187,7 @@ async def test_batch_route_manager_enforces_manager_and_event_owner(
         "/v1/task-events/batch-route-manager",
         json={
             "event_ids": [mine_event_id],
-            "manager_conversation_id": other_manager_id,
+            "manager_id": other_manager_id,
         },
     )
     assert manager_denied.status_code == 404
@@ -210,7 +210,7 @@ async def test_batch_route_manager_enforces_manager_and_event_owner(
         "/v1/task-events/batch-route-manager",
         json={
             "event_ids": [other_event_id],
-            "manager_conversation_id": mine_manager_id,
+            "manager_id": mine_manager_id,
         },
     )
     assert event_denied.status_code == 404
@@ -239,7 +239,7 @@ async def test_batch_route_manager_rejects_invalid_state(
 
     resp = await client.post(
         "/v1/task-events/batch-route-manager",
-        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+        json={"event_ids": [event_id], "manager_id": manager_id},
     )
 
     assert resp.status_code == 409
@@ -272,7 +272,7 @@ async def test_batch_route_manager_conflict_does_not_partially_route(
         "build.failed",
         "Already routed elsewhere",
         state="routed",
-        manager_conversation_id=other_manager_id,
+        manager_id=other_manager_id,
         owner_user_id="__anonymous__",
     )
 
@@ -280,7 +280,7 @@ async def test_batch_route_manager_conflict_does_not_partially_route(
         "/v1/task-events/batch-route-manager",
         json={
             "event_ids": [routable_id, conflict_id],
-            "manager_conversation_id": manager_id,
+            "manager_id": manager_id,
         },
     )
 
@@ -288,7 +288,7 @@ async def test_batch_route_manager_conflict_does_not_partially_route(
     untouched = task_event_store.get_event(routable_id)
     assert untouched is not None
     assert untouched.state == "awaiting_grouping"
-    assert untouched.manager_conversation_id is None
+    assert untouched.manager_id is None
 
 
 async def test_batch_route_manager_rejects_host_mismatch(
@@ -316,7 +316,7 @@ async def test_batch_route_manager_rejects_host_mismatch(
 
     resp = await client.post(
         "/v1/task-events/batch-route-manager",
-        json={"event_ids": [event_id], "manager_conversation_id": manager_id},
+        json={"event_ids": [event_id], "manager_id": manager_id},
     )
 
     assert resp.status_code == 409
@@ -350,7 +350,7 @@ async def test_owned_routed_event_can_be_filed_as_fyi_or_dismissed(
             "build.finished",
             "No action needed",
             state="routed",
-            manager_conversation_id=_uid("owned-manager"),
+            manager_id=_uid("owned-manager"),
             owner_user_id="__anonymous__",
         )
 
@@ -376,7 +376,7 @@ async def test_event_handling_rejects_another_owner(
         "build.finished",
         "Their event",
         state="routed",
-        manager_conversation_id=_uid("their-manager"),
+        manager_id=_uid("their-manager"),
         owner_user_id="someone-else",
     )
 
@@ -410,7 +410,7 @@ async def test_bootstrap_rejects_dead_manager_session(
     task_id = create_resp.json()["id"]
     SqlAlchemyTaskStore(db_uri).update(
         task_id,
-        manager_conversation_id=dead_conversation_id,
+        manager_id=dead_conversation_id,
     )
     bootstrap_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/bootstrap",

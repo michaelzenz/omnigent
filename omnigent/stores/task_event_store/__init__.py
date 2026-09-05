@@ -32,7 +32,7 @@ class TaskEventStore(ABC):
         title: str,
         *,
         task_id: str | None = None,
-        manager_conversation_id: str | None = None,
+        manager_id: str | None = None,
         payload: str | None = None,
         source: str | None = None,
         source_key: str | None = None,
@@ -84,7 +84,7 @@ class TaskEventStore(ABC):
         event_id: str,
         *,
         task_id: str | None = _UNSET,
-        manager_conversation_id: str | None = _UNSET,
+        manager_id: str | None = _UNSET,
         state: str | None = None,
         routed_at: int | None = None,
         processed_at: int | None = None,
@@ -98,7 +98,7 @@ class TaskEventStore(ABC):
         event_ids: list[str],
         *,
         task_id: str,
-        manager_conversation_id: str | None,
+        manager_id: str | None,
     ) -> list[TaskEvent]:
         """Atomically reconcile routed events assigned to one task."""
 
@@ -107,7 +107,7 @@ class TaskEventStore(ABC):
         self,
         event_ids: list[str],
         *,
-        manager_conversation_id: str,
+        manager_id: str,
         owner_user_id: str,
         routable_states: frozenset[str],
     ) -> list[TaskEvent] | None:

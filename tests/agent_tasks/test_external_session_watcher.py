@@ -57,7 +57,7 @@ def test_get_by_external_hint_finds_external_worker(db_uri: str) -> None:
         title="Ext", agent_id=agent_id, host_id=_uid("h"), workspace="/tmp"
     )
     task_id = _uid("task_hint")
-    task_store.create(task_id, "Hint task", "hint goal", manager_conversation_id=conv.id)
+    task_store.create(task_id, "Hint task", "hint goal", manager_id=conv.id)
 
     hint = "codex-session-abc123"
     worker = worker_store.create_worker(
@@ -219,7 +219,7 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
         title="Mgr", agent_id=agent_id, host_id=_uid("hm"), workspace="/tmp"
     )
     task_id = _uid("task_route")
-    task_store.create(task_id, "Route task", "route goal", manager_conversation_id=mgr_conv.id)
+    task_store.create(task_id, "Route task", "route goal", manager_id=mgr_conv.id)
 
     worker_conv = conv_store.create_conversation(
         kind="sub_agent",
@@ -357,7 +357,7 @@ def test_propose_external_session_adoption_uses_existing_task(db_uri: str) -> No
     )
     task_id = _uid("task_existing")
     task_store.create(
-        task_id, "Existing task", "existing goal", manager_conversation_id=mgr_conv.id
+        task_id, "Existing task", "existing goal", manager_id=mgr_conv.id
     )
 
     hint = "codex-propose-existing"
@@ -439,7 +439,7 @@ async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> N
         owner_user_id="__anonymous__",
     )
     # Set up manager conversation for the task
-    task_store.update(task.id, manager_conversation_id=mgr_conv.id)
+    task_store.update(task.id, manager_id=mgr_conv.id)
 
     from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
     from omnigent.entities.task_role_profile import TaskRoleProfile

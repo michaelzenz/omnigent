@@ -1428,6 +1428,8 @@ def create_app(
                     conversation_store=conversation_store,
                     runner_router=runner_router,
                     app_state=app_inst.state,
+                    manager_store=manager_store,
+                    session_creator=_session_creator,
                 )
             worker_handler: WorkerDispatchHandler | None = None
             if task_store is not None and task_item_store is not None and worker_store is not None:
@@ -1510,19 +1512,7 @@ def create_app(
                     task_event_store=task_event_store,
                     task_store=task_store,
                     status_reader=_PackagerStatusReaderSync(),
-                )
-            # Cancel stale manager queue items keyed by task_id (pre-rekey)
-            # so events re-package under the correct manager_conversation_id key.
-            from omnigent.agent_tasks.queue.rekey_migration import rekey_manager_queues
-
-            rekey_result = rekey_manager_queues(
-                agent_queue_store=agent_queue_store,
-                task_event_store=task_event_store,
-            )
-            if rekey_result["items_canceled"]:
-                _logger.info(
-                    "startup: rekey migration cancelled %d stale manager queue items",
-                    rekey_result["items_canceled"],
+                    manager_store=manager_store,
                 )
 
             await _broker_packager.start()
@@ -2996,6 +2986,7 @@ def create_app(
                 worker_store=worker_store,
                 conversation_store=conversation_store,
                 task_item_store=task_item_store,
+                manager_store=manager_store,
                 task_role_profile_store=task_role_profile_store,
                 host_store=host_store,
                 runner_router=runner_router,

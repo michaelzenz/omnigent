@@ -2119,7 +2119,7 @@ class SqlScheduledTaskRun(OmnigentBase):
 
 
 class SqlManager(OmnigentBase):
-    """A first-class task manager bound to one conversation."""
+    """A first-class task manager; the durable identity behind one agent queue."""
 
     __tablename__ = "managers"
 
@@ -2130,10 +2130,18 @@ class SqlManager(OmnigentBase):
         server_default="0",
         default=current_workspace_id,
     )
-    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     role_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    host_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
+    harness: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    prompt_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -2143,7 +2151,7 @@ class SqlManager(OmnigentBase):
             "workspace_id",
             "owner_user_id",
             "created_at",
-            "conversation_id",
+            "id",
         ),
     )
 
@@ -2172,7 +2180,7 @@ class SqlTask(OmnigentBase):
         nullable=False,
         server_default="manager:default",
     )
-    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
@@ -2192,9 +2200,9 @@ class SqlTask(OmnigentBase):
         Index("ix_tasks_manager_role_key", "workspace_id", "manager_role_key", "id"),
         Index("ix_tasks_created_at", "workspace_id", "created_at", "id"),
         Index(
-            "ix_tasks_manager_conversation",
+            "ix_tasks_manager",
             "workspace_id",
-            "manager_conversation_id",
+            "manager_id",
         ),
     )
 
@@ -2232,7 +2240,7 @@ class SqlTaskEvent(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    manager_conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
@@ -2258,7 +2266,7 @@ class SqlTaskEvent(OmnigentBase):
         Index(
             "ix_task_events_manager_state",
             "workspace_id",
-            "manager_conversation_id",
+            "manager_id",
             "state",
             "created_at",
             "id",

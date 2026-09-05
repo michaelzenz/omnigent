@@ -86,7 +86,7 @@ def _seed_task(
         "Completion task",
         "complete the task",
         owner_user_id=owner,
-        manager_conversation_id=manager_conv.id,
+        manager_id=manager_conv.id,
     )
     task_item_id = _uid("item_" + task_seed)
     item_store.create_item(

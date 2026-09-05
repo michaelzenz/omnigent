@@ -246,7 +246,7 @@ def test_create_item_retry_does_not_duplicate_reconciled_event(stores) -> None:
         _uid("retry-task"),
         "Retry task",
         "Retry goal",
-        manager_conversation_id=_uid("retry-manager"),
+        manager_id=_uid("retry-manager"),
     )
     event_id = _uid("retry-event")
     stores["event"].create_event(
@@ -254,7 +254,7 @@ def test_create_item_retry_does_not_duplicate_reconciled_event(stores) -> None:
         "build.failed",
         "Retry event",
         task_id=task.id,
-        manager_conversation_id=task.manager_conversation_id,
+        manager_id=task.manager_id,
         state="routed",
     )
     create_task_item(
@@ -284,7 +284,7 @@ def test_concurrent_create_item_claims_event_once(stores) -> None:
         _uid("concurrent-claim-task"),
         "Concurrent claim",
         "Claim one event once",
-        manager_conversation_id=_uid("concurrent-claim-manager"),
+        manager_id=_uid("concurrent-claim-manager"),
     )
     event_id = _uid("concurrent-claim-event")
     stores["event"].create_event(
@@ -292,7 +292,7 @@ def test_concurrent_create_item_claims_event_once(stores) -> None:
         "build.failed",
         "Concurrent event",
         task_id=task.id,
-        manager_conversation_id=task.manager_conversation_id,
+        manager_id=task.manager_id,
         state="routed",
     )
     start = threading.Barrier(2, timeout=10)
@@ -329,7 +329,7 @@ def test_atomic_create_rolls_back_when_any_event_is_unclaimable(stores) -> None:
         _uid("atomic-rollback-task"),
         "Atomic rollback",
         "Do not partially reconcile",
-        manager_conversation_id=_uid("atomic-rollback-manager"),
+        manager_id=_uid("atomic-rollback-manager"),
     )
     routed_id = _uid("atomic-rollback-routed")
     reconciled_id = _uid("atomic-rollback-reconciled")
@@ -342,7 +342,7 @@ def test_atomic_create_rolls_back_when_any_event_is_unclaimable(stores) -> None:
             "build.failed",
             state,
             task_id=task.id,
-            manager_conversation_id=task.manager_conversation_id,
+            manager_id=task.manager_id,
             state=state,
         )
 
@@ -429,7 +429,7 @@ def test_package_reconcile_rejects_event_routed_to_another_manager(stores) -> No
         "Target",
         "Target goal",
         state="pending",
-        manager_conversation_id=_uid("target-manager"),
+        manager_id=_uid("target-manager"),
     )
     event_id = _uid("other-manager-event")
     stores["event"].create_event(
@@ -437,7 +437,7 @@ def test_package_reconcile_rejects_event_routed_to_another_manager(stores) -> No
         "build.failed",
         "Other manager event",
         state="awaiting_grouping",
-        manager_conversation_id=_uid("other-manager"),
+        manager_id=_uid("other-manager"),
     )
 
     with pytest.raises(OmnigentError, match="Task event not found"):
@@ -544,7 +544,7 @@ async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str
     activated = task_store.get(task.id)
     assert activated is not None
     assert activated.state == "active"
-    assert activated.manager_conversation_id is not None
+    assert activated.manager_id is not None
 
 
 @pytest.mark.asyncio
@@ -647,7 +647,7 @@ def test_reject_task_package(stores) -> None:
         owner_user_id=_uid("owner"),
         title="Package to reject",
         goal="Package rejected",
-        manager_conversation_id=_uid("reject-manager"),
+        manager_id=_uid("reject-manager"),
         items=[PackageItemSpec(title="Do work", event_ids=[reject_event_id])],
         task_store=task_store,
         task_item_store=item_store,
@@ -665,7 +665,7 @@ def test_reject_task_package(stores) -> None:
     assert released is not None
     assert released.state == "awaiting_grouping"
     assert released.task_id is None
-    assert released.manager_conversation_id is None
+    assert released.manager_id is None
     rejected_item = item_store.list_items_for_task(reject_task.id)[0]
     assert item_store.list_events_for_item(rejected_item.id) == []
     assert item_store.get_item_for_event(reject_event_id) is None
@@ -707,7 +707,7 @@ def test_ambiguous_inbox_suggests_paused_tasks(stores) -> None:
 
 
 def test_create_task_package_born_attached(stores) -> None:
-    """A package created with manager_conversation_id is born attached."""
+    """A package created with manager_id is born attached."""
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
@@ -726,14 +726,14 @@ def test_create_task_package_born_attached(stores) -> None:
         title="CI failure",
         goal="CI green",
         items=[PackageItemSpec(title="Fix CI", event_ids=[event_id])],
-        manager_conversation_id=manager_conv_id,
+        manager_id=manager_conv_id,
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
         worker_store=stores["worker"],
     )
     assert task.state == "pending"
-    assert task.manager_conversation_id == manager_conv_id
+    assert task.manager_id == manager_conv_id
 
 
 def test_agent_resolved_state_codec(stores) -> None:

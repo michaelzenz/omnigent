@@ -8,31 +8,36 @@ must not land on a manager on host B; workspace is relaxed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from omnigent.agent_tasks.constants import MANAGER_TASK_CAPACITY
 from omnigent.agent_tasks.task_search import score_task_text
 from omnigent.entities import Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
-from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_store import TaskStore
 
 # A live task occupies capacity on its manager. Archived tasks free the slot;
 # agent-resolved stays live (it can revive to pending on new events).
+_logger = logging.getLogger(__name__)
+
 _LIVE_TASK_STATES = frozenset({"active", "idle", "pending", "agent-resolved"})
 
 
 @dataclass
 class ManagerInfo:
-    """One active manager session and the tasks it owns."""
+    """One live manager and the tasks it owns."""
 
-    conversation_id: str
-    host_id: str | None
-    workspace: str | None
+    manager_id: str
+    conversation_id: str | None
+    host_id: str
+    workspace: str
+    harness: str
     role_key: str
     description: str
-    title: str | None
+    title: str
+    agent_profile_id: str
     tasks: list[Task]
 
     @property
@@ -45,31 +50,54 @@ def list_active_managers(
     owner_user_id: str,
     manager_store: ManagerStore,
     task_store: TaskStore,
-    conversation_store: ConversationStore,
 ) -> list[ManagerInfo]:
-    """Return the owner's registered manager sessions with live portfolios.
+    """Return the owner's registered managers with live portfolios.
 
     A manager's portfolio counts every task on it — including other owners',
     when a session is shared — since that is the real load against capacity.
+
+    Managers missing any field required to re-create their session (host,
+    workspace, harness, agent profile) are filtered out: the row is
+    self-describing, so an incomplete snapshot is a registration bug, not a
+    state to default around.
+
+    The session pointer is allowed to be dead — the identity is durable and
+    dispatch-time healing re-creates the session from this same snapshot.
     """
     managers: list[ManagerInfo] = []
     for manager in manager_store.list(owner_user_id=owner_user_id):
-        conv = conversation_store.get_conversation(manager.conversation_id)
-        if conv is None:
+        if (
+            not manager.host_id
+            or not manager.workspace
+            or not manager.harness
+            or not manager.agent_profile_id
+        ):
+            _logger.warning(
+                "manager %s has an incomplete execution snapshot "
+                "(host=%r workspace=%r harness=%r agent_profile=%r); skipping",
+                manager.id,
+                manager.host_id,
+                manager.workspace,
+                manager.harness,
+                manager.agent_profile_id,
+            )
             continue
         tasks = [
             task
-            for task in task_store.list_by_manager_conversation_id(manager.conversation_id)
+            for task in task_store.list_by_manager_id(manager.id)
             if task.state in _LIVE_TASK_STATES
         ]
         managers.append(
             ManagerInfo(
+                manager_id=manager.id,
                 conversation_id=manager.conversation_id,
-                host_id=conv.host_id,
-                workspace=conv.workspace,
+                host_id=manager.host_id,
+                workspace=manager.workspace,
+                harness=manager.harness,
                 role_key=manager.role_key,
                 description=manager.description,
-                title=conv.title,
+                title=manager.title or manager.description,
+                agent_profile_id=manager.agent_profile_id,
                 tasks=tasks,
             )
         )
@@ -105,7 +133,7 @@ def choose_manager_for_task(
             default=0.0,
         )
         scored.append((manager, score))
-    scored.sort(key=lambda row: (-row[1], row[0].conversation_id))
+    scored.sort(key=lambda row: (-row[1], row[0].manager_id))
     return scored[0][0]
 
 

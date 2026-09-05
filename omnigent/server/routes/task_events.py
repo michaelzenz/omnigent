@@ -128,7 +128,7 @@ class BatchRouteManagerTaskEventsRequest(BaseModel):
     """Request body for ``POST /v1/task-events/batch-route-manager``."""
 
     event_ids: list[str] = Field(min_length=1)
-    manager_conversation_id: str
+    manager_id: str
 
     @field_validator("event_ids")
     @classmethod
@@ -142,12 +142,12 @@ class BatchRouteManagerTaskEventsRequest(BaseModel):
             raise ValueError("event_ids must contain at most 100 unique ids")
         return cleaned
 
-    @field_validator("manager_conversation_id")
+    @field_validator("manager_id")
     @classmethod
-    def _clean_manager_conversation_id(cls, value: str) -> str:
+    def _clean_manager_id(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
-            raise ValueError("manager_conversation_id must be a non-empty string")
+            raise ValueError("manager_id must be a non-empty string")
         return cleaned
 
 
@@ -166,7 +166,7 @@ def _event_to_response(event: TaskEvent) -> dict[str, Any]:
         "tags": tags_to_payload(event.tags or []),
         "state": event.state,
         "task_id": event.task_id,
-        "manager_conversation_id": event.manager_conversation_id,
+        "manager_id": event.manager_id,
         "created_at": event.created_at,
         "updated_at": event.updated_at,
         "routed_at": event.routed_at,
@@ -389,11 +389,6 @@ def create_task_events_router(
                 task_event_store=task_event_store,
                 conversation_store=conversation_store,
                 task=task,
-                host_id=body.host_id,
-                workspace=body.workspace,
-                harness=body.harness,
-                model=body.model,
-                role_profile=profile,
                 session_creator=session_creator,
                 app_state=request.app.state,
                 user_id=user_id,
@@ -416,19 +411,19 @@ def create_task_events_router(
             )
         manager = await asyncio.to_thread(
             manager_store.get,
-            body.manager_conversation_id,
+            body.manager_id,
         )
-        conversation = await asyncio.to_thread(
-            conversation_store.get_conversation,
-            body.manager_conversation_id,
+        conversation = (
+            await asyncio.to_thread(
+                conversation_store.get_conversation,
+                manager.conversation_id,
+            )
+            if manager is not None and manager.conversation_id is not None
+            else None
         )
-        if (
-            manager is None
-            or conversation is None
-            or conversation.parent_conversation_id is not None
-        ):
+        if manager is None or manager.owner_user_id != owner:
             raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
-        if manager.owner_user_id != owner:
+        if conversation is not None and conversation.parent_conversation_id is not None:
             raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
 
         events_by_id = {
@@ -443,6 +438,7 @@ def create_task_events_router(
             source_host = event_host(event)
             if (
                 source_host is not None
+                and conversation is not None
                 and conversation.host_id is not None
                 and source_host != conversation.host_id
             ):
@@ -451,7 +447,7 @@ def create_task_events_router(
                     code=ErrorCode.CONFLICT,
                 )
             if event.state == "routed" and (
-                event.manager_conversation_id == body.manager_conversation_id
+                event.manager_id == body.manager_id
             ):
                 events.append(event)
                 continue
@@ -465,7 +461,7 @@ def create_task_events_router(
         routed = await asyncio.to_thread(
             task_event_store.route_events_to_manager,
             body.event_ids,
-            manager_conversation_id=body.manager_conversation_id,
+            manager_id=body.manager_id,
             owner_user_id=owner,
             routable_states=ROUTABLE_STALLED_EVENT_STATES,
         )

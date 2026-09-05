@@ -58,6 +58,7 @@ from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.prompt_profile_store import PromptProfileStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
@@ -419,8 +420,10 @@ class ManagerPackager(Packager):
     """Stage-1 packager for routed task events.
 
     Scans ``routed`` events each tick and groups them by their persisted
-    ``(owner, manager_conversation_id)`` destination — one queue per manager
-    session, shared by every task bound to that manager.
+    ``(owner, manager_id)`` destination — one queue per durable manager,
+    shared by every task bound to it. The manager row resolves the queue's
+    delivery session; a manager whose session pointer is dead still groups
+    and packages (dispatch-time healing re-creates the session).
     """
 
     def __init__(
@@ -430,6 +433,7 @@ class ManagerPackager(Packager):
         task_store: TaskStore,
         status_reader: _StatusReader,
         *,
+        manager_store: ManagerStore | None = None,
         poll_interval_s: float = DEFAULT_PACKAGER_POLL_INTERVAL_S,
         batch_size: int = MANAGER_BATCH_MAX_SIZE,
         age_threshold_s: float = DEFAULT_PACKAGER_AGE_THRESHOLD_S,
@@ -443,6 +447,7 @@ class ManagerPackager(Packager):
         self._task_event_store = task_event_store
         self._task_store = task_store
         self._status_reader = status_reader
+        self._manager_store = manager_store
 
     @property
     def role(self) -> str:
@@ -460,23 +465,22 @@ class ManagerPackager(Packager):
             title_by_task[task_id] = task.title
         grouped: dict[tuple[str, str], list[TaskEvent]] = {}
         for event in events:
-            manager_conv_id = event.manager_conversation_id
-            if manager_conv_id is None:
+            if event.manager_id is None:
                 continue
             owner = event.owner_user_id or "__anonymous__"
-            grouped.setdefault((owner, manager_conv_id), []).append(event)
+            grouped.setdefault((owner, event.manager_id), []).append(event)
         batches: list[_PendingBatch] = []
         now = now_epoch()
-        for (owner, manager_conv_id), task_events in grouped.items():
+        for (owner, manager_id), task_events in grouped.items():
             key = AgentQueueKey(
                 role=TASK_MANAGER_ROLE,
                 owner_user_id=owner,
-                scope_id=manager_conv_id,
+                scope_id=manager_id,
             )
             claimed = self._store.list_claimed_source_ids(
                 TASK_MANAGER_ROLE,
                 owner,
-                scope_id=manager_conv_id,
+                scope_id=manager_id,
             )
             unclaimed = [e for e in task_events if e.id not in claimed]
             if not unclaimed:
@@ -488,7 +492,7 @@ class ManagerPackager(Packager):
             }
             task_states = {
                 task.id: task.state
-                for task in self._task_store.list_by_manager_conversation_id(manager_conv_id)
+                for task in self._task_store.list_by_manager_id(manager_id)
             }
             # Split session events (cooldown + per-session grouping) from
             # other routed events (existing single-batch behavior).
@@ -529,9 +533,42 @@ class ManagerPackager(Packager):
         return batches
 
     async def _is_idle(self, key: AgentQueueKey) -> bool:
+        """Whether the manager may receive a partial batch now.
+
+        Three cases, and the distinction matters:
+
+        * manager row missing → ``False``. Nothing to send to; holding the
+          batch is correct (it will re-package if the manager appears).
+        * manager row alive, session pointer dead/null → ``True``. The
+          session is *gone*, not busy — holding the batch would strand it
+          forever, because the dispatch-time heal that re-creates the
+          session only runs once a queue item exists. Flush so the
+          dispatcher can heal and deliver.
+        * session alive → the normal status check.
+        """
         if key.scope_id is None:
             return False
-        return self._status_reader.status_for(key.scope_id) == "idle"
+        if self._manager_store is None:
+            return False
+        manager = await asyncio.to_thread(self._manager_store.get, key.scope_id)
+        if manager is None:
+            return False
+        session_id = manager.conversation_id
+        if session_id is None:
+            return True
+        status = self._status_reader.status_for(session_id)
+        if status is None:
+            # The pointer names a session that no longer reports status —
+            # deleted. Same as a dead pointer: flush so dispatch heals.
+            return True
+        return status == "idle"
+
+    async def _session_for_manager(self, manager_id: str) -> str | None:
+        """Resolve a manager's current session through its durable row."""
+        if self._manager_store is None:
+            return None
+        manager = await asyncio.to_thread(self._manager_store.get, manager_id)
+        return manager.conversation_id if manager is not None else None
 
     async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         if batch.key.scope_id is None:

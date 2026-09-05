@@ -45,7 +45,7 @@ def _require_package_event_scope(
     *,
     task_id: str,
     owner_user_id: str | None,
-    manager_conversation_id: str | None,
+    manager_id: str | None,
 ) -> None:
     if (event.owner_user_id or "__anonymous__") != (
         owner_user_id or "__anonymous__"
@@ -53,8 +53,8 @@ def _require_package_event_scope(
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
     task_matches = event.task_id is None or event.task_id == task_id
     manager_matches = (
-        event.manager_conversation_id is None
-        or event.manager_conversation_id == manager_conversation_id
+        event.manager_id is None
+        or event.manager_id == manager_id
     )
     if not task_matches or not manager_matches:
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
@@ -94,7 +94,7 @@ def _bulk_claimable_events(
             event,
             task_id=task.id,
             owner_user_id=task.owner_user_id,
-            manager_conversation_id=task.manager_conversation_id,
+            manager_id=task.manager_id,
         )
         if eid in claimed_by_items or eid in claimed_by_fyi:
             continue
@@ -105,8 +105,8 @@ def _bulk_claimable_events(
                 event.task_id == task.id
                 or (
                     event.task_id is None
-                    and event.manager_conversation_id is not None
-                    and event.manager_conversation_id == task.manager_conversation_id
+                    and event.manager_id is not None
+                    and event.manager_id == task.manager_id
                 )
             )
         )
@@ -179,7 +179,7 @@ def reconcile_events_to_task_batch(
                 task.id,
                 [event.id for event in events],
                 owner_user_id=task.owner_user_id,
-                manager_conversation_id=task.manager_conversation_id,
+                manager_id=task.manager_id,
                 title=spec.title,
                 description=spec.description,
                 instructions=spec.instructions,
@@ -242,7 +242,7 @@ def create_task_package(
     description: str | None = None,
     tags: list[TaskTag] | None = None,
     event_tags: list | None = None,
-    manager_conversation_id: str | None = None,
+    manager_id: str | None = None,
 ) -> Task:
     """Create a pending task package, optionally born attached to a manager."""
     if not items:
@@ -268,7 +268,7 @@ def create_task_package(
             event,
             task_id=resolved_task_id,
             owner_user_id=owner_user_id,
-            manager_conversation_id=manager_conversation_id,
+            manager_id=manager_id,
         )
 
     task = task_store.create(
@@ -278,7 +278,7 @@ def create_task_package(
         owner_user_id=owner_user_id,
         description=description,
         internal_note=resolved_internal_note,
-        manager_conversation_id=manager_conversation_id,
+        manager_id=manager_id,
         manager_role_key=MANAGER_DEFAULT_ROLE_KEY,
         state="pending",
         tags=resolved_tags,
@@ -347,7 +347,7 @@ def reject_task_package(
                 task_event_store.update_event(
                     link.event_id,
                     task_id=None,
-                    manager_conversation_id=None,
+                    manager_id=None,
                     state="awaiting_grouping",
                 )
         task_item_store.unlink_events(item.id)

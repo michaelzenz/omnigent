@@ -30,7 +30,7 @@ from omnigent.agent_tasks.agent_builtins import (
 )
 from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
-    create_manager_session,
+    spawn_manager_session,
     resolve_bootstrap_params,
 )
 from omnigent.agent_tasks.bootstrap import ensure_puppygarden_project
@@ -226,7 +226,7 @@ class UpdateAgentTaskRequest(BaseModel):
     internal_note: str | None = None
     goal: str | None = None
     manager_role_key: str | None = None
-    manager_conversation_id: str | None = None
+    manager_id: str | None = None
     state: str | None = None
     priority: int | None = Field(default=None, ge=0, le=3)
 
@@ -572,7 +572,7 @@ class CreateTaskPackageRequest(BaseModel):
     items: list[PackageItemInput] = Field(min_length=1)
     # Manager session to attach the task to at birth. Omitted by the user;
     # managers pass their own session id so the task is born attached.
-    manager_conversation_id: str | None = None
+    manager_id: str | None = None
 
     @field_validator("title", "goal")
     @classmethod
@@ -756,7 +756,7 @@ def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[
         "id": task.id,
         "object": "agent.task",
         "manager_role_key": task.manager_role_key,
-        "manager_conversation_id": task.manager_conversation_id,
+        "manager_id": task.manager_id,
         "owner_user_id": task.owner_user_id,
         "title": task.title,
         "description": task.description,
@@ -968,6 +968,7 @@ def _item_to_response(item: TaskItem) -> dict[str, Any]:
 def _manager_to_response(manager: ManagerInfo) -> dict[str, Any]:
     """Serialize a first-class manager and its live portfolio."""
     return {
+        "id": manager.manager_id,
         "conversation_id": manager.conversation_id,
         "title": manager.title,
         "host_id": manager.host_id,
@@ -1065,24 +1066,16 @@ def create_agent_tasks_router(
         return task
 
     async def _require_owned_manager(
-        conversation_id: str,
+        manager_id: str,
         user_id: str | None,
     ) -> None:
-        if manager_store is None or conversation_store is None:
+        if manager_store is None:
             raise OmnigentError(
                 "manager persistence is not configured on this server",
                 code=ErrorCode.INTERNAL_ERROR,
             )
-        manager, conversation = await asyncio.gather(
-            asyncio.to_thread(manager_store.get, conversation_id),
-            asyncio.to_thread(conversation_store.get_conversation, conversation_id),
-        )
-        if (
-            manager is None
-            or manager.owner_user_id != _effective_user_id(user_id)
-            or conversation is None
-            or conversation.parent_conversation_id is not None
-        ):
+        manager = await asyncio.to_thread(manager_store.get, manager_id)
+        if manager is None or manager.owner_user_id != _effective_user_id(user_id):
             raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
 
     def _tags_from_input(task_id: str, tags: list[TaskTagInput]) -> list[TaskTag]:
@@ -1092,11 +1085,19 @@ def create_agent_tasks_router(
     async def create_task(request: Request, body: CreateAgentTaskRequest) -> dict[str, Any]:
         """Create a managed task.
 
-        ``state="active"`` bootstraps the manager session inline (spins up the
-        manager); ``state="pending"`` leaves the task as a broker-managed
-        suggestion.
+        Managers are first-class and always created first: the task must name
+        an existing, owned ``manager_id`` it attaches to. ``state="active""
+        additionally ensures the manager's session is live before the task is
+        returned; ``state="pending"`` leaves the task as a suggestion.
         """
         user_id = require_user(request, auth_provider)
+        if body.manager_id is None:
+            raise OmnigentError(
+                "manager_id is required; create a manager via "
+                "POST /agent-tasks/managers first",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        await _require_owned_manager(body.manager_id, user_id)
         task_id = _generate_task_id()
         tags = _tags_from_input(task_id, body.tags)
         task = await asyncio.to_thread(
@@ -1107,12 +1108,20 @@ def create_agent_tasks_router(
             description=body.description,
             internal_note=body.internal_note,
             goal=body.goal,
+            manager_id=body.manager_id,
             state=body.state,
             priority=body.priority,
             tags=tags,
         )
         if body.state == "active":
-            task = await _bootstrap_manager_for_task(request, task, user_id)
+            task = await bootstrap_task_manager(
+                task=task,
+                task_store=task_store,
+                conversation_store=conversation_store,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
         return _task_to_response(task, tags=tags)
 
     @router.get("/agent-tasks")
@@ -1179,35 +1188,6 @@ def create_agent_tasks_router(
             auth_user_id=user_id,
             task=task,
             prompt_profile_store=prompt_profile_store,
-        )
-
-    async def _bootstrap_manager_for_task(
-        request: Request,
-        task: Task,
-        user_id: str | None,
-    ) -> Task:
-        """Spin up the manager session for ``task`` (used by create-on-active)."""
-        if conversation_store is None or session_creator is None:
-            raise OmnigentError(
-                "manager bootstrap is not configured on this server",
-                code=ErrorCode.INVALID_INPUT,
-            )
-        profile = await _manager_role_profile_for_task(task, user_id)
-        params = resolve_bootstrap_params(
-            host_id=None,
-            workspace=None,
-            harness=None,
-            model=None,
-            role_profile=profile,
-        )
-        return await bootstrap_task_manager(
-            task=task,
-            task_store=task_store,
-            conversation_store=conversation_store,
-            params=params,
-            session_creator=session_creator,
-            app_state=request.app.state,
-            user_id=user_id,
         )
 
     async def _ensure_system_role_profiles(user_id: str | None) -> None:
@@ -1574,14 +1554,13 @@ def create_agent_tasks_router(
         """
         user_id = require_user(request, auth_provider)
         owner = _effective_user_id(user_id)
-        if conversation_store is None or manager_store is None:
+        if manager_store is None:
             return {"object": "list", "managers": [], "role_profiles": []}
         managers = await asyncio.to_thread(
             list_active_managers,
             owner_user_id=owner,
             manager_store=manager_store,
             task_store=task_store,
-            conversation_store=conversation_store,
         )
         role_profiles: list = []
         if task_role_profile_store is not None:
@@ -1631,12 +1610,12 @@ def create_agent_tasks_router(
             model=None,
             role_profile=profile,
         )
-        conversation_id = await create_manager_session(
+        manager = await spawn_manager_session(
             params=params,
-            title=body.title or role_profile_title(profile.role),
-            role_key=profile.role,
-            description=body.description,
             owner_user_id=owner,
+            role_key=profile.role,
+            title=body.title or role_profile_title(profile.role),
+            description=body.description,
             manager_store=manager_store,
             session_creator=session_creator,
             app_state=request.app.state,
@@ -1647,18 +1626,14 @@ def create_agent_tasks_router(
             owner_user_id=owner,
             manager_store=manager_store,
             task_store=task_store,
-            conversation_store=conversation_store,
         )
-        manager = next(
-            (item for item in managers if item.conversation_id == conversation_id),
-            None,
-        )
-        if manager is None:
+        info = next((item for item in managers if item.manager_id == manager.id), None)
+        if info is None:
             raise OmnigentError(
-                "created manager session is unavailable",
+                "created manager is unavailable",
                 code=ErrorCode.INTERNAL_ERROR,
             )
-        return _manager_to_response(manager)
+        return _manager_to_response(info)
 
     @router.patch("/agent-tasks/managers/self")
     async def update_manager_self(
@@ -1687,7 +1662,9 @@ def create_agent_tasks_router(
                 "manager updates are not configured on this server",
                 code=ErrorCode.INTERNAL_ERROR,
             )
-        manager_record = await asyncio.to_thread(manager_store.get, conversation_id)
+        manager_record = await asyncio.to_thread(
+            manager_store.get_by_conversation_id, conversation_id
+        )
         conversation = await asyncio.to_thread(
             conversation_store.get_conversation,
             conversation_id,
@@ -1709,7 +1686,7 @@ def create_agent_tasks_router(
             )
         await asyncio.to_thread(
             manager_store.update,
-            conversation_id,
+            manager_record.id,
             description=body.description,
         )
         managers = await asyncio.to_thread(
@@ -1717,7 +1694,6 @@ def create_agent_tasks_router(
             owner_user_id=owner,
             manager_store=manager_store,
             task_store=task_store,
-            conversation_store=conversation_store,
         )
         manager = next(
             (item for item in managers if item.conversation_id == conversation_id),
@@ -1826,10 +1802,10 @@ def create_agent_tasks_router(
         ):
             if field in body.model_fields_set:
                 update_kwargs[field] = getattr(body, field)
-        if "manager_conversation_id" in body.model_fields_set:
-            if body.manager_conversation_id is not None:
-                await _require_owned_manager(body.manager_conversation_id, user_id)
-            update_kwargs["manager_conversation_id"] = body.manager_conversation_id
+        if "manager_id" in body.model_fields_set:
+            if body.manager_id is not None:
+                await _require_owned_manager(body.manager_id, user_id)
+            update_kwargs["manager_id"] = body.manager_id
         manager_role_key = None
         if "manager_role_key" in body.model_fields_set:
             if task.state != "pending":
@@ -1883,14 +1859,14 @@ def create_agent_tasks_router(
         task = await _get_task_or_404(task_id, user_id)
         if agent_queue_store is None:
             raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
-        if task.manager_conversation_id is None:
+        if task.manager_id is None:
             raise OmnigentError("Task has no manager queue", code=ErrorCode.CONFLICT)
         token = body.token or uuid.uuid4().hex
         now = now_epoch()
         key = AgentQueueKey(
             role="manager",
             owner_user_id=_effective_user_id(user_id),
-            scope_id=task.manager_conversation_id,
+            scope_id=task.manager_id,
         )
         try:
             queue = await asyncio.to_thread(
@@ -1917,12 +1893,12 @@ def create_agent_tasks_router(
         task = await _get_task_or_404(task_id, user_id)
         if agent_queue_store is None:
             raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
-        if task.manager_conversation_id is None:
+        if task.manager_id is None:
             raise OmnigentError("Task has no manager queue", code=ErrorCode.CONFLICT)
         key = AgentQueueKey(
             role="manager",
             owner_user_id=_effective_user_id(user_id),
-            scope_id=task.manager_conversation_id,
+            scope_id=task.manager_id,
         )
         released = await asyncio.to_thread(agent_queue_store.release_inspection_hold, key, token)
         return {"object": "agent.queue.hold.release", "released": released}
@@ -1957,11 +1933,11 @@ def create_agent_tasks_router(
         if agent_queue_store is not None:
             from omnigent.db.utils import now_epoch
             from omnigent.entities import AgentQueueKey
-            if task.manager_conversation_id is not None:
+            if task.manager_id is not None:
                 manager_key = AgentQueueKey(
                     role="manager",
                     owner_user_id=_effective_user_id(user_id),
-                    scope_id=task.manager_conversation_id,
+                    scope_id=task.manager_id,
                 )
                 for item in await asyncio.to_thread(
                     agent_queue_store.list_items, manager_key, state="queued"
@@ -2085,19 +2061,10 @@ def create_agent_tasks_router(
             """Bootstrap the manager session for a managed task."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
-            profile = await _manager_role_profile_for_task(task, user_id)
-            params = resolve_bootstrap_params(
-                host_id=body.host_id,
-                workspace=body.workspace,
-                harness=body.harness,
-                model=body.model,
-                role_profile=profile,
-            )
             bootstrapped = await bootstrap_task_manager(
                 task=task,
                 task_store=task_store,
                 conversation_store=conversation_store,
-                params=params,
                 session_creator=session_creator,
                 app_state=request.app.state,
                 user_id=user_id,
@@ -3076,12 +3043,12 @@ def create_agent_tasks_router(
             """
             user_id = require_user(request, auth_provider)
             target_task = await _get_task_or_404(body.task_id, user_id)
-            if target_task.manager_conversation_id is None:
+            if target_task.manager_id is None:
                 raise OmnigentError(
                     "Target task has no manager",
                     code=ErrorCode.CONFLICT,
                 )
-            await _require_owned_manager(target_task.manager_conversation_id, user_id)
+            await _require_owned_manager(target_task.manager_id, user_id)
             event = await asyncio.to_thread(task_event_store.get_event, event_id)
             if event is None or (
                 (event.owner_user_id or "__anonymous__") != _effective_user_id(user_id)
@@ -3095,14 +3062,14 @@ def create_agent_tasks_router(
                 )
             if (
                 event.task_id == target_task.id
-                and event.manager_conversation_id
-                == target_task.manager_conversation_id
+                and event.manager_id
+                == target_task.manager_id
             ):
                 return {
                     "id": event.id,
                     "object": "task.event",
                     "task_id": target_task.id,
-                    "manager_conversation_id": target_task.manager_conversation_id,
+                    "manager_id": target_task.manager_id,
                 }
             if agent_queue_store is None:
                 raise OmnigentError(
@@ -3130,13 +3097,13 @@ def create_agent_tasks_router(
                 task_event_store.update_event,
                 event_id,
                 task_id=target_task.id,
-                manager_conversation_id=target_task.manager_conversation_id,
+                manager_id=target_task.manager_id,
             )
             return {
                 "id": event.id,
                 "object": "task.event",
                 "task_id": target_task.id,
-                "manager_conversation_id": target_task.manager_conversation_id,
+                "manager_id": target_task.manager_id,
                 "previous_task_id": event.task_id,
             }
 
@@ -3167,8 +3134,8 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Create a pending task package with manager-reconciled items."""
             user_id = require_user(request, auth_provider)
-            if body.manager_conversation_id is not None:
-                await _require_owned_manager(body.manager_conversation_id, user_id)
+            if body.manager_id is not None:
+                await _require_owned_manager(body.manager_id, user_id)
             task_id = _generate_task_id()
             tags = _tags_from_input(task_id, body.tags)
             all_event_ids = [event_id for item in body.items for event_id in item.event_ids]
@@ -3187,7 +3154,7 @@ def create_agent_tasks_router(
                 internal_note=body.internal_note,
                 tags=tags or task_tags_from_event_tags(task_id, event_tags),
                 event_tags=event_tags,
-                manager_conversation_id=body.manager_conversation_id,
+                manager_id=body.manager_id,
                 items=[
                     PackageItemSpec(
                         title=item.title,
@@ -3295,7 +3262,14 @@ def create_agent_tasks_router(
                 )
 
             accepted = await asyncio.to_thread(_accept)
-            accepted = await _bootstrap_manager_for_task(request, accepted, user_id)
+            accepted = await bootstrap_task_manager(
+                task=accepted,
+                task_store=task_store,
+                conversation_store=conversation_store,
+                session_creator=session_creator,
+                app_state=request.app.state,
+                user_id=user_id,
+            )
             tags = await asyncio.to_thread(task_store.get_tags, task_id)
             return _task_to_response(accepted, tags=tags)
 

@@ -20,6 +20,7 @@ from omnigent.entities import AgentQueueKey
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
@@ -56,6 +57,14 @@ def manager_setup(db_uri: str) -> dict:
         host_id=_uid("host_mgr"),
         workspace="/tmp/mgr",
     )
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager = manager_store.upsert(
+        _uid("mgr"),
+        owner_user_id="user-1",
+        role_key="manager:default",
+        description="Manager",
+        conversation_id=manager_conv.id,
+    )
 
     task_id = _uid("task_a")
     owner = "user-1"
@@ -64,7 +73,7 @@ def manager_setup(db_uri: str) -> dict:
         "Manager task",
         "manager goal",
         owner_user_id=owner,
-        manager_conversation_id=manager_conv.id,
+        manager_id=manager.id,
     )
 
     status_reader = _StaticStatusReader("idle")
@@ -73,6 +82,7 @@ def manager_setup(db_uri: str) -> dict:
         task_event_store=event_store,
         task_store=task_store,
         status_reader=status_reader,
+        manager_store=manager_store,
         # Negative threshold so freshly-created events qualify immediately
         # when idle (age 0 > -1). Tests that need "wait because young" raise it.
         age_threshold_s=-1.0,
@@ -87,16 +97,18 @@ def manager_setup(db_uri: str) -> dict:
         "task_id": task_id,
         "owner": owner,
         "manager_conv_id": manager_conv.id,
+        "manager_id": manager.id,
+        "manager_store": manager_store,
         "packager": packager,
         "status_reader": status_reader,
     }
 
 
-def _key(owner: str, manager_conv_id: str) -> AgentQueueKey:
+def _key(owner: str, manager_id: str) -> AgentQueueKey:
     return AgentQueueKey(
         role=TASK_MANAGER_ROLE,
         owner_user_id=owner,
-        scope_id=manager_conv_id,
+        scope_id=manager_id,
     )
 
 
@@ -110,15 +122,15 @@ def _routed_event(
     event_type: str = "build.finished",
     title: str = "Build broke",
     task_id: str | None = None,
-    manager_conversation_id: str | None | object = _DEFAULT_MANAGER,
+    manager_id: str | None | object = _DEFAULT_MANAGER,
     payload: str | None = None,
 ) -> str:
     event_store: SqlAlchemyTaskEventStore = setup["event_store"]
     event_id = _uid(seed)
     resolved_manager = (
-        setup["manager_conv_id"]
-        if manager_conversation_id is _DEFAULT_MANAGER
-        else manager_conversation_id
+        setup["manager_id"]
+        if manager_id is _DEFAULT_MANAGER
+        else manager_id
     )
     assert resolved_manager is None or isinstance(resolved_manager, str)
     event_store.create_event(
@@ -126,7 +138,7 @@ def _routed_event(
         event_type,
         title,
         task_id=task_id or setup["task_id"],
-        manager_conversation_id=resolved_manager,
+        manager_id=resolved_manager,
         state="routed",
         payload=payload,
         owner_user_id=setup["owner"],
@@ -146,7 +158,7 @@ async def test_manager_routed_event_without_task_is_delivered(
         "build.finished",
         "Unassigned build",
         task_id=None,
-        manager_conversation_id=manager_setup["manager_conv_id"],
+        manager_id=manager_setup["manager_id"],
         state="routed",
         owner_user_id=manager_setup["owner"],
     )
@@ -154,7 +166,7 @@ async def test_manager_routed_event_without_task_is_delivered(
     await manager_setup["packager"].scan_once()
 
     items = queue_store.list_items(
-        _key(manager_setup["owner"], manager_setup["manager_conv_id"])
+        _key(manager_setup["owner"], manager_setup["manager_id"])
     )
     assert len(items) == 1
     assert items[0].source_ids == [event_id]
@@ -162,7 +174,7 @@ async def test_manager_routed_event_without_task_is_delivered(
     stored = event_store.get_event(event_id)
     assert stored is not None
     assert stored.task_id is None
-    assert stored.manager_conversation_id == manager_setup["manager_conv_id"]
+    assert stored.manager_id == manager_setup["manager_id"]
 
 
 @pytest.mark.asyncio
@@ -176,7 +188,7 @@ async def test_full_batch_sends_regardless_of_agent_state(manager_setup: dict) -
         _routed_event(manager_setup, seed=f"evt{i}")
     await packager.scan_once()
 
-    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))) == 1
+    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"]))) == 1
 
 
 @pytest.mark.asyncio
@@ -189,7 +201,7 @@ async def test_partial_batch_waits_when_agent_busy(manager_setup: dict) -> None:
     _routed_event(manager_setup, seed="evt")
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"])) == []
+    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"])) == []
 
 
 @pytest.mark.asyncio
@@ -202,7 +214,7 @@ async def test_partial_batch_sends_when_idle_and_age_exceeded(manager_setup: dic
     _routed_event(manager_setup, seed="evt")
     await packager.scan_once()
 
-    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))
+    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"]))
     assert len(items) == 1
     assert "[System: 1 event(s) routed to task 'Manager task'" in items[0].payload
 
@@ -217,7 +229,7 @@ async def test_partial_batch_waits_when_idle_but_young(manager_setup: dict) -> N
     _routed_event(manager_setup, seed="evt")
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"])) == []
+    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"])) == []
 
 
 @pytest.mark.asyncio
@@ -231,7 +243,7 @@ async def test_claimed_events_are_not_repackaged(manager_setup: dict) -> None:
     await packager.scan_once()  # packages it
     await packager.scan_once()  # should not duplicate
 
-    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))) == 1
+    assert len(queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"]))) == 1
 
 
 @pytest.mark.asyncio
@@ -246,7 +258,7 @@ async def test_reconciled_events_are_filtered(manager_setup: dict) -> None:
     event_store.update_event(event_id, state="reconciled")
     await packager.scan_once()
 
-    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"])) == []
+    assert queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"])) == []
 
 
 @pytest.mark.asyncio
@@ -258,7 +270,7 @@ async def test_no_manager_conversation_holds_events(manager_setup: dict) -> None
     manager_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
-    # A second task with no manager_conversation_id.
+    # A second task with no manager_id.
     orphan_task_id = _uid("task_orphan")
     task_store.create(
         orphan_task_id,
@@ -270,7 +282,7 @@ async def test_no_manager_conversation_holds_events(manager_setup: dict) -> None
         manager_setup,
         seed="orphan_evt",
         task_id=orphan_task_id,
-        manager_conversation_id=None,
+        manager_id=None,
     )
     await packager.scan_once()
 
@@ -304,7 +316,7 @@ async def test_worker_execution_finished_event_is_packaged(manager_setup: dict) 
     )
     await packager.scan_once()
 
-    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))
+    items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"]))
     assert len(items) == 1
     assert "worker.execution.finished" in items[0].payload
     assert "Fix login" in items[0].payload
@@ -319,7 +331,7 @@ async def test_events_grouped_by_manager_conversation(manager_setup: dict) -> No
     manager_setup["status_reader"].status = "idle"
     packager._age_threshold_s = -1.0
 
-    # A second task sharing the owner, with its own manager conversation.
+    # A second task sharing the owner, with its own manager.
     second_task_id = _uid("task_b")
     second_conv = manager_setup["conversation_store"].create_conversation(
         title="Manager B",
@@ -327,12 +339,19 @@ async def test_events_grouped_by_manager_conversation(manager_setup: dict) -> No
         host_id=_uid("host_mgr_b"),
         workspace="/tmp/mgr_b",
     )
+    second_manager = manager_setup["manager_store"].upsert(
+        _uid("mgr_b"),
+        owner_user_id=manager_setup["owner"],
+        role_key="manager:default",
+        description="Manager B",
+        conversation_id=second_conv.id,
+    )
     task_store.create(
         second_task_id,
         "Second task",
         "second goal",
         owner_user_id=manager_setup["owner"],
-        manager_conversation_id=second_conv.id,
+        manager_id=second_manager.id,
     )
 
     # Two events on task A, one on task B.
@@ -342,12 +361,12 @@ async def test_events_grouped_by_manager_conversation(manager_setup: dict) -> No
         manager_setup,
         seed="b1",
         task_id=second_task_id,
-        manager_conversation_id=second_conv.id,
+        manager_id=second_manager.id,
     )
     await packager.scan_once()
 
-    a_items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_conv_id"]))
-    b_items = queue_store.list_items(_key(manager_setup["owner"], second_conv.id))
+    a_items = queue_store.list_items(_key(manager_setup["owner"], manager_setup["manager_id"]))
+    b_items = queue_store.list_items(_key(manager_setup["owner"], second_manager.id))
     assert len(a_items) == 1
     assert len(b_items) == 1
     # The task-A notice bundles both of its events.
@@ -369,7 +388,7 @@ async def test_tasks_sharing_one_manager_share_one_queue(manager_setup: dict) ->
         "Shared-manager task",
         "shared goal",
         owner_user_id=manager_setup["owner"],
-        manager_conversation_id=manager_setup["manager_conv_id"],
+        manager_id=manager_setup["manager_id"],
     )
 
     _routed_event(manager_setup, seed="s1")
@@ -377,7 +396,7 @@ async def test_tasks_sharing_one_manager_share_one_queue(manager_setup: dict) ->
     await packager.scan_once()
 
     items = queue_store.list_items(
-        _key(manager_setup["owner"], manager_setup["manager_conv_id"])
+        _key(manager_setup["owner"], manager_setup["manager_id"])
     )
     assert len(items) == 1
     # Both tasks are labeled in the shared notice.
@@ -395,3 +414,36 @@ async def test_tasks_sharing_one_manager_share_one_queue(manager_setup: dict) ->
 def test_defaults_are_configurable_constants() -> None:
     assert DEFAULT_PACKAGER_POLL_INTERVAL_S == 5.0
     assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 180
+
+
+@pytest.mark.asyncio
+async def test_dead_session_pointer_is_treated_as_idle(manager_setup: dict) -> None:
+    """A dead session pointer must not strand partial batches.
+
+    The dispatch-time heal only runs once a queue item exists; if _is_idle
+    reported a dead-pointer manager as busy, single-event batches would be
+    held forever and the heal would be unreachable.
+    """
+    packager: ManagerPackager = manager_setup["packager"]
+    manager_setup["status_reader"].status = "idle"
+    key = _key(manager_setup["owner"], manager_setup["manager_id"])
+
+    # Session pointer alive and idle → normal idle.
+    assert await packager._is_idle(key) is True
+
+    # Pointer alive but the session reports busy → not idle (hold is correct).
+    manager_setup["status_reader"].status = "running"
+    assert await packager._is_idle(key) is False
+
+    # Session deleted out from under the pointer → packageable so the
+    # dispatcher's heal can re-create the session. The static reader
+    # reports None for the deleted session, matching the DB-backed reader.
+    manager_setup["status_reader"].status = None
+    assert await packager._is_idle(key) is True
+
+    # Session pointer null (never bound) → also packageable.
+    manager_setup["manager_store"].update(manager_setup["manager_id"], conversation_id=None)
+    assert await packager._is_idle(key) is True
+
+    # Manager row itself missing → not idle; hold is correct.
+    assert await packager._is_idle(_key(manager_setup["owner"], _uid("ghost-manager"))) is False

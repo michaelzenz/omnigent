@@ -26,11 +26,11 @@ def test_create_and_get_round_trip(store: SqlAlchemyTaskStore) -> None:
         goal="S3 uploads are reliable",
         owner_user_id="alice@example.com",
         internal_note="upload retries and backoff",
-        manager_conversation_id=_uid("conv_mgr"),
+        manager_id=_uid("conv_mgr"),
         tags=[TaskTag(task_id=_uid("task_1"), tag_type="domain", tag="s3")],
     )
     assert task.id == _uid("task_1")
-    assert task.manager_conversation_id == _uid("conv_mgr")
+    assert task.manager_id == _uid("conv_mgr")
     # A task names the roles that run it, not the agent profiles behind them.
     assert task.manager_role_key == "manager:default"
     assert task.worker_role_key == "worker:default"

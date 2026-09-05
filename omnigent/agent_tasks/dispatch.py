@@ -119,7 +119,7 @@ async def dispatch_worker_for_item(
     and appends the instructions as a real user message.
     """
     _ = (session_creator, app_state, user_id)
-    if task.manager_conversation_id is None:
+    if task.manager_id is None:
         raise OmnigentError(
             "Task manager is not bootstrapped",
             code=ErrorCode.CONFLICT,
@@ -128,7 +128,7 @@ async def dispatch_worker_for_item(
         raise OmnigentError("Task item does not belong to task", code=ErrorCode.INVALID_INPUT)
     manager_conv = await asyncio.to_thread(
         conversation_store.get_conversation,
-        task.manager_conversation_id,
+        task.manager_id,
     )
     if manager_conv is None:
         raise OmnigentError(
