@@ -1453,6 +1453,29 @@ def create_app(
                     app_state=app_inst.state,
                 )
 
+            def _status_for_dispatch(session_id: str) -> str | None:
+                """Status as the dispatch path sees it.
+
+                "failed" is edge-written and outlives the failure it describes:
+                a runner lost mid-turn leaves it behind with no turn in flight.
+                While the runner is still connected the session can take a
+                turn, so read it as idle and let the next real turn
+                re-establish the truth; with the runner gone, keep reporting
+                failed so the gate still abandons and backs off until the
+                relay reconnects.
+                """
+                conv = conversation_store.get_conversation(session_id)
+                if conv is None:
+                    return None
+                if conv.live_status != "failed":
+                    return conv.live_status
+                connectivity = conversation_store.get_session_connectivity([session_id]).get(
+                    session_id
+                )
+                if connectivity is not None and connectivity.runner_last_seen is not None:
+                    return "idle"
+                return conv.live_status
+
             class _StoreStatusReader(StatusReader):
                 """Reads session status from the conversation store.
 
@@ -1464,15 +1487,13 @@ def create_app(
                 """
 
                 async def status_for(self, session_id: str) -> str | None:
-                    conv = conversation_store.get_conversation(session_id)
-                    return conv.live_status if conv is not None else None
+                    return await asyncio.to_thread(_status_for_dispatch, session_id)
 
             class _PackagerStatusReaderSync(_PackagerStatusReader):
                 """Sync version of _StoreStatusReader for the packager."""
 
                 def status_for(self, session_id: str) -> str | None:
-                    conv = conversation_store.get_conversation(session_id)
-                    return conv.live_status if conv is not None else None
+                    return _status_for_dispatch(session_id)
 
             _agent_queue_dispatcher = AgentQueueDispatcher(
                 DispatcherContext(
