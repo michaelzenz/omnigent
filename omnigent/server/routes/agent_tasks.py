@@ -2444,7 +2444,6 @@ def create_agent_tasks_router(
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
-                task_role_profile_store=task_role_profile_store,
                 owner_user_id=target_task.owner_user_id,
                 session_creator=session_creator,
                 app_state=request.app.state,

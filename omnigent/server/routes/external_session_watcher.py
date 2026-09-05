@@ -24,7 +24,6 @@ from omnigent.server.routes._auth_helpers import get_user_id, require_user
 from omnigent.server.routes.task_events import HOST_ID_HEADER
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
-from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
@@ -51,7 +50,6 @@ def create_external_session_watcher_router(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    task_role_profile_store: TaskRoleProfileStore | None = None,
     auth_provider: Any | None = None,
     session_creator: Any | None = None,
 ) -> APIRouter:
@@ -60,13 +58,6 @@ def create_external_session_watcher_router(
 
     def _effective_user_id(user_id: str | None) -> str:
         return user_id if user_id is not None else "__anonymous__"
-
-    async def _load_broker_profile() -> Any:
-        if task_role_profile_store is None:
-            return None
-        from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
-
-        return await asyncio.to_thread(task_role_profile_store.get, TASK_BROKER_ROLE)
 
     @router.post("/external-session-watcher/update")
     async def external_session_watcher_update(
@@ -154,15 +145,12 @@ def create_external_session_watcher_router(
             )
 
         created = await asyncio.to_thread(_create)
-        profile = await _load_broker_profile()
         distributed = await ingress_event(
             event=created,
             task_store=task_store,
             task_event_store=task_event_store,
             worker_store=worker_store,
             conversation_store=conversation_store,
-            task_role_profile_store=task_role_profile_store,
-            role_profile=profile,
             owner_user_id=owner,
             session_creator=session_creator,
             app_state=request.app.state,

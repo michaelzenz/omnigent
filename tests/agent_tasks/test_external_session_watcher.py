@@ -166,22 +166,6 @@ def test_purge_old_events_without_event_type_purges_all_types(db_uri: str) -> No
 # ── Ingress auto-routing for external.session.updated ───────────────
 
 
-def _role_profile(agent_profile_id: str, *, host_seed: str, workspace: str):
-    from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
-    from omnigent.entities.task_role_profile import TaskRoleProfile
-
-    return TaskRoleProfile(
-        role=TASK_BROKER_ROLE,
-        kind="broker",
-        agent_profile_id=agent_profile_id,
-        harness="cursor",
-        model="composer-2.5",
-        host_id=_uid(host_seed),
-        workspace=workspace,
-        created_at=1,
-    )
-
-
 def _mock_session_creator(conversation_store):
     async def _creator(*, body, request, user_id, **kwargs):
         return conversation_store.create_conversation(
@@ -259,14 +243,12 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
         state="received",
     )
 
-    profile = _role_profile(agent_id, host_seed="host_route", workspace="/tmp/route")
     distributed = await ingress_event(
         event=event,
         task_store=task_store,
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conv_store,
-        role_profile=profile,
         session_creator=_mock_session_creator(conv_store),
         app_state=SimpleNamespace(),
     )
