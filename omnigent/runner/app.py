@@ -15801,12 +15801,19 @@ def create_runner_app(
             )
             response.raise_for_status()
             event = response.json()
-            await _handle_harness_compaction(session_id, event)
+            # "Already compacted" comes back as a success payload with no
+            # summary to persist — persisting it would append a bogus empty
+            # compaction item.
+            if not event.get("already_compacted"):
+                await _handle_harness_compaction(session_id, event)
             return JSONResponse(status_code=200, content=event)
         except NoLiveHarnessError:
             return JSONResponse(status_code=409, content={"error": "no_live_harness"})
         except Exception as exc:  # noqa: BLE001
-            await process_manager.release(session_id)
+            # No release() here: a compaction error (even a harness 500) does
+            # not mean the subprocess is dead, and tearing it down strands the
+            # session with no_live_harness on every retry until the next turn
+            # respawns it. The idle reaper handles genuinely wedged processes.
             _logger.warning("Native harness compaction failed for %s", session_id, exc_info=True)
             return JSONResponse(
                 status_code=502,

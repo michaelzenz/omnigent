@@ -2408,7 +2408,13 @@ class PiExecutor(Executor):
             if not isinstance(result, dict):
                 if event.get("aborted"):
                     raise RuntimeError("Pi compaction was aborted")
-                raise RuntimeError(str(event.get("errorMessage", "Pi compaction failed")))
+                error_message = str(event.get("errorMessage", "Pi compaction failed"))
+                if "already compacted" in error_message.lower():
+                    # Benign: the session was just compacted (e.g. a second
+                    # /compact right after a successful one). Return an
+                    # idempotent no-op so callers don't tear anything down.
+                    return {"already_compacted": True, "summary": "", "total_tokens": 0}
+                raise RuntimeError(error_message)
             await rpc.send_command({"type": "get_messages", "id": f"messages_{command_id}"})
             while True:
                 messages_line = await rpc.read_line(timeout=15.0)
