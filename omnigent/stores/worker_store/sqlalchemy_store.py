@@ -79,16 +79,18 @@ class SqlAlchemyWorkerStore(WorkerStore):
             return _worker_to_entity(row)
 
     def get_by_target_id(self, target_id: str) -> Worker | None:
+        workers = self.list_workers_by_target_id(target_id)
+        return workers[0] if workers else None
+
+    def list_workers_by_target_id(self, target_id: str) -> list[Worker]:
         with self._session() as session:
             stmt = (
                 select(SqlWorker)
                 .where(SqlWorker.workspace_id == current_workspace_id())
                 .where(SqlWorker.target_id == target_id)
+                .order_by(asc(SqlWorker.created_at), asc(SqlWorker.id))
             )
-            row = session.execute(stmt).scalars().first()
-            if row is None:
-                return None
-            return _worker_to_entity(row)
+            return [_worker_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def list_workers_for_task(self, task_id: str) -> list[Worker]:
         with self._session() as session:

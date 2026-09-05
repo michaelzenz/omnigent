@@ -40,7 +40,11 @@ class WorkerStore(ABC):
 
     @abstractmethod
     def get_by_target_id(self, target_id: str) -> Worker | None:
-        """Return the Worker bound to a target session, if any."""
+        """Return one worker bound to the session (first match)."""
+
+    @abstractmethod
+    def list_workers_by_target_id(self, target_id: str) -> list[Worker]:
+        """Return every worker bound to the target session (many may share it)."""
 
     @abstractmethod
     def list_workers_for_task(self, task_id: str) -> list[Worker]:

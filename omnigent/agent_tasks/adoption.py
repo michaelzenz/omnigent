@@ -10,6 +10,7 @@ from typing import Any
 
 from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
+from omnigent.agent_tasks.manager_discovery import _LIVE_TASK_STATES
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
 from omnigent.agent_tasks.workers import _generate_worker_id
@@ -352,52 +353,89 @@ def emit_turn_finished_event_unbound(
 def emit_turn_finished_event(
     *,
     session_id: str,
-    worker: Worker,
     status: str = "idle",
 ) -> None:
-    """Emit a ``session.turn.finished`` event for an adopted session.
+    """Broadcast a ``session.turn.finished`` event to a session's managers.
 
-    The event is born ``routed`` so the packager never picks it up.
-    The manager is woken by the event itself, not a separate notice.
+    A session is shared: many worker lanes may bind to it, each serving
+    tasks of the same owner. The traversal is workers bound to the session
+    → their tasks (live only) → the deduped set of those tasks' managers.
+    One born-``routed`` event per manager wakes each governing manager;
+    the broker is never involved.
     """
     if _context is None:
         return
-    task = _context.task_store.get(worker.task_id)
-    if task is None:
+    workers = _context.worker_store.list_workers_by_target_id(session_id)
+    if not workers:
         return
+
+    # Workers → their tasks (live only; deleted lanes and archived tasks
+    # must not wake managers).
+    tasks_by_id: dict[str, Task] = {}
+    for worker in workers:
+        if worker.state == "deleted":
+            continue
+        task = _context.task_store.get(worker.task_id)
+        if task is not None and task.state in _LIVE_TASK_STATES:
+            tasks_by_id[task.id] = task
+    if not tasks_by_id:
+        return
+
+    # Tasks → deduped manager set, resolved through the manager registry so
+    # each event is attributed to the manager's own owner (queue grouping).
+    manager_owner: dict[str, str | None] = {}
+    for task in tasks_by_id.values():
+        if task.manager_id is None or task.manager_id in manager_owner:
+            continue
+        manager = (
+            _context.manager_store.get(task.manager_id)
+            if _context.manager_store is not None
+            else None
+        )
+        if manager is None:
+            _logger.warning(
+                "turn-finished broadcast: task %s references manager %s "
+                "which does not exist; skipping",
+                task.id,
+                task.manager_id,
+            )
+            continue
+        manager_owner[manager.id] = manager.owner_user_id
+    if not manager_owner:
+        return
+
     conv = _context.conversation_store.get_conversation(session_id)
     session_title = conv.title if conv is not None else session_id
-    owner = task.owner_user_id or "__anonymous__"
     last_user_message, last_agent_response = _extract_last_turn_text(
         _context.conversation_store, session_id
     )
     payload = json.dumps({
         "session_id": session_id,
         "session_title": session_title,
-        "worker_id": worker.id,
         "status": status,
         "last_user_message": last_user_message,
         "last_agent_response": last_agent_response,
     })
     title = f"Session turn finished: {session_title}"
-    try:
-        event = _context.task_event_store.create_event(
-            uuid.uuid4().hex,
-            SESSION_TURN_FINISHED_EVENT_TYPE,
-            title,
-            task_id=task.id,
-            manager_id=task.manager_id,
-            source="adoption",
-            source_key=session_id,
-            state="routed",
-            payload=payload,
-            owner_user_id=owner,
-        )
-        _context.task_event_store.update_event(event.id, routed_at=now_epoch())
-    except Exception:
-        _logger.exception(
-            "failed to emit %s event for session %s on task %s",
-            SESSION_TURN_FINISHED_EVENT_TYPE,
-            session_id,
-            task.id,
-        )
+
+    for manager_id, owner in manager_owner.items():
+        try:
+            event = _context.task_event_store.create_event(
+                uuid.uuid4().hex,
+                SESSION_TURN_FINISHED_EVENT_TYPE,
+                title,
+                manager_id=manager_id,
+                source="adoption",
+                source_key=session_id,
+                state="routed",
+                payload=payload,
+                owner_user_id=owner or "__anonymous__",
+            )
+            _context.task_event_store.update_event(event.id, routed_at=now_epoch())
+        except Exception:
+            _logger.exception(
+                "failed to emit %s event for session %s to manager %s",
+                SESSION_TURN_FINISHED_EVENT_TYPE,
+                session_id,
+                manager_id,
+            )
