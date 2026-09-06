@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.inner.databricks_executor import DatabricksCredentials
 from omnigent.inner.executor import (
     CompactionComplete,
@@ -1436,6 +1437,21 @@ class TestPiRpcSession(unittest.TestCase):
             self.assertIsNone(rpc.process)
 
         _run(_test())
+
+
+# ---------------------------------------------------------------------------
+# compact_session tests
+# ---------------------------------------------------------------------------
+
+
+class TestPiExecutorCompactSession(unittest.TestCase):
+    def test_compact_without_live_process_raises_conflict(self):
+        with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+            executor = PiExecutor()
+        with self.assertRaises(OmnigentError) as ctx:
+            asyncio.run(executor.compact_session("conv_1"))
+        self.assertEqual(ctx.exception.code, ErrorCode.CONFLICT)
+        self.assertIn("no live Pi process", ctx.exception.message)
 
 
 # ---------------------------------------------------------------------------

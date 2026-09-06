@@ -57,6 +57,7 @@ from omnigent.inner.agent_env import clean_agent_env
 from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.llms.context_window import lookup_model_context_window
 from omnigent.model_metadata import ModelWireAPI
@@ -2390,31 +2391,39 @@ class PiExecutor(Executor):
             return False
 
     async def compact_session(self, session_key: str) -> _JsonObject:
-        """Run Pi's native compactor and return its canonical recovery payload."""
+        """Run Pi's native compactor and return its canonical recovery payload.
+
+        Raises OmnigentError so harness error mapping turns failures into
+        structured responses the runner can surface, instead of a bare 500.
+        """
         state = self._session_states.get(session_key)
         if state is None or state.rpc is None:
-            raise RuntimeError("no live Pi process for this conversation")
+            raise OmnigentError(
+                "no live Pi process for this conversation; send a message to respawn "
+                "the session first, then compact",
+                code=ErrorCode.CONFLICT,
+            )
         rpc = state.rpc
         command_id = f"compact_{session_key}"
         await rpc.send_command({"type": "compact", "id": command_id})
         while True:
             line = await rpc.read_line(timeout=180.0)
             if line is None:
-                raise RuntimeError("Pi exited during compaction")
+                raise OmnigentError("Pi exited during compaction", code=ErrorCode.INTERNAL_ERROR)
             event = json.loads(line)
             if event.get("type") != "compaction_end":
                 continue
             result = event.get("result")
             if not isinstance(result, dict):
                 if event.get("aborted"):
-                    raise RuntimeError("Pi compaction was aborted")
+                    raise OmnigentError("Pi compaction was aborted", code=ErrorCode.CONFLICT)
                 error_message = str(event.get("errorMessage", "Pi compaction failed"))
                 if "already compacted" in error_message.lower():
                     # Benign: the session was just compacted (e.g. a second
                     # /compact right after a successful one). Return an
                     # idempotent no-op so callers don't tear anything down.
                     return {"already_compacted": True, "summary": "", "total_tokens": 0}
-                raise RuntimeError(error_message)
+                raise OmnigentError(error_message, code=ErrorCode.INTERNAL_ERROR)
             await rpc.send_command({"type": "get_messages", "id": f"messages_{command_id}"})
             while True:
                 messages_line = await rpc.read_line(timeout=15.0)
@@ -2427,7 +2436,10 @@ class PiExecutor(Executor):
                 ):
                     continue
                 if not messages_event.get("success", True):
-                    raise RuntimeError(str(messages_event.get("error", "Pi get_messages failed")))
+                    raise OmnigentError(
+                        str(messages_event.get("error", "Pi get_messages failed")),
+                        code=ErrorCode.INTERNAL_ERROR,
+                    )
                 data = messages_event.get("data")
                 messages = data.get("messages") if isinstance(data, dict) else None
                 return {
