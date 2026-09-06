@@ -174,6 +174,24 @@ class AdoptSessionRequest(BaseModel):
     task_id: str
 
 
+class ProposeExternalAdoptionRequest(BaseModel):
+    """Request body for proposing adoption of a watcher-discovered session."""
+
+    session_hint: str
+    task_id: str | None = None
+    transcript_snippet: str | None = None
+
+
+class AdoptExternalSessionRequest(BaseModel):
+    """Request body for adopting a watcher-discovered external session."""
+
+    task_id: str
+    host_id: str | None = None
+    workspace: str | None = None
+    harness: str | None = None
+    model: str | None = None
+
+
 class CreateAgentTaskRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks``."""
 
@@ -3417,22 +3435,6 @@ def create_agent_tasks_router(
             }
 
         # ── External session adoption (watcher-discovered) ──────────
-
-        class ProposeExternalAdoptionRequest(BaseModel):
-            """Request body for ``POST /v1/agent-tasks/external-sessions/propose-adoption``."""
-
-            session_hint: str
-            task_id: str | None = None
-            transcript_snippet: str | None = None
-
-        class AdoptExternalSessionRequest(BaseModel):
-            """Request body for ``POST /v1/agent-tasks/external-sessions/{session_hint}/adopt``."""
-
-            task_id: str
-            host_id: str | None = None
-            workspace: str | None = None
-            harness: str | None = None
-            model: str | None = None
 
         @router.post("/agent-tasks/external-sessions/propose-adoption")
         async def propose_external_adoption_route(
