@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from omnigent.runner.native.orchestration import (
+from omnigent.runner.app import (
     ResolvedSpec,
     _resolve_sub_agent_spec_entry,
     _resolved_workdir_for_spec,

@@ -257,7 +257,6 @@ def _make_spec(
     return AgentSpec(
         spec_version=1,
         skills=skills or [],
-        skills_filter="none",
         mcp_servers=mcp_servers or [],
         local_tools=local_tools or [],
         # Without this, ``LoadSkillTool`` merges in host-scope skills from
@@ -388,12 +387,13 @@ def test_schemas_exclude_read_skill_file_without_resources(
 
 def test_schemas_empty_when_no_skills() -> None:
     """
-    get_tool_schemas returns empty when agent has no skills,
-    excluding the always-registered lifecycle tool
-    (``sys_cancel_task``).
+    With no bundled skills, no resource-backed skill tool registers
+    (``read_skill_file``); the portable default builtins do.
     """
     mgr = ToolManager(_make_spec([]))
-    assert _non_lifecycle_schemas(mgr) == []
+    names = {s["function"]["name"] for s in _non_lifecycle_schemas(mgr)}
+    assert "read_skill_file" not in names
+    assert "serve_html" in names
 
 
 def test_schemas_isolate_a_failing_tool(
@@ -851,19 +851,14 @@ def test_client_tools_registered_in_schemas() -> None:
         ],
     )
 
-    # Filter out the always-present lifecycle tool
-    # (sys_cancel_task) — orthogonal to the client-tool
-    # registration being tested.
     schemas = _non_lifecycle_schemas(mgr)
     names = [s["function"]["name"] for s in schemas]
 
-    # Both client tools appear in schemas — 2 registered, 2 returned
-    assert len(schemas) == 2, (
-        f"Expected 2 schemas (2 client tools), got {len(schemas)}. "
-        "If 0, client_tool_specs are not being registered."
-    )
+    # Both client tools appear in schemas.
     assert "get_weather" in names
     assert "send_email" in names
+    # The portable default builtins are always registered too.
+    assert "serve_html" in names
 
 
 def test_is_client_side_tool_returns_true_for_registered_client_tools() -> None:
@@ -938,14 +933,16 @@ def test_client_tool_shadows_skill_tool(
 def test_client_tools_none_equivalent_to_empty() -> None:
     """
     Passing client_tool_specs=None and client_tool_specs=[] produce
-    the same result: no client tools registered.
+    the same result: the portable default builtins, no client tools.
     """
     spec = _make_spec()
     mgr_none = ToolManager(spec, client_tool_specs=None)
     mgr_empty = ToolManager(spec, client_tool_specs=[])
 
-    assert _non_lifecycle_schemas(mgr_none) == []
-    assert _non_lifecycle_schemas(mgr_empty) == []
+    none_names = {s["function"]["name"] for s in _non_lifecycle_schemas(mgr_none)}
+    empty_names = {s["function"]["name"] for s in _non_lifecycle_schemas(mgr_empty)}
+    assert none_names == empty_names
+    assert "get_weather" not in none_names
 
 
 # ── Spec-declared client tools (runtime: client) ──────────
@@ -1256,13 +1253,11 @@ def test_local_tools_skipped_without_workdir() -> None:
     spec = _make_spec(local_tools=[info])
     # workdir=None (default) — should not raise.
     mgr = ToolManager(spec)
-    # Excluding the always-present lifecycle tool
-    # (sys_cancel_task), no tools should register when workdir
-    # is None and no skills / builtins are set.
-    assert _non_lifecycle_schemas(mgr) == [], (
-        "No tools (apart from the always-present sys_cancel_task) "
-        "should be registered when workdir is None."
-    )
+    # The local tool is skipped; the portable default builtins
+    # still register when workdir is None.
+    names = {s["function"]["name"] for s in _non_lifecycle_schemas(mgr)}
+    assert "some_tool" not in names
+    assert "serve_html" in names
 
 
 # ── web_search builtin: Databricks model does not emit web_search_preview ───

@@ -121,6 +121,12 @@ async def _native_wrappers(client: httpx.AsyncClient, db_uri: str) -> dict[str, 
         ("claude-native", "claude-native-ui"),
         ("codex-native", "codex-native-ui"),
     ):
+        # The app fixture seeds every packaged native wrapper by name; reuse
+        # the seeded template instead of re-registering a duplicate.
+        seeded = store.get_by_name(agent_name)
+        if seeded is not None:
+            wrappers[harness] = seeded.id
+            continue
         agent_id = generate_agent_id()
         store.create(agent_id, name=agent_name, bundle_location=bundle.bundle_location)
         wrappers[harness] = agent_id

@@ -77,8 +77,13 @@ async def test_builtin_flag_distinguishes_seeded_from_registered(
     built-in.
     """
     agent_store = SqlAlchemyAgentStore(db_uri)
-    seeded_id = builtin_agent_id("polly")
-    agent_store.create(seeded_id, name="polly", bundle_location="test:///polly")
+    # The app fixture already seeded every packaged built-in (polly, debby,
+    # onih-* …); pick a name reserved for seeding that the fixture never
+    # seeds so this test controls the row itself.
+    from omnigent.server.app import _ensure_default_agents  # noqa: F401  (documents seeding)
+
+    seeded_id = builtin_agent_id("test-seeded-agent")
+    agent_store.create(seeded_id, name="test-seeded-agent", bundle_location="test:///seeded")
     registered_id = generate_agent_id()
     agent_store.create(registered_id, name="my-agent", bundle_location="test:///mine")
 

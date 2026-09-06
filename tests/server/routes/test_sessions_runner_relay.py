@@ -514,6 +514,7 @@ class _RecordingLabelStore:
         return SimpleNamespace(
             labels=dict(self.labels.get(conversation_id, {})),
             live_status=self.live_status,
+            execution_generation=0,
         )
 
 

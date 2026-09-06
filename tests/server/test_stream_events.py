@@ -303,6 +303,7 @@ def test_session_skills_event_round_trips_through_union() -> None:
         "type": "session.skills",
         "conversation_id": "conv_abc",
         "sequence_number": None,
+        "execution_generation": None,
     }
     parsed = _ADAPTER.validate_python(dumped)
     # Discriminator must route to SessionSkillsEvent, not some other
@@ -323,6 +324,7 @@ def test_session_model_options_event_round_trips_through_union() -> None:
         "type": "session.model_options",
         "conversation_id": "conv_abc",
         "sequence_number": None,
+        "execution_generation": None,
     }
     parsed = _ADAPTER.validate_python(dumped)
     # Discriminator must route to the model-options nudge, otherwise

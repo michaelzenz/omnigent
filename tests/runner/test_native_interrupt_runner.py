@@ -57,6 +57,15 @@ def _make_runner(**overrides: Any) -> tuple[NativeInterruptRunner, dict[str, Any
         captured["wakes"].append((child_session_id, status, output))
         return _FakeAck()
 
+    async def _noop_cancel(session_id: str) -> None:
+        return None
+
+    async def _fake_bridge_id_resolver(*, server_client: object, session_id: str) -> str:
+        return "bridge-x"
+
+    async def _fake_labels_resolver(*, server_client: object, session_id: str, labels=None):
+        return None
+
     async def _codex_bridge_state(conv_id: str, *, action: str, **_kw: Any) -> Any | None:
         return None
 
@@ -72,6 +81,9 @@ def _make_runner(**overrides: Any) -> tuple[NativeInterruptRunner, dict[str, Any
         "codex_bridge_state_for_session": _codex_bridge_state,
         "client_safe_error_detail": _client_safe,
         "logger": logging.getLogger("test.interrupt"),
+        "cancel_auto_forwarder_task": _noop_cancel,
+        "claude_bridge_id_for_session": _fake_bridge_id_resolver,
+        "session_labels_for_runner_spawn": _fake_labels_resolver,
     }
     kwargs.update(overrides)
     return NativeInterruptRunner(**kwargs), captured
@@ -238,7 +250,6 @@ async def test_claude_stop_is_idempotent_without_advertised_tmux(
 ) -> None:
     """An already-absent Claude pane still completes stop teardown."""
     import omnigent.claude_native_bridge as claude_bridge
-    from omnigent.runner.native import interrupt as interrupt_mod
 
     async def _fake_bridge_id(*, server_client: Any, session_id: str) -> str:
         del server_client, session_id
@@ -248,7 +259,9 @@ async def test_claude_stop_is_idempotent_without_advertised_tmux(
         del bridge_dir, timeout_s
         raise claude_bridge.TmuxSessionNotAdvertised("not advertised")
 
-    monkeypatch.setattr(interrupt_mod, "_claude_native_bridge_id_for_session", _fake_bridge_id)
+    monkeypatch.setattr(
+        "omnigent.runner.app._claude_native_bridge_id_for_session", _fake_bridge_id
+    )
     monkeypatch.setattr(claude_bridge, "bridge_dir_for_bridge_id", lambda bridge_id: bridge_id)
     monkeypatch.setattr(claude_bridge, "kill_session", _absent)
 
@@ -265,13 +278,13 @@ async def test_claude_interrupt_resolves_bridge_id_and_injects(
 ) -> None:
     """claude interrupt resolves the bridge id, injects, and wakes the parent."""
     import omnigent.claude_native_bridge as claude_bridge
-    from omnigent.runner.native import interrupt as interrupt_mod
 
     async def _fake_bridge_id(*, server_client: Any, session_id: str) -> str:
         return f"bid-{session_id}"
 
     injected: list[Any] = []
-    monkeypatch.setattr(interrupt_mod, "_claude_native_bridge_id_for_session", _fake_bridge_id)
+    # The resolver is injected at construction; pass the fake via overrides.
+    runner, captured = _make_runner(claude_bridge_id_for_session=_fake_bridge_id)
     monkeypatch.setattr(claude_bridge, "bridge_dir_for_bridge_id", lambda bid: f"dir/{bid}")
     monkeypatch.setattr(
         claude_bridge,
@@ -279,7 +292,6 @@ async def test_claude_interrupt_resolves_bridge_id_and_injects(
         lambda bridge_dir, *, timeout_s: injected.append((bridge_dir, timeout_s)),
     )
 
-    runner, captured = _make_runner()
     resp = await runner.interrupt("claude-native", "conv_cl")
 
     assert isinstance(resp, Response) and resp.status_code == 204

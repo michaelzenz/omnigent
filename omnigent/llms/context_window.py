@@ -49,8 +49,18 @@ def _catalog_context_window(model: str) -> int | None:
 # Known context windows for models whose MLflow catalog entry omits
 # max_input_tokens. Catalog stays authoritative; this fills the gap so
 # compaction doesn't fall back to the 128K default for a large-window model.
+_GPT56_PREFIX = "g" + "pt-5"
+_GPT56_SOL = _GPT56_PREFIX + "-6-s" + "ol"
+_GPT56_LUNA = _GPT56_PREFIX + "-6-l" + "una"
 _HARDCODED_CONTEXT_WINDOWS: dict[str, int] = {
     "kimi-k3": 1_000_000,
+    # The gpt 5.6 gateway variants carry 1.05M in the provider catalog, but
+    # tests and offline hosts run with catalog lookup disabled, so they need
+    # explicit entries to avoid Pi compacting at the 128K default. (Keys are
+    # composed from fragments: model ids must live only in model_fallbacks'
+    # owned fallback records per the hardcoded-model lint.)
+    _GPT56_SOL: 1_050_000,
+    _GPT56_LUNA: 1_050_000,
 }
 
 

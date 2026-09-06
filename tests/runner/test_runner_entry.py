@@ -553,7 +553,9 @@ def test_managed_mint_factory_no_factory_when_host_runner_gets_401(
     :returns: None.
     """
 
-    def _unauthorized(mint_url: str, server_url: str, binding_token: str) -> tuple[str, float]:
+    def _unauthorized(
+        mint_url: str, server_url: str, binding_token: str, *, proxy_bearer: str | None = None
+    ) -> tuple[str, float]:
         """Reject the mint the way a host-launched runner does (401)."""
         request = httpx.Request("POST", mint_url)
         raise httpx.HTTPStatusError(

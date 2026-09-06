@@ -9,12 +9,12 @@ from omnigent.agent_tasks.constants import (
 )
 
 
-def test_default_task_harness_is_cursor_native() -> None:
-    assert DEFAULT_TASK_HARNESS == "cursor-native"
+def test_default_task_harness_is_openai_agents() -> None:
+    assert DEFAULT_TASK_HARNESS == "openai-agents"
 
 
-def test_default_broker_harness_is_cursor_native() -> None:
-    assert DEFAULT_BROKER_HARNESS == "cursor-native"
+def test_default_broker_harness_is_openai_agents() -> None:
+    assert DEFAULT_BROKER_HARNESS == "openai-agents"
 
 
 def test_resolve_task_harness_maps_headless_cursor_to_native() -> None:

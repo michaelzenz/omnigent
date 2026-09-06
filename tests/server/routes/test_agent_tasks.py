@@ -9,13 +9,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import (
-    TASK_BROKER_ROLE,
-    TASK_MANAGER_AGENT_NAME,
-    TASK_SECRETARY_AGENT_NAME,
-    TASK_SECRETARY_ROLE,
-    resolve_task_agent_id,
-)
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE, TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.broker_session import NO_HOST_AVAILABLE_MESSAGE
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag
@@ -28,14 +22,12 @@ from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStor
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
-from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
 from tests.server.routes.agent_task_api import (
     agent_role_profile_url,
     agent_role_session_reset_url,
     agent_role_session_url,
     put_agent_role_profile,
-    task_worker_url,
 )
 
 
@@ -53,8 +45,10 @@ def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     live-host requirement.
     """
 
-    async def _skip_validation(*args: object, **kwargs: object) -> str | None:
-        return kwargs.get("workspace")
+    from omnigent.server.routes._workspace_validation import WorkspaceValidationResult
+
+    async def _skip_validation(*args: object, **kwargs: object) -> WorkspaceValidationResult:
+        return WorkspaceValidationResult(canonical_path=kwargs.get("workspace") or "")
 
     monkeypatch.setattr(
         "omnigent.server.routes.sessions._validate_session_workspace",
@@ -105,26 +99,22 @@ def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest_asyncio.fixture()
-async def task_manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
-    """Return the seeded task-manager built-in agent id."""
-    del client
-    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
-
-
-@pytest_asyncio.fixture()
-async def secretary_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
-    """Return the seeded task-secretary built-in agent id."""
-    del client
-    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_SECRETARY_AGENT_NAME)
-
-
-@pytest_asyncio.fixture()
-async def custom_agent_id(db_uri: str) -> str:
-    """Register an agent that is none of the packaged task built-ins."""
+async def manager_agent_id(db_uri: str) -> str:
+    """Register a standalone agent backing manager conversations."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
     agent_store.create(agent_id, name="custom-agent", bundle_location="test:///bundle")
     return agent_id
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def task_manager_id(db_uri: str, manager_agent_id: str) -> str:
+    """Register the first-class manager every task creation attaches to."""
+    return _register_manager(
+        db_uri,
+        conversation_id=_uid("task-manager"),
+        agent_id=manager_agent_id,
+    )
 
 
 def _create_payload(**overrides: object) -> dict:
@@ -132,6 +122,8 @@ def _create_payload(**overrides: object) -> dict:
         "title": "S3 upload reliability",
         "goal": "All S3 uploads eventually succeed without manual retry",
         "internal_note": "retry flaky uploads",
+        "manager_id": _uid("task-manager"),
+        "state": "pending",
         "tags": [{"tag_type": "domain", "tag": "s3"}],
     }
     base.update(overrides)  # type: ignore[arg-type]
@@ -141,15 +133,12 @@ def _create_payload(**overrides: object) -> dict:
 async def test_create_and_get_task(client: httpx.AsyncClient) -> None:
     """Creating a task returns the task snapshot; GET includes tags."""
     create_resp = await client.post("/v1/agent-tasks", json=_create_payload())
-    assert create_resp.status_code == 200
+    assert create_resp.status_code == 200, create_resp.text
     created = create_resp.json()
     assert created["object"] == "agent.task"
     assert created["state"] == "pending"
     assert created["goal"] == "All S3 uploads eventually succeed without manual retry"
     assert created["manager_role_key"] == "manager:default"
-    assert created["worker_role_key"] == "worker:default"
-    # The agent behind each lane is named by the role, not by the task.
-    assert "agent_profile_id" not in created
     assert created["tags"] == [{"tag_type": "domain", "tag": "s3"}]
 
     get_resp = await client.get(f"/v1/agent-tasks/{created['id']}")
@@ -175,41 +164,51 @@ async def test_create_task_requires_goal_and_supported_state(
     )
     assert invalid_state.status_code == 422
 
-    manager_session = await client.post(
+    unknown_manager = await client.post(
         "/v1/agent-tasks",
         json={
-            "title": "Invalid manager session",
+            "title": "Unknown manager",
             "goal": "Never created",
-            "manager_id": _uid("manager"),
+            "manager_id": _uid("unknown-manager"),
         },
     )
-    assert manager_session.status_code == 422
+    assert unknown_manager.status_code == 404
 
 
-async def test_create_defaults_manager_role_to_task_manager_agent(
+async def test_create_requires_an_owned_manager(client: httpx.AsyncClient) -> None:
+    """Tasks are born attached to a first-class manager; omitting one is a 400."""
+    resp = await client.post(
+        "/v1/agent-tasks",
+        json={"title": "No manager", "goal": "never created"},
+    )
+    assert resp.status_code == 400
+    assert "manager_id is required" in resp.json()["error"]["message"]
+
+
+async def test_create_defaults_manager_role(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
 ) -> None:
-    """A task with no role keys runs the built-in task-manager through manager:default."""
+    """A task with no role key runs the manager:default role."""
     _seed_live_host(db_uri, "default-manager-host")
     create_resp = await client.post(
         "/v1/agent-tasks",
         json={
             "title": "Default manager task",
             "goal": "default manager task done",
+            "manager_id": _uid("task-manager"),
             "tags": [{"tag_type": "domain", "tag": "s3"}],
         },
     )
-    assert create_resp.status_code == 200
+    assert create_resp.status_code == 200, create_resp.text
     assert create_resp.json()["manager_role_key"] == "manager:default"
 
     profile_resp = await client.get(agent_role_profile_url("manager:default"))
     assert profile_resp.status_code == 200
-    # manager:default auto-forks from the packaged task-manager on first
-    # load, so the role owns its profile (decoupled from the reseeded built-in).
-    assert profile_resp.json()["agent_profile_id"] != task_manager_agent_id
-    assert profile_resp.json()["agent_name"].startswith("task-manager-fork-")
+    # manager:default auto-provisions on first load, bound to the restricted
+    # PuppyGarden OmniHarness execution target.
+    assert profile_resp.json()["agent_profile_id"] is not None
+    assert profile_resp.json()["agent_name"] is not None
 
 
 async def test_create_active_task_bootstraps_manager(
@@ -225,23 +224,12 @@ async def test_create_active_task_bootstraps_manager(
             "title": "Active task",
             "goal": "Manager session is running",
             "state": "active",
+            "manager_id": _uid("task-manager"),
         },
     )
     assert created.status_code == 200, created.text
     assert created.json()["state"] == "active"
-    assert created.json()["manager_id"] is not None
-
-
-async def test_role_profile_rejects_missing_agent_profile(client: httpx.AsyncClient) -> None:
-    """Pointing a role at an unknown agent_profile_id returns 404."""
-    resp = await put_agent_role_profile(
-        client,
-        role=TASK_BROKER_ROLE,
-        agent_profile_id=_uid("missing_profile"),
-        host_id=_uid("missing_profile_host"),
-        workspace="/tmp/broker",
-    )
-    assert resp.status_code == 404
+    assert created.json()["manager_id"] == _uid("task-manager")
 
 
 async def test_list_tasks_filters_by_state(client: httpx.AsyncClient) -> None:
@@ -369,26 +357,29 @@ async def test_unknown_task_agent_role_returns_404(client: httpx.AsyncClient) ->
 
 async def test_broker_profile_round_trip(
     client: httpx.AsyncClient,
-    custom_agent_id: str,
+    db_uri: str,
 ) -> None:
-    """Broker role accepts and stores a profile independent of secretary."""
-    profile_resp = await put_agent_role_profile(
+    """Broker role profile persists editable metadata; the agent binding is system-managed."""
+    _seed_live_host(db_uri, "broker-profile-host")
+    put_resp = await put_agent_role_profile(
         client,
         role=TASK_BROKER_ROLE,
-        agent_profile_id=custom_agent_id,
+        agent_profile_id=_uid("ignored-binding"),
         host_id=_uid("broker_host"),
         workspace="/tmp/broker",
+        model="composer-2.5",
     )
-    assert profile_resp.status_code == 200
-    body = profile_resp.json()
+    assert put_resp.status_code == 200, put_resp.text
+    body = put_resp.json()
     assert body["role"] == TASK_BROKER_ROLE
     assert body["kind"] == "broker"
-    assert body["agent_profile_id"] == custom_agent_id
+    # The role's agent binding is system-managed (Onih target), not caller-chosen.
+    assert body["agent_profile_id"] is not None
+    assert body["model"] == "composer-2.5"
 
     loaded = await client.get(agent_role_profile_url(TASK_BROKER_ROLE))
     assert loaded.status_code == 200
-    assert loaded.json()["workspace"] == "/tmp/broker"
-    assert loaded.json()["agent_profile_id"] == custom_agent_id
+    assert loaded.json()["model"] == "composer-2.5"
     # Definitions are shared; only the live session is per user.
     assert loaded.json()["conversation_id"] is None
 
@@ -409,34 +400,46 @@ def _register_manager(
     description: str = "Owns upload reliability.",
     parent_conversation_id: str | None = None,
     tunnel_token: str | None = None,
-) -> None:
+) -> str:
+    """Create the manager conversation and row; return the durable manager id."""
+    host_id = _uid("manager-api-host")
     SqlAlchemyConversationStore(db_uri).create_conversation(
         conversation_id=conversation_id,
         title="Upload manager",
         parent_conversation_id=parent_conversation_id,
         agent_id=agent_id,
         runner_id=token_bound_runner_id(tunnel_token) if tunnel_token else None,
-        host_id=_uid("manager-api-host"),
+        host_id=host_id,
         workspace="/tmp/manager-api",
     )
+    # The row must carry a complete self-describing execution snapshot —
+    # managers missing host/workspace/harness/agent profile are filtered
+    # out of discovery.
     SqlAlchemyManagerStore(db_uri).upsert(
         conversation_id,
+        conversation_id=conversation_id,
         owner_user_id=owner_user_id,
         role_key=role_key,
         description=description,
+        host_id=host_id,
+        workspace="/tmp/manager-api",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=agent_id,
     )
+    return conversation_id
 
 
 async def test_list_managers_includes_zero_task_manager_metadata(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
+    manager_agent_id: str,
 ) -> None:
     conversation_id = _uid("zero-task-manager")
     _register_manager(
         db_uri,
         conversation_id=conversation_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         role_key="manager:uploads",
         description="Owns all upload workflows.",
     )
@@ -477,21 +480,21 @@ async def test_create_manager_registers_top_level_manager_role(
     assert body["role_key"] == "manager:default"
     assert body["description"] == "Owns release readiness."
     assert body["task_count"] == 0
-    conversation = SqlAlchemyConversationStore(db_uri).get_conversation(
-        body["conversation_id"]
-    )
+    conversation = SqlAlchemyConversationStore(db_uri).get_conversation(body["conversation_id"])
     assert conversation is not None
     assert conversation.parent_conversation_id is None
-    stored = SqlAlchemyManagerStore(db_uri).get(body["conversation_id"])
+    # Manager identity is durable and decoupled from the session pointer.
+    stored = SqlAlchemyManagerStore(db_uri).get(body["id"])
     assert stored is not None
     assert stored.owner_user_id == "__anonymous__"
     assert stored.role_key == "manager:default"
+    assert stored.conversation_id == body["conversation_id"]
 
 
 async def test_update_manager_self_updates_only_owned_caller(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
+    manager_agent_id: str,
 ) -> None:
     tunnel_token = "manager-self-token"
     caller_id = _uid("caller-manager")
@@ -499,14 +502,14 @@ async def test_update_manager_self_updates_only_owned_caller(
     _register_manager(
         db_uri,
         conversation_id=caller_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         description="Caller old scope.",
         tunnel_token=tunnel_token,
     )
     _register_manager(
         db_uri,
         conversation_id=other_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         description="Other scope.",
     )
 
@@ -534,7 +537,7 @@ async def test_update_manager_self_updates_only_owned_caller(
 async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_identity(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
+    manager_agent_id: str,
 ) -> None:
     missing = await client.patch(
         "/v1/agent-tasks/managers/self",
@@ -556,7 +559,7 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     _register_manager(
         db_uri,
         conversation_id=bound_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         tunnel_token="correct-token",
     )
     wrong_token = await client.patch(
@@ -573,7 +576,7 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     _register_manager(
         db_uri,
         conversation_id=cross_owner_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         owner_user_id="someone-else",
         tunnel_token="cross-owner-token",
     )
@@ -591,13 +594,13 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     SqlAlchemyConversationStore(db_uri).create_conversation(
         conversation_id=parent_id,
         title="Parent",
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
     )
     child_id = _uid("child-manager")
     _register_manager(
         db_uri,
         conversation_id=child_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         parent_conversation_id=parent_id,
         tunnel_token="child-token",
     )
@@ -615,18 +618,19 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
 async def test_task_bindings_reject_foreign_first_class_manager(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
+    manager_agent_id: str,
+    task_manager_id: str,
 ) -> None:
     foreign_manager_id = _uid("foreign-binding-manager")
     _register_manager(
         db_uri,
         conversation_id=foreign_manager_id,
-        agent_id=task_manager_agent_id,
+        agent_id=manager_agent_id,
         owner_user_id="someone-else",
     )
     created = await client.post(
         "/v1/agent-tasks",
-        json={"title": "Owned task", "goal": "Stay owner-isolated"},
+        json=_create_payload(title="Owned task", goal="Stay owner-isolated"),
     )
     assert created.status_code == 200
 
@@ -656,28 +660,23 @@ async def test_task_bindings_reject_foreign_first_class_manager(
 async def test_ack_manager_routed_event_assigns_task_and_preserves_manager(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
+    manager_agent_id: str,
+    task_manager_id: str,
 ) -> None:
-    manager_id = _uid("reconcile-manager")
-    _register_manager(
-        db_uri,
-        conversation_id=manager_id,
-        agent_id=task_manager_agent_id,
-    )
     task_id = _uid("reconcile-task")
     SqlAlchemyTaskStore(db_uri).create(
         task_id,
         "Reconcile task",
         "Assign the routed event",
         owner_user_id="__anonymous__",
-        manager_id=manager_id,
+        manager_id=task_manager_id,
     )
     event_id = _uid("manager-routed-reconcile-event")
     SqlAlchemyTaskEventStore(db_uri).create_event(
         event_id,
         "build.finished",
         "Build completed",
-        manager_id=manager_id,
+        manager_id=task_manager_id,
         state="routed",
         owner_user_id="__anonymous__",
     )
@@ -691,7 +690,7 @@ async def test_ack_manager_routed_event_assigns_task_and_preserves_manager(
     event = resp.json()["data"][0]
     assert event["state"] == "reconciled"
     assert event["task_id"] == task_id
-    assert event["manager_id"] == manager_id
+    assert event["manager_id"] == task_manager_id
 
 
 async def test_list_role_profiles_includes_system_roles(
@@ -705,234 +704,94 @@ async def test_list_role_profiles_includes_system_roles(
     assert "broker" in roles
     assert "secretary" in roles
     assert "manager:default" in roles
-    assert "worker:default" in roles
+    # The worker role family was removed with the worker-provider redesign.
+    assert "worker:default" not in roles
 
 
 async def test_list_role_profiles_kind_filter(
     client: httpx.AsyncClient,
     db_uri: str,
 ) -> None:
-    """kind filters by role family (broker/secretary/manager/worker)."""
+    """kind filters by role family (broker/secretary/manager)."""
     _seed_live_host(db_uri, "kind-filter-host")
-    workers = await client.get("/v1/agent-tasks/roles/profiles?kind=worker")
-    assert workers.status_code == 200
-    worker_roles = {row["role"] for row in workers.json()["data"]}
-    assert "worker:default" in worker_roles
-    assert "broker" not in worker_roles
-    assert "secretary" not in worker_roles
-    assert "manager:default" not in worker_roles
+    brokers = await client.get("/v1/agent-tasks/roles/profiles?kind=broker")
+    assert brokers.status_code == 200
+    broker_roles = {row["role"] for row in brokers.json()["data"]}
+    assert broker_roles == {"broker"}
 
     managers = await client.get("/v1/agent-tasks/roles/profiles?kind=manager")
     manager_roles = {row["role"] for row in managers.json()["data"]}
     assert "manager:default" in manager_roles
-    assert "worker:default" not in manager_roles
+    assert "broker" not in manager_roles
+    assert "secretary" not in manager_roles
 
 
 async def test_role_profile_description_round_trip(
     client: httpx.AsyncClient,
     db_uri: str,
 ) -> None:
-    """Description seeds from packaged defaults and round-trips via PUT."""
+    """Description round-trips via PUT on a system role and clears on empty."""
     _seed_live_host(db_uri, "desc-host")
-    # Packaged worker:default seeds a default description on first read.
-    get_resp = await client.get("/v1/agent-tasks/roles/worker:default/profile")
-    assert get_resp.status_code == 200
-    seeded = get_resp.json()
-    assert seeded["description"] is not None
-    assert "general-purpose" in seeded["description"].lower()
-
-    # PUT updates the description and persists.
-    put_resp = await client.put(
-        "/v1/agent-tasks/roles/worker:default/profile",
-        json={
-            "agent_profile_id": seeded["agent_profile_id"],
-            "description": "Reviews pull requests for API correctness.",
-        },
+    put_resp = await put_agent_role_profile(
+        client,
+        role="manager:default",
+        agent_profile_id=_uid("ignored-binding"),
+        host_id=_uid("desc-host"),
+        workspace="/tmp/manager",
+        description="Reviews pull requests for API correctness.",
     )
-    assert put_resp.status_code == 200
+    assert put_resp.status_code == 200, put_resp.text
     assert put_resp.json()["description"] == "Reviews pull requests for API correctness."
 
-    # An empty string clears the description back to null.
-    clear_resp = await client.put(
-        "/v1/agent-tasks/roles/worker:default/profile",
-        json={"agent_profile_id": seeded["agent_profile_id"], "description": ""},
+    # An empty string clears the description.
+    clear_resp = await put_agent_role_profile(
+        client,
+        role="manager:default",
+        agent_profile_id=_uid("ignored-binding"),
+        host_id=_uid("desc-host"),
+        workspace="/tmp/manager",
+        description="",
     )
     assert clear_resp.status_code == 200
-    assert clear_resp.json()["description"] is None
-
-    # The listing surfaces the description so the manager can pick a lane.
-    list_resp = await client.get("/v1/agent-tasks/roles/profiles?kind=worker")
-    assert list_resp.status_code == 200
-    row = next(r for r in list_resp.json()["data"] if r["role"] == "worker:default")
-    assert row["description"] is None
+    assert clear_resp.json()["description"] in (None, "")
 
 
-async def test_create_custom_worker_role_seeds_description(
-    client: httpx.AsyncClient,
-    db_uri: str,
-    task_manager_agent_id: str,
-) -> None:
-    """A custom worker role inherits the default worker description, overridable on creation."""
-    _seed_live_host(db_uri, "custom-desc-host")
-    create_resp = await client.post(
-        "/v1/agent-tasks/roles/worker",
-        json={"slug": "reviewer", "agent_profile_id": task_manager_agent_id},
-    )
-    assert create_resp.status_code == 200
-    assert create_resp.json()["role"] == "worker:reviewer"
-    # Inherits the packaged worker:default description via the fallback.
-    assert create_resp.json()["description"] is not None
-
-    # Setting a description on creation overrides the inherited default.
-    create_with_desc = await client.post(
-        "/v1/agent-tasks/roles/worker",
-        json={
-            "slug": "coder",
-            "agent_profile_id": task_manager_agent_id,
-            "description": "Implements coding task items.",
-        },
-    )
-    assert create_with_desc.status_code == 200
-    assert create_with_desc.json()["description"] == "Implements coding task items."
-
-
-async def test_role_profile_returns_candidate_agents(
+async def test_update_role_prompt_edits_in_place(
     client: httpx.AsyncClient,
     db_uri: str,
 ) -> None:
-    """Profile response lists the packaged agents backing the role's kind."""
-    _seed_live_host(db_uri, "candidate-host")
-    resp = await client.get("/v1/agent-tasks/roles/worker:default/profile")
-    assert resp.status_code == 200
-    body = resp.json()
-    names = {c["name"] for c in body["candidate_agents"]}
-    assert {"default-worker", "coding-agent"}.issubset(names)
-    # every candidate is flagged packaged for the import-button gating
-    assert all(c["packaged"] for c in body["candidate_agents"])
-
-
-async def test_import_role_agent_forks_and_rebinds(
-    client: httpx.AsyncClient,
-    db_uri: str,
-) -> None:
-    """Import forks a packaged worker agent into a private is_role copy."""
-    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
-
-    _seed_live_host(db_uri, "import-host")
-    store = SqlAlchemyAgentStore(db_uri)
-    default_worker = store.get_by_name("default-worker")
-    assert default_worker is not None
-
-    resp = await client.post(
-        "/v1/agent-tasks/roles/worker:default/import-agent",
-        json={"agent_id": default_worker.id},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    new_id = body["agent_profile_id"]
-    assert new_id != default_worker.id
-    assert body["agent_name"].startswith("default-worker-fork-")
-
-    fork = store.get(new_id)
-    assert fork is not None
-    assert fork.is_role is True
-    # the fork is hidden from the public catalog but resolvable by id
-    listed_ids = {a.id for a in store.list().data}
-    assert new_id not in listed_ids
-
-    # the bound fork is NOT offered as a candidate (you can't re-import what's
-    # already bound); only the packaged sources remain in the dropdown
-    candidate_ids = {c["id"] for c in body["candidate_agents"]}
-    assert new_id not in candidate_ids
-    assert default_worker.id in candidate_ids
-
-
-async def test_update_role_prompt_auto_forks_then_edits_in_place(
-    client: httpx.AsyncClient,
-    db_uri: str,
-) -> None:
-    """Setting a prompt on a packaged-bound role auto-forks; a second set edits in place."""
-    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
-
+    """Setting a prompt twice edits the role's manual in place."""
     _seed_live_host(db_uri, "prompt-host")
-    store = SqlAlchemyAgentStore(db_uri)
-    default_worker = store.get_by_name("default-worker")
-    assert default_worker is not None
-
-    # worker:default is auto-forked from the packaged default-worker on
-    # first load (via _load_role_profile), so the prompt endpoint edits the
-    # bound fork in place.
     first = await client.put(
-        "/v1/agent-tasks/roles/worker:default/prompt",
+        "/v1/agent-tasks/roles/manager:default/prompt",
         json={"prompt": "You are a careful reviewer."},
     )
     assert first.status_code == 200, first.text
     first_body = first.json()
-    fork_id = first_body["agent_profile_id"]
-    assert fork_id != default_worker.id
+    profile_id = first_body["agent_profile_id"]
     assert first_body["prompt"] == "You are a careful reviewer."
-    fork = store.get(fork_id)
-    assert fork is not None and fork.is_role is True
 
-    # second edit stays on the same fork (in place, no rebind)
+    # second edit stays on the same binding (in place, no fork)
     second = await client.put(
-        "/v1/agent-tasks/roles/worker:default/prompt",
+        "/v1/agent-tasks/roles/manager:default/prompt",
         json={"prompt": "You are a careful reviewer. Be concise."},
     )
     assert second.status_code == 200, second.text
     second_body = second.json()
-    assert second_body["agent_profile_id"] == fork_id
+    assert second_body["agent_profile_id"] == profile_id
     assert second_body["prompt"] == "You are a careful reviewer. Be concise."
-
-
-async def test_create_custom_worker_role_seeds_empty_backing_fork(
-    client: httpx.AsyncClient,
-    db_uri: str,
-) -> None:
-    """A new custom role gets an empty-prompt backing fork bound up front."""
-    _seed_live_host(db_uri, "empty-fork-host")
-    resp = await client.post(
-        "/v1/agent-tasks/roles/worker",
-        json={"slug": "scribe"},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["role"] == "worker:scribe"
-    assert body["agent_name"].startswith("default-worker-fork-")
-    # empty prompt by default
-    assert body["prompt"] == "" or body["prompt"] is None
-
-
-async def test_import_role_agent_rejects_non_packaged_source(
-    client: httpx.AsyncClient,
-    db_uri: str,
-) -> None:
-    """Import rejects an agent that isn't a packaged role agent for the kind."""
-    _seed_live_host(db_uri, "import-reject-host")
-    # task-manager is packaged for the manager kind, not worker
-    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
-
-    store = SqlAlchemyAgentStore(db_uri)
-    manager = store.get_by_name("task-manager")
-    assert manager is not None
-    resp = await client.post(
-        "/v1/agent-tasks/roles/worker:default/import-agent",
-        json={"agent_id": manager.id},
-    )
-    assert resp.status_code == 400
 
 
 async def test_create_and_delete_custom_manager_role(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
 ) -> None:
     _seed_live_host(db_uri, "manager-role-host")
     create_resp = await client.post(
         "/v1/agent-tasks/roles/manager",
-        json={"slug": "research", "agent_profile_id": task_manager_agent_id},
+        json={"slug": "research"},
     )
-    assert create_resp.status_code == 200
+    assert create_resp.status_code == 200, create_resp.text
     body = create_resp.json()
     assert body["role"] == "manager:research"
     assert body["deletable"] is True
@@ -948,12 +807,11 @@ async def test_create_and_delete_custom_manager_role(
 async def test_patch_manager_role_key_pending_only(
     client: httpx.AsyncClient,
     db_uri: str,
-    task_manager_agent_id: str,
 ) -> None:
     _seed_live_host(db_uri, "patch-manager-host")
     await client.post(
         "/v1/agent-tasks/roles/manager",
-        json={"slug": "alt", "agent_profile_id": task_manager_agent_id},
+        json={"slug": "alt"},
     )
     created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     pending_state = await client.patch(
@@ -982,108 +840,20 @@ async def test_patch_manager_role_key_pending_only(
     assert blocked_patch.status_code == 409
 
 
-async def _worker_lane_id(
-    client: httpx.AsyncClient,
-    *,
-    task_id: str,
-    role_key: str = "worker:default",
-) -> str:
-    """Create and return a worker lane id."""
-    worker_resp = await client.post(
-        f"/v1/agent-tasks/{task_id}/workers",
-        json={"lanes": [{"role_key": role_key}]},
-    )
-    assert worker_resp.status_code == 200, worker_resp.text
-    return worker_resp.json()["lanes"][role_key][0]
-
-
-async def test_patch_worker_lane_role(
-    client: httpx.AsyncClient,
-    db_uri: str,
-    task_manager_agent_id: str,
-) -> None:
-    """A lane that has not run yet can be re-pointed at another worker role."""
-    _seed_live_host(db_uri, "worker-lane-host")
-    await client.post(
-        "/v1/agent-tasks/roles/worker",
-        json={"slug": "reviewer", "agent_profile_id": task_manager_agent_id},
-    )
-    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
-    SqlAlchemyTaskStore(db_uri).update(task_id, state="idle")
-    worker_id = await _worker_lane_id(client, task_id=task_id)
-
-    patch_resp = await client.patch(
-        task_worker_url(worker_id),
-        json={"role_key": "worker:reviewer"},
-    )
-    assert patch_resp.status_code == 200
-    body = patch_resp.json()
-    assert body["object"] == "agent.task.worker"
-    assert body["role_key"] == "worker:reviewer"
-    assert body["kind"] == "managed"
-    assert body["agent_profile_id"] is None
-
-
-async def test_patch_worker_lane_rejects_unknown_worker(client: httpx.AsyncClient) -> None:
-    """An unknown lane id is a 404."""
-    resp = await client.patch(
-        task_worker_url(_uid("missing_worker")),
-        json={"role_key": "worker:default"},
-    )
-    assert resp.status_code == 404
-
-
-async def test_patch_worker_lane_rejects_non_worker_role(
-    client: httpx.AsyncClient,
-    db_uri: str,
-) -> None:
-    """Only worker roles may run a worker lane."""
-    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
-    SqlAlchemyTaskStore(db_uri).update(task_id, state="idle")
-    worker_id = await _worker_lane_id(client, task_id=task_id)
-
-    resp = await client.patch(
-        task_worker_url(worker_id),
-        json={"role_key": "manager:default"},
-    )
-    assert resp.status_code == 400
-    assert resp.json()["error"]["code"] == "invalid_input"
-
-
-async def test_patch_worker_lane_conflicts_once_it_has_a_session(
-    client: httpx.AsyncClient,
-    db_uri: str,
-) -> None:
-    """A lane that already ran keeps its history under the old role."""
-    task_id = (await client.post("/v1/agent-tasks", json=_create_payload())).json()["id"]
-    SqlAlchemyTaskStore(db_uri).update(task_id, state="idle")
-    worker_id = await _worker_lane_id(client, task_id=task_id)
-    SqlAlchemyWorkerStore(db_uri).update_worker(worker_id, session_id=_uid("lane_session"))
-
-    resp = await client.patch(
-        task_worker_url(worker_id),
-        json={"role_key": "worker:default"},
-    )
-    assert resp.status_code == 409
-    assert resp.json()["error"]["code"] == "conflict"
-
-
 async def test_secretary_profile_and_bootstrap(
     client: httpx.AsyncClient,
-    task_manager_agent_id: str,
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
+    task_manager_id: str,
 ) -> None:
     """Manager glossary defaults feed manager bootstrap."""
     _patch_workspace_validation(monkeypatch)
-    from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY
-
     manager_host_id = _uid("manager_host")
     HostStore(db_uri).upsert_on_connect(manager_host_id, "manager-host", RESERVED_USER_LOCAL)
     profile_resp = await put_agent_role_profile(
         client,
-        role=MANAGER_DEFAULT_ROLE_KEY,
-        agent_profile_id=task_manager_agent_id,
+        role="manager:default",
+        agent_profile_id=_uid("ignored-binding"),
         host_id=manager_host_id,
         workspace="/tmp/manager",
     )
@@ -1091,17 +861,20 @@ async def test_secretary_profile_and_bootstrap(
 
     created = await client.post(
         "/v1/agent-tasks",
-        json={"title": "Bootstrap me", "goal": "ship the feature"},
+        json={
+            "title": "Bootstrap me",
+            "goal": "ship the feature",
+            "manager_id": task_manager_id,
+        },
     )
     task_id = created.json()["id"]
     bootstrap_resp = await client.post(f"/v1/agent-tasks/{task_id}/bootstrap", json={})
     assert bootstrap_resp.status_code == 200
-    assert bootstrap_resp.json()["manager_id"] is not None
+    assert bootstrap_resp.json()["manager_id"] == task_manager_id
 
 
 async def _put_secretary_profile(
     client: httpx.AsyncClient,
-    secretary_agent_id: str,
     *,
     db_uri: str,
 ) -> str:
@@ -1111,25 +884,22 @@ async def _put_secretary_profile(
     profile_resp = await put_agent_role_profile(
         client,
         role=TASK_SECRETARY_ROLE,
-        agent_profile_id=secretary_agent_id,
+        agent_profile_id=_uid("ignored-binding"),
         host_id=host_id,
         workspace="/tmp/secretary",
+        model="composer-2.5",
     )
     assert profile_resp.status_code == 200
-    body = profile_resp.json()
-    assert body["agent_profile_id"] == secretary_agent_id
-    assert "agent_id" not in body
     return host_id
 
 
 async def test_ensure_secretary_session_starts_without_synthetic_items(
     client: httpx.AsyncClient,
-    secretary_agent_id: str,
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_validation(monkeypatch)
-    await _put_secretary_profile(client, secretary_agent_id, db_uri=db_uri)
+    await _put_secretary_profile(client, db_uri=db_uri)
 
     ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     assert ensure_resp.status_code == 200
@@ -1152,12 +922,11 @@ async def test_ensure_secretary_session_starts_without_synthetic_items(
 
 async def test_reset_secretary_session_starts_without_synthetic_items(
     client: httpx.AsyncClient,
-    secretary_agent_id: str,
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_validation(monkeypatch)
-    await _put_secretary_profile(client, secretary_agent_id, db_uri=db_uri)
+    await _put_secretary_profile(client, db_uri=db_uri)
     first = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
     first_id = first.json()["conversation_id"]
 
@@ -1176,8 +945,7 @@ async def test_reset_secretary_session_starts_without_synthetic_items(
     profile_resp = await client.get(agent_role_profile_url(TASK_SECRETARY_ROLE))
     profile = profile_resp.json()
     assert profile["conversation_id"] == reset_body["conversation_id"]
-    # Only the session is reset; the role keeps the harness and model it was given.
-    assert profile["harness"] == "cursor"
+    # Only the session is reset; the role keeps the model it was given.
     assert profile["model"] == "composer-2.5"
 
 

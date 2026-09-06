@@ -6,20 +6,16 @@ import asyncio
 
 import httpx
 
-from omnigent.db.utils import builtin_agent_id
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
 
 def _seed_claude_agent(db_uri: str) -> str:
-    """Seed the built-in agent because focused app tests skip lifespan startup."""
-    agent_id = builtin_agent_id("claude-native-ui")
-    SqlAlchemyAgentStore(db_uri).create(
-        agent_id,
-        name="claude-native-ui",
-        bundle_location="builtin://claude-native-ui",
-    )
-    return agent_id
+    """Resolve the seeded claude-native-ui built-in by its stable name."""
+    store = SqlAlchemyAgentStore(db_uri)
+    seeded = store.get_by_name("claude-native-ui")
+    assert seeded is not None, "app fixture did not seed claude-native-ui"
+    return seeded.id
 
 
 async def test_import_session_creates_normal_session_and_blocks_duplicate(

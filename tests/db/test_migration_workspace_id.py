@@ -124,26 +124,22 @@ def test_agent_round_trip_via_store(db_engine: Engine) -> None:
     assert fetched.id == "c8596df60b081551fdd8e352e7aef4ea"
 
 
-def test_downgrade_removes_workspace_id_and_restores_pk(tmp_path: Path) -> None:
-    """Downgrade drops workspace_id and restores each original primary key."""
+def test_downgrade_across_manager_identity_is_refused(tmp_path: Path) -> None:
+    """The manager-identity migration is irreversible; crossing it must raise."""
     db_path = tmp_path / "downgrade.db"
     uri = f"sqlite:///{db_path}"
     engine = get_or_create_engine(uri)
 
-    # Start at head (includes r1a2b3c4d5e6).
     assert "workspace_id" in {c["name"] for c in sa.inspect(engine).get_columns("agents")}
 
-    # Downgrade one step to the prior head.
     config = _build_alembic_config(uri)
-    with engine.begin() as conn:
-        config.attributes["connection"] = conn
-        command.downgrade(config, "q1a2b3c4d5e6")
+    with pytest.raises(NotImplementedError):
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.downgrade(config, "q1a2b3c4d5e6")
 
-    inspector = sa.inspect(engine)
-    for table, original_pk in _ORIGINAL_PKS.items():
-        columns = {c["name"] for c in inspector.get_columns(table)}
-        assert "workspace_id" not in columns, f"{table}.workspace_id must be dropped by downgrade"
-        assert inspector.get_pk_constraint(table)["constrained_columns"] == original_pk
+    # The refused downgrade leaves the schema at head.
+    assert "workspace_id" in {c["name"] for c in sa.inspect(engine).get_columns("agents")}
 
     engine.dispose()
     clear_engine_cache()

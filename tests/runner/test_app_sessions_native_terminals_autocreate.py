@@ -825,13 +825,18 @@ def test_agent_os_env_from_spec_unwraps_resolved_and_handles_none() -> None:
     assert _agent_os_env_from_spec(ResolvedSpec(spec=bare, workdir=None)) is os_env
     # No spec at all: None (caller then uses the platform default).
     assert _agent_os_env_from_spec(None) is None
-    # AgentSpec without an os_env block: None.
+    # AgentSpec without an os_env block: since 06a030a2c the datamodel
+    # materializes a populated default (default_factory=default_os_env_spec),
+    # so "absent" is no longer representable on the spec — the helper returns
+    # that default (which carries the safe caller_process/none-sandbox shape).
     no_os_env = AgentSpec(
         spec_version=1,
         name="agent",
         executor=ExecutorSpec(type="omnigent", config={}),
     )
-    assert _agent_os_env_from_spec(no_os_env) is None
+    from omnigent.inner.datamodel import default_os_env_spec
+
+    assert _agent_os_env_from_spec(no_os_env) == default_os_env_spec()
 
 
 @pytest.mark.asyncio
@@ -2271,9 +2276,7 @@ async def test_create_session_auto_create_guard_skips_rotation_targets(
         del resource_registry, publish_event
         created.append(session_id)
 
-    monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_claude_terminal", _recording_auto_create
-    )
+    monkeypatch.setattr("omnigent.runner.app._auto_create_claude_terminal", _recording_auto_create)
 
     native_spec = AgentSpec(
         spec_version=1,
@@ -2547,7 +2550,7 @@ async def test_create_session_antigravity_auto_create_guard_skips_rotation_targe
         created.append(session_id)
 
     monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_antigravity_terminal",
+        "omnigent.runner.app._auto_create_antigravity_terminal",
         _recording_auto_create,
     )
 
@@ -2798,7 +2801,7 @@ async def test_create_session_codex_auto_create_guard_skips_rotation_targets(
         created.append(session_id)
 
     monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_codex_terminal",
+        "omnigent.runner.app._auto_create_codex_terminal",
         _recording_auto_create,
     )
 

@@ -1976,7 +1976,7 @@ async def test_codex_native_launch_config_reads_the_auto_harness_flag(
     """Only an auto-harness codex session gets the routed-spawn instructions."""
     import httpx
 
-    from omnigent.runner.native.orchestration import _codex_native_launch_config
+    from omnigent.runner.app import _codex_native_launch_config
     from omnigent.runner.subagent_routing import AUTO_HARNESS_LABEL_KEY
 
     assert AUTO_HARNESS_LABEL_KEY == "omnigent.routing.auto_harness"

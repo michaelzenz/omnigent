@@ -162,16 +162,6 @@ async def test_events_codex_native_settings_change_uses_thread_settings_update(
     conv_id = "524fe55f9d5a7f66fec5c5401a930b84"
     monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
     bridge_dir = codex_native_bridge.bridge_dir_for_bridge_id(conv_id)
-    codex_native_bridge.write_bridge_state(
-        bridge_dir,
-        codex_native_bridge.CodexNativeBridgeState(
-            session_id=conv_id,
-            socket_path="ws://127.0.0.1:43210",
-            thread_id="thread_codex",
-            codex_home=str(tmp_path / "codex-home"),
-            active_turn_id=None,
-        ),
-    )
 
     fake_client = _RecordingCodexAppServerClient(
         transport="ws://127.0.0.1:43210",
@@ -229,6 +219,16 @@ async def test_events_codex_native_settings_change_uses_thread_settings_update(
             json={"session_id": conv_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
         )
         assert create_resp.status_code == 201, create_resp.text
+        codex_native_bridge.write_bridge_state(
+            bridge_dir,
+            codex_native_bridge.CodexNativeBridgeState(
+                session_id=conv_id,
+                socket_path="ws://127.0.0.1:43210",
+                thread_id="thread_codex",
+                codex_home=str(tmp_path / "codex-home"),
+                active_turn_id=None,
+            ),
+        )
 
         resp = await client.post(
             f"/v1/sessions/{conv_id}/events",
@@ -680,7 +680,7 @@ async def test_codex_native_model_options_query_model_list(
     # under test stays real: it still reads bridge state and CODEX_HOME off
     # disk and still queries Codex through the fake app-server client.
     monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_codex_terminal",
+        "omnigent.runner.app._auto_create_codex_terminal",
         _fake_auto_create_codex,
     )
 
@@ -905,9 +905,7 @@ async def test_claude_native_model_options_use_session_launch_catalog(
             metadata={"terminal_name": "claude", "session_key": "main", "running": True},
         )
 
-    monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_claude_terminal", _fake_auto_create
-    )
+    monkeypatch.setattr("omnigent.runner.app._auto_create_claude_terminal", _fake_auto_create)
     app = create_runner_app(
         process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
         spec_resolver=_resolver,
@@ -1021,9 +1019,7 @@ async def test_claude_native_model_options_serves_probe_rows_after_pending(
             metadata={"terminal_name": "claude", "session_key": "main", "running": True},
         )
 
-    monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_claude_terminal", _fake_auto_create
-    )
+    monkeypatch.setattr("omnigent.runner.app._auto_create_claude_terminal", _fake_auto_create)
     app = create_runner_app(
         process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
         spec_resolver=_resolver,
@@ -1108,9 +1104,7 @@ async def test_claude_native_model_options_config_error_is_not_retryable(
             metadata={"terminal_name": "claude", "session_key": "main", "running": True},
         )
 
-    monkeypatch.setattr(
-        "omnigent.runner.native.orchestration._auto_create_claude_terminal", _fake_auto_create
-    )
+    monkeypatch.setattr("omnigent.runner.app._auto_create_claude_terminal", _fake_auto_create)
     app = create_runner_app(
         process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
         spec_resolver=_resolver,
@@ -1219,16 +1213,6 @@ async def test_events_interrupt_on_codex_native_uses_turn_interrupt_without_mark
     conv_id = "83d1472d16e3e635c84ca44f29624fca"
     monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
     bridge_dir = codex_native_bridge.bridge_dir_for_bridge_id(conv_id)
-    codex_native_bridge.write_bridge_state(
-        bridge_dir,
-        codex_native_bridge.CodexNativeBridgeState(
-            session_id=conv_id,
-            socket_path="ws://127.0.0.1:43210",
-            thread_id="thread_codex",
-            codex_home=str(tmp_path / "codex-home"),
-            active_turn_id="turn_codex",
-        ),
-    )
 
     fake_client = _RecordingCodexAppServerClient(
         transport="ws://127.0.0.1:43210",
@@ -1285,6 +1269,16 @@ async def test_events_interrupt_on_codex_native_uses_turn_interrupt_without_mark
             json={"session_id": conv_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
         )
         assert create_resp.status_code == 201, create_resp.text
+        codex_native_bridge.write_bridge_state(
+            bridge_dir,
+            codex_native_bridge.CodexNativeBridgeState(
+                session_id=conv_id,
+                socket_path="ws://127.0.0.1:43210",
+                thread_id="thread_codex",
+                codex_home=str(tmp_path / "codex-home"),
+                active_turn_id="turn_codex",
+            ),
+        )
 
         int_resp = await client.post(
             f"/v1/sessions/{conv_id}/events",
@@ -1367,16 +1361,6 @@ async def test_events_stop_session_on_codex_native_uses_turn_interrupt_without_m
     conv_id = "fa87fda193a47e99e6a2599e44032807"
     monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
     bridge_dir = codex_native_bridge.bridge_dir_for_bridge_id(conv_id)
-    codex_native_bridge.write_bridge_state(
-        bridge_dir,
-        codex_native_bridge.CodexNativeBridgeState(
-            session_id=conv_id,
-            socket_path="ws://127.0.0.1:43211",
-            thread_id="thread_codex_stop",
-            codex_home=str(tmp_path / "codex-home"),
-            active_turn_id="turn_codex_stop",
-        ),
-    )
 
     fake_client = _RecordingCodexAppServerClient(
         transport="ws://127.0.0.1:43211",
@@ -1432,6 +1416,16 @@ async def test_events_stop_session_on_codex_native_uses_turn_interrupt_without_m
             json={"session_id": conv_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
         )
         assert create_resp.status_code == 201, create_resp.text
+        codex_native_bridge.write_bridge_state(
+            bridge_dir,
+            codex_native_bridge.CodexNativeBridgeState(
+                session_id=conv_id,
+                socket_path="ws://127.0.0.1:43211",
+                thread_id="thread_codex_stop",
+                codex_home=str(tmp_path / "codex-home"),
+                active_turn_id="turn_codex_stop",
+            ),
+        )
 
         stop_resp = await client.post(
             f"/v1/sessions/{conv_id}/events",
@@ -2937,7 +2931,7 @@ async def test_auxiliary_codex_tui_exit_preserves_app_server(
         teardown_calls.append(session_id)
 
     monkeypatch.setattr(
-        runner_app._native_runtime,
+        runner_app,
         "teardown_codex_native_app_server",
         _record_teardown,
     )

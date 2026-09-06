@@ -30,7 +30,7 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
         _populate_codex_home_config,
         materialize_codex_provider_config,
     )
-    from omnigent.runner.native.orchestration import _codex_native_model_from_spec
+    from omnigent.runner.app import _codex_native_model_from_spec
 
     model = context.model_override or _codex_native_model_from_spec(context.session_spec)
     # Thread the spec so a title exec honors spec-level auth too (#2744).

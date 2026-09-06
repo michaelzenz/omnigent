@@ -746,7 +746,9 @@ async def test_events_compact_on_codex_native_injects_slash_command(
 
 
 @pytest.mark.asyncio
-async def test_events_compact_on_codex_native_returns_204_when_no_terminal() -> None:
+async def test_events_compact_on_codex_native_returns_204_when_no_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Codex-native compact returns 204 when no live terminal is registered.
 
@@ -768,6 +770,21 @@ async def test_events_compact_on_codex_native_returns_204_when_no_terminal() -> 
     conv_id = "4be2f8fe2204fade6a89dafade0a0fd2"
     # Empty registry — no codex terminal registered.
     terminal_registry = TerminalRegistry()
+
+    # Create eagerly launches the terminal (which would register one and
+    # defeat the "no terminal" premise). Stub the launch adapter so the
+    # session exists with no terminal registered.
+    from omnigent.entities.session_resources import SessionResourceView
+
+    async def _no_launch(ctx: object) -> SessionResourceView:
+        return SessionResourceView(
+            id="terminal_codex_main",
+            type="terminal",
+            session_id=conv_id,
+            name="Codex",
+        )
+
+    monkeypatch.setattr("omnigent.runner.app._launch_codex", _no_launch)
 
     pm = _FakeProcessManager(_ScriptedHarnessClient([]))
     app = create_runner_app(

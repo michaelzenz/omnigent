@@ -698,6 +698,9 @@ class _StubLoadedSpec:
             def __init__(self, hk: str) -> None:
                 self.harness_kind = hk
 
+        # spec.name is read for the pi-target fork-history check; a value
+        # that is never ONIH_PI_TARGET keeps the stub out of that branch.
+        self.name = "test-agent"
         self.executor = _Executor(harness_kind)
 
 

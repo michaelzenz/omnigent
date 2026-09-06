@@ -1988,7 +1988,11 @@ async def test_resolve_harness_config_applies_harness_override(
     # The spawn env must be built FOR the overridden harness (pi env keys),
     # not the spec's claude-sdk shape — a claude env here means the harness
     # name and env were resolved inconsistently.
-    assert spawn_env is not None and "HARNESS_PI_MODEL" in spawn_env, (
+    # HARNESS_PI_AGENT_NAME, not HARNESS_PI_MODEL: on the server-proxy path
+    # the pi env deliberately carries no baked model (the inference proxy
+    # selects the model per request; a /model override still lands in
+    # HARNESS_PI_MODEL via _build_spawn_env_from_spec's override block).
+    assert spawn_env is not None and "HARNESS_PI_AGENT_NAME" in spawn_env, (
         f"Expected a pi spawn-env; got keys {sorted(spawn_env or {})!r}"
     )
 
@@ -3363,7 +3367,10 @@ async def test_sys_session_send_reuses_existing_child_session(
                 ),
                 server_client=server_client,
                 conversation_id="conv_parent",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="claude")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="claude", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
                 publish_event=_capturing_publish_event(published),
             )
@@ -3432,7 +3439,10 @@ async def test_sys_session_send_named_child_retries_without_rejected_actor(
                 arguments=json.dumps({"agent": "worker", "title": "retry", "args": "continue"}),
                 server_client=server_client,
                 conversation_id="conv_parent_retry",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
         finally:
@@ -3496,7 +3506,10 @@ async def test_sys_session_send_existing_child_retries_without_rejected_actor(
                 arguments=json.dumps({"session_id": "conv_existing_retry", "args": "continue"}),
                 server_client=server_client,
                 conversation_id="conv_parent_existing",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
         finally:
@@ -3524,12 +3537,14 @@ def _spec_with_subagent_harness(harness: str) -> SimpleNamespace:
     :returns: A structural parent-spec stub for ``execute_tool``.
     """
     return SimpleNamespace(
+        allowed_tools=None,
         sub_agents=[
             SimpleNamespace(
                 name="worker",
+                allowed_tools=None,
                 executor=SimpleNamespace(type="omnigent", config={"harness": harness}),
             )
-        ]
+        ],
     )
 
 
@@ -3543,16 +3558,18 @@ def _spec_with_subagent_effort(harness: str, effort: str | None) -> SimpleNamesp
     :returns: A structural parent-spec stub for ``execute_tool``.
     """
     return SimpleNamespace(
+        allowed_tools=None,
         sub_agents=[
             SimpleNamespace(
                 name="worker",
+                allowed_tools=None,
                 executor=SimpleNamespace(
                     type="omnigent",
                     config={"harness": harness},
                     reasoning_effort=effort,
                 ),
             )
-        ]
+        ],
     )
 
 
@@ -4682,7 +4699,10 @@ async def test_sys_session_send_completion_drains_from_parent_inbox(
                 ),
                 server_client=server_client,
                 conversation_id="conv_parent_inbox",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
             payload = json.loads(output)
@@ -4782,7 +4802,10 @@ async def test_subagent_inbox_cleanup_does_not_unregister_next_turn(
                     ),
                     server_client=server_client,
                     conversation_id=parent_id,
-                    agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+                    agent_spec=SimpleNamespace(
+                        allowed_tools=None,
+                        sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                    ),
                     session_inbox=session_inbox,
                 )
                 assert json.loads(output)["status"] == "launching"
@@ -5437,7 +5460,10 @@ async def test_sys_cancel_task_stops_subagent_and_dedupes_late_completion(
                 ),
                 server_client=server_client,
                 conversation_id="conv_parent_cancel",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="runner")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="runner", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
             cancel_output = json.loads(
@@ -7906,7 +7932,10 @@ async def test_sys_session_send_session_id_posts_to_direct_child(
                 arguments=json.dumps({"session_id": "conv_child", "args": "continue please"}),
                 server_client=server_client,
                 conversation_id="conv_caller",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="researcher")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="researcher", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
         finally:
@@ -7963,7 +7992,10 @@ async def test_sys_session_send_session_id_rejects_non_child() -> None:
                 arguments=json.dumps({"session_id": "conv_other", "args": "hi"}),
                 server_client=server_client,
                 conversation_id="conv_caller",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="researcher")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="researcher", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
         finally:
@@ -8076,7 +8108,10 @@ async def test_sys_session_send_rejects_both_session_id_and_named_target() -> No
                 ),
                 server_client=server_client,
                 conversation_id="conv_parent_ambiguous",
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="claude")]),
+                agent_spec=SimpleNamespace(
+                    allowed_tools=None,
+                    sub_agents=[SimpleNamespace(name="claude", allowed_tools=None)],
+                ),
                 session_inbox=session_inbox,
             )
         finally:

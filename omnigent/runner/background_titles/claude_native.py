@@ -25,7 +25,7 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
         build_native_claude_terminal_env,
         resolve_native_claude_config,
     )
-    from omnigent.runner.native.orchestration import _claude_terminal_env_unset
+    from omnigent.runner.app import _claude_terminal_env_unset
 
     try:
         claude_config = resolve_native_claude_config(spec=None)

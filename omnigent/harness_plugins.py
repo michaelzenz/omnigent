@@ -267,7 +267,7 @@ def _builtin_native_provider(key: str) -> NativeHarnessProvider:
     return NativeHarnessProvider(
         key=key,
         run_native=f"{module}:run_{key}_native",
-        auto_create_terminal=f"omnigent.runner.native:_launch_{key}",
+        auto_create_terminal=f"omnigent.runner.app:_launch_{key}",
         spawn_env_builder=f"{module}_bridge:build_{key}_native_spawn_env",
         bridge_id_label_key=(f"{module}.bridge_id" if key in _BRIDGE_ID_LABEL_HARNESSES else None),
         materialize_agent_spec=f"{module}:_materialize_{key}_agent_spec",

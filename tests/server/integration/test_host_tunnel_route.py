@@ -90,6 +90,12 @@ def _make_hello(
             frame_protocol_version=1,
             name=name,
             runners=runners or [],
+            # The server refuses a hello without skill-sync configuration
+            # (4001 "host skill configuration is required", 8f38bd85c) — the
+            # real daemon always sends these (host/connect.py), so the
+            # fixture mirrors that. Empty = configured, nothing to sync.
+            skill_sync_harnesses={},
+            skill_search_roots=[],
         )
     )
 
@@ -394,6 +400,8 @@ async def test_host_tunnel_refreshes_harness_readiness_without_reconnect(
                     frame_protocol_version=1,
                     name="test-laptop",
                     configured_harnesses={"pi": False},
+                    skill_sync_harnesses={},
+                    skill_search_roots=[],
                 )
             ),
         }

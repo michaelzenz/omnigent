@@ -1509,6 +1509,10 @@ def register_core_routes(
                             items = await _fetch_watched_items([sid], user_id)
                             if items:
                                 await _send({"type": "changed", "items": items})
+                                # Nudge the client to reconcile immediately so
+                                # off-tab creates (ambient imports, CLI) appear
+                                # without waiting for the HTTP fallback poll.
+                                await _send({"type": "session_added", "session_id": sid})
                         except WebSocketDisconnect:
                             # Client gone mid-send — propagate to tear the stream down.
                             raise
@@ -1522,6 +1526,16 @@ def register_core_routes(
                                 sid,
                                 exc_info=True,
                             )
+                            try:
+                                await _send({"type": "session_added", "session_id": sid})
+                            except WebSocketDisconnect:
+                                raise
+                            except Exception:
+                                _logger.warning(
+                                    "session-updates session_added fallback failed for %r",
+                                    sid,
+                                    exc_info=True,
+                                )
                 elif evt_type == "hosts_changed":
                     async with emit_lock:
                         try:

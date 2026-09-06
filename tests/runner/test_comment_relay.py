@@ -355,36 +355,45 @@ async def test_terminal_launch_with_bridge_inject_advertises_comment_tools(
     info = json.loads(relay_file.read_text())
 
     tools_by_name = {t["name"]: t for t in info["tools"]}
-    # The framework comment tools, read-only session-discovery tools
-    # (sys_session_list / sys_session_get_history / sys_session_get_info),
-    # read-only agent tools (sys_agent_list / sys_agent_get /
-    # sys_agent_download), policy tools (sys_add_policy /
-    # sys_policy_registry), and OS tools (sys_os_*) — claude-native
-    # ignores the harness tool schemas, so this relay is the only
-    # surface that reaches Claude Code. All are routed through the AP
-    # server's /mcp endpoint for policy enforcement. The opt-in spawn
-    # writes (sys_session_send/close/create) are absent here because
-    # this fixture's session has no resolvable spec — the fallback
-    # can't evaluate the (tools.agents | spawn) gate; specs that opt
-    # in get them via the ToolManager-derived branch.
+    # The surface for this fixture's default-materialized spec: the framework
+    # comment tools, session read/write + discovery, read-only agent tools,
+    # policy tools, the project family, the builtin OS tools (bash/edit/find/
+    # grep/ls/read/write — materialized by default agent capabilities,
+    # 06a030a2c), and sys_os_* — claude-native ignores the harness tool
+    # schemas, so this relay is the only surface that reaches Claude Code.
+    # All are routed through the AP server's /mcp endpoint for policy
+    # enforcement. The opt-in spawn writes (sys_session_send/close/create)
+    # are still absent: the (tools.agents | spawn) gate needs explicit opt-in
+    # the default spec doesn't grant. Same for browser/terminal/timer
+    # families — they appear only when the spec declares them.
     # No more, no less: a missing entry means the schema loop dropped a class;
     # an extra entry means an unintended tool leaked into the relay.
     assert set(tools_by_name) == {
+        "bash",
+        "edit",
+        "find",
+        "grep",
         "list_comments",
-        "update_comment",
-        "sys_session_list",
+        "ls",
+        "read",
+        "sys_add_policy",
+        "sys_agent_download",
+        "sys_agent_get",
+        "sys_agent_list",
+        "sys_os_edit",
+        "sys_os_read",
+        "sys_os_shell",
+        "sys_os_write",
+        "sys_policy_registry",
+        "sys_project_create",
+        "sys_project_list",
         "sys_session_get_history",
         "sys_session_get_info",
+        "sys_session_list",
         "sys_session_rename",
-        "sys_agent_list",
-        "sys_agent_get",
-        "sys_agent_download",
-        "sys_add_policy",
-        "sys_policy_registry",
-        "sys_os_read",
-        "sys_os_write",
-        "sys_os_edit",
-        "sys_os_shell",
+        "sys_session_set_project",
+        "update_comment",
+        "write",
     }
     # Parameters must be the real schemas from the tool classes — proving
     # get_schema() flowed through rather than an empty placeholder. "status"
@@ -983,8 +992,14 @@ def _spec_with_terminals() -> AgentSpec:
 
 
 def _spec_without_terminals() -> AgentSpec:
-    """Return a spec that grants no terminal tools."""
-    return AgentSpec(spec_version=1, name="agent-without-terminals")
+    """Return a spec that grants no terminal tools.
+
+    The opt-out must be explicit (``terminals={}``): since default agent
+    capabilities landed (06a030a2c), a bare AgentSpec materializes a default
+    interactive-terminal set (zsh/bash) via ``default_factory``, so an absent
+    field *grants* ``sys_terminal_*`` rather than withholding it.
+    """
+    return AgentSpec(spec_version=1, name="agent-without-terminals", terminals={})
 
 
 def _spec_with_sub_agent(sub_agent_name: str) -> AgentSpec:

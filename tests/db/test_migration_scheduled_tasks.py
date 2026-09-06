@@ -303,8 +303,8 @@ def test_scheduled_task_runs_status_stored_as_smallint(db_engine: Engine) -> Non
     assert "INT" in str(cols["status"]["type"]).upper()
 
 
-def test_downgrade_drops_both_tables(tmp_path: Path) -> None:
-    """Downgrading one step removes both tables; re-upgrade restores them."""
+def test_downgrade_across_manager_identity_is_refused(tmp_path: Path) -> None:
+    """Downgrading from head crosses the irreversible manager-identity migration."""
     db_path = tmp_path / "downgrade.db"
     uri = f"sqlite:///{db_path}"
     engine = get_or_create_engine(uri)
@@ -313,18 +313,12 @@ def test_downgrade_drops_both_tables(tmp_path: Path) -> None:
     assert {"scheduled_tasks", "scheduled_task_runs"} <= tables
 
     config = _build_alembic_config(uri)
-    with engine.begin() as conn:
-        config.attributes["connection"] = conn
-        command.downgrade(config, _PREVIOUS_HEAD)
+    with pytest.raises(NotImplementedError):
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.downgrade(config, _PREVIOUS_HEAD)
 
-    tables = set(sa.inspect(engine).get_table_names())
-    assert "scheduled_tasks" not in tables
-    assert "scheduled_task_runs" not in tables
-
-    # Re-upgrade restores both tables — proves the upgrade is replayable.
-    with engine.begin() as conn:
-        config.attributes["connection"] = conn
-        command.upgrade(config, "z6a2b3c4d5e6")
+    # The refused downgrade leaves both tables in place.
     tables = set(sa.inspect(engine).get_table_names())
     assert {"scheduled_tasks", "scheduled_task_runs"} <= tables
 

@@ -11,8 +11,6 @@ from __future__ import annotations
 import json
 import uuid
 from types import SimpleNamespace
-
-from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from unittest.mock import AsyncMock
 
 import pytest
@@ -30,6 +28,7 @@ from omnigent.server.routes.agent_queues import create_agent_queues_router
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_role_profile_store.sqlalchemy_store import (
@@ -108,23 +107,39 @@ def worker_setup(db_uri: str) -> dict:
         host_id=_uid("host"),
         workspace="/tmp/mgr",
     )
+    # The task points at the durable manager row, not the conversation.
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager_row = manager_store.upsert(
+        _uid("mgr_w"),
+        conversation_id=manager_conv.id,
+        owner_user_id="user-w",
+        role_key="manager:default",
+        description="Worker fixture manager",
+        host_id=_uid("host"),
+        workspace="/tmp/mgr",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=manager_agent_id,
+    )
     task_id = _uid("task_w")
     task_store.create(
         task_id,
         "Worker task",
         "worker goal",
         owner_user_id="user-w",
-        manager_id=manager_conv.id,
+        manager_id=manager_row.id,
     )
     worker = worker_store.create_worker(
         _uid("worker"),
         task_id,
         provider_name="internal-test",
-        provider_configuration=json.dumps({
-            "kind": "internal",
-            "configuration": {"agent_id": worker_agent_id},
-            "launch": {"host_id": _uid("host"), "workspace": "/tmp/worker"},
-        }),
+        provider_configuration=json.dumps(
+            {
+                "kind": "internal",
+                "configuration": {"agent_id": worker_agent_id},
+                "launch": {"host_id": _uid("host"), "workspace": "/tmp/worker"},
+            }
+        ),
     )
     item = item_store.create_item(
         _uid("item"),
@@ -146,7 +161,6 @@ def worker_setup(db_uri: str) -> dict:
             parent_conversation_id=getattr(body, "parent_session_id", None),
         )
 
-    manager_store = SqlAlchemyManagerStore(db_uri)
     handler = WorkerDispatchHandler(
         store=queue_store,
         task_store=task_store,
@@ -182,12 +196,18 @@ def worker_setup(db_uri: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_resolve_target_fresh_slot_is_dispatchable(worker_setup: dict) -> None:
+async def test_resolve_target_initializes_fresh_slot(worker_setup: dict) -> None:
+    """A fresh slot is initialized on the queue path and comes back ready."""
     handler: WorkerDispatchHandler = worker_setup["handler"]
+    worker_store: SqlAlchemyWorkerStore = worker_setup["worker_store"]
     worker = worker_setup["worker"]
     key = AgentQueueKey(role="worker", owner_user_id=worker_setup["owner"], scope_id=worker.id)
     target = await handler.resolve_target(_queue_item(key, source_id=worker_setup["item"].id))
-    assert target.session_id is None  # fresh slot → gate dispatches immediately
+    initialized = worker_store.get_worker(worker.id)
+    assert initialized is not None
+    assert initialized.state == "idle"
+    assert target.session_id == initialized.target_id
+    assert target.ready is True
 
 
 @pytest.mark.asyncio
@@ -257,31 +277,33 @@ async def test_resolve_target_waits_while_worker_initializes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deliver_creates_worker_session_and_caches_conversation(
-    worker_setup: dict,
-) -> None:
+async def test_deliver_dispatches_to_initialized_worker(worker_setup: dict) -> None:
+    """Deliver appends the instructions to the worker's initialized session."""
     handler: WorkerDispatchHandler = worker_setup["handler"]
     queue_store: SqlAlchemyAgentQueueStore = worker_setup["queue_store"]
     item_store: SqlAlchemyTaskItemStore = worker_setup["item_store"]
+    worker_store: SqlAlchemyWorkerStore = worker_setup["worker_store"]
+    conversation_store: SqlAlchemyConversationStore = worker_setup["conversation_store"]
     worker = worker_setup["worker"]
     item = worker_setup["item"]
+    # Initialization owns target creation: give the slot an idle session.
+    worker_conv = conversation_store.create_conversation(
+        kind="default",
+        title="Worker",
+        agent_id=worker_setup["worker_agent_id"],
+        host_id=_uid("host"),
+        workspace="/tmp/worker",
+    )
+    worker_store.update_worker(worker.id, target_id=worker_conv.id, state="idle")
+
     key = AgentQueueKey(role="worker", owner_user_id=worker_setup["owner"], scope_id=worker.id)
     queue_item = _queue_item(
         key,
         source_id=item.id,
-        payload={
-            "instructions": item.instructions or "",
-            "internal_note": item.internal_note,
-            "worker_role_key": worker.role_key,
-            "host_id": _uid("host"),
-            "workspace": "/tmp/worker",
-            "harness": "claude-native",
-            "model": "composer-2.5",
-        },
+        payload={"instructions": item.instructions or "", "internal_note": item.internal_note},
     )
-    target = DispatchTarget(session_id=None)
-    # The dispatcher only delivers items the packager/enqueue path already
-    # created a queue row for, so create it here too.
+    # The dispatcher only delivers items the enqueue path already created a
+    # queue row for, so create it here too.
     queue_store.enqueue(
         _uid("q"),
         key,
@@ -289,7 +311,7 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
         source_ids=[item.id],
         payload=json.dumps({}),
     )
-    await handler.deliver(queue_item, target)
+    await handler.deliver(queue_item, DispatchTarget(session_id=worker_conv.id))
 
     refreshed_item = item_store.get_item(item.id)
     assert refreshed_item is not None
@@ -299,21 +321,18 @@ async def test_deliver_creates_worker_session_and_caches_conversation(
     )
     assert execution is not None
     assert execution.status == "running"
-    queue = queue_store.get_queue(key)
-    assert queue is not None and queue.conversation_id is not None
-    worker_conv = worker_setup["conversation_store"].get_conversation(queue.conversation_id)
-    assert worker_conv is not None
-    assert worker_conv.kind == "default"
-    assert worker_conv.parent_conversation_id is None
-    messages = worker_setup["conversation_store"].list_items(
-        queue.conversation_id,
+    messages = conversation_store.list_items(
+        worker_conv.id,
         limit=10,
         order="asc",
     )
     assert [message.response_id for message in messages.data] == [execution.id]
+    # The runner was ensured for the worker's session before dispatch.
     worker_setup["ensure_runner"].assert_called_once()
-    # The runner was ensured for the freshly created worker conversation.
-    assert worker_setup["ensure_runner"].call_args.args[0] == queue.conversation_id
+    assert worker_setup["ensure_runner"].call_args.args[0] == worker_conv.id
+    dispatched = worker_store.get_worker(worker.id)
+    assert dispatched is not None
+    assert dispatched.state == "busy"
 
 
 @pytest.mark.asyncio
@@ -407,7 +426,7 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
     assert items[0].kind == "item.dispatch"
     assert items[0].source_ids == [item.id]
     payload = json.loads(items[0].payload)
-    assert payload["worker_role_key"] == WORKER_DEFAULT_ROLE_KEY
+    assert payload["instructions"] == "Do the work"
 
 
 @pytest.mark.asyncio
@@ -429,13 +448,27 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
         host_id=_uid("host"),
         workspace="/tmp/mgr",
     )
+    # Managers are first-class: register the durable row and point the task at it.
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager_row = manager_store.upsert(
+        _uid("legacy_mgr"),
+        conversation_id=manager_conv.id,
+        owner_user_id="user-legacy",
+        role_key="manager:default",
+        description="Legacy manager",
+        host_id=_uid("host"),
+        workspace="/tmp/mgr",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=manager_id,
+    )
     task_id = _uid("task_legacy")
     task = task_store.create(
         task_id,
         "Legacy task",
         "legacy goal",
         owner_user_id="user-legacy",
-        manager_id=manager_conv.id,
+        manager_id=manager_row.id,
     )
     item = item_store.create_item(
         _uid("legacy_item"),
@@ -444,11 +477,17 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
         state="pending",
         instructions="Do the work",
     )
-    worker = worker_store.create_worker(
-        uuid.uuid4().hex,
-        task_id,
-        kind="managed",
+    # Initialization owns target creation — the sync path dispatches to an
+    # already-initialized idle slot.
+    worker = worker_store.create_worker(uuid.uuid4().hex, task_id, kind="managed")
+    worker_conv = conversation_store.create_conversation(
+        kind="default",
+        title="Worker",
+        agent_id=worker_agent_id,
+        host_id=_uid("host"),
+        workspace="/tmp/omnigent-legacy",
     )
+    worker_store.update_worker(worker.id, target_id=worker_conv.id, state="idle")
     item = item_store.update_item(item.id, worker_id=worker.id)
     assert item is not None
 
@@ -484,28 +523,41 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
     assert updated.state == "running"
 
 
-def test_resume_endpoint_rearms_halted_queue(db_uri: str) -> None:
+def test_fail_dispatch_requeues_and_keeps_queue_active(db_uri: str) -> None:
+    """Dispatch failures re-queue with backoff; only a user pause stops a slot."""
     queue_store = SqlAlchemyAgentQueueStore(db_uri)
     key = AgentQueueKey(
         role="worker",
-        owner_user_id="user-resume",
+        owner_user_id="user-retry",
         scope_id=_uid("slot"),
     )
     queue_store.enqueue(_uid("q"), key, "item.dispatch", source_ids=[_uid("ti")])
-    queue_store.fail_dispatch(_uid("q"), key, error="boom", now=now_epoch())
-    halted = queue_store.get_queue(key)
-    assert halted is not None and halted.state == "halted"
+    updated = queue_store.fail_dispatch(_uid("q"), key, error="boom", now=now_epoch())
+    assert updated is not None
+    assert updated.state == "queued"
+    assert updated.retry_count == 1
+    assert updated.not_before is not None and updated.not_before > now_epoch() - 1
 
+    queue = queue_store.get_queue(key)
+    assert queue is not None and queue.state == "active"
+
+    # A user pause is the only stop; resume re-arms the slot.
     app = FastAPI()
     app.include_router(create_agent_queues_router(queue_store), prefix="/v1")
     client = TestClient(app)
-    response = client.post(
+    paused = client.post(
+        "/v1/agent-queues/worker/pause",
+        json={"owner_user_id": key.owner_user_id, "scope_id": key.scope_id},
+    )
+    assert paused.status_code == 200
+    assert queue_store.get_queue(key).state == "paused"
+
+    resumed = client.post(
         "/v1/agent-queues/worker/resume",
         json={"owner_user_id": key.owner_user_id, "scope_id": key.scope_id},
     )
-    assert response.status_code == 200
-    resumed = queue_store.get_queue(key)
-    assert resumed is not None and resumed.state == "active"
+    assert resumed.status_code == 200
+    assert queue_store.get_queue(key).state == "active"
 
 
 @pytest.mark.asyncio

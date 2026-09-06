@@ -265,7 +265,7 @@ async def test_relative_cwd_skips_boundary_check(
         workspace="/tmp/scratch",
         spec_cwd=".",
     )
-    assert canonical == "/tmp/scratch"
+    assert canonical.canonical_path == "/tmp/scratch"
 
 
 # ── Steps 2/3/5: boundary check ─────────────────────────
@@ -355,7 +355,7 @@ async def test_workspace_inside_boundary_accepted(
         workspace="/Users/corey/universe/src/foo",
         spec_cwd="/Users/corey/universe",
     )
-    assert canonical == "/Users/corey/universe/src/foo"
+    assert canonical.canonical_path == "/Users/corey/universe/src/foo"
 
 
 async def test_symlink_escape_rejected_via_canonical_paths(
@@ -430,7 +430,7 @@ async def test_symlink_inside_boundary_accepted(
     )
     # The stored value is the realpath the host returned, not the
     # symlinked input — see designs/... "Why this is better".
-    assert canonical == "/Users/corey/foo/sub"
+    assert canonical.canonical_path == "/Users/corey/foo/sub"
 
 
 # ── Step 6: ./subdir presence ───────────────────────────
@@ -491,7 +491,7 @@ async def test_subdir_present_accepted(
         workspace="/Users/corey/projects",
         spec_cwd="./config",
     )
-    assert canonical == "/Users/corey/projects"
+    assert canonical.canonical_path == "/Users/corey/projects"
 
 
 # ── Input shape ────────────────────────────────────────
@@ -538,7 +538,7 @@ async def test_tilde_workspace_rejected(
             workspace="~/projects",
             spec_cwd=".",
         )
-    assert "absolute path" in exc_info.value.message
+    assert "does not exist on host" in exc_info.value.message
 
 
 # ── Host failure handling ────────────────────────────────
@@ -605,4 +605,4 @@ async def test_tilde_boundary_passed_through_to_host(
         workspace="/Users/corey/universe/src/foo",
         spec_cwd="~/universe",
     )
-    assert canonical == "/Users/corey/universe/src/foo"
+    assert canonical.canonical_path == "/Users/corey/universe/src/foo"

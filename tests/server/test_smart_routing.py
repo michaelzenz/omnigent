@@ -311,8 +311,16 @@ def test_infer_models_unknown_harness() -> None:
     assert infer_models(None) is None
 
 
-def test_infer_models_supports_omnigent_profile_harness() -> None:
-    assert infer_models("omnigent") == infer_models("openai-agents")
+def test_infer_models_omnigent_target_is_unroutable() -> None:
+    """``omnigent`` is the user-facing execution target, not a harness.
+
+    Since OmniHarness split target-owned profiles from the internal OpenAI
+    Agents adapter (68944eb91), ``omnigent`` no longer aliases
+    ``openai-agents`` in the family map — model inference only applies to
+    real harnesses.
+    """
+    assert infer_models("omnigent") is None
+    assert infer_models("openai-agents") is not None
 
 
 def test_models_fixture_unknown_harness() -> None:

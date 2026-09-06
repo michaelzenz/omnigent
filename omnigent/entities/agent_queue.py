@@ -106,8 +106,9 @@ class AgentQueueItem:
     :param scope_id: Task/worker id narrowing the role, or ``None``.
     :param kind: One of :data:`AGENT_QUEUE_ITEM_KINDS`.
     :param state: ``"queued"``, ``"dispatched"``, ``"done"``, ``"cancelled"``,
-        ``"dispatch_failed"``, or ``"interrupted"``. The last two are *parked*:
-        the queue halts and the item waits to be retried or cancelled.
+        ``"dispatch_failed"``, or ``"interrupted"``. The last two are legacy
+        parked states, kept decodable for existing rows; new dispatch
+        failures and watchdog reclaims re-queue with backoff instead.
     :param created_at: Unix epoch seconds at row creation.
     :param source_ids: Business-layer ids (events, task items) this item
         consumed. Packaging commits these before the sources are treated as
@@ -118,8 +119,8 @@ class AgentQueueItem:
         ordering a queue has — items dispatch in the order they were inserted.
         Breaks ties that ``created_at`` cannot, being second-granularity.
     :param not_before: Earliest Unix epoch second this item may dispatch, used
-        for debounce and snooze. There is no retry backoff — a failed dispatch
-        halts the queue rather than rescheduling.
+        for debounce, snooze, and dispatch-failure backoff — a failed dispatch
+        re-queues the item behind this gate instead of halting the queue.
     :param last_error: Why the dispatch failed. ``None`` unless failed.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
     :param dispatched_at: Unix epoch seconds the item was handed to the agent,

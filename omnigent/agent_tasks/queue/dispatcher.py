@@ -367,7 +367,7 @@ class AgentQueueDispatcher:
         )
 
     async def _fail(self, item: AgentQueueItem, key: AgentQueueKey, error: str) -> None:
-        backoff = min(_BASE_BACKOFF_S * (2 ** item.retry_count), _MAX_BACKOFF_S)
+        backoff = min(_BASE_BACKOFF_S * (2**item.retry_count), _MAX_BACKOFF_S)
         _logger.warning(
             "agent queue %s/%s/%s: dispatch failed (attempt %d, retrying in %ds): %s",
             key.role,
@@ -377,7 +377,7 @@ class AgentQueueDispatcher:
             backoff,
             error,
         )
-        failed = await asyncio.to_thread(
+        await asyncio.to_thread(
             self._context.store.fail_dispatch,
             item.id,
             key,
@@ -387,11 +387,6 @@ class AgentQueueDispatcher:
             max_retries=None,
             backoff_s=backoff,
         )
-        # Mirror only a true park onto the work record: a requeued item is
-        # still being retried, and marking its task dispatch_failed would
-        # smear the board every cycle and outlive a successful retry.
-        if failed is not None and failed.state == "dispatch_failed":
-            await self._notify_parked(item, "dispatch_failed")
 
     async def _notify_parked(self, item: AgentQueueItem, state: str) -> None:
         """Let the owning role mirror a park onto its own work record."""

@@ -189,7 +189,7 @@ async def test_run_plugin_executes_run_py(tmp_path: Path) -> None:
         host_id = "host_test"
 
     poller = ScriptPollPluginsPoller(config_path=tmp_path / "missing.yaml")
-    await poller._run_plugin(plugin_dir, ctx=_Ctx(), timeout_s=10.0, interval_s=60.0)  # type: ignore[arg-type]
+    await poller._run_subprocess_plugin(plugin_dir, ctx=_Ctx(), timeout_s=10.0, interval_s=60.0)
     assert (plugin_dir / "ran.txt").read_text() == "1"
 
 
@@ -324,6 +324,7 @@ async def test_poll_once_does_not_run_disabled_plugin(tmp_path: Path, monkeypatc
     await poller.poll_once(_Ctx())  # type: ignore[arg-type]
 
     assert not (plugin_dir / "ran.txt").exists()
-    [health] = poller._health.snapshot()
+    # The snapshot also carries the builtin plugins' records; pick ours by name.
+    health = next(r for r in poller._health.snapshot() if r.name == "disabled")
     assert health.enabled is False
     assert health.outcome == "disabled"

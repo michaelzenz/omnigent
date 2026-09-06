@@ -25,7 +25,6 @@ from omnigent.agent_tasks.execution_reconciler import (
     reconcile_running_executions_once,
 )
 from omnigent.agent_tasks.notices import _format_worker_notice
-from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import MessageData, NewConversationItem
 from omnigent.entities.agent_queue import AgentQueueKey
@@ -99,7 +98,6 @@ def _seed_task(
     worker = worker_store.create_worker(
         _uid("worker_" + task_seed),
         task_id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
     )
     worker_conv = conversation_store.create_conversation(
         kind="sub_agent",
@@ -109,7 +107,7 @@ def _seed_task(
         host_id=_uid("host_worker_" + task_seed),
         workspace="/tmp/worker",
     )
-    worker_store.update_worker(worker.id, session_id=worker_conv.id)
+    worker_store.update_worker(worker.id, target_id=worker_conv.id)
     queue_item_id = None
     if with_worker_queue:
         queue_item_id = _uid("queue_" + task_seed)
@@ -256,6 +254,7 @@ async def test_reconciler_completes_response_after_missed_idle(
                 response_id="resp_worker",
                 data=MessageData(
                     role="assistant",
+                    agent="worker-agent",
                     content=[{"type": "output_text", "text": "Done"}],
                 ),
             ),

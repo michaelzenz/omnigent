@@ -890,9 +890,7 @@ def _build_session_list_item(
     if conv.runner_id is not None and pending_updated_at is not None:
         pending_elicitations_count = pending_count
     elif conv.runner_id is not None:
-        pending_elicitations_count = max(
-            pending_count, conv.pending_elicitation_count or 0
-        )
+        pending_elicitations_count = max(pending_count, conv.pending_elicitation_count or 0)
     else:
         pending_elicitations_count = pending_count
     return SessionListItem(
@@ -5123,8 +5121,7 @@ async def _forward_event_to_runner(
     _is_onih_child = conv.parent_conversation_id is not None and uses_omniharness
     _uses_omniharness = uses_omniharness and conv.parent_conversation_id is None
     _routing_enabled = (
-        _effective_cost_control == "on"
-        and (conv.parent_conversation_id is None or _is_onih_child)
+        _effective_cost_control == "on" and (conv.parent_conversation_id is None or _is_onih_child)
     ) or _parent_routing_on
     _profile_dynamic = (
         body.type == "message"
@@ -6471,9 +6468,11 @@ _AUTO_WORKTREE_RENEW_INTERVAL_S = 3_600
 
 async def _renew_active_auto_worktree_lease(
     session_id: str,
-    conversation_store: ConversationStore,
+    conversation_store: ConversationStore | None,
 ) -> None:
     """Throttle lease renewal while a runner turn remains active."""
+    if conversation_store is None:
+        return
     if _session_status_cache.get(session_id) not in ("running", "waiting"):
         return
     now = time.time()
