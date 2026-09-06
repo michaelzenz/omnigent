@@ -30,6 +30,7 @@ import {
 import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { readSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
+import { readSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import { hasCommandModifier } from "@/lib/hotkeys";
 import { isNativeShell } from "@/lib/nativeBridge";
 
@@ -161,7 +162,7 @@ export function KeyboardShortcutsList() {
   const preventsKeyboardSubmit = isMobileViewport || isCoarsePointer;
   const groups = shortcutGroupsFor(
     isNativeShell(),
-    readSubmitWithModEnter(),
+    readSubmitWithModEnter() || readSendMessageShortcut() === "command-enter",
     preventsKeyboardSubmit,
   );
   return (
