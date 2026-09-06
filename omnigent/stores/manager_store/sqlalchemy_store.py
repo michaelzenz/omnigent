@@ -154,9 +154,7 @@ class SqlAlchemyManagerStore(ManagerStore):
                 return None
             changed = False
             normalized_owner = (
-                _normalized_owner(owner_user_id)
-                if owner_user_id is not _UNSET
-                else _UNSET
+                _normalized_owner(owner_user_id) if owner_user_id is not _UNSET else _UNSET
             )
             if normalized_owner is not _UNSET and row.owner_user_id != normalized_owner:
                 row.owner_user_id = normalized_owner

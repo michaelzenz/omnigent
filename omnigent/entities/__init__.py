@@ -17,8 +17,11 @@ from omnigent.entities.agent_text_thread import (
     AgentTextThreadTurnState,
 )
 from omnigent.entities.comment import Comment, CommentsFingerprint
+from omnigent.entities.connection import ProviderConnection
 from omnigent.entities.conversation import (
+    DEFAULT_GENERATED_TITLE_MAX_CHARS,
     NON_CONTENT_ITEM_TYPES,
+    USER_SESSION_TITLE_MAX_CHARS,
     CompactionData,
     Conversation,
     ConversationItem,
@@ -39,6 +42,7 @@ from omnigent.entities.conversation import (
 )
 from omnigent.entities.device_grant import DeviceGrant
 from omnigent.entities.file import StoredFile
+from omnigent.entities.github_connection import GithubConnection
 from omnigent.entities.memory import MemoryCategory
 from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
@@ -76,7 +80,9 @@ __all__ = [
     "AGENT_QUEUE_ITEM_KINDS",
     "AGENT_QUEUE_ROLES",
     "DEFAULT_ENVIRONMENT_ID",
+    "DEFAULT_GENERATED_TITLE_MAX_CHARS",
     "NON_CONTENT_ITEM_TYPES",
+    "USER_SESSION_TITLE_MAX_CHARS",
     "Account",
     "AccountToken",
     "Agent",
@@ -99,6 +105,7 @@ __all__ = [
     "FunctionCallData",
     "FunctionCallOutputData",
     "FyiCluster",
+    "GithubConnection",
     "ItemData",
     "LoadedAgent",
     "Manager",
@@ -110,6 +117,7 @@ __all__ = [
     "Policy",
     "Project",
     "PromptProfile",
+    "ProviderConnection",
     "ReasoningData",
     "ResolvedAccess",
     "ResourceEventData",

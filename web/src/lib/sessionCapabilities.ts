@@ -1,4 +1,4 @@
-/** UI-only session capability gates, derived from snapshot labels. */
+/** UI-only session capability gates, derived from the live session snapshot. */
 
 import { isNativeWrapper as isNativeWrapperLabel } from "@/lib/nativeCodingAgents";
 import { isOnihPiTargetName } from "@/lib/omniharnessModels";
@@ -25,6 +25,7 @@ export function supportsEffortControl(
   session:
     | {
         labels?: Record<string, string | null> | null;
+        harness?: string | null;
         agentName?: string | null;
       }
     | null
@@ -35,6 +36,7 @@ export function supportsEffortControl(
     wrapper === CLAUDE_NATIVE_WRAPPER ||
     wrapper === CODEX_NATIVE_WRAPPER ||
     wrapper === PI_NATIVE_WRAPPER ||
+    (wrapper == null && session?.harness === "codex-native") ||
     isOnihPiTargetName(session?.agentName)
   );
 }

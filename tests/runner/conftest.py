@@ -26,7 +26,9 @@ from tests.runner.helpers import NullServerClient
 # attribute back to this. (An assignment, not an alias import, so lint
 # autofixes can't strip it as unused.)
 REAL_CLAUDE_LAUNCH_CATALOG = claude_native.claude_launch_catalog
+REAL_CLAUDE_REPROBED_LAUNCH_CATALOG = claude_native.claude_reprobed_launch_catalog
 REAL_CODEX_LAUNCH_CATALOG = codex_native_app_server.codex_launch_catalog
+REAL_CODEX_REPROBED_LAUNCH_CATALOG = codex_native_app_server.codex_reprobed_launch_catalog
 
 # Project root: two parents up from this conftest (tests/runner/ → repo root).
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -42,7 +44,7 @@ def _isolated_model_catalog_store(
     a miss, probe the REAL harness CLIs — which a unit test must never do
     (a real ``claude`` boot takes ~6 s and writes the developer's real
     ``~/.omnigent`` store). Redirect the store's directory seam per test
-    and stub both launch-catalog resolvers to "no catalog" (the
+    and stub the launch-catalog resolvers to "no catalog" (the
     pre-catalog behavior); a test exercising catalogs re-patches them
     explicitly.
     """
@@ -53,7 +55,11 @@ def _isolated_model_catalog_store(
         return None
 
     monkeypatch.setattr("omnigent.claude_native.claude_launch_catalog", _no_catalog)
+    monkeypatch.setattr("omnigent.claude_native.claude_reprobed_launch_catalog", _no_catalog)
     monkeypatch.setattr("omnigent.codex_native_app_server.codex_launch_catalog", _no_catalog)
+    monkeypatch.setattr(
+        "omnigent.codex_native_app_server.codex_reprobed_launch_catalog", _no_catalog
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -716,7 +722,14 @@ def _build_interrupt_app(
         function_call frames.
     :returns: ``(app, process_manager, harness_client)`` tuple.
     """
-    spec = AgentSpec(spec_version=1, name="t")
+    # Use the test-only harness so _build_spawn_env_from_spec returns None
+    # without reading provider config. Each test seeds _session_spec_cache via
+    # POST /v1/sessions before sending the turn.
+    spec = AgentSpec(
+        spec_version=1,
+        name="t",
+        executor=ExecutorSpec(type="omnigent", config={"harness": "runner-test-default"}),
+    )
     sse_frames = [
         _sse({"type": "response.created", "response": {"id": "resp_int"}}),
         _sse(

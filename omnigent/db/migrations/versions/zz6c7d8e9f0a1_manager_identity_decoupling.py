@@ -16,7 +16,7 @@ keying is erased: every manager row, manager-role queues and items, and
 non-terminal task events. Tasks re-bootstrap on their next routed event.
 
 Revision ID: zz6c7d8e9f0a1
-Revises: zz5b6c7d8e9f0
+Revises: gb1b2c3d4e5f, c7d8e9f0a1b3
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from alembic import op
 from omnigent.db.db_models import Uuid16
 
 revision: str = "zz6c7d8e9f0a1"
-down_revision: str = "c7d8e9f0a1b3"
+down_revision: tuple[str, str] = ("gb1b2c3d4e5f", "c7d8e9f0a1b3")
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

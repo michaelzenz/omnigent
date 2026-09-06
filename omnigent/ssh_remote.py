@@ -78,8 +78,7 @@ async def ssh_remote_file_to_tempfile(
 ) -> Path:
     """Download a remote file into a local temporary file."""
     payload = await ssh_remote_file_bytes(profile, remote_path)
-    handle = tempfile.NamedTemporaryFile(delete=False)
-    handle.write(payload)
-    handle.flush()
-    handle.close()
-    return Path(handle.name)
+    with tempfile.NamedTemporaryFile(delete=False) as handle:
+        handle.write(payload)
+        handle.flush()
+        return Path(handle.name)

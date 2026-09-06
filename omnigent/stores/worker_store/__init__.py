@@ -59,6 +59,7 @@ class WorkerStore(ABC):
         self,
         worker_id: str,
         *,
+        task_id: str | None = None,
         kind: str | None = None,
         target_id: str | None = _UNSET,
         state: str | None = None,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import and_, asc, delete, desc, false, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -234,10 +234,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             if task_id is not _UNSET and row.task_id != task_id:
                 row.task_id = task_id
                 changed = True
-            if (
-                manager_id is not _UNSET
-                and row.manager_id != manager_id
-            ):
+            if manager_id is not _UNSET and row.manager_id != manager_id:
                 row.manager_id = manager_id
                 changed = True
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
@@ -272,24 +269,23 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         workspace_id = current_workspace_id()
         routed_state = encode_task_event_state("routed")
         with self._claim_session() as session:
-            rows = session.execute(
-                select(SqlTaskEvent).where(
-                    SqlTaskEvent.workspace_id == workspace_id,
-                    SqlTaskEvent.id.in_(unique_ids),
+            rows = (
+                session.execute(
+                    select(SqlTaskEvent).where(
+                        SqlTaskEvent.workspace_id == workspace_id,
+                        SqlTaskEvent.id.in_(unique_ids),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             rows_by_id = {row.id: row for row in rows}
             if len(rows_by_id) != len(unique_ids):
                 raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
             for event_id in unique_ids:
                 row = rows_by_id[event_id]
-                belongs_to_task = (
-                    row.task_id == task_id
-                    and row.manager_id == manager_id
-                ) or (
-                    row.task_id is None
-                    and manager_id is not None
-                    and row.manager_id == manager_id
+                belongs_to_task = (row.task_id == task_id and row.manager_id == manager_id) or (
+                    row.task_id is None and manager_id is not None and row.manager_id == manager_id
                 )
                 if not belongs_to_task:
                     raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
@@ -317,8 +313,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                     or_(
                         and_(
                             SqlTaskEvent.task_id == task_id,
-                            SqlTaskEvent.manager_id
-                            == manager_id,
+                            SqlTaskEvent.manager_id == manager_id,
                         ),
                         manager_route,
                     ),
@@ -332,17 +327,23 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 )
                 .execution_options(synchronize_session=False)
             )
-            if result.rowcount != len(unique_ids):
+            if cast(Any, result).rowcount != len(unique_ids):
                 raise OmnigentError(
                     "Task event is already reconciled",
                     code=ErrorCode.CONFLICT,
                 )
-            refreshed = session.execute(
-                select(SqlTaskEvent).where(
-                    SqlTaskEvent.workspace_id == workspace_id,
-                    SqlTaskEvent.id.in_(unique_ids),
-                ).execution_options(populate_existing=True)
-            ).scalars().all()
+            refreshed = (
+                session.execute(
+                    select(SqlTaskEvent)
+                    .where(
+                        SqlTaskEvent.workspace_id == workspace_id,
+                        SqlTaskEvent.id.in_(unique_ids),
+                    )
+                    .execution_options(populate_existing=True)
+                )
+                .scalars()
+                .all()
+            )
             refreshed_by_id = {row.id: _event_to_entity(row) for row in refreshed}
             return [refreshed_by_id[event_id] for event_id in unique_ids]
 
@@ -361,12 +362,16 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         routed_state = encode_task_event_state("routed")
         routable_codes = [encode_task_event_state(state) for state in routable_states]
         with self._session() as session:
-            rows = session.execute(
-                select(SqlTaskEvent).where(
-                    SqlTaskEvent.workspace_id == workspace_id,
-                    SqlTaskEvent.id.in_(unique_ids),
+            rows = (
+                session.execute(
+                    select(SqlTaskEvent).where(
+                        SqlTaskEvent.workspace_id == workspace_id,
+                        SqlTaskEvent.id.in_(unique_ids),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             rows_by_id = {row.id: row for row in rows}
             if len(rows_by_id) != len(unique_ids):
                 session.rollback()
@@ -378,14 +383,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 if (row.owner_user_id or "__anonymous__") != owner_user_id:
                     session.rollback()
                     return None
-                same_target = (
-                    row.state == routed_state
-                    and row.manager_id == manager_id
-                )
-                stalled = (
-                    row.state in routable_codes
-                    and row.manager_id is None
-                )
+                same_target = row.state == routed_state and row.manager_id == manager_id
+                stalled = row.state in routable_codes and row.manager_id is None
                 if same_target:
                     continue
                 if not stalled:
@@ -402,9 +401,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                         SqlTaskEvent.id.in_(stalled_ids),
                         SqlTaskEvent.state.in_(routable_codes),
                         SqlTaskEvent.manager_id.is_(None),
-                        func.coalesce(
-                            SqlTaskEvent.owner_user_id, "__anonymous__"
-                        )
+                        func.coalesce(SqlTaskEvent.owner_user_id, "__anonymous__")
                         == owner_user_id,
                     )
                     .values(
@@ -415,16 +412,20 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                         updated_at=now,
                     )
                 )
-                if result.rowcount != len(stalled_ids):
+                if cast(Any, result).rowcount != len(stalled_ids):
                     session.rollback()
                     return None
 
-            refreshed = session.execute(
-                select(SqlTaskEvent).where(
-                    SqlTaskEvent.workspace_id == workspace_id,
-                    SqlTaskEvent.id.in_(unique_ids),
+            refreshed = (
+                session.execute(
+                    select(SqlTaskEvent).where(
+                        SqlTaskEvent.workspace_id == workspace_id,
+                        SqlTaskEvent.id.in_(unique_ids),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             refreshed_by_id = {row.id: _event_to_entity(row) for row in refreshed}
             return [refreshed_by_id[event_id] for event_id in event_ids]
 
@@ -535,7 +536,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 )
             )
             session.flush()
-            return result.rowcount or 0
+            return cast(Any, result).rowcount or 0
 
     def list_deliveries_for_event(self, parent_event_id: str) -> list[TaskEvent]:
         with self._session() as session:
@@ -753,4 +754,4 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 stmt = stmt.where(SqlTaskEvent.event_type == event_type)
             result = session.execute(stmt)
             session.flush()
-            return result.rowcount or 0
+            return cast(Any, result).rowcount or 0

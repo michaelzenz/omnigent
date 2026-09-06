@@ -252,6 +252,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
         name: str | None = None,
         prompt: str | None = None,
         rrule: str | None = None,
+        agent_id: str | None = None,
         timezone: str | None = None,
         model_override: str | None = _UNSET,
         reasoning_effort: str | None = _UNSET,
@@ -273,7 +274,9 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
         ``None`` explicitly sets the column to NULL — so resetting an override
         to the agent default actually clears it (a set ``bypassPermissions``
         can be turned back off). Passing ``rrule`` updates the recurring
-        trigger; ``None`` leaves it unchanged.
+        trigger and ``agent_id`` rebinds the task to a different agent
+        (switching the harness future firings run); ``None`` leaves either
+        unchanged.
         """
         with self._session("update_task") as session:
             row = session.get(SqlScheduledTask, (current_workspace_id(), scheduled_task_id))
@@ -288,6 +291,9 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
                 changed = True
             if rrule is not None and row.rrule != rrule:
                 row.rrule = rrule
+                changed = True
+            if agent_id is not None and row.agent_id != agent_id:
+                row.agent_id = agent_id
                 changed = True
             if timezone is not None and row.timezone != timezone:
                 row.timezone = timezone

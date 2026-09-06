@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import secrets
 import weakref
@@ -16,6 +17,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 
+from omnigent.debug_logging import add_audit_attrs, mark_request_audit_suppressed
 from omnigent.entities import (
     Conversation,
     ErrorData,
@@ -99,6 +101,7 @@ from omnigent.server.routes._sessions.common import (
     _ALLOWED_EVENT_TYPES,
     _APPROVAL_TYPE,
     _COMPACT_TYPE,
+    _EXTERNAL_ACP_SUBAGENT_START_TYPE,
     _EXTERNAL_ANTIGRAVITY_SUBAGENT_START_TYPE,
     _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
     _EXTERNAL_CODEX_APPROVAL_MODE_CHANGE_TYPE,
@@ -159,6 +162,7 @@ from omnigent.server.routes._sessions.helpers import (
     _is_codex_native_subagent,
     _launch_runner_on_host,
     _parse_background_tasks,
+    _persist_external_acp_subagent_start,
     _persist_external_assistant_message,
     _persist_external_codex_approval_mode_change,
     _persist_external_codex_collaboration_mode_change,
@@ -186,11 +190,9 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_status,
     _publish_worktree_log,
     _publish_worktree_status,
-    _remove_session_worktree,
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
     _resolve_harness,
-    _run_compact_locked,
     _session_status_from_cache,
     _signal_harness_elicitation_resolved_by_id,
     _stop_session_host_runner,
@@ -210,6 +212,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _evaluate_tool_call_policy,
     _heal_subagent_runner_binding_via_parent,
     _is_native_terminal_session,
+    _mark_dispatch_in_flight,
     _maybe_relaunch_managed_sandbox,
     _maybe_wake_stale_resumable_managed_sandbox,
     _persist_external_antigravity_subagent_start,
@@ -254,6 +257,18 @@ _retry_recovery_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
 _retry_recovery_tasks: dict[str, asyncio.Task[dict[str, bool | str]]] = {}
 _session_lifecycle_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
     weakref.WeakValueDictionary()
+)
+
+# POST /events types that arrive per streamed chunk — the harness echoing its
+# own live output back. Their per-call audit row is pure noise (the content is
+# already on the SSE-event logger), so the envelope is suppressed for them.
+_TRANSIENT_AUDIT_EVENT_TYPES = frozenset(
+    {
+        _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
+        _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
+        _EXTERNAL_TOOL_OUTPUT_DELTA_TYPE,
+        _EXTERNAL_SESSION_USAGE_TYPE,
+    }
 )
 
 
@@ -666,6 +681,27 @@ def register_events_routes(
         body: SessionEventInput,
     ) -> dict[str, bool | str]:
         """
+        Route entry for :func:`_post_event_impl`.
+
+        A message counts as in flight for the whole request — including any
+        runner launch it triggers — so the session list reports a booting
+        session as running instead of idle.
+        """
+        with contextlib.ExitStack() as in_flight:
+            return await _post_event_impl(
+                request,
+                session_id,
+                body,
+                in_flight=in_flight if body.type == "message" else None,
+            )
+
+    async def _post_event_impl(
+        request: Request,
+        session_id: str,
+        body: SessionEventInput,
+        in_flight: contextlib.ExitStack | None = None,
+    ) -> dict[str, bool | str]:
+        """
         Submit a session event (input message, tool output,
         approval, or interrupt).
 
@@ -741,6 +777,9 @@ def register_events_routes(
 
         :param session_id: Session/conversation identifier.
         :param body: The validated :class:`SessionEventInput`.
+        :param in_flight: When given, the session is marked as having a
+            dispatch in flight once the caller is authorized, for the rest
+            of the request.
         :returns: ``{"queued": True, "item_id": "..."}`` for
             item-typed events, where ``item_id`` is the persisted
             conversation item id also emitted by
@@ -807,6 +846,10 @@ def register_events_routes(
                     session_id,
                 )
                 conv = await _renew_or_relocate_auto_worktree(latest or conv)
+        if in_flight is not None:
+            # Marked only after authorization and stale-generation validation,
+            # so rejected callers cannot make the session appear active.
+            in_flight.enter_context(_mark_dispatch_in_flight(session_id))
         created_by = _attribution_user(user_id)
         body_created_by = _attribution_user(body.created_by)
         if body_created_by is not None:
@@ -838,6 +881,13 @@ def register_events_routes(
                 f"Allowed types: {sorted(_ALLOWED_EVENT_TYPES)}",
                 code=ErrorCode.INVALID_INPUT,
             )
+        # Tag the audit envelope end-event with the event kind so a message,
+        # interrupt, approval, stop, … are distinguishable in the audit table.
+        # Transient per-chunk echoes suppress the row entirely (they are the
+        # firehose; the content is already on the SSE-event logger).
+        add_audit_attrs(event_type=body.type)
+        if body.type in _TRANSIENT_AUDIT_EVENT_TYPES:
+            mark_request_audit_suppressed()
         # For item types, validate the data payload shape against
         # the item-type's discriminator class. The control types
         # (interrupt, approval) bypass the item-persist path and have
@@ -871,6 +921,7 @@ def register_events_routes(
             _EXTERNAL_SESSION_TITLE_TYPE,
             _EXTERNAL_SESSION_TODOS_TYPE,
             _EXTERNAL_SUBAGENT_START_TYPE,
+            _EXTERNAL_ACP_SUBAGENT_START_TYPE,
             _EXTERNAL_CODEX_SUBAGENT_START_TYPE,
             _EXTERNAL_ANTIGRAVITY_SUBAGENT_START_TYPE,
             _EXTERNAL_CODEX_COLLABORATION_MODE_CHANGE_TYPE,
@@ -956,6 +1007,13 @@ def register_events_routes(
                 # deny sentinel on the session stream so the
                 # client/REPL sees feedback.
                 reason = _input_verdict.get("reason", "Denied by policy")
+                # Surface the input-policy block on this post_event's audit row
+                # so a "my message was blocked" case is queryable with its reason.
+                add_audit_attrs(
+                    policy_verdict=_input_verdict.get("verdict", "deny"),
+                    policy_phase="input",
+                    policy_reason=reason,
+                )
                 _publish_policy_deny(session_id, reason)
                 await _persist_policy_deny_sentinel(
                     session_id,
@@ -1340,20 +1398,14 @@ def register_events_routes(
             # Unified control dispatch (designs/CLAUDE_NATIVE.md
             # "Control events dispatch on the runner"): forward /compact
             # to the bound runner first, regardless of harness. The
-            # runner dispatches by harness — claude-native injects
-            # /compact into the tmux pane so Claude Code compacts its
-            # own context and returns 200; other harnesses 204 no-op.
-            # The Omnigent server stays harness-agnostic: it runs its own
-            # in-process compaction only when the runner did NOT handle
-            # the control (204 / no runner bound). A 4xx/5xx from the
-            # runner (e.g. 503 when the claude-native pane isn't
-            # attached) is surfaced as an error rather than silently
-            # falling through to AP-side compaction, which would be
-            # wrong for a terminal-owned session.
+            # runner dispatches by harness — native harnesses inject
+            # /compact into the vendor TUI and return 200 on success or
+            # 5xx on failure. SDK harnesses return 204 (no-op) because
+            # their context is controlled entirely by the vendor harness.
+            # A 4xx/5xx from the runner is surfaced as an error.
             # TUI budget, not the 5s default: the claude-native handler
             # drives a delivery-verified slash-command inject, and a timeout
-            # here falls through to AP-side compaction on top of the
-            # terminal's own still-running /compact.
+            # here would surface as an error mid-TUI-compact.
             runner_result = await _forward_session_change_to_runner(
                 session_id,
                 runner_router,
@@ -1408,13 +1460,10 @@ def register_events_routes(
                     "run /compact again.",
                     code=ErrorCode.RUNNER_UNAVAILABLE,
                 )
-            await _run_compact_locked(
-                session_id,
-                conv,
-                agent_store,
-                agent_cache,
+            raise OmnigentError(
+                "/compact is not available for this session type.",
+                code=ErrorCode.INVALID_INPUT,
             )
-            return {"queued": False}
         if body.type == "compaction":
             import uuid as _uuid
 
@@ -1802,6 +1851,16 @@ def register_events_routes(
                 conversation_store,
             )
             return {"queued": False, "child_session_id": child_id}
+        if body.type == _EXTERNAL_ACP_SUBAGENT_START_TYPE:
+            child_id = await _persist_external_acp_subagent_start(
+                session_id,
+                conv,
+                body,
+                conversation_store,
+            )
+            # Returned to the runner so it can address the sub-agent's transcript
+            # items and its completion status to the child id.
+            return {"queued": False, "child_session_id": child_id}
         if body.type == "function_call_output":
             # A client-side tool's result tunneling back to a parked turn.
             # The harness scaffold resolves the parked tool Future on a
@@ -2002,6 +2061,7 @@ def register_events_routes(
                     _sf._HOST_BOUND_RUNNER_CONNECT_GRACE_S,
                     conv.runner_id,
                     session_id,
+                    extra={"session_id": session_id},
                 )
                 if _grace_host_reg is not None and _grace_host_conn is not None:
                     runner_client = await _wait_for_host_bound_runner_client(
@@ -2811,13 +2871,19 @@ def register_events_routes(
             has a server-created worktree (``git_branch`` set), the
             host removes the worktree directory and deletes its branch
             (``git worktree remove --force`` then ``git branch -D``).
-            Ignored for sessions with no worktree. A cleanup failure
-            aborts the session deletion and is returned to the caller.
-            Defaults to ``False`` (worktree and branch left untouched). See
+            Ignored for sessions with no worktree. If the host
+            tunnel is down (typically ``runner_online: false``), the
+            delete is rejected with 409 so the caller can retry
+            without cleanup rather than receiving a misleading 404.
+            A host-reported git failure is still logged and does not
+            block the delete. Defaults to ``False`` (worktree and
+            branch left untouched). See
             designs/SESSION_GIT_WORKTREE.md.
         :returns: A :class:`ConversationDeleted` confirmation.
         :raises OmnigentError: 404 if no session or no access,
-            403 if insufficient permissions.
+            403 if insufficient permissions, 409 if
+            ``delete_branch=true`` and the host is offline so
+            worktree cleanup cannot run.
         """
         user_id = _require_user(request, auth_provider)
         if permission_store is not None and user_id is not None:
@@ -2855,7 +2921,7 @@ def register_events_routes(
         if runner_client is not None:
             try:
                 await runner_client.delete(
-                    f"/v1/sessions/{session_id}/resources",
+                    f"/v1/sessions/{session_id}",
                     timeout=10.0,
                 )
             except (httpx.HTTPError, ConnectionError):
@@ -2871,20 +2937,27 @@ def register_events_routes(
             with contextlib.suppress(RuntimeError):
                 await get_terminal_registry().cleanup_conversation(session_id)
         # Opt-in git worktree cleanup: only when delete_branch=true and
-        # the session has a server-created worktree. Keep the session row
-        # and files when cleanup fails so the caller can retry.
+        # the session has a server-created worktree. Runs after runner
+        # teardown but before the irreversible file cleanup below: an
+        # unreachable host fails the delete (409) with the session
+        # retained, so nothing irrecoverable may be destroyed first.
+        # Git errors on a reachable host stay best-effort.
         if (
             delete_branch
             and conv.git_branch is not None
             and conv.workspace is not None
             and conv.host_id is not None
         ):
-            await _remove_session_worktree(
+            await _remove_session_worktree_best_effort(
                 host_id=conv.host_id,
                 worktree_path=conv.workspace,
                 branch=conv.git_branch,
                 delete_branch=True,
                 request=request,
+                reason="session-delete",
+                conversation_store=conversation_store,
+                exclude_conversation_id=conv.id,
+                fail_if_unavailable=True,
             )
         if (
             conv.labels.get("omnigent.auto_worktree") == "1"
@@ -2963,7 +3036,7 @@ def register_events_routes(
         host_store_for_managed = getattr(request.app.state, "host_store", None)
         if conv.host_id is not None and host_store_for_managed is not None:
             bound_host = await asyncio.to_thread(host_store_for_managed.get_host, conv.host_id)
-            if bound_host is not None and bound_host.sandbox_id is not None:
+            if bound_host is not None and bound_host.sandbox_provider is not None:
                 from omnigent.server.managed_hosts import terminate_managed_host
 
                 await terminate_managed_host(

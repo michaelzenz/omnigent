@@ -301,6 +301,28 @@ describe("parseEvent — session.mcp_startup", () => {
   });
 });
 
+describe("parseEvent — response.output_item.done error level", () => {
+  it("lifts level: info onto the error event and omits it otherwise", () => {
+    const item = {
+      id: "err_1",
+      response_id: "resp_1",
+      type: "error",
+      source: "harness",
+      code: "codex_thread_reset",
+      message: "Codex started a fresh thread.",
+    };
+    const info = parseEvent("response.output_item.done", { item: { ...item, level: "info" } });
+    expect(info).toMatchObject({
+      type: "error",
+      error: { code: "codex_thread_reset", level: "info" },
+    });
+    const plain = parseEvent("response.output_item.done", { item });
+    const plainError = plain?.type === "error" ? plain.error : null;
+    expect(plainError).not.toBeNull();
+    expect(plainError).not.toHaveProperty("level");
+  });
+});
+
 describe("parseEvent — session.worktree_status", () => {
   it("parses every stage, threading branch and error", () => {
     // The background auto-send and the worktree panel both hang off this
@@ -338,7 +360,9 @@ describe("parseEvent — session.worktree_status", () => {
   });
 
   it("tolerates absent branch/error on non-failed stages", () => {
-    expect(parseEvent("session.worktree_status", { conversation_id: "conv_a", stage: "ready" })).toEqual({
+    expect(
+      parseEvent("session.worktree_status", { conversation_id: "conv_a", stage: "ready" }),
+    ).toEqual({
       type: "session_worktree_status",
       conversationId: "conv_a",
       stage: "ready",
@@ -364,8 +388,6 @@ describe("parseEvent — session.worktree_log", () => {
 
   it("rejects frames without a conversation id or a string line", () => {
     expect(parseEvent("session.worktree_log", { line: "x" })).toBeNull();
-    expect(
-      parseEvent("session.worktree_log", { conversation_id: "conv_a", line: 42 }),
-    ).toBeNull();
+    expect(parseEvent("session.worktree_log", { conversation_id: "conv_a", line: 42 })).toBeNull();
   });
 });

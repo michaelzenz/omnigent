@@ -78,6 +78,10 @@ class HostFrameKind(str, Enum):
     FS_RESULT = "host.fs_result"
     MODEL_OPTIONS = "host.model_options"
     MODEL_OPTIONS_RESULT = "host.model_options_result"
+    IMPORT_LOCAL = "host.import_local"
+    IMPORT_LOCAL_BY_ID = "host.import_local_by_id"
+    IMPORT_LOCAL_SESSION = "host.import_local_session"
+    IMPORT_LOCAL_DONE = "host.import_local_done"
     WORKTREE_SIZES = "host.worktree_sizes"
     WORKTREE_SIZES_RESULT = "host.worktree_sizes_result"
 
@@ -494,13 +498,18 @@ class HostCreateWorktreeFrame:
     :param branch_name: New branch to create, e.g. ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from ``HEAD``.
+    :param existing_branch: When ``True``, check out the pre-existing
+        ``branch_name`` into a fresh worktree (the deleted-worktree
+        recreate path) instead of creating a new branch.
     :param auto_fetch_base: Whether to fetch and retry an unavailable base.
+
     """
 
     request_id: str
     repo_path: str
     branch_name: str
     base_branch: str | None = None
+    existing_branch: bool = False
     auto_fetch_base: bool = False
     auto_reuse: bool = False
     reuse_existing_branch: bool = False
@@ -511,12 +520,10 @@ class HostCreateWorktreeFrame:
 @dataclass
 class HostWorktreeLogFrame:
     """Host → server: one streamed log line during worktree creation.
-
     Sent zero or more times between the :class:`HostCreateWorktreeFrame`
     request and the final :class:`HostCreateWorktreeResultFrame`, so the
     server can relay each git stdout/stderr line to the session's SSE
     stream for real-time display in the worktree-creation log panel.
-
     :param request_id: Correlates to the
         :class:`HostCreateWorktreeFrame`, e.g. ``"req_wt_1"``.
     :param line: One line of git output (without trailing newline),
@@ -938,6 +945,95 @@ class HostModelOptionsResultFrame:
 
 
 @dataclass
+class HostImportedLocalSession:
+    """One local transcript the host read, normalized for import.
+
+    :param external_session_id: Harness-native session id on the host.
+    :param workspace: The session's recorded working directory, or ``None``.
+    :param items: Items in ``/v1/imports`` wire shape —
+        ``{"type", "response_id", "data"}`` — ready to persist server-side.
+    :param title: The harness's own session title, or ``None`` to let the
+        server synthesize one from the first user message.
+    :param source: Harness this session came from, e.g. ``"claude"``. Carried
+        per session so an "all harnesses" request can mix sources in one batch.
+    """
+
+    external_session_id: str
+    workspace: str | None
+    items: list[_JsonObject]
+    title: str | None = None
+    source: str = ""
+
+
+@dataclass
+class HostImportLocalFrame:
+    """Server → host: read the host's recent local transcripts for a harness.
+
+    The host owns the transcripts (``~/.claude`` etc.); the server can't see
+    them, so it asks the host to enumerate + normalize the most recent ones.
+
+    :param request_id: Unique id for correlating the result.
+    :param source: Harness whose local sessions to read, e.g. ``"claude"``, or
+        ``"all"`` to read every supported harness on the host in one batch.
+    :param limit: Maximum number of most-recent sessions to return per harness.
+    """
+
+    request_id: str
+    source: str
+    limit: int = 10
+
+
+@dataclass
+class HostImportLocalByIdFrame:
+    """Server → host: read one known local transcript without listing.
+
+    :param request_id: Unique id for correlating the result.
+    :param source: Harness namespace containing the session.
+    :param session_id: Exact harness-native session id to load.
+    """
+
+    request_id: str
+    source: str
+    session_id: str
+
+
+@dataclass
+class HostImportLocalSessionFrame:
+    """Host → server: one normalized local session, streamed as it's read.
+
+    Sent once per session so a large batch never rides in a single frame (the
+    server persists each on arrival). ``total`` is the number of sessions the
+    host expects to stream for this request, so the server can report progress.
+
+    :param request_id: Correlates to the :class:`HostImportLocalFrame`.
+    :param total: Total sessions the host will stream for this request.
+    :param session: The normalized session to persist.
+    """
+
+    request_id: str
+    total: int
+    session: HostImportedLocalSession
+
+
+@dataclass
+class HostImportLocalDoneFrame:
+    """Host → server: the import stream for a request has ended.
+
+    :param request_id: Correlates to the :class:`HostImportLocalFrame`.
+    :param status: ``"ok"`` or ``"failed"``.
+    :param error: Failure detail when ``status`` is ``"failed"``.
+    :param failed: Count of enumerated sessions the host could not read/parse
+        (skipped, no session frame sent). The server folds these into its own
+        failed tally so the reported counts account for every target.
+    """
+
+    request_id: str
+    status: str
+    error: str | None = None
+    failed: int = 0
+
+
+@dataclass
 class HostWorktreeSizesFrame:
     """Server → host: request cached worktree sizes for a repository.
 
@@ -961,14 +1057,16 @@ class HostWorktreeSizesResultFrame:
     :param total_bytes: Sum of non-failed worktree sizes.
     :param calculated_at: Monotonic seconds of the last calculation (0 when unknown).
     :param error: Overall error message, or None.
+
     """
 
     request_id: str
     status: str
+    error: str | None = None
+    failed: int = 0
     worktrees: list[_JsonObject] | None = None
     total_bytes: int = 0
     calculated_at: float = 0.0
-    error: str | None = None
 
 
 HostFrame = (
@@ -1008,6 +1106,10 @@ HostFrame = (
     | HostFsResultFrame
     | HostModelOptionsFrame
     | HostModelOptionsResultFrame
+    | HostImportLocalFrame
+    | HostImportLocalByIdFrame
+    | HostImportLocalSessionFrame
+    | HostImportLocalDoneFrame
     | HostWorktreeSizesFrame
     | HostWorktreeSizesResultFrame
 )
@@ -1221,6 +1323,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "repo_path": frame.repo_path,
                 "branch_name": frame.branch_name,
                 "base_branch": frame.base_branch,
+                "existing_branch": frame.existing_branch,
                 "auto_fetch_base": frame.auto_fetch_base,
                 "auto_reuse": frame.auto_reuse,
                 "reuse_existing_branch": frame.reuse_existing_branch,
@@ -1424,6 +1527,50 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "routable_models": frame.routable_models,
             }
         )
+    if isinstance(frame, HostImportLocalFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.IMPORT_LOCAL.value,
+                "request_id": frame.request_id,
+                "source": frame.source,
+                "limit": frame.limit,
+            }
+        )
+    if isinstance(frame, HostImportLocalByIdFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.IMPORT_LOCAL_BY_ID.value,
+                "request_id": frame.request_id,
+                "source": frame.source,
+                "session_id": frame.session_id,
+            }
+        )
+    if isinstance(frame, HostImportLocalSessionFrame):
+        s = frame.session
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.IMPORT_LOCAL_SESSION.value,
+                "request_id": frame.request_id,
+                "total": frame.total,
+                "session": {
+                    "external_session_id": s.external_session_id,
+                    "workspace": s.workspace,
+                    "items": s.items,
+                    "title": s.title,
+                    "source": s.source,
+                },
+            }
+        )
+    if isinstance(frame, HostImportLocalDoneFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.IMPORT_LOCAL_DONE.value,
+                "request_id": frame.request_id,
+                "status": frame.status,
+                "error": frame.error,
+                "failed": frame.failed,
+            }
+        )
     if isinstance(frame, HostWorktreeSizesFrame):
         return _encode_payload(
             {
@@ -1581,10 +1728,19 @@ def _decode_known_host_frame(
             return _decode_model_options(msg)
         case HostFrameKind.MODEL_OPTIONS_RESULT:
             return _decode_model_options_result(msg)
+        case HostFrameKind.IMPORT_LOCAL:
+            return _decode_import_local(msg)
+        case HostFrameKind.IMPORT_LOCAL_BY_ID:
+            return _decode_import_local_by_id(msg)
+        case HostFrameKind.IMPORT_LOCAL_SESSION:
+            return _decode_import_local_session(msg)
+        case HostFrameKind.IMPORT_LOCAL_DONE:
+            return _decode_import_local_done(msg)
         case HostFrameKind.WORKTREE_SIZES:
             return _decode_worktree_sizes(msg)
         case HostFrameKind.WORKTREE_SIZES_RESULT:
             return _decode_worktree_sizes_result(msg)
+
     raise ValueError(f"unhandled host frame kind: {kind.value!r}")  # pragma: no cover
 
 
@@ -1856,6 +2012,9 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
     :param msg: Decoded frame object.
     :returns: Typed host.create_worktree frame.
     """
+    # ``existing_branch`` is absent on frames from older servers — treat
+    # missing (or non-bool) as False so old-server/new-host stays compatible.
+    existing_branch = msg.get("existing_branch")
     auto_fetch_base = msg.get("auto_fetch_base", False)
     if not isinstance(auto_fetch_base, bool):
         raise ValueError("frame field must be a bool: 'auto_fetch_base'")
@@ -1868,11 +2027,13 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
     lease_seconds = msg.get("lease_seconds", 86_400)
     if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or lease_seconds <= 0:
         raise ValueError("frame field must be a positive int: 'lease_seconds'")
+
     return HostCreateWorktreeFrame(
         request_id=_required_str(msg, "request_id"),
         repo_path=_required_str(msg, "repo_path"),
         branch_name=_required_str(msg, "branch_name"),
         base_branch=_optional_nullable_str(msg, "base_branch"),
+        existing_branch=existing_branch is True,
         auto_fetch_base=auto_fetch_base,
         auto_reuse=auto_reuse,
         reuse_existing_branch=reuse_existing_branch,
@@ -1883,7 +2044,6 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
 
 def _decode_create_worktree_log(msg: _JsonObject) -> HostWorktreeLogFrame:
     """Decode a host.create_worktree_log frame.
-
     :param msg: Decoded frame object.
     :returns: Typed host.create_worktree_log frame.
     """
@@ -2193,6 +2353,69 @@ def _decode_model_options_result(msg: _JsonObject) -> HostModelOptionsResultFram
         models=models,
         error=_optional_nullable_str(msg, "error"),
         routable_models=routable,
+    )
+
+
+def _decode_import_local(msg: _JsonObject) -> HostImportLocalFrame:
+    """Decode a host.import_local frame."""
+    return HostImportLocalFrame(
+        request_id=_required_str(msg, "request_id"),
+        source=_required_str(msg, "source"),
+        limit=_required_int(msg, "limit"),
+    )
+
+
+def _decode_import_local_by_id(msg: _JsonObject) -> HostImportLocalByIdFrame:
+    """Decode a host.import_local_by_id frame."""
+    return HostImportLocalByIdFrame(
+        request_id=_required_str(msg, "request_id"),
+        source=_required_str(msg, "source"),
+        session_id=_required_str(msg, "session_id"),
+    )
+
+
+def _decode_imported_local_session(raw: object) -> HostImportedLocalSession:
+    """Decode one normalized session object into a HostImportedLocalSession."""
+    if not isinstance(raw, dict):
+        raise ValueError("'session' must be a JSON object")
+    items = raw.get("items", [])
+    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+        raise ValueError("session 'items' must be a list of JSON objects")
+    workspace = raw.get("workspace")
+    if workspace is not None and not isinstance(workspace, str):
+        raise ValueError("session 'workspace' must be a string or null")
+    title = raw.get("title")
+    if title is not None and not isinstance(title, str):
+        raise ValueError("session 'title' must be a string or null")
+    source = raw.get("source", "")
+    if not isinstance(source, str):
+        raise ValueError("session 'source' must be a string")
+    return HostImportedLocalSession(
+        external_session_id=_required_str(raw, "external_session_id"),
+        workspace=workspace,
+        items=items,
+        title=title,
+        source=source,
+    )
+
+
+def _decode_import_local_session(msg: _JsonObject) -> HostImportLocalSessionFrame:
+    """Decode a host.import_local_session frame (one streamed session)."""
+    return HostImportLocalSessionFrame(
+        request_id=_required_str(msg, "request_id"),
+        total=_required_int(msg, "total"),
+        session=_decode_imported_local_session(msg.get("session")),
+    )
+
+
+def _decode_import_local_done(msg: _JsonObject) -> HostImportLocalDoneFrame:
+    """Decode a host.import_local_done frame."""
+    return HostImportLocalDoneFrame(
+        request_id=_required_str(msg, "request_id"),
+        status=_required_str(msg, "status"),
+        error=_optional_nullable_str(msg, "error"),
+        # Absent on older hosts; default to 0 so decode stays backward-compatible.
+        failed=raw_failed if isinstance(raw_failed := msg.get("failed"), int) else 0,
     )
 
 

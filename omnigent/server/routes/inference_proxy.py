@@ -12,7 +12,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from omnigent.inference_proxy import inference_surface_for_model
@@ -29,8 +29,6 @@ from omnigent.stores import ConversationStore
 
 _logger = logging.getLogger(__name__)
 _MAX_REQUEST_BYTES = 20 * 1024 * 1024
-_MAX_ERROR_BODY_BYTES = 64 * 1024
-_ERROR_LOG_BODY_CHARS = 2000
 _HOP_BY_HOP_HEADERS = frozenset(
     {
         "connection",
@@ -53,7 +51,7 @@ _SURFACES = {
 def _pi_provider() -> ProviderEntry | None:
     try:
         return default_provider_for_harness(load_config(), "pi")
-    except Exception:
+    except Exception:  # noqa: BLE001
         _logger.warning("Could not resolve the server Pi provider", exc_info=True)
         return None
 
@@ -91,7 +89,7 @@ def create_inference_proxy_router(
         session_id: str,
         surface: str,
         upstream_path: str,
-    ) -> Response:
+    ) -> StreamingResponse:
         if not enabled:
             raise HTTPException(status_code=404, detail="not found")
         _authorize_runner(request, conversation_store, runner_id, session_id)
@@ -179,59 +177,6 @@ def create_inference_proxy_router(
             and key.lower() not in {"content-length", "set-cookie"}
         }
 
-        if response.status_code >= 400:
-            # Buffer the error body so the provider's error text survives to the
-            # runner SDK instead of surfacing as an opaque "<status> status code
-            # (no body)", and log it here — the hop adjacent to the provider.
-            error_body = bytearray()
-            try:
-                async for chunk in response.aiter_raw():
-                    error_body.extend(chunk)
-                    if len(error_body) > _MAX_ERROR_BODY_BYTES:
-                        break
-            except Exception:
-                _logger.warning("inference upstream error body read failed", exc_info=True)
-            await response.aclose()
-            await client.aclose()
-            body_text = bytes(error_body).decode("utf-8", errors="replace")
-            _logger.warning(
-                "inference upstream error: status=%s surface=%s model=%s request_bytes=%s body=%s",
-                response.status_code,
-                surface,
-                model,
-                len(body),
-                body_text[:_ERROR_LOG_BODY_CHARS] or "<empty>",
-            )
-            if not body_text.strip():
-                # Say so explicitly rather than letting the client SDK report a
-                # bodyless error with no context.
-                empty_body_headers = {
-                    key: value
-                    for key, value in response_headers.items()
-                    if key.lower() != "content-type"
-                }
-                return Response(
-                    content=json.dumps(
-                        {
-                            "error": {
-                                "type": "upstream_error",
-                                "message": (
-                                    f"upstream returned HTTP {response.status_code}"
-                                    " with an empty response body"
-                                ),
-                            }
-                        }
-                    ).encode(),
-                    status_code=response.status_code,
-                    headers=empty_body_headers,
-                    media_type="application/json",
-                )
-            return Response(
-                content=bytes(error_body),
-                status_code=response.status_code,
-                headers=response_headers,
-            )
-
         async def response_body() -> AsyncIterator[bytes]:
             try:
                 async for chunk in response.aiter_raw():
@@ -266,9 +211,7 @@ def _validated_workspace_origin(value: str | None) -> str:
         raise HTTPException(
             status_code=503, detail="server Databricks workspace is invalid"
         ) from exc
-    allowed_host = hostname.endswith(".databricks.com") or hostname.endswith(
-        ".azuredatabricks.net"
-    )
+    allowed_host = hostname.endswith((".databricks.com", ".azuredatabricks.net"))
     try:
         address = ip_address(hostname)
     except ValueError:

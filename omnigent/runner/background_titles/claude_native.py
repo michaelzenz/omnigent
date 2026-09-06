@@ -7,12 +7,14 @@ import contextlib
 import json
 import logging
 import os
+from collections.abc import Callable
+from typing import Any, cast
 
 from omnigent.debug_logging import runner_primary_session_id
 from omnigent.runner.background_titles.service import (
     BACKGROUND_TITLE_INFERENCE_TIMEOUT_SECONDS,
-    BACKGROUND_TITLE_INSTRUCTIONS,
     BackgroundTitleContext,
+    build_background_title_instructions,
 )
 
 _logger = logging.getLogger("omnigent.runner.background_titles.claude_native")
@@ -38,14 +40,15 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
         )
         claude_config = None
     effective_model = (
-        context.spawn_env.get("HARNESS_CLAUDE_SDK_MODEL")
+        context.title_model
+        or context.spawn_env.get("HARNESS_CLAUDE_SDK_MODEL")
         or context.model_override
         or (claude_config.model if claude_config is not None else None)
     )
     args = [
         "--safe-mode",
         "--system-prompt",
-        BACKGROUND_TITLE_INSTRUCTIONS,
+        build_background_title_instructions(context.additional_instructions),
         "-p",
         f"<user_message>\n{context.prompt}\n</user_message>",
         "--tools",
@@ -64,7 +67,8 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
     command, launch_args = resolve_claude_launch("claude", args)
     env = dict(os.environ)
     env.update(build_native_claude_terminal_env(claude_config))
-    for name in _claude_terminal_env_unset(claude_config):
+    env_unset = cast(Callable[[Any], set[str]], _claude_terminal_env_unset)
+    for name in env_unset(claude_config):
         env.pop(name, None)
 
     process = await asyncio.create_subprocess_exec(

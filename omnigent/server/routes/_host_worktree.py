@@ -144,6 +144,7 @@ async def create_worktree_on_host(
     repo_path: str,
     branch_name: str,
     base_branch: str | None,
+    existing_branch: bool = False,
     auto_fetch_base: bool = False,
     on_log: Callable[[str], None] | None = None,
     auto_reuse: bool = False,
@@ -165,6 +166,9 @@ async def create_worktree_on_host(
     :param branch_name: New branch to create, e.g. ``"feature/login"``.
     :param base_branch: Optional base ref, e.g. ``"main"``. ``None``
         branches from the repo's current ``HEAD``.
+    :param existing_branch: When ``True``, the host checks out the
+        pre-existing ``branch_name`` into a fresh worktree (the
+        deleted-worktree recreate path) instead of creating a branch.
     :param auto_fetch_base: Whether the host may fetch and retry a missing base.
     :param on_log: Optional callback for each streamed git output line.
     :returns: The created worktree's path and branch.
@@ -181,6 +185,7 @@ async def create_worktree_on_host(
                 repo_path=repo_path,
                 branch_name=branch_name,
                 base_branch=base_branch,
+                existing_branch=existing_branch,
                 auto_fetch_base=auto_fetch_base,
                 auto_reuse=auto_reuse,
                 reuse_existing_branch=reuse_existing_branch,

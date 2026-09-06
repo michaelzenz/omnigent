@@ -1,9 +1,10 @@
-"""Owned static model tables for Smart Routing.
+"""Owned static model tables for Smart Routing and background titles.
 
 Pre-launch picker listings carry no static stand-ins anymore — the live
 harness probes (see ``omnigent.host.connect``) are their source of truth.
 What remains here is the router's operational data: rankings, arm menus,
-and probed exclusions that no discovery API can provide.
+probed exclusions that no discovery API can provide, plus the economy-tier
+arms background session-title generation pins per harness family.
 """
 
 from __future__ import annotations
@@ -61,6 +62,14 @@ _CODEX_LAUNCH_DEFAULT = StaticModelFallback(
 )
 
 CODEX_DEFAULT_MODEL = _CODEX_LAUNCH_DEFAULT.model_ids[0]
+
+_CONTEXT_WINDOW_FALLBACK = StaticModelFallback(
+    model_ids=("kimi-k3",),
+    owner="Context-window lookup (omnigent.llms.context_window)",
+    provenance="Published provider context-window metadata",
+    discovery_gap="some MLflow catalog entries omit max_input_tokens",
+)
+KIMI_K3_MODEL = _CONTEXT_WINDOW_FALLBACK.model_ids[0]
 
 
 # ── Smart Routing ───────────────────────────────────────────────────────────
@@ -198,3 +207,39 @@ SMART_ROUTING_PI_EXCLUDED = _SMART_ROUTING_FALLBACKS["pi_excluded"].model_ids
 CODEX_CATALOG_CLONE_SOURCE_SLUG = _SMART_ROUTING_FALLBACKS["codex_catalog_clone_source"].model_ids[
     0
 ]
+
+#: Cheapest current arm per CLI family for background session titles. Title
+#: calls are tiny (<=64 output tokens, no tools, low effort), so they always
+#: run on the family's cheapest arm regardless of the session's model.
+_BACKGROUND_TITLE_FALLBACKS: dict[str, StaticModelFallback] = {
+    "claude": StaticModelFallback(
+        model_ids=("haiku",),
+        owner="Background session titles (omnigent.runner.background_titles.service)",
+        provenance=(
+            "claude's bare family alias resolves to the cheapest current Haiku "
+            "on Anthropic-direct and AI-Gateway paths alike"
+        ),
+        discovery_gap=(
+            "a background title never consults the session's live model catalog, "
+            "and no discovery API ranks arms by cost"
+        ),
+    ),
+    "codex": StaticModelFallback(
+        model_ids=("gpt-5.6-luna",),
+        owner="Background session titles (omnigent.runner.background_titles.service)",
+        provenance=(
+            "codex's own dotted catalog slug for its cheapest current arm — the "
+            "gateway's hyphenated spelling 400s on codex's backend"
+        ),
+        discovery_gap=(
+            "a background title never consults the session's live model catalog, "
+            "and no discovery API ranks arms by cost"
+        ),
+    ),
+}
+
+#: The claude-family arm background session titles pin.
+BACKGROUND_TITLE_CLAUDE_ECONOMY_MODEL = _BACKGROUND_TITLE_FALLBACKS["claude"].model_ids[0]
+
+#: The codex-family arm background session titles pin.
+BACKGROUND_TITLE_CODEX_ECONOMY_MODEL = _BACKGROUND_TITLE_FALLBACKS["codex"].model_ids[0]

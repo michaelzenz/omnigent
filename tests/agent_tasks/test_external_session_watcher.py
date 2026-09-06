@@ -282,7 +282,7 @@ def test_propose_external_session_adoption_creates_new_task(db_uri: str) -> None
 
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    worker_store = SqlAlchemyWorkerStore(db_uri)
+    SqlAlchemyWorkerStore(db_uri)
 
     hint = "codex-propose-new"
     task, proposal = propose_external_session_adoption(
@@ -311,7 +311,7 @@ def test_propose_external_session_adoption_uses_existing_task(db_uri: str) -> No
 
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    worker_store = SqlAlchemyWorkerStore(db_uri)
+    SqlAlchemyWorkerStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
 
     agent_store = SqlAlchemyAgentStore(db_uri)
@@ -343,7 +343,7 @@ def test_propose_external_session_adoption_reconciles_discovered_event(
 
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    worker_store = SqlAlchemyWorkerStore(db_uri)
+    SqlAlchemyWorkerStore(db_uri)
 
     hint = "codex-reconcile"
     # Create a discovered event
@@ -452,7 +452,7 @@ def test_reject_external_session_adoption_dismisses_proposal(db_uri: str) -> Non
 
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    worker_store = SqlAlchemyWorkerStore(db_uri)
+    SqlAlchemyWorkerStore(db_uri)
 
     hint = "codex-reject-test"
     _, proposal = propose_external_session_adoption(

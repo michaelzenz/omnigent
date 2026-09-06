@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import asc, desc, func, or_, select, update
 
@@ -272,7 +272,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     updated_at=now,
                 )
             )
-            if session.execute(stmt).rowcount != 1:
+            if cast(Any, session.execute(stmt)).rowcount != 1:
                 return None
             session.flush()
             return self._read_queue(session, key)
@@ -295,7 +295,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 .where(SqlAgentQueue.lease_owner == lease_owner)
                 .values(lease_expires_at=now + ttl_s, updated_at=now)
             )
-            return session.execute(stmt).rowcount == 1
+            return cast(Any, session.execute(stmt)).rowcount == 1
 
     def release_lease(
         self,
@@ -395,7 +395,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 )
                 .values(inflight_item_id=item_id, inflight_since=now, updated_at=now)
             )
-            if session.execute(claim).rowcount != 1:
+            if cast(Any, session.execute(claim)).rowcount != 1:
                 return None
             row.state = encode_agent_queue_item_state("dispatched")
             row.dispatched_at = now
@@ -585,26 +585,24 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
 
     def get_dispatch_stoplist(self) -> frozenset[str]:
         with self._session() as session:
-            rows = session.execute(
-                select(SqlDispatchStop.role).where(
-                    SqlDispatchStop.workspace_id == current_workspace_id()
+            rows = (
+                session.execute(
+                    select(SqlDispatchStop.role).where(
+                        SqlDispatchStop.workspace_id == current_workspace_id()
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             return frozenset(rows)
 
     def set_role_dispatch_stopped(self, role: str, stopped: bool) -> None:
         now = now_epoch()
         with self._session() as session:
-            row = session.get(
-                SqlDispatchStop, (current_workspace_id(), role)
-            )
+            row = session.get(SqlDispatchStop, (current_workspace_id(), role))
             if stopped:
                 if row is None:
-                    session.add(
-                        SqlDispatchStop(
-                            role=role, created_at=now, updated_at=now
-                        )
-                    )
+                    session.add(SqlDispatchStop(role=role, created_at=now, updated_at=now))
                 else:
                     row.updated_at = now
             elif row is not None:
@@ -807,7 +805,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     updated_at=now,
                 )
             )
-            if session.execute(stmt).rowcount != 1:
+            if cast(Any, session.execute(stmt)).rowcount != 1:
                 return None
             session.flush()
             row = session.get(SqlAgentQueueItem, (current_workspace_id(), item_id))
@@ -925,7 +923,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     owner_user_id=row.owner_user_id,
                     scope_id=row.scope_id if row.scope_id else None,
                 )
-                queue = self._get_queue_row(session, key)
+                self._get_queue_row(session, key)
                 # Queue is always active now (no halted state); nothing to clear.
             session.flush()
             return _item_to_entity(row)
@@ -943,7 +941,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             )
             result = session.execute(stmt)
             session.flush()
-            return result.rowcount or 0
+            return cast(Any, result).rowcount or 0
 
     # ── Internals ──────────────────────────────────────
 

@@ -812,9 +812,7 @@ class PolicyEngine:
         """
         return replace(ctx, session_state=dict(self._session_state))
 
-    def _inject_trajectory(
-        self, ctx: EvaluationContext
-    ) -> EvaluationContext:
+    def _inject_trajectory(self, ctx: EvaluationContext) -> EvaluationContext:
         """
         Return a copy of *ctx* with ``trajectory`` populated.
 

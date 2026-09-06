@@ -101,11 +101,21 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-_WHEEL_BUILD_EXCLUDE_DIRS = frozenset({
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
-    ".omnigent",
-})
+_WHEEL_BUILD_EXCLUDE_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".omnigent",
+    }
+)
 
 
 def _newest_source_mtime(root: Path, exclude: frozenset[str]) -> float:
@@ -326,7 +336,7 @@ class SshHostOperations:
             self._npm_registry_url(),
             self._remote_namespace,
         )
-        command = f'${{SHELL:-bash}} -l -c {shlex.quote(install_command)}'
+        command = f"${{SHELL:-bash}} -l -c {shlex.quote(install_command)}"
         self._log(
             profile.id,
             "installing",
@@ -572,14 +582,14 @@ class SshHostOperations:
             # offline before the new one connects — otherwise the
             # reconciler sees the stale connection as "online" and
             # short-circuits before the new daemon is ready.
-            'for i in 1 2 3 4 5; do '
+            "for i in 1 2 3 4 5; do "
             'if ! kill -0 "$pid" 2>/dev/null; then break; fi; sleep 0.5; done; fi; fi; '
             f'nohup env PATH="$pi_path:$PATH" {env} "$root/current/venv/bin/omnigent" host '
             f"--server http://localhost --server-unix-socket {shlex.quote(socket_path)} "
             '--non-interactive >"$runtime/host.log" 2>&1 < /dev/null & '
             'echo "$!" >"$runtime/host.pid"'
         )
-        command = f'${{SHELL:-bash}} -l -c {shlex.quote(inner)}'
+        command = f"${{SHELL:-bash}} -l -c {shlex.quote(inner)}"
         code, stdout, stderr = await ssh_run(profile, command, timeout_s=30)
         if code != 0:
             error_msg = (stderr or stdout).decode().strip() or "remote host start failed"

@@ -393,8 +393,6 @@ def test_hardcoded_context_window_yields_to_catalog_metadata(
     monkeypatch.setattr(
         context_window,
         "find_catalog_models",
-        lambda _model: [
-            ModelInfo(name="kimi-k3", provider="provider", max_input_tokens=256_000)
-        ],
+        lambda _model: [ModelInfo(name="kimi-k3", provider="provider", max_input_tokens=256_000)],
     )
     assert get_model_context_window("databricks-kimi-k3") == 256_000

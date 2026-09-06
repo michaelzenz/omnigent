@@ -218,8 +218,13 @@ async def test_retry_backoff_is_capped(store: SqlAlchemyAgentQueueStore) -> None
     for _ in range(12):
         assert store.mark_dispatched(_uid("a"), key, now=now_epoch()) is not None
         store.fail_dispatch(
-            _uid("a"), key, error="boom", now=now_epoch(),
-            retryable=True, max_retries=None, backoff_s=0,
+            _uid("a"),
+            key,
+            error="boom",
+            now=now_epoch(),
+            retryable=True,
+            max_retries=None,
+            backoff_s=0,
         )
 
     handler = _RecordingHandler(deliver_error="still down")

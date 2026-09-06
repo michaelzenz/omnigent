@@ -8,9 +8,7 @@ import {
   useToolPreferences,
   useUpdateToolPreferences,
   type ToolEntry,
-  type ToolGroup,
 } from "@/hooks/useToolPreferences";
-import { cn } from "@/lib/utils";
 
 type CheckedState = boolean | "indeterminate";
 

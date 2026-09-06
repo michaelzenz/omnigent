@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
+from omnigent.model_fallbacks import KIMI_K3_MODEL
 from omnigent.onboarding.providers import ModelInfo, find_catalog_models
 
 _DEFAULT_CONTEXT_WINDOW: int = 128_000
@@ -53,7 +54,7 @@ _GPT56_PREFIX = "g" + "pt-5"
 _GPT56_SOL = _GPT56_PREFIX + "-6-s" + "ol"
 _GPT56_LUNA = _GPT56_PREFIX + "-6-l" + "una"
 _HARDCODED_CONTEXT_WINDOWS: dict[str, int] = {
-    "kimi-k3": 1_000_000,
+    KIMI_K3_MODEL: 1_000_000,
     # The gpt 5.6 gateway variants carry 1.05M in the provider catalog, but
     # tests and offline hosts run with catalog lookup disabled, so they need
     # explicit entries to avoid Pi compacting at the 128K default. (Keys are

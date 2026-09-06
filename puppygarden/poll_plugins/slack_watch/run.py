@@ -322,7 +322,11 @@ async def _amain() -> int:
             # IMs/MPIMs always emit all messages. Channels are mentions_only
             # unless listed in all_events_channels (by ID or name).
             kind = meta.get("kind", "channel")
-            mentions_only = kind not in ("im", "mpim") and cid not in all_events_set and meta.get("name", "") not in all_events_set
+            mentions_only = (
+                kind not in ("im", "mpim")
+                and cid not in all_events_set
+                and meta.get("name", "") not in all_events_set
+            )
             history = await slack.get(
                 "conversations.history",
                 {"channel": cid, "oldest": f"{watermark:.6f}", "limit": limit},
@@ -411,9 +415,11 @@ async def _amain() -> int:
                         # In all-events mode, only fan out for thread roots
                         # with a newer reply (root has thread_ts == ts).
                         latest_reply = message.get("latest_reply")
-                        if latest_reply and ts_to_float(latest_reply) > t_watermark and ts_to_float(
-                            thread_ts
-                        ) == ts_to_float(message.get("ts", "")):
+                        if (
+                            latest_reply
+                            and ts_to_float(latest_reply) > t_watermark
+                            and ts_to_float(thread_ts) == ts_to_float(message.get("ts", ""))
+                        ):
                             await _fetch_thread_replies(
                                 slack=slack,
                                 channel_id=cid,

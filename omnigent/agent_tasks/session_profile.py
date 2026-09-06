@@ -9,6 +9,7 @@ from omnigent.entities.conversation import Conversation
 
 def resolve_session_routing_tags(session_id: str, conv: Conversation) -> list[EventTag]:
     """Return structured routing tags written by the broker on the session."""
+    del session_id
     tags: list[EventTag] = []
     repo = conv.labels.get(ROUTING_REPO_LABEL, "").strip()
     if repo:

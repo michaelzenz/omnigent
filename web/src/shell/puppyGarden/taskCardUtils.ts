@@ -1,4 +1,4 @@
-import type { TaskExecutionSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
+import type { TaskExecutionSummary, TaskWorkerLane, TaskWorkerRow } from "@/lib/agentTasksApi";
 
 export type WorkStateLabel = "To Run" | "Running" | "Done";
 
@@ -43,7 +43,7 @@ export function itemStateLabel(state: string): string {
   }
 }
 
-export function visibleWorkerRows(rows: import("@/lib/agentTasksApi").TaskWorkerRow[]) {
+export function visibleWorkerRows(rows: TaskWorkerRow[]) {
   return rows.filter((row) => row.kind !== "item" || !isDoneTaskItem(row.item.state));
 }
 

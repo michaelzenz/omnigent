@@ -30,6 +30,12 @@ describe("sessionWorkspaceState", () => {
     });
   });
 
+  it("persists the GitHub rail tab", () => {
+    writeSessionWorkspaceState("conv_github", { rightRailTab: "github" });
+
+    expect(readSessionWorkspaceState("conv_github")).toEqual({ rightRailTab: "github" });
+  });
+
   it("keeps sessions isolated by id", () => {
     writeSessionWorkspaceState("conv_a", { open: true });
     writeSessionWorkspaceState("conv_b", { open: false, widthPx: 600 });

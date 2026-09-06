@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CheckIcon, Loader2Icon, MessageSquareIcon, PencilIcon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,14 @@ import { TaskCardSidebar } from "./TaskCardAssets";
 import { TaskItemsPanel } from "./TaskCardWorkers";
 import { TaskActionsMenu } from "./TaskActionsMenu";
 
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ children, ...props }) => (
+    <a {...props} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+};
+
 // Task-state badge palette ("tinted outline"): hue-matched border + translucent
 // fill, darker text in light mode and brighter tinted text in dark mode.
 const TASK_STATE_BADGE_CLASSES: Record<string, string> = {
@@ -29,8 +37,7 @@ const TASK_STATE_BADGE_CLASSES: Record<string, string> = {
     "border-[rgba(234,179,8,0.6)] bg-[rgba(234,179,8,0.08)] text-[#a16207] dark:bg-[rgba(234,179,8,0.08)] dark:text-[#fde047]",
   "agent-resolved":
     "border-[rgba(59,130,246,0.55)] bg-[rgba(59,130,246,0.07)] text-[#1d4ed8] dark:bg-[rgba(59,130,246,0.08)] dark:text-[#60a5fa]",
-  idle:
-    "border-[rgba(100,116,139,0.45)] bg-[rgba(100,116,139,0.06)] text-[#64748b] dark:bg-[rgba(148,163,184,0.06)] dark:text-[#94a3b8]",
+  idle: "border-[rgba(100,116,139,0.45)] bg-[rgba(100,116,139,0.06)] text-[#64748b] dark:bg-[rgba(148,163,184,0.06)] dark:text-[#94a3b8]",
   archived:
     "border-[rgba(120,113,108,0.45)] bg-[rgba(120,113,108,0.06)] text-[#78716c] dark:bg-[rgba(120,113,108,0.08)] dark:text-[#a8a29e]",
 };
@@ -235,16 +242,7 @@ export function TaskCard({
             </h3>
             {effectiveDescription ? (
               <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    a: ({ children, ...props }) => (
-                      <a {...props} target="_blank" rel="noopener noreferrer">
-                        {children}
-                      </a>
-                    ),
-                  }}
-                >
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                   {effectiveDescription}
                 </ReactMarkdown>
               </div>
@@ -302,16 +300,7 @@ export function TaskCard({
               </h3>
               {effectiveDescription ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      a: ({ children, ...props }) => (
-                        <a {...props} target="_blank" rel="noopener noreferrer">
-                          {children}
-                        </a>
-                      ),
-                    }}
-                  >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                     {effectiveDescription}
                   </ReactMarkdown>
                 </div>
@@ -337,9 +326,11 @@ export function TaskCard({
                       setManagerHoldError(null);
                       try {
                         await openManager(taskId, dashboard.task.manager_conversation_id, title);
-                      } catch (error) {
+                      } catch (openError) {
                         setManagerHoldError(
-                          error instanceof Error ? error.message : "Could not pause manager dispatch",
+                          openError instanceof Error
+                            ? openError.message
+                            : "Could not pause manager dispatch",
                         );
                       } finally {
                         setManagerHoldPending(false);

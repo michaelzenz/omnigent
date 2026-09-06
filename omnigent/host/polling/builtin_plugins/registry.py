@@ -7,8 +7,9 @@ import time and is immutable.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,10 @@ def _register_all() -> None:
                 "interval_s": 300,
                 "singleton": False,
             },
-            description="Internal session watcher — auto-adopts omnigent sessions and emits turn-finish events",
+            description=(
+                "Internal session watcher — auto-adopts omnigent sessions "
+                "and emits turn-finish events"
+            ),
         )
     )
 

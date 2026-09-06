@@ -177,27 +177,31 @@ def test_mutable_registries_are_single_homed() -> None:
     )
 
 
-def test_moved_machinery_is_absent_from_orchestration() -> None:
-    """Orchestration stays the leaf layer: no upstream-derived machinery.
-
-    Stage 1 moved upstream-derived defs into app.py so upstream merges are
-    text-merges. If a sync re-adds one to orchestration.py, app.py and
-    orchestration drift again (the same-name/two-homes trap).
-    """
-    import subprocess
-
-    upstream = subprocess.run(
-        ["git", "show", "origin/main:omnigent/runner/app.py"],
-        capture_output=True,
+def test_native_launch_machinery_is_owned_by_orchestration() -> None:
+    """Native launch entry points stay in orchestration, never app.py."""
+    app_defs = _top_level_defs(ast.parse(APP_PATH.read_text()))
+    orchestration_defs = _top_level_defs(ast.parse((NATIVE_DIR / "orchestration.py").read_text()))
+    expected = {
+        "ResolvedSpec",
+        "_auto_create_claude_terminal",
+        "_auto_create_codex_terminal",
+        "_codex_discover_thread_and_forward",
+        "_launch_claude",
+        "_launch_codex",
+        "_launch_native_terminal",
+    }
+    assert expected <= set(orchestration_defs), (
+        "native/orchestration.py is missing required launch machinery: "
+        f"{sorted(expected - set(orchestration_defs))}"
     )
-    if upstream.returncode != 0:
-        raise AssertionError("origin/main unavailable; cannot compare against upstream")
-    upstream_defs = set(_top_level_defs(ast.parse(upstream.stdout.decode(errors="replace"))))
-
-    orch_defs = _top_level_defs(ast.parse((NATIVE_DIR / "orchestration.py").read_text()))
-    regressed = sorted(set(orch_defs) & upstream_defs)
-    assert not regressed, (
-        "orchestration.py defines upstream-derived names that were "
-        f"consolidated into app.py: {regressed}. An upstream merge likely "
-        "re-introduced them; delete them from orchestration.py."
+    assert not expected & set(app_defs), (
+        "app.py must delegate native launch machinery to native/orchestration.py: "
+        f"{sorted(expected & set(app_defs))}"
     )
+
+
+def test_native_provider_hooks_target_native_package() -> None:
+    """Provider lazy-import strings must resolve launch hooks from native/."""
+    provider_source = (RUNNER_DIR.parent / "harness_plugins.py").read_text()
+    assert 'auto_create_terminal=f"omnigent.runner.native:_launch_{key}"' in provider_source
+    assert 'auto_create_terminal=f"omnigent.runner.app:_launch_{key}"' not in provider_source

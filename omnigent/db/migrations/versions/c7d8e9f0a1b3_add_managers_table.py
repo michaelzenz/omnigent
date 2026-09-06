@@ -118,8 +118,7 @@ def upgrade() -> None:
                 tasks.c.created_at,
                 tasks.c.id,
             )
-        )
-        .mappings()
+        ).mappings()
     )
     grouped: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for row in rows:
@@ -128,9 +127,7 @@ def upgrade() -> None:
 
     backfill: dict[tuple[int, str], dict[str, Any]] = {}
     for key, shared_rows in grouped.items():
-        task_owners = {
-            row["owner_user_id"] or "__anonymous__" for row in shared_rows
-        }
+        task_owners = {row["owner_user_id"] or "__anonymous__" for row in shared_rows}
         permission_owners = set(
             bind.execute(
                 sa.select(permissions.c.user_id).where(
@@ -162,9 +159,7 @@ def upgrade() -> None:
         metadata_rows = selected_rows or shared_rows
         exemplar = metadata_rows[0]
         created_at = min((row["created_at"] or 0) for row in metadata_rows)
-        updated_at = max(
-            (row["updated_at"] or row["created_at"] or 0) for row in metadata_rows
-        )
+        updated_at = max((row["updated_at"] or row["created_at"] or 0) for row in metadata_rows)
         description = next(
             (
                 candidate
@@ -191,8 +186,7 @@ def upgrade() -> None:
             .where(
                 tasks.c.workspace_id == key[0],
                 tasks.c.manager_conversation_id == key[1],
-                sa.func.coalesce(tasks.c.owner_user_id, "__anonymous__")
-                != selected_owner,
+                sa.func.coalesce(tasks.c.owner_user_id, "__anonymous__") != selected_owner,
             )
             .values(manager_conversation_id=None)
         )

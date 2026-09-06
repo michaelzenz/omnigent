@@ -34,7 +34,7 @@ import {
   routingExtras,
 } from "./routingDecision";
 import { isSystemUserContent } from "./systemMessage";
-import type { RememberScope } from "./types";
+import type { CodexPersistMode, RememberScope } from "./types";
 import type { ActiveResponse } from "@/store/types";
 
 /**
@@ -100,6 +100,7 @@ export type RenderItem =
       message: string;
       source: string;
       code: string;
+      level?: "error" | "info";
       title?: string;
       cause?: string;
       remediation?: string;
@@ -127,6 +128,7 @@ export type RenderItem =
       response: {
         action: "accept" | "decline" | "cancel" | "auto_resolved";
         content?: Record<string, unknown>;
+        _meta?: Record<string, unknown>;
       } | null;
       askUserQuestion?: Record<string, unknown> | null;
       exitPlanMode?: Record<string, unknown> | null;
@@ -138,6 +140,7 @@ export type RenderItem =
       } | null;
       allowAllEdits?: boolean;
       rememberScope?: RememberScope | null;
+      codexPersistModes?: CodexPersistMode[];
     };
 
 /** A bubble cluster. The page maps over these. */
@@ -196,7 +199,7 @@ export type Bubble =
        *  Display-only. */
       createdAtS?: number;
     }
-  | { kind: "compaction_loading"; itemId: string }
+  | { kind: "compaction_loading"; itemId: string; createdAtS?: number }
   | { kind: "compaction"; itemId: string }
   | {
       kind: "routing_decision";
@@ -817,6 +820,7 @@ function walkBubbles(
       bubbles.push({
         kind: "compaction_loading",
         itemId: b.ctx.itemId ?? `compaction_loading_${i}`,
+        createdAtS: b.ctx.clientCreatedAtS,
       });
       i += 1;
       continue;
@@ -1485,6 +1489,7 @@ function buildAssistantItems(
         message: b.message,
         source: b.source,
         code: b.code,
+        ...(b.level ? { level: b.level } : {}),
         ...(b.title ? { title: b.title } : {}),
         ...(b.cause ? { cause: b.cause } : {}),
         ...(b.remediation ? { remediation: b.remediation } : {}),
@@ -1525,6 +1530,7 @@ function buildAssistantItems(
         codexCommand: b.codexCommand,
         allowAllEdits: b.allowAllEdits,
         rememberScope: b.rememberScope,
+        codexPersistModes: b.codexPersistModes,
       });
       i += 1;
       continue;

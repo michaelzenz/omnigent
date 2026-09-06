@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 import sys
@@ -42,15 +43,11 @@ def main() -> int:
         for statement in DROP_LEGACY:
             conn.execute(statement)
         for table in CLEAR_TABLES:
-            try:
+            with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"DELETE FROM {table}")
-            except sqlite3.OperationalError:
-                pass
         # Tighten task_events check constraint when legacy DB still allows state 5.
-        try:
+        with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE task_events DROP CONSTRAINT ck_task_events_state")
-        except sqlite3.OperationalError:
-            pass
         conn.commit()
     finally:
         conn.close()

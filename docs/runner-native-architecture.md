@@ -2,9 +2,9 @@
 
 ## Status
 
-Current as of the machinery consolidation (stages 0–2). This document explains
-the component landscape of the runner, how the pieces fit together, and the
-structural rules that keep the fork mergeable with upstream.
+Current as of the restoration of upstream's native-orchestration split. This
+document explains the component landscape of the runner, how the pieces fit
+together, and the structural rules that keep the fork mergeable with upstream.
 
 ## The two planes
 
@@ -118,17 +118,17 @@ When no loaded bridge exists, handlers degrade deliberately and differently:
 settings return 503 (a silent 204 would claim a switch the app-server never
 saw); compact falls through to server-side compaction.
 
-## Code map after the consolidation
+## Code map
 
 ```
-omnigent/runner/app.py            ALL machinery — upstream shape + fork hooks inline
+omnigent/runner/app.py            FastAPI/session integration and Omniharness behavior
 omnigent/runner/native/
-  ├─ orchestration.py (~900 L)    fork-only leaf: routers, launch metadata, routed spawn
-  ├─ interrupt.py                 interrupt/stop control (DI: app injects 3 callables)
-  └─ __init__.py                  re-exports only
+  ├─ orchestration.py             native launch, ensure, teardown, and shared state
+  ├─ interrupt.py                 interrupt/stop control using orchestration helpers
+  └─ __init__.py                  complete native surface re-export
 omnigent/<key>_native*.py         vendor integrations (upstream)
 omnigent/harness_plugins.py       provider seam: registry mapping harness key → hooks
-omnigent/native_dispatch.py         (e.g. omnigent.runner.app:_launch_codex)
+omnigent/native_dispatch.py       (e.g. omnigent.runner.native:_launch_codex)
 omnigent/runner/subagent_routing.py   Smart Routing (fork-only)
 omnigent/runner/turn_routing.py       first-message routing (fork-only)
 omnigent/runner/session_init_protocol.py  versioned init snapshot (fork-only)
@@ -152,13 +152,19 @@ pointing at the cause. The structural guard
    app-server pools) exist in exactly one module. Duplicated registries
    cause split-brain: register writes dict A, cancel pops dict B, sessions
    leak live tasks.
-4. **Orchestration stays leaf** — upstream-derived defs belong in `app.py`
-   (checked against `origin/main`), so upstream merges are text-merges.
+4. **Native launch machinery stays in orchestration** — launch/ensure/teardown
+   entry points and their mutable state follow upstream in
+   `native/orchestration.py`. `app.py` imports and delegates to that surface;
+   it does not carry fallback copies.
+5. **Provider hooks target the native package** —
+   `NativeHarnessProvider.auto_create_terminal` resolves
+   `omnigent.runner.native:_launch_<key>`.
 
-Rule of thumb for placement: **if upstream also has the function, it lives in
-`app.py`** (so upstream's edits merge as text); **if it is fork-only and
-referenced by nothing in app.py's machinery, it may live in the leaf layer.**
-State dicts always co-locate with the functions that mutate them.
+Rule of thumb for placement: native process lifecycle and bridge orchestration
+live in `native/orchestration.py`; FastAPI routes, session state, Smart Routing,
+agent-task handling, per-turn MCP/tool filtering, and Omniharness prompt
+composition live in `app.py`. State dicts always co-locate with the functions
+that mutate them.
 
 ## Fork-vs-upstream provenance: the recurring trap
 

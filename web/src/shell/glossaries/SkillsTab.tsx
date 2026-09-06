@@ -282,9 +282,7 @@ function SkillRootsDialog({
         <div className="space-y-3 rounded-lg border border-border p-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Hidden skills</h3>
-            <span className="text-xs text-muted-foreground">
-              {hiddenSkills.length} hidden
-            </span>
+            <span className="text-xs text-muted-foreground">{hiddenSkills.length} hidden</span>
           </div>
           <p className="text-xs text-muted-foreground">
             Skills listed here won't appear in the sidebar. Toggle to unhide.
@@ -296,10 +294,7 @@ function SkillRootsDialog({
             {allSkillNames.map((name) => {
               const isHidden = hiddenSkills.includes(name);
               return (
-                <label
-                  key={name}
-                  className="flex items-center gap-2 text-xs"
-                >
+                <label key={name} className="flex items-center gap-2 text-xs">
                   <Switch
                     checked={!isHidden}
                     onCheckedChange={() => onToggleHidden(name)}
@@ -761,7 +756,9 @@ export function SkillsTab() {
                           size="icon-sm"
                           className="ml-auto"
                           aria-label={
-                            previewPaths.has(file.path) ? `Edit ${file.path}` : `Preview ${file.path}`
+                            previewPaths.has(file.path)
+                              ? `Edit ${file.path}`
+                              : `Preview ${file.path}`
                           }
                           onClick={() =>
                             setPreviewPaths((prev) => {

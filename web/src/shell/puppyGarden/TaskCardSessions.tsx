@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
 import { Loader2Icon } from "lucide-react";
+import { Link } from "@/lib/routing";
 import { Badge } from "@/components/ui/badge";
 import { relativeTime } from "@/lib/relativeTime";
 import type { TaskDashboard } from "@/lib/agentTasksApi";

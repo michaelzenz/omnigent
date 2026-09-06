@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from builtins import list as builtin_list
 
 from omnigent.entities.memory import MemoryCategory
 from omnigent.memory import MemoryProvider
@@ -58,7 +59,9 @@ class MemoryStore(ABC):
         ...
 
     @abstractmethod
-    def reorder(self, category_ids: list[str], *, user_id: str | None) -> list[MemoryCategory]:
+    def reorder(
+        self, category_ids: builtin_list[str], *, user_id: str | None
+    ) -> builtin_list[MemoryCategory]:
         """Replace the owner's category order."""
         ...
 

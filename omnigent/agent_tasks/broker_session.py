@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from typing import Any
@@ -106,6 +107,7 @@ def ensure_role_profile(
         existing is not None
         and (existing.prompt_profile_id or prompt_profile_store is None)
         and (host_store is None or existing.host_id is not None)
+        and existing.agent_profile_id is not None
         and agent_store.get(existing.agent_profile_id) is not None
     ):
         return existing
@@ -157,6 +159,7 @@ def get_or_create_role_profile(
         existing is not None
         and (existing.prompt_profile_id or prompt_profile_store is None)
         and existing.host_id is not None
+        and existing.agent_profile_id is not None
         and agent_store.get(existing.agent_profile_id) is not None
     ):
         return existing
@@ -223,7 +226,7 @@ async def _rebind_broker_runner(
             conversation_store=conversation_store,
             permission_store=None,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         _logger.warning(
             "broker rebind: host launch resolve failed for session %s",
             conversation_id,
@@ -243,9 +246,7 @@ async def _rebind_broker_runner(
         return conversation_id
 
     request_id = secrets.token_hex(8)
-    future: asyncio.Future[dict[str, str | None]] = (
-        asyncio.get_running_loop().create_future()
-    )
+    future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()
     conn = target.conn
     conn.pending_launches[request_id] = future
 
@@ -254,10 +255,8 @@ async def _rebind_broker_runner(
 
     harness = None
     inference_proxy = False
-    try:
+    with contextlib.suppress(Exception):
         inference_proxy = use_server_inference_proxy(conn, harness)
-    except Exception:
-        pass
     frame = HostLaunchRunnerFrame(
         request_id=request_id,
         binding_token=binding_token,
@@ -268,23 +267,29 @@ async def _rebind_broker_runner(
     )
     try:
         host_registry.send_text(conn, encode_host_frame(frame))
-    except Exception:
-        _logger.warning("broker rebind: host frame send failed for session %s", conversation_id, exc_info=True)
+    except Exception:  # noqa: BLE001
+        _logger.warning(
+            "broker rebind: host frame send failed for session %s", conversation_id, exc_info=True
+        )
         conn.pending_launches.pop(request_id, None)
         return None
 
     try:
         result = await asyncio.wait_for(future, timeout=30.0)
-    except (asyncio.TimeoutError, Exception):
+    except Exception:  # noqa: BLE001
         _logger.warning("broker rebind: runner launch timed out for session %s", conversation_id)
         conn.pending_launches.pop(request_id, None)
         return None
 
     if not result.get("runner_id"):
-        _logger.warning("broker rebind: runner launch failed for session %s: %s", conversation_id, result)
+        _logger.warning(
+            "broker rebind: runner launch failed for session %s: %s", conversation_id, result
+        )
         return None
 
-    _logger.info("broker rebind: runner %s re-attached to session %s", result["runner_id"], conversation_id)
+    _logger.info(
+        "broker rebind: runner %s re-attached to session %s", result["runner_id"], conversation_id
+    )
     return conversation_id
 
 

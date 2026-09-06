@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from sqlalchemy import asc, delete, func, select
 
 from omnigent.db.db_models import SqlTaskAsset, current_workspace_id
@@ -92,4 +94,4 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 )
             )
             session.flush()
-            return result.rowcount or 0
+            return cast(Any, result).rowcount or 0

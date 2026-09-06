@@ -215,6 +215,10 @@ class AgentQueueStore(ABC):
         global dispatch stoplist. Idempotent either way.
         """
 
+    @abstractmethod
+    def get_dispatch_stoplist(self) -> frozenset[str]:
+        """Return roles currently excluded from dispatch."""
+
     # ── Control plane ──────────────────────────────────
 
     @abstractmethod

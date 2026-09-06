@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { hostFetch } from "@/lib/host";
+import { authenticatedFetch } from "@/lib/identity";
 
 export interface DatabricksStatus {
   connected: boolean;
@@ -11,7 +11,7 @@ export interface DatabricksStatus {
 const STATUS_KEY = ["databricks-status"];
 
 async function fetchDatabricksStatus(): Promise<DatabricksStatus> {
-  const res = await hostFetch("/v1/databricks/status");
+  const res = await authenticatedFetch("/v1/databricks/status");
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as DatabricksStatus;
 }
@@ -37,7 +37,7 @@ interface LoginStartResponse {
 export function useDatabricksLogin() {
   return useMutation({
     mutationFn: async (host?: string): Promise<LoginStartResponse> => {
-      const res = await hostFetch("/v1/databricks/login", {
+      const res = await authenticatedFetch("/v1/databricks/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(host ? { host } : {}),
@@ -60,7 +60,7 @@ export function useDatabricksLoginPoll() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (): Promise<LoginPollResponse> => {
-      const res = await hostFetch("/v1/databricks/login/poll");
+      const res = await authenticatedFetch("/v1/databricks/login/poll");
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return (await res.json()) as LoginPollResponse;
     },

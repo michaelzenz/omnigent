@@ -76,10 +76,7 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
             )}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
           {!isArchived && (
             <DropdownMenuItem
               onClick={() => {
@@ -110,8 +107,8 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
           <DialogHeader>
             <DialogTitle>Archive task?</DialogTitle>
             <DialogDescription>
-              The task will be hidden from the board but its data is kept.
-              You can still find it later by querying archived tasks.
+              The task will be hidden from the board but its data is kept. You can still find it
+              later by querying archived tasks.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -126,9 +123,7 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
               disabled={archiveTask.isPending}
               onClick={() => void handleArchive()}
             >
-              {archiveTask.isPending ? (
-                <Loader2Icon className="mr-2 size-4 animate-spin" />
-              ) : null}
+              {archiveTask.isPending ? <Loader2Icon className="mr-2 size-4 animate-spin" /> : null}
               Archive
             </Button>
           </DialogFooter>
@@ -138,18 +133,14 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent onClick={(e) => e.stopPropagation()}>
           <DialogHeader>
-            <DialogTitle className="text-destructive">
-              Delete task permanently?
-            </DialogTitle>
+            <DialogTitle className="text-destructive">Delete task permanently?</DialogTitle>
             <DialogDescription>
-              This action cannot be undone. All task data — items and events —
-              will be permanently removed. Worker sessions and assets will be
-              untracked but remain accessible as regular conversations.
+              This action cannot be undone. All task data — items and events — will be permanently
+              removed. Worker sessions and assets will be untracked but remain accessible as regular
+              conversations.
             </DialogDescription>
           </DialogHeader>
-          {deleteError ? (
-            <p className="text-sm text-destructive">{deleteError}</p>
-          ) : null}
+          {deleteError ? <p className="text-sm text-destructive">{deleteError}</p> : null}
           <DialogFooter>
             <DialogClose asChild>
               <Button type="button" variant="outline">

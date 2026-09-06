@@ -7,7 +7,12 @@ import {
   readCodeFontSizePx,
 } from "@/lib/codeFontPreferences";
 import { detectLang } from "../codeViewerHelpers";
-import { ensureLanguage, ensureMonacoReady, monacoLanguageId, resolvedThemeToMonaco } from "../monacoSetup";
+import {
+  ensureLanguage,
+  ensureMonacoReady,
+  monacoLanguageId,
+  resolvedThemeToMonaco,
+} from "../monacoSetup";
 import { useTheme } from "next-themes";
 import { normalizeResolvedTheme } from "@/components/theme/themeMode";
 import "../monacoCodeEditor.css";

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { Link } from "@/lib/routing";
 import type { TaskWorkerRow, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { isEditableItemState, isExecutionEditable, visibleWorkerRows } from "./taskCardUtils";
 import { TaskCardItemEditor } from "./TaskCardItemEditor";
@@ -25,7 +25,12 @@ interface TaskCardWorkerRowsProps {
   workerKind: string;
 }
 
-export function TaskCardWorkerRows({ taskId, rows, workerLanes, workerKind }: TaskCardWorkerRowsProps) {
+export function TaskCardWorkerRows({
+  taskId,
+  rows,
+  workerLanes,
+  workerKind,
+}: TaskCardWorkerRowsProps) {
   const visibleRows = visibleWorkerRows(rows);
   const [folded, setFolded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(visibleRows.map((row) => [rowKey(row), row.default_folded])),
@@ -92,13 +97,11 @@ export function TaskCardWorkerRows({ taskId, rows, workerLanes, workerKind }: Ta
                         workerLanes={workerLanes}
                         workerKind={workerKind}
                         mode={
-                          row.item.state === "draft"
-                            ? "draft"
-                            : row.item.state === "pending"
-                              ? "ack"
-                              : row.item.state === "queued"
-                                ? "edit"
-                                : "parked"
+                          row.item.state === "pending"
+                            ? "ack"
+                            : row.item.state === "queued"
+                              ? "edit"
+                              : "parked"
                         }
                       />
                       <TaskCardRowActions taskId={taskId} item={row.item} />

@@ -48,7 +48,7 @@ import tempfile
 from asyncio import Queue, Task
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
+from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, cast
 from urllib.parse import urlparse as _urlparse
 
 from omnigent import model_catalog
@@ -57,7 +57,6 @@ from omnigent.inner.agent_env import clean_agent_env
 from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue
-from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.llms.context_window import lookup_model_context_window
 from omnigent.model_metadata import ModelWireAPI
@@ -110,16 +109,6 @@ logger = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS_RE = re.compile(r"\b(429|5\d{2})\s+status\s+code\b", re.IGNORECASE)
 
-# Pi's default auto-compaction reserve (settings-manager.js) and the extra
-# headroom we add on top for per-turn growth and estimator error.
-_PI_COMPACTION_RESERVE_TOKENS = 16 * 1024
-_PI_COMPACTION_HEADROOM_TOKENS = 16 * 1024
-
-# Stable marker for "compaction needs a live Pi session and none exists".
-# The harness adapter maps this to a 409 no_live_process response so the
-# runner/server can fall back to server-side compaction of stored history.
-NO_LIVE_PI_PROCESS_MESSAGE = "no live Pi process for this conversation"
-
 
 def _is_transient_error(message: str) -> bool:
     """True when an error message references a transient HTTP status (429, 5xx).
@@ -164,10 +153,15 @@ def _fetch_shell_command_token(command: str) -> str | None:
 # server so the adapter can correlate the dispatch with the observed event
 # without relying on a racy FIFO queue); may return the result dict directly
 # or a coroutine/future yielding one.
-ToolExecutor: TypeAlias = Callable[  # type: ignore[explicit-any]
-    [str, dict[str, Any]],
-    Awaitable[dict[str, Any]] | dict[str, Any],
-]
+class ToolExecutor(Protocol):
+    def __call__(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        tool_call_id: str | None = None,
+    ) -> Awaitable[dict[str, Any]] | dict[str, Any]: ...
+
 
 # Native-tool policy gate wired by :class:`PiExecutor`. Invoked with a native
 # (non-bridged) tool name + argument dict; returns ``{"block": bool, "reason":
@@ -623,7 +617,9 @@ module.exports = function(pi) {{
   // correlation by the before_provider_request logging hook below.
   function readTurnContext() {{
     if (!CONTEXT_FILE) return {{}};
-    try {{ return JSON.parse(fs.readFileSync(CONTEXT_FILE, "utf8")) || {{}}; }} catch (_) {{ return {{}}; }}
+    try {{
+      return JSON.parse(fs.readFileSync(CONTEXT_FILE, "utf8")) || {{}};
+    }} catch (_) {{ return {{}}; }}
   }}
 
   // Opt-in provider-request logging.  Set OMNIGENT_PI_PROVIDER_REQUEST_LOG
@@ -644,7 +640,9 @@ module.exports = function(pi) {{
       fs.appendFileSync(REQUEST_LOG, JSON.stringify(entry) + "\\n", {{ mode: 0o600 }});
     }} catch (e) {{
       // Logging failures must never break the model request.
-      try {{ console.error("[onih-pi] provider request log write failed:", e.message); }} catch (_) {{}}
+      try {{
+        console.error("[onih-pi] provider request log write failed:", e.message);
+      }} catch (_) {{}}
     }}
   }});
 
@@ -735,6 +733,21 @@ _PI_ENV_ALLOW_EXACT: frozenset[str] = frozenset(
     }
 )
 _STREAM_READ_CHUNK_SIZE = 65536
+# How long _PiRpcSession.close() waits for the Pi subprocess to exit on its own
+# after SIGTERM before falling back to SIGKILL. The interrupt-slice budget in
+# _executor_adapter must be >= this value so the slice never fires first and
+# inject a CancelledError that bypasses the SIGKILL path.
+_RPC_SESSION_CLOSE_REAP_TIMEOUT_S = 2.0
+
+# Idle budget for one stdout read during a turn. Expiry alone never ends
+# the turn (a long tool call may stay silent past it); only a real stdout
+# EOF does. Module-level so tests can patch it.
+_TURN_STDOUT_IDLE_TIMEOUT_S = 120.0
+
+# Post-error drain budget: after an errored message the only line left to
+# consume is the already-emitted ``agent_end``. Module-level so tests can
+# patch it.
+_TURN_STDOUT_ERROR_DRAIN_TIMEOUT_S = 10.0
 
 # Idle budget for one read during a turn, and the shorter drain budget once
 # an errored ``message_end`` means only the trailing ``agent_end`` is left.
@@ -947,30 +960,6 @@ def _local_pi_provider_for_model(
         ):
             matches.append(provider_id)
     return matches[0] if len(matches) == 1 else None
-
-
-def _estimate_wire_overhead_tokens(tools: Sequence[Mapping[str, Any]], system_prompt: str) -> int:
-    """Estimate request tokens pi's compaction trigger does not see.
-
-    Pi's auto-compaction trigger compares its session-token view against
-    ``contextWindow - reserveTokens``, but the wire request also carries the
-    system prompt and every bridged tool schema. When that overhead is large
-    the trigger only fires after the real request has already passed the
-    provider's hard limit — the turn dies before compaction can help. The
-    reserve therefore adds this estimate on top of pi's default.
-
-    Rough by design (tiktoken, cl100k_base): it only positions the trigger,
-    it is not an authoritative count.
-    """
-    if not tools and not system_prompt:
-        return 0
-    serialized = json.dumps(list(tools), default=str) + system_prompt
-    try:
-        import tiktoken
-
-        return len(tiktoken.get_encoding("cl100k_base").encode(serialized))
-    except Exception:  # noqa: BLE001 — estimator must never block a spawn
-        return len(serialized) // 4
 
 
 def _local_pi_settings(
@@ -1532,8 +1521,11 @@ class _PiRpcSession:
                 self._line_queue.put_nowait(line)
         return result
 
-    async def read_line(self, timeout: float | None = 120.0) -> str | None:
-        """Read the next JSONL line from Pi's stdout. Returns None on EOF.
+    async def read_line(self, timeout: float | None = _TURN_STDOUT_IDLE_TIMEOUT_S) -> str | None:
+        """Read the next JSONL line from Pi's stdout.
+
+        Returns ``None`` on EOF **or** timeout; callers that must tell
+        the two apart check :meth:`stdout_at_eof`.
 
         ``timeout=None`` waits indefinitely (used while a bridged tool is
         executing — the tool's own timeout governs, not the read budget).
@@ -1542,6 +1534,18 @@ class _PiRpcSession:
             return await asyncio.wait_for(self._line_queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
             return None
+
+    def stdout_at_eof(self) -> bool:
+        """Whether Pi's stdout is exhausted (process exited / pipe closed).
+
+        The background reader runs until EOF and pushes the ``None``
+        sentinel from its ``finally``, so a finished (or never-started)
+        reader means no further stdout lines can arrive, while a live
+        reader means a ``read_line`` ``None`` was only an idle timeout.
+        Also requires an empty queue so already-buffered lines are
+        drained before the stream is declared exhausted.
+        """
+        return (self._read_task is None or self._read_task.done()) and self._line_queue.empty()
 
     async def close(self) -> None:
         for task in (self._read_task, self._stderr_task):
@@ -1555,7 +1559,9 @@ class _PiRpcSession:
             with contextlib.suppress(ProcessLookupError):
                 self.process.terminate()
             try:
-                await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                await asyncio.wait_for(
+                    self.process.wait(), timeout=_RPC_SESSION_CLOSE_REAP_TIMEOUT_S
+                )
             except (asyncio.TimeoutError, ProcessLookupError, RuntimeError):
                 # RuntimeError can happen when the subprocess was created on a
                 # different event loop (e.g. test fixtures that call close() in
@@ -2425,39 +2431,31 @@ class PiExecutor(Executor):
             return False
 
     async def compact_session(self, session_key: str) -> _JsonObject:
-        """Run Pi's native compactor and return its canonical recovery payload.
-
-        Raises OmnigentError so harness error mapping turns failures into
-        structured responses the runner can surface, instead of a bare 500.
-        """
+        """Run Pi's native compactor and return its canonical recovery payload."""
         state = self._session_states.get(session_key)
         if state is None or state.rpc is None:
-            raise OmnigentError(
-                f"{NO_LIVE_PI_PROCESS_MESSAGE}; send a message to respawn the "
-                "session first, then compact",
-                code=ErrorCode.CONFLICT,
-            )
+            raise RuntimeError("no live Pi process for this conversation")
         rpc = state.rpc
         command_id = f"compact_{session_key}"
         await rpc.send_command({"type": "compact", "id": command_id})
         while True:
             line = await rpc.read_line(timeout=180.0)
             if line is None:
-                raise OmnigentError("Pi exited during compaction", code=ErrorCode.INTERNAL_ERROR)
+                raise RuntimeError("Pi exited during compaction")
             event = json.loads(line)
             if event.get("type") != "compaction_end":
                 continue
             result = event.get("result")
             if not isinstance(result, dict):
                 if event.get("aborted"):
-                    raise OmnigentError("Pi compaction was aborted", code=ErrorCode.CONFLICT)
+                    raise RuntimeError("Pi compaction was aborted")
                 error_message = str(event.get("errorMessage", "Pi compaction failed"))
                 if "already compacted" in error_message.lower():
                     # Benign: the session was just compacted (e.g. a second
                     # /compact right after a successful one). Return an
                     # idempotent no-op so callers don't tear anything down.
                     return {"already_compacted": True, "summary": "", "total_tokens": 0}
-                raise OmnigentError(error_message, code=ErrorCode.INTERNAL_ERROR)
+                raise RuntimeError(error_message)
             await rpc.send_command({"type": "get_messages", "id": f"messages_{command_id}"})
             while True:
                 messages_line = await rpc.read_line(timeout=15.0)
@@ -2470,10 +2468,7 @@ class PiExecutor(Executor):
                 ):
                     continue
                 if not messages_event.get("success", True):
-                    raise OmnigentError(
-                        str(messages_event.get("error", "Pi get_messages failed")),
-                        code=ErrorCode.INTERNAL_ERROR,
-                    )
+                    raise RuntimeError(str(messages_event.get("error", "Pi get_messages failed")))
                 data = messages_event.get("data")
                 messages = data.get("messages") if isinstance(data, dict) else None
                 return {
@@ -2668,7 +2663,6 @@ class PiExecutor(Executor):
         tool_server_port: int | None,
         tool_server_token: str | None,
         model: str | None,
-        system_prompt: str = "",
     ) -> PiSubprocessConfig:
         """Build env dict, temp dir, and extra CLI args for a Pi subprocess.
 
@@ -2684,19 +2678,7 @@ class PiExecutor(Executor):
             ``models.json`` on the gateway path so the
             ``provider/<model>`` selector resolves. ``None`` when no model
             is pinned (Pi picks its own default).
-        :param system_prompt: The system prompt this run will send, used to
-            size the auto-compaction reserve alongside the tool schemas.
         """
-        compaction_settings = {
-            "compaction": {
-                "enabled": True,
-                "reserveTokens": (
-                    _PI_COMPACTION_RESERVE_TOKENS
-                    + _estimate_wire_overhead_tokens(tools, system_prompt)
-                    + _PI_COMPACTION_HEADROOM_TOKENS
-                ),
-            }
-        }
         env = dict(self._env)
         tmp_dir = tempfile.mkdtemp(prefix="omnigent_pi_")
         extra_args: list[str] = list(self._extra_args)
@@ -2741,7 +2723,6 @@ class PiExecutor(Executor):
                 if self._local_config_dir is not None and self._local_models is not None
                 else self._retry_policy.pi.settings()
             )
-            settings = {**settings, **compaction_settings}
             config_dir = pathlib.Path(tmp_dir)
             if self._launch_options.isolated_resources:
                 fingerprint_payload = {
@@ -2781,7 +2762,7 @@ class PiExecutor(Executor):
 
                 prepare_managed_pi_agent_dir(
                     config_dir,
-                    overlay={**self._retry_policy.pi.settings(), **compaction_settings},
+                    overlay=self._retry_policy.pi.settings(),
                 )
             env["PI_CODING_AGENT_DIR"] = str(config_dir)
         elif self._local_models is not None and self._local_config_dir is not None:
@@ -2795,14 +2776,11 @@ class PiExecutor(Executor):
             settings_path = config_dir / "settings.json"
             settings_path.write_text(
                 json.dumps(
-                    {
-                        **_local_pi_settings(
-                            self._local_config_dir,
-                            self._local_models,
-                            self._retry_policy.pi.settings(),
-                        ),
-                        **compaction_settings,
-                    },
+                    _local_pi_settings(
+                        self._local_config_dir,
+                        self._local_models,
+                        self._retry_policy.pi.settings(),
+                    ),
                     indent=2,
                     sort_keys=True,
                 )
@@ -2991,7 +2969,7 @@ class PiExecutor(Executor):
         tool_server_port = await self._ensure_tool_server(tools)
         tool_server_token = self._tool_server.token if self._tool_server is not None else None
         subprocess_config = self._build_env_and_dir(
-            tools, tool_server_port, tool_server_token, effective_model, system_prompt
+            tools, tool_server_port, tool_server_token, effective_model
         )
         env = subprocess_config.env
         tmp_dir = subprocess_config.tmp_dir
@@ -3234,7 +3212,15 @@ class PiExecutor(Executor):
             if isinstance(configured_turn_id, str) and configured_turn_id
             else f"turn_{id(messages)}"
         )
-        command: CodexEvent = {"type": "prompt", "message": message, "id": cmd_id}
+        # streamingBehavior='followUp' lets Pi queue the prompt when its isStreaming
+        # flag is still set after a race with a not-yet-confirmed-dead subprocess,
+        # rather than surfacing the raw 'Agent is already processing' protocol error.
+        command: CodexEvent = {
+            "type": "prompt",
+            "message": message,
+            "id": cmd_id,
+            "streamingBehavior": "followUp",
+        }
         if images:
             command["images"] = images
         try:
@@ -3271,9 +3257,10 @@ class PiExecutor(Executor):
         while True:
             # After an errored message the only thing left to drain is the
             # already-emitted agent_end, so don't wait the full idle budget.
-            # When a bridged tool is in flight, wait indefinitely — the tool's
-            # own timeout governs, and killing the session mid-tool would
-            # abandon a legitimate long-running call.
+            # Read timeout tiers: drain quickly after an errored message; wait
+            # indefinitely while a bridged tool is in flight (the tool's own timeout
+            # governs, and killing the session mid-tool would abandon a legitimate
+            # long-running call); otherwise the idle budget.
             if pending_error is not None:
                 read_timeout: float | None = _TURN_READ_DRAIN_TIMEOUT_S
             elif inflight_tools:
@@ -3290,6 +3277,14 @@ class PiExecutor(Executor):
                         model=model,
                         compacted_messages=None,
                     )
+                if pending_error is None and not rpc.stdout_at_eof():
+                    # Idle timeout, not process death: pi's stdout reader is
+                    # still running — e.g. a long tool call silent past the
+                    # idle budget. Keep waiting; a dead pi process delivers
+                    # a real EOF (reader finishes) instead. True hangs are
+                    # bounded by the harness-level idle watchdog.
+                    logger.debug("PiExecutor: stdout idle past budget; pi still running, waiting")
+                    continue
                 if pending_error is not None:
                     yield ExecutorError(
                         message=pending_error,

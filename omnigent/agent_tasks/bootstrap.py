@@ -14,7 +14,6 @@ from omnigent.agent_tasks.constants import (
     DEFAULT_TASK_WORKSPACE,
     resolve_task_harness,
 )
-from omnigent.agent_tasks.manager_discovery import list_active_managers
 from omnigent.entities import Manager, Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -235,8 +234,7 @@ async def bootstrap_task_manager(
         manager = await asyncio.to_thread(manager_store.get, task.manager_id)
         if manager is None:
             raise OmnigentError(
-                f"task {task.id} references manager {task.manager_id} "
-                "which does not exist",
+                f"task {task.id} references manager {task.manager_id} which does not exist",
                 code=ErrorCode.NOT_FOUND,
             )
         await ensure_manager_session(

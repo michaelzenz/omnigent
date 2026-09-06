@@ -612,3 +612,23 @@ async def test_worktree_task_crash_settles_failed_via_dead_letter(
     status = body["worktree_status"]
     assert status["stage"] == "failed"
     assert status["error"] == "internal error during worktree creation"
+
+
+async def test_existing_branch_is_forwarded_to_background_worktree_create(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """The recreate path checks out, rather than recreates, an existing branch."""
+    cap = register_worktree_host()
+    agent = await create_test_agent(client, name="wt-existing-branch-agent")
+
+    resp = await _create_git_session(
+        client,
+        agent["id"],
+        {"branch_name": "feature/kept", "existing_branch": True},
+    )
+
+    assert resp.status_code == 201, resp.text
+    await _wait_for_worktree_settled(client, resp.json()["id"])
+    assert len(cap.create) == 1, cap.create
+    assert cap.create[0].existing_branch is True

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Callable
+    from collections.abc import Callable
 
     from omnigent.entities import Agent, Conversation
     from omnigent.spec.types import AgentSpec
@@ -60,7 +60,9 @@ def execution_target_for_role(role: str) -> str:
     ``onih-openai-agents`` profile.
     """
     _ensure_puppygarden_ro_predicates()
-    if role in _PUPPYGARDEN_RO_ROLE_KEYS or _is_manager_role_key(role):
+    if role in _PUPPYGARDEN_RO_ROLE_KEYS or (
+        _is_manager_role_key is not None and _is_manager_role_key(role)
+    ):
         return ONIH_PUPPYGARDEN_RO_TARGET
     return ONIH_OPENAI_AGENTS_TARGET
 

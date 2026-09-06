@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import and_, asc, delete, desc, exists, false, func, or_, select, update
 
@@ -18,8 +18,8 @@ from omnigent.db.enum_codecs import (
     decode_fyi_cluster_state,
     decode_task_event_state,
     decode_task_item_state,
-    encode_task_event_state,
     encode_fyi_cluster_state,
+    encode_task_event_state,
     encode_task_item_state,
 )
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
@@ -87,17 +87,9 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
     ) -> bool:
         if event.task_id == task_id:
             return event.manager_id == manager_id
-        if (
-            event.task_id is None
-            and manager_id is not None
-            and event.manager_id == manager_id
-        ):
+        if event.task_id is None and manager_id is not None and event.manager_id == manager_id:
             return True
-        return (
-            allow_unassigned
-            and event.task_id is None
-            and event.manager_id is None
-        )
+        return allow_unassigned and event.task_id is None and event.manager_id is None
 
     def _claim_events(
         self,
@@ -112,12 +104,16 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         """Validate and transition events; the caller owns the transaction."""
         unique_ids = list(dict.fromkeys(event_ids))
         workspace_id = current_workspace_id()
-        rows = session.execute(
-            select(SqlTaskEvent).where(
-                SqlTaskEvent.workspace_id == workspace_id,
-                SqlTaskEvent.id.in_(unique_ids),
+        rows = (
+            session.execute(
+                select(SqlTaskEvent).where(
+                    SqlTaskEvent.workspace_id == workspace_id,
+                    SqlTaskEvent.id.in_(unique_ids),
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         rows_by_id = {row.id: row for row in rows}
         if len(rows_by_id) != len(unique_ids):
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
@@ -176,7 +172,8 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         )
         if invalid_state is not None:
             raise OmnigentError(
-                f"Cannot reconcile event in state {decode_task_event_state(invalid_state.state)!r}",
+                "Cannot reconcile event in state "
+                f"{decode_task_event_state(invalid_state.state)!r}",
                 code=ErrorCode.CONFLICT,
             )
 
@@ -221,14 +218,12 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             .where(
                 SqlTaskEvent.workspace_id == workspace_id,
                 SqlTaskEvent.id.in_(unique_ids),
-                func.coalesce(SqlTaskEvent.owner_user_id, "__anonymous__")
-                == normalized_owner,
+                func.coalesce(SqlTaskEvent.owner_user_id, "__anonymous__") == normalized_owner,
                 SqlTaskEvent.state.in_(acceptable_states),
                 or_(
                     and_(
                         SqlTaskEvent.task_id == task_id,
-                        SqlTaskEvent.manager_id
-                        == manager_id,
+                        SqlTaskEvent.manager_id == manager_id,
                     ),
                     manager_route,
                     legacy_unassigned,
@@ -416,7 +411,9 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             rows = session.execute(stmt).scalars().all()
             return [_item_to_entity(row) for row in rows]
 
-    def delete_items_for_task(self, task_id: str, *, exclude_states: set[str] | None = None) -> int:
+    def delete_items_for_task(
+        self, task_id: str, *, exclude_states: set[str] | None = None
+    ) -> int:
         with self._session() as session:
             stmt = delete(SqlTaskItem).where(
                 SqlTaskItem.workspace_id == current_workspace_id(),
@@ -427,7 +424,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 stmt = stmt.where(~SqlTaskItem.state.in_(excluded_codes))
             result = session.execute(stmt)
             session.flush()
-            return result.rowcount or 0
+            return cast(Any, result).rowcount or 0
 
     def update_item(
         self,
@@ -471,12 +468,16 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
         relation: str = "triggered",
     ) -> TaskItemEvent:
         with self._claim_session() as session:
-            existing = session.execute(
-                select(SqlTaskItemEvent).where(
-                    SqlTaskItemEvent.workspace_id == current_workspace_id(),
-                    SqlTaskItemEvent.event_id == event_id,
+            existing = (
+                session.execute(
+                    select(SqlTaskItemEvent).where(
+                        SqlTaskItemEvent.workspace_id == current_workspace_id(),
+                        SqlTaskItemEvent.event_id == event_id,
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if existing is not None:
                 if existing.task_item_id == task_item_id:
                     return _item_event_to_entity(existing)
@@ -571,7 +572,7 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                     SqlTaskItemEvent.task_item_id == task_item_id,
                 )
             )
-            return result.rowcount
+            return cast(Any, result).rowcount
 
     def create_fyi_cluster(
         self,

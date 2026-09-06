@@ -97,6 +97,9 @@ def configure(conversation_id: str, payload: Any, history: Any) -> None:
         _contexts.pop(conversation_id, None)
         return
     provider = payload.get("provider")
+    if not isinstance(provider, str):
+        _contexts.pop(conversation_id, None)
+        return
     filename = _PROVIDER_FILENAMES.get(provider)
     if filename is None:
         _contexts.pop(conversation_id, None)

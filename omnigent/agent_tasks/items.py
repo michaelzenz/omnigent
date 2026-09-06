@@ -20,26 +20,6 @@ from omnigent.entities import Task, TaskEvent, TaskEventExecution, TaskItem
 from omnigent.entities.agent_queue import AgentQueueKey
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
-
-
-def _require_worker_owner_scope(
-    worker,
-    owner_user_id: str | None,
-    *,
-    task_store,
-) -> None:
-    """A shared worker lane may only serve tasks of its own owner.
-
-    The worker row has no owner column; its owner is the owner of the home
-    task it was created on — a stable binding, unlike worker.task_id which
-    v2 treats as a weak lane reference.
-    """
-    home = task_store.get(worker.task_id)
-    home_owner = home.owner_user_id if home is not None else None
-    if home_owner is not None and home_owner != owner_user_id:
-        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-
-
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -48,6 +28,20 @@ from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
 _logger = logging.getLogger(__name__)
+
+
+def _require_worker_owner_scope(
+    worker,
+    owner_user_id: str | None,
+    *,
+    task_store,
+) -> None:
+    """A shared worker lane may only serve tasks of its own owner."""
+    home = task_store.get(worker.task_id)
+    home_owner = home.owner_user_id if home is not None else None
+    if home_owner is not None and home_owner != owner_user_id:
+        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+
 
 ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
 _INBOX_STATES = frozenset({"draft", "pending"})
@@ -94,6 +88,7 @@ def create_task_item(
     allow_unassigned_events: bool = False,
 ) -> TaskItem:
     """Create a task item and optionally link contributing events."""
+    del task_event_store
     if kind == "human_action":
         if worker_id is not None:
             raise OmnigentError(

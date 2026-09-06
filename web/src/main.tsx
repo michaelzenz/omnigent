@@ -11,8 +11,10 @@ import { QueueFlushProvider } from "./hooks/QueueFlushProvider";
 import { SessionUpdatesProvider } from "./hooks/SessionUpdatesProvider";
 import { resolveServerInfo, type ServerInfo } from "./lib/capabilities";
 import { CapabilitiesProvider } from "./lib/CapabilitiesContext";
+import { ExtensionProvider } from "./extensions/ExtensionProvider";
 import { createBootServerInfo, withBootTimeout } from "./lib/bootCapabilities";
 import { isLoginRedirectPending, resolveIdentity } from "./lib/identity";
+import { hideNativeChatTerminalBar } from "./lib/nativeChatTerminalBar";
 import { initNativeInsets } from "./lib/nativeInsets";
 import { initBrowserTelemetry } from "./lib/telemetry";
 import { installChunkRecovery } from "./lib/chunkRecovery";
@@ -74,6 +76,12 @@ const bootIdentity = resolveIdentity();
 // No-op off the iOS shell (the inset vars stay at their env()-only defaults).
 initNativeInsets();
 
+// The Chat/Terminal switcher lives in the header (ViewModeToggle) on every
+// shell; assert the iOS shell's legacy bottom pill hidden before the router
+// mounts, so stale shell state (a page served before the pill's retirement)
+// can never float it — on any route, chat or auth. No-op off the iOS shell.
+hideNativeChatTerminalBar();
+
 // Apply the saved desktop UI font size and family before first paint so there's no flash.
 applyDesktopUiFontSize(readUiFontSizePx());
 applyUiFontFamily(readUiFontFamily());
@@ -133,21 +141,23 @@ function RootApp({ initialInfo }: { initialInfo: ServerInfo }) {
   return (
     <CapabilitiesProvider info={info}>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <TooltipProvider>
-            <ImageLightboxProvider>
-              <BrowserRouter>
-                <SessionUpdatesProvider>
-                  <RunnerHealthProvider>
-                    <QueueFlushProvider>
-                      <App />
-                    </QueueFlushProvider>
-                  </RunnerHealthProvider>
-                </SessionUpdatesProvider>
-              </BrowserRouter>
-            </ImageLightboxProvider>
-          </TooltipProvider>
-        </ThemeProvider>
+        <ExtensionProvider>
+          <ThemeProvider>
+            <TooltipProvider>
+              <ImageLightboxProvider>
+                <BrowserRouter>
+                  <SessionUpdatesProvider>
+                    <RunnerHealthProvider>
+                      <QueueFlushProvider>
+                        <App />
+                      </QueueFlushProvider>
+                    </RunnerHealthProvider>
+                  </SessionUpdatesProvider>
+                </BrowserRouter>
+              </ImageLightboxProvider>
+            </TooltipProvider>
+          </ThemeProvider>
+        </ExtensionProvider>
       </QueryClientProvider>
     </CapabilitiesProvider>
   );

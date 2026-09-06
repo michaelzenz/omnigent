@@ -60,7 +60,7 @@ def _auto_managed_info(repo_root: str) -> dict[str, dict[str, object]]:
                 and isinstance(raw, dict)
                 and raw.get("repo_root") == repo_root
             }
-    except Exception:
+    except Exception:  # noqa: BLE001
         _logger.warning("failed to read auto worktree cache", exc_info=True)
         return {}
 
@@ -156,7 +156,7 @@ def _dir_size_bytes(path: str) -> tuple[int, str | None]:
     """
     cmd: list[str] = ["du", "-sb", path]
     if sys.platform == "linux":
-        cmd = ["nice", "-n", "19", "ionice", "-c", "3"] + cmd
+        cmd = ["nice", "-n", "19", "ionice", "-c", "3", *cmd]
     elif sys.platform == "darwin":
         cmd = ["nice", "-n", "19", "du", "-sk", path]
     try:
@@ -214,9 +214,7 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
             if not dirty:
                 owner = info.get("lease_owner") if isinstance(info, dict) else None
                 expires_at = info.get("lease_expires_at") if isinstance(info, dict) else None
-                lease_free = owner is None or (
-                    isinstance(expires_at, int) and expires_at <= now
-                )
+                lease_free = owner is None or (isinstance(expires_at, int) and expires_at <= now)
         entries.append(
             WorktreeSizeEntry(
                 path=wt.path,

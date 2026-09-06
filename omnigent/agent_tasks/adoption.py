@@ -8,13 +8,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from omnigent.agent_tasks.bootstrap import BootstrapParams
 from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.manager_discovery import _LIVE_TASK_STATES
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent
+from omnigent.entities import MessageData, Task, TaskEvent
 from omnigent.entities.conversation import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
@@ -50,7 +51,7 @@ def _extract_last_turn_text(
             if item.type != "message":
                 continue
             data = item.data
-            if not hasattr(data, "role"):
+            if not isinstance(data, MessageData):
                 continue
             text_parts = [
                 block.get("text", "")
@@ -72,7 +73,7 @@ def _extract_last_turn_text(
                 else:
                     last_agent_response = text
                 last_agent_response = last_agent_response[:2000]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return last_user_message, last_agent_response or None
 
@@ -136,6 +137,7 @@ def adopt_session_to_task(
 
     :returns: worker_id
     """
+    del score, owner_user_id
     assert _context is not None
     worker_id = _generate_worker_id()
     _context.worker_store.create_worker(
@@ -233,12 +235,14 @@ async def adopt_external_session(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
+    params: BootstrapParams | None = None,
     proposal_event: TaskEvent | None = None,
     session_creator: Any | None = None,
     app_state: Any | None = None,
     user_id: str | None = None,
 ) -> tuple[TaskEvent, TaskEvent]:
     """Bind a watcher-discovered external session to a task."""
+    del params
     task = task_store.get(task_id)
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)

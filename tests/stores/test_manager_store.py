@@ -6,7 +6,6 @@ import uuid
 
 import pytest
 
-from omnigent.entities import Manager
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 
 

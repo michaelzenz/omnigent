@@ -131,7 +131,7 @@ class PollScheduler:
             await poller.on_start(self._ctx)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             _logger.warning("Poller %s on_start failed", poller.name, exc_info=True)
 
         in_flight: asyncio.Task[None] | None = None
@@ -166,7 +166,7 @@ class PollScheduler:
             await poller.poll_once(self._ctx)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             stats.consecutive_failures += 1
             base = poller.interval_s(self._ctx)
             stats.backoff_s = min(
@@ -189,9 +189,10 @@ class PollScheduler:
         poller: PollSource,
         stats: PollSourceStats,
     ) -> None:
+        del stats
         try:
             await task
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             _logger.debug("Poller %s tick failed after completion", poller.name, exc_info=True)

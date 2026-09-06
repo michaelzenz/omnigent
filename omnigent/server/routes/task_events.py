@@ -130,9 +130,7 @@ class BatchRouteManagerTaskEventsRequest(BaseModel):
     @field_validator("event_ids")
     @classmethod
     def _clean_event_ids(cls, value: list[str]) -> list[str]:
-        cleaned = list(
-            dict.fromkeys(event_id.strip() for event_id in value if event_id.strip())
-        )
+        cleaned = list(dict.fromkeys(event_id.strip() for event_id in value if event_id.strip()))
         if not cleaned:
             raise ValueError("event_ids must contain at least one id")
         if len(cleaned) > 100:
@@ -232,8 +230,7 @@ def create_task_events_router(
                 task_event_store.list_deliveries_for_event, event.id
             )
             response["deliveries"] = [
-                {"event_id": delivery.id, "task_id": delivery.task_id}
-                for delivery in deliveries
+                {"event_id": delivery.id, "task_id": delivery.task_id} for delivery in deliveries
             ]
         return response
 
@@ -433,9 +430,7 @@ def create_task_events_router(
                     f"Event {event.id} is not compatible with the manager host",
                     code=ErrorCode.CONFLICT,
                 )
-            if event.state == "routed" and (
-                event.manager_id == body.manager_id
-            ):
+            if event.state == "routed" and (event.manager_id == body.manager_id):
                 events.append(event)
                 continue
             if event.state not in ROUTABLE_STALLED_EVENT_STATES:
@@ -464,10 +459,9 @@ def create_task_events_router(
         """Dismiss a task event without routing it."""
         user_id = require_user(request, auth_provider)
         event = await _get_event_or_404(event_id)
-        if (
-            (event.owner_user_id or "__anonymous__") != _effective_user_id(user_id)
-            and not _is_admin(user_id)
-        ):
+        if (event.owner_user_id or "__anonymous__") != _effective_user_id(
+            user_id
+        ) and not _is_admin(user_id):
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         updated = await dismiss_task_event(event=event, task_event_store=task_event_store)
         return _event_to_response(updated)

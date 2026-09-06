@@ -23,6 +23,7 @@ from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import WorkerStore
 
+
 def _generate_task_id() -> str:
     return uuid.uuid4().hex
 
@@ -47,15 +48,10 @@ def _require_package_event_scope(
     owner_user_id: str | None,
     manager_id: str | None,
 ) -> None:
-    if (event.owner_user_id or "__anonymous__") != (
-        owner_user_id or "__anonymous__"
-    ):
+    if (event.owner_user_id or "__anonymous__") != (owner_user_id or "__anonymous__"):
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
     task_matches = event.task_id is None or event.task_id == task_id
-    manager_matches = (
-        event.manager_id is None
-        or event.manager_id == manager_id
-    )
+    manager_matches = event.manager_id is None or event.manager_id == manager_id
     if not task_matches or not manager_matches:
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
 
@@ -99,15 +95,12 @@ def _bulk_claimable_events(
         if eid in claimed_by_items or eid in claimed_by_fyi:
             continue
         is_ambiguous = event.state in AMBIGUOUS_EVENT_STATES
-        is_direct_manager_route = (
-            event.state == "routed"
-            and (
-                event.task_id == task.id
-                or (
-                    event.task_id is None
-                    and event.manager_id is not None
-                    and event.manager_id == task.manager_id
-                )
+        is_direct_manager_route = event.state == "routed" and (
+            event.task_id == task.id
+            or (
+                event.task_id is None
+                and event.manager_id is not None
+                and event.manager_id == task.manager_id
             )
         )
         if is_ambiguous or is_direct_manager_route:
@@ -255,12 +248,8 @@ def create_task_package(
     resolved_internal_note = internal_note or (
         internal_note_from_event_tags(event_tags) if event_tags else None
     )
-    all_event_ids = list(
-        dict.fromkeys(event_id for item in items for event_id in item.event_ids)
-    )
-    events_by_id = {
-        event.id: event for event in task_event_store.get_events(all_event_ids)
-    }
+    all_event_ids = list(dict.fromkeys(event_id for item in items for event_id in item.event_ids))
+    events_by_id = {event.id: event for event in task_event_store.get_events(all_event_ids)}
     if any(event_id not in events_by_id for event_id in all_event_ids):
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
     for event in events_by_id.values():

@@ -15,10 +15,15 @@ import {
   type AvailableAgent,
 } from "@/hooks/useAvailableAgents";
 import { useSessionAgent } from "@/hooks/useAgents";
-import { useHosts, type Host } from "@/hooks/useHosts";
+import { useSession } from "@/hooks/useSession";
+import { useHosts, useHostModelOptions, type Host } from "@/hooks/useHosts";
 import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
-import { checkHostDirectory, useHostFilesystem } from "@/hooks/useHostFilesystem";
+import {
+  checkHostDirectory,
+  hostDirectoryMissing,
+  useHostFilesystem,
+} from "@/hooks/useHostFilesystem";
 import { useHostRepository } from "@/hooks/useHostWorktrees";
 
 const navigateMock = vi.fn();
@@ -32,12 +37,14 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
   prefetchAvailableAgentDetails: vi.fn(),
 }));
 vi.mock("@/hooks/useAgents", () => ({ useSessionAgent: vi.fn() }));
-vi.mock("@/hooks/useHosts", () => ({ useHosts: vi.fn() }));
+vi.mock("@/hooks/useSession", () => ({ useSession: vi.fn() }));
+vi.mock("@/hooks/useHosts", () => ({ useHosts: vi.fn(), useHostModelOptions: vi.fn() }));
 vi.mock("@/hooks/useDirectorySessions", () => ({ useDirectorySessions: vi.fn() }));
 vi.mock("@/hooks/RunnerHealthProvider", () => ({ useRunnerHealthRegistration: vi.fn() }));
 vi.mock("@/hooks/useHostFilesystem", () => ({
   useHostFilesystem: vi.fn(),
   checkHostDirectory: vi.fn(),
+  hostDirectoryMissing: vi.fn(),
 }));
 vi.mock("@/hooks/useHostWorktrees", () => ({ useHostRepository: vi.fn() }));
 // The tree browser only mounts when browsing; coding-fork tests rely on the
@@ -57,10 +64,13 @@ const launchRunnerMock = vi.mocked(launchRunner);
 const useAvailableAgentsMock = vi.mocked(useAvailableAgents);
 const useSessionAgentMock = vi.mocked(useSessionAgent);
 const useHostsMock = vi.mocked(useHosts);
+const useHostModelOptionsMock = vi.mocked(useHostModelOptions);
+const useSessionMock = vi.mocked(useSession);
 const useDirectorySessionsMock = vi.mocked(useDirectorySessions);
 const useRunnerHealthMock = vi.mocked(useRunnerHealthRegistration);
 const useHostFilesystemMock = vi.mocked(useHostFilesystem);
 const checkHostDirectoryMock = vi.mocked(checkHostDirectory);
+const hostDirectoryMissingMock = vi.mocked(hostDirectoryMissing);
 const useHostRepositoryMock = vi.mocked(useHostRepository);
 const prefetchAvailableAgentDetailsMock = vi.mocked(prefetchAvailableAgentDetails);
 
@@ -176,12 +186,27 @@ beforeEach(() => {
   // The submit pre-flight passes by default; the nonexistent-directory
   // test overrides it with a failure message.
   checkHostDirectoryMock.mockReset();
+  hostDirectoryMissingMock.mockReset();
   checkHostDirectoryMock.mockResolvedValue(null);
   useHostRepositoryMock.mockReturnValue({
     data: { isGitRepository: false, worktrees: [], autoWorktreesSupported: false },
   } as unknown as ReturnType<typeof useHostRepository>);
   prefetchAvailableAgentDetailsMock.mockReset();
   setAgents(AVAILABLE_AGENTS, "claude-sdk");
+  // The run-config section reads the source snapshot (to seed a same-harness
+  // fork) and, for a native target, the host model catalog. Default both to
+  // empty so the section renders nothing for the SDK source these tests use
+  // and stays inert until a test opts into a native switch.
+  useSessionMock.mockReturnValue({
+    session: null,
+    isLoading: false,
+    error: null,
+  } as unknown as ReturnType<typeof useSession>);
+  useHostModelOptionsMock.mockReturnValue({
+    data: [],
+    isLoading: false,
+    error: null,
+  } as unknown as ReturnType<typeof useHostModelOptions>);
   // Defaults for the coding-fork wiring; the non-coding tests don't render
   // these fields but the hooks still run (with isCodingSource false).
   setHosts([host()]);
@@ -232,6 +257,8 @@ describe("ForkSessionDialog", () => {
     await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
     // No agent switch → agent_id omitted (undefined) so the server keeps
     // the source's agent.
+    // A non-native (SDK) source with no agent switch renders no run-config
+    // section, so no run overrides are sent.
     expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
       title: "My clone",
       agentId: undefined,
@@ -541,11 +568,73 @@ describe("ForkSessionDialog", () => {
     // Switching to a same-family native target forwards agent_id so the
     // server clones that agent and marks the fork for native rebuild. The
     // name was left blank (optional) → undefined so the server derives it.
+    // Switching reveals the run-config section, but no control was touched, so
+    // it emits `{}` — the server inherits/resets per its own family rule
+    // rather than the dialog racing the async model catalog and sending an
+    // explicit "default" that would clear the source's model.
     expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
       title: undefined,
       agentId: "ag_claude_native",
       upToResponseId: undefined,
       autoWorktree: false,
+    });
+  });
+
+  it("emits only the run-config fields the user actually changed", async () => {
+    forkSessionMock.mockResolvedValue({
+      id: "conv_fork",
+    } as unknown as Awaited<ReturnType<typeof forkSession>>);
+    renderDialog();
+
+    // Switch to claude-native so the run-config section renders.
+    openAgentSelect();
+    fireEvent.click(screen.getByTestId("fork-session-agent-option-ag_claude_native"));
+
+    // Touch ONLY the permission control (pick "Plan"); leave model + effort
+    // untouched. The fork must carry the permission launch args and NOTHING
+    // for model/effort — so the server inherits those instead of the dialog
+    // sending a catalog-racing "default" that clears them.
+    fireEvent.click(screen.getByTestId("fork-session-config-permission"));
+    fireEvent.click(screen.getByRole("option", { name: "Plan" }));
+    fireEvent.click(screen.getByTestId("fork-session-submit"));
+
+    await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
+    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+      title: undefined,
+      agentId: "ag_claude_native",
+      upToResponseId: undefined,
+      autoWorktree: false,
+      terminalLaunchArgs: ["--permission-mode", "plan"],
+    });
+  });
+
+  it("arms Codex bypass only on an explicit pick, with a danger banner", async () => {
+    forkSessionMock.mockResolvedValue({
+      id: "conv_fork",
+    } as unknown as Awaited<ReturnType<typeof forkSession>>);
+    renderDialog();
+
+    // Switch to codex-native so the Approval row (with the 4th bypass option)
+    // renders. No banner until the dangerous option is actually chosen.
+    openAgentSelect();
+    fireEvent.click(screen.getByTestId("fork-session-agent-option-ag_codex_native"));
+    expect(screen.queryByTestId("fork-session-codex-bypass-banner")).not.toBeInTheDocument();
+
+    // Pick "Bypass approvals & sandbox" → danger banner appears and the fork
+    // carries the dedicated opt-in (as a label server-side), NOT launch args.
+    fireEvent.click(screen.getByTestId("fork-session-config-approval"));
+    fireEvent.click(screen.getByRole("option", { name: "Bypass approvals & sandbox" }));
+    expect(screen.getByTestId("fork-session-codex-bypass-banner")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("fork-session-submit"));
+
+    await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
+    expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
+      title: undefined,
+      agentId: "ag_codex_native",
+      upToResponseId: undefined,
+      autoWorktree: false,
+      terminalLaunchArgs: [],
+      codexBypassSandbox: true,
     });
   });
 
@@ -676,6 +765,7 @@ describe("ForkSessionDialog", () => {
 
       await waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
       // Name left blank (optional) → undefined so the server derives it.
+      // Coding SDK source, no agent switch → no run-config overrides.
       expect(forkSessionMock).toHaveBeenCalledWith("conv_src", {
         title: undefined,
         agentId: undefined,
@@ -755,6 +845,74 @@ describe("ForkSessionDialog", () => {
         "host_1",
         "/Users/a/repo-worktrees/fix-1",
       );
+    });
+
+    it("recreates the source worktree when its directory was deleted and the name is untouched", async () => {
+      forkSessionMock.mockResolvedValue({
+        id: "conv_fork",
+      } as unknown as Awaited<ReturnType<typeof forkSession>>);
+      launchRunnerMock.mockResolvedValue({ runnerId: "r1" });
+      // The worktree pre-flight fails — the directory is gone — but the
+      // miss is a 404, so the fork recreates the worktree at the same
+      // branch instead of erroring. The repo path itself is intact.
+      checkHostDirectoryMock.mockImplementation(async (_hostId: string, path: string) =>
+        path === "/Users/a/repo"
+          ? null
+          : "The working directory /Users/a/repo-worktrees/fix-1 doesn't exist on this host (or isn't a directory).",
+      );
+      hostDirectoryMissingMock.mockResolvedValue(true);
+      renderDialog(WORKTREE_CODING);
+
+      fireEvent.click(screen.getByTestId("fork-session-submit"));
+
+      await waitFor(() => expect(launchRunnerMock).toHaveBeenCalledTimes(1));
+      // Launched from the REPO path with the prefilled branch (which already
+      // exists) — the host adds the worktree back at the conventional path.
+      // existingBranch (not baseBranch): the branch survives its deleted
+      // directory, so it is checked out rather than re-created.
+      expect(launchRunnerMock).toHaveBeenCalledWith("host_1", "conv_fork", "/Users/a/repo", {
+        branchName: "fix-1",
+        existingBranch: true,
+      });
+      // Both the worktree path and the repo fallback path were pre-flighted.
+      expect(checkHostDirectoryMock).toHaveBeenCalledWith("host_1", "/Users/a/repo");
+    });
+
+    it("still errors when the repo path is also missing (nothing to recreate from)", async () => {
+      forkSessionMock.mockResolvedValue({
+        id: "conv_fork",
+      } as unknown as Awaited<ReturnType<typeof forkSession>>);
+      // Worktree gone (404 miss) AND the repo itself gone: the recreate
+      // fallback has nothing to launch from, so the fork must abort.
+      checkHostDirectoryMock.mockResolvedValue(
+        "The working directory doesn't exist on this host (or isn't a directory).",
+      );
+      hostDirectoryMissingMock.mockResolvedValue(true);
+      renderDialog(WORKTREE_CODING);
+
+      fireEvent.click(screen.getByTestId("fork-session-submit"));
+
+      await waitFor(() => expect(screen.getByText(/doesn't exist on this host/i)).toBeTruthy());
+      expect(launchRunnerMock).not.toHaveBeenCalled();
+    });
+
+    it("still errors when the pre-flight fails for a reason other than a missing directory", async () => {
+      forkSessionMock.mockResolvedValue({
+        id: "conv_fork",
+      } as unknown as Awaited<ReturnType<typeof forkSession>>);
+      // Host unreachable: NOT a 404 miss, so no worktree-recreate fallback.
+      checkHostDirectoryMock.mockResolvedValue(
+        "Couldn't verify the working directory. Check your connection and try again.",
+      );
+      hostDirectoryMissingMock.mockResolvedValue(false);
+      renderDialog(WORKTREE_CODING);
+
+      fireEvent.click(screen.getByTestId("fork-session-submit"));
+
+      await waitFor(() =>
+        expect(screen.getByText(/Couldn't verify the working directory/i)).toBeTruthy(),
+      );
+      expect(launchRunnerMock).not.toHaveBeenCalled();
     });
 
     it("creates a fresh worktree off the source branch when the branch is renamed", async () => {

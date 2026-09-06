@@ -134,7 +134,7 @@ async def test_ingress_auto_routes_clear_match(db_uri: str, stores: dict) -> Non
             EventTag(tag_type="repo", tag="omnigent-fork"),
         ],
     )
-    profile = _role_profile(
+    _role_profile(
         stores["agent_profile_id"],
         host_seed="host_ingress",
         workspace="/tmp/ingress-test",
@@ -162,7 +162,7 @@ async def test_ingress_stalls_when_no_tasks(db_uri: str, manager_agent_id: str) 
     task_store = SqlAlchemyTaskStore(db_uri)
     worker_store = SqlAlchemyWorkerStore(db_uri)
     conversation_store = SqlAlchemyConversationStore(db_uri)
-    secretary_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    SqlAlchemyTaskRoleProfileStore(db_uri)
     event_id = _uid("stall_event")
     event = event_store.create_event(
         event_id,
@@ -212,7 +212,7 @@ async def test_ingress_fast_paths_explicit_task_id(db_uri: str, stores: dict) ->
         task_id=stores["task_id"],
         state="received",
     )
-    profile = _role_profile(
+    _role_profile(
         stores["agent_profile_id"],
         host_seed="host_bound",
         workspace="/tmp/ingress-bound",
@@ -262,7 +262,7 @@ async def test_ingress_fans_out_to_subscribers(db_uri: str, stores: dict) -> Non
         source_offset="1",
         state="received",
     )
-    profile = _role_profile(
+    _role_profile(
         stores["agent_profile_id"],
         host_seed="host_broadcast",
         workspace="/tmp/ingress-broadcast",
@@ -384,7 +384,7 @@ async def test_ingress_fanout_continues_past_failed_subscriber(db_uri: str, stor
         source_offset="1",
         state="received",
     )
-    profile = _role_profile(
+    _role_profile(
         stores["agent_profile_id"],
         host_seed="host_partial",
         workspace="/tmp/ingress-partial",

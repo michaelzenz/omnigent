@@ -5,6 +5,10 @@
 // changed" decision is unit-testable without React or the Notification
 // global. The hook owns the previous-snapshot ref; this module only
 // diffs two snapshots.
+//
+// Archived sessions are excluded from every output here — archiving means
+// "stop showing me this". The snapshot builders still record them, so
+// unarchiving diffs against real prior state, not a phantom transition.
 
 import type { Conversation } from "@/hooks/useConversations";
 import { isBrokerSession } from "@/lib/agentTasksApi";
@@ -38,6 +42,7 @@ export function detectIdleTransitions(
   conversations: Conversation[],
 ): Conversation[] {
   return conversations.filter((conversation) => {
+    if (conversation.archived) return false;
     const status = conversation.status;
     if (status === undefined || !TERMINAL_STATUSES.has(status)) return false;
     return previous.get(conversation.id) === "running";
@@ -68,6 +73,7 @@ export function detectNewElicitations(
   conversations: Conversation[],
 ): Conversation[] {
   return conversations.filter((conversation) => {
+    if (conversation.archived) return false;
     const current = conversation.pending_elicitations_count ?? 0;
     const prior = previous.get(conversation.id);
     return prior !== undefined && current > prior;

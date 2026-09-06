@@ -15,6 +15,7 @@ session policies, with ``session_id IS NULL``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import uuid
 from typing import Any
@@ -41,6 +42,8 @@ from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import PolicyDeletedEvent as _TelPolicyDeletedEvent
 from omnigent.telemetry.events import PolicyRegisteredEvent as _TelPolicyRegisteredEvent
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
+
+_logger = logging.getLogger(__name__)
 
 
 def _generate_default_policy_id() -> str:
@@ -224,6 +227,12 @@ def create_default_policies_router(
                 code=ErrorCode.CONFLICT,
             ) from exc
         invalidate_default_policy_specs_cache()
+        _logger.info(
+            "policies/create: user=%s created policy_id=%s handler=%s",
+            user_id or "(single-user)",
+            policy.id,
+            policy.handler,
+        )
         try:
             import hashlib as _hashlib
 
@@ -321,14 +330,14 @@ def create_default_policies_router(
         :raises OmnigentError: 401/403 if the user lacks admin
             privileges, or 404 if the policy is not found.
         """
-        await _require_admin(request, auth_provider, permission_store)
+        user_id = await _require_admin(request, auth_provider, permission_store)
         update_factory_params = "factory_params" in body.model_fields_set
         # Validate the resulting handler/params pair against the existing type.
         if body.handler is not None or update_factory_params:
             existing = store.get_default(policy_id)
             if existing is None:
                 raise OmnigentError("Policy not found", code=ErrorCode.NOT_FOUND)
-            effective_handler = body.handler or existing.handler
+            effective_handler = body.handler if body.handler is not None else existing.handler
             effective_factory_params = (
                 body.factory_params if update_factory_params else existing.factory_params
             )
@@ -372,6 +381,11 @@ def create_default_policies_router(
         if policy is None:
             raise OmnigentError("Policy not found", code=ErrorCode.NOT_FOUND)
         invalidate_default_policy_specs_cache()
+        _logger.info(
+            "policies/update: user=%s updated policy_id=%s",
+            user_id or "(single-user)",
+            policy_id,
+        )
         return _entity_to_response(policy)
 
     @router.delete("/policies/{policy_id}")
@@ -395,6 +409,11 @@ def create_default_policies_router(
         user_id = await _require_admin(request, auth_provider, permission_store)
         store.delete_default(policy_id)
         invalidate_default_policy_specs_cache()
+        _logger.info(
+            "policies/delete: user=%s deleted policy_id=%s",
+            user_id or "(single-user)",
+            policy_id,
+        )
         try:
             import hashlib as _hashlib
 

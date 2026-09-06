@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 import pytest
 
 from omnigent.agent_tasks.bootstrap import bootstrap_task_manager
-from omnigent.errors import OmnigentError
 from omnigent.agent_tasks.manager_discovery import (
-    choose_manager_for_task,
     list_active_managers,
 )
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import Task
+from omnigent.errors import OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
@@ -165,12 +163,6 @@ def test_list_active_managers_includes_registered_manager_with_zero_tasks(
 # ── bootstrap attach-or-create ─────────────────────────────────────
 
 
-
-
-
-
-
-
 async def test_bootstrap_returns_when_manager_already_live(discovery_setup: dict) -> None:
     """Idempotent: a task whose manager session still exists is returned as-is."""
     task_store: SqlAlchemyTaskStore = discovery_setup["task_store"]
@@ -287,7 +279,6 @@ async def test_bootstrap_throws_when_manager_row_missing(discovery_setup: dict) 
         )
 
 
-
 def test_list_active_managers_filters_incomplete_snapshots(
     discovery_setup: dict,
 ) -> None:
@@ -311,7 +302,5 @@ def test_list_active_managers_filters_incomplete_snapshots(
     _create_task(task_store, "t_broken", manager_id=broken.id)
 
     managers = _managers(discovery_setup)
-    assert [manager.manager_id for manager in managers] == [
-        discovery_setup["manager"].id
-    ]
+    assert [manager.manager_id for manager in managers] == [discovery_setup["manager"].id]
     assert managers[0].task_count == 1

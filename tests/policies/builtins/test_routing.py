@@ -858,9 +858,7 @@ async def test_intent_based_authorization_different_trajectory_invalidates_cache
     cache_key_empty = f"{_INTENT_CHECK_PREFIX}{hash_empty}"
 
     # Cache key with non-empty trajectory should differ
-    ctx_repr_full = json.dumps(
-        {"u": ["hello"], "a": ["hi there"]}, sort_keys=True, default=str
-    )
+    ctx_repr_full = json.dumps({"u": ["hello"], "a": ["hi there"]}, sort_keys=True, default=str)
     hash_full = hashlib.sha256(
         f"{intent}\x00{tool}\x00{args_repr}\x00{ctx_repr_full}".encode()
     ).hexdigest()[:16]

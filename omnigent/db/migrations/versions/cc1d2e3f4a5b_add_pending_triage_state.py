@@ -15,9 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "ALTER TABLE task_events DROP CONSTRAINT ck_task_events_state"
-    )
+    op.execute("ALTER TABLE task_events DROP CONSTRAINT ck_task_events_state")
     op.execute(
         "ALTER TABLE task_events ADD CONSTRAINT ck_task_events_state "
         "CHECK (state IN (1, 4, 6, 7, 8, 9, 12, 13, 14))"
@@ -25,9 +23,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        "ALTER TABLE task_events DROP CONSTRAINT ck_task_events_state"
-    )
+    op.execute("ALTER TABLE task_events DROP CONSTRAINT ck_task_events_state")
     op.execute(
         "ALTER TABLE task_events ADD CONSTRAINT ck_task_events_state "
         "CHECK (state IN (1, 4, 6, 7, 8, 9, 12, 13))"

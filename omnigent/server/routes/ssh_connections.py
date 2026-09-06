@@ -146,7 +146,7 @@ async def _build_connections_payload(
     request: Request,
     store: SshHostInstallationStore,
 ) -> dict[str, object]:
-    manager = getattr(request.app.state, "ssh_host_manager", None)
+    getattr(request.app.state, "ssh_host_manager", None)
     snapshots = await asyncio.to_thread(store.snapshots)
     settings = await asyncio.to_thread(store.get_settings)
     host_store = getattr(request.app.state, "host_store", None)

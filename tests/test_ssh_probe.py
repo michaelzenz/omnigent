@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -38,7 +40,14 @@ async def test_probe_ssh_success() -> None:
         async def communicate(self) -> tuple[bytes, bytes]:
             return (b"omnigent-ssh-ok\n", b"")
 
-    with patch("omnigent.ssh_probe.asyncio.create_subprocess_exec", return_value=_Proc()):
+    async def _create_process(*_args: object, **_kwargs: object) -> _Proc:
+        return _Proc()
+
+    fake_asyncio = SimpleNamespace(
+        **vars(asyncio),
+        create_subprocess_exec=_create_process,
+    )
+    with patch("omnigent.ssh_probe.asyncio", fake_asyncio):
         result = await probe_ssh(SshProbeRequest(alias="arca.ssh"))
     assert result.ok is True
     assert result.message == "Connected"
@@ -53,7 +62,14 @@ async def test_probe_ssh_failure_returns_stderr_line() -> None:
         async def communicate(self) -> tuple[bytes, bytes]:
             return (b"", b"Permission denied (publickey).\n")
 
-    with patch("omnigent.ssh_probe.asyncio.create_subprocess_exec", return_value=_Proc()):
+    async def _create_process(*_args: object, **_kwargs: object) -> _Proc:
+        return _Proc()
+
+    fake_asyncio = SimpleNamespace(
+        **vars(asyncio),
+        create_subprocess_exec=_create_process,
+    )
+    with patch("omnigent.ssh_probe.asyncio", fake_asyncio):
         result = await probe_ssh(SshProbeRequest(alias="arca.ssh"))
     assert result.ok is False
     assert result.message == "Permission denied (publickey)."

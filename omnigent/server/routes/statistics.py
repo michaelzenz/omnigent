@@ -185,17 +185,14 @@ def _prices_differ(
     service: dict[str, float | None],
     custom: dict[str, float | None],
 ) -> bool:
-    return any(
-        service[name] is None
-        or custom[name] is None
-        or not math.isclose(
-            float(service[name]),
-            float(custom[name]),
-            rel_tol=1e-9,
-            abs_tol=1e-15,
-        )
-        for name in ("input", "output", "cache_read", "cache_write")
-    )
+    for name in ("input", "output", "cache_read", "cache_write"):
+        service_value = service[name]
+        custom_value = custom[name]
+        if service_value is None or custom_value is None:
+            return True
+        if not math.isclose(service_value, custom_value, rel_tol=1e-9, abs_tol=1e-15):
+            return True
+    return False
 
 
 def _pricing(

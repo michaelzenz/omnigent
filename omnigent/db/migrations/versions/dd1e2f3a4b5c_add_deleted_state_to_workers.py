@@ -15,9 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "ALTER TABLE workers DROP CONSTRAINT ck_workers_state"
-    )
+    op.execute("ALTER TABLE workers DROP CONSTRAINT ck_workers_state")
     op.execute(
         "ALTER TABLE workers ADD CONSTRAINT ck_workers_state "
         "CHECK (state IN ('uninitialized', 'initializing', 'idle', 'busy', "
@@ -26,9 +24,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        "ALTER TABLE workers DROP CONSTRAINT ck_workers_state"
-    )
+    op.execute("ALTER TABLE workers DROP CONSTRAINT ck_workers_state")
     op.execute(
         "ALTER TABLE workers ADD CONSTRAINT ck_workers_state "
         "CHECK (state IN ('uninitialized', 'initializing', 'idle', 'busy', "

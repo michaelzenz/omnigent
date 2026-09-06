@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from types import SimpleNamespace
 
 import httpx
@@ -155,119 +154,6 @@ async def test_proxy_routes_databricks_glm_alias_to_chat_completions(
 
     assert response.status_code == 200
     assert upstream.called
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_proxy_relays_and_logs_upstream_error_body(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    binding_token = "runner-binding-secret"
-    runner_id = token_bound_runner_id(binding_token)
-    store = _ConversationStore(SimpleNamespace(runner_id=runner_id, host_id="host_1"))
-    monkeypatch.setattr(
-        inference_proxy,
-        "default_provider_for_harness",
-        lambda _config, _harness: SimpleNamespace(
-            kind=inference_proxy.DATABRICKS_KIND,
-            profile="local-profile",
-        ),
-    )
-    monkeypatch.setattr(inference_proxy, "load_config", dict)
-    monkeypatch.setattr(
-        inference_proxy,
-        "_profile_auth",
-        lambda _profile, _workspace_origin: (
-            _Auth(),
-            "https://dbc-test.cloud.databricks.com",
-        ),
-    )
-    monkeypatch.setattr(
-        inference_proxy,
-        "get_workspace_url_for_profile",
-        lambda _profile: "https://dbc-test.cloud.databricks.com",
-    )
-    upstream_error = {
-        "error_code": "BAD_REQUEST",
-        "message": "Requested token count exceeds the model's maximum context length",
-    }
-    respx.post("https://dbc-test.cloud.databricks.com/serving-endpoints/chat/completions").mock(
-        return_value=httpx.Response(400, json=upstream_error)
-    )
-    app = FastAPI()
-    app.include_router(create_inference_proxy_router(store, enabled=True), prefix="/v1")  # type: ignore[arg-type]
-
-    with caplog.at_level(logging.WARNING, logger="omnigent.server.routes.inference_proxy"):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://server",
-        ) as client:
-            response = await client.post(
-                (f"/v1/runners/{runner_id}/sessions/conv_1/inference/completions/chat/completions"),
-                headers={RUNNER_TUNNEL_TOKEN_HEADER: binding_token},
-                json={"model": "databricks-glm-5-3-flash"},
-            )
-
-    assert response.status_code == 400
-    assert response.json() == upstream_error
-    assert "Requested token count exceeds" in caplog.text
-    assert "databricks-glm-5-3-flash" in caplog.text
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_proxy_annotates_upstream_empty_error_body(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    binding_token = "runner-binding-secret"
-    runner_id = token_bound_runner_id(binding_token)
-    store = _ConversationStore(SimpleNamespace(runner_id=runner_id, host_id="host_1"))
-    monkeypatch.setattr(
-        inference_proxy,
-        "default_provider_for_harness",
-        lambda _config, _harness: SimpleNamespace(
-            kind=inference_proxy.DATABRICKS_KIND,
-            profile="local-profile",
-        ),
-    )
-    monkeypatch.setattr(inference_proxy, "load_config", dict)
-    monkeypatch.setattr(
-        inference_proxy,
-        "_profile_auth",
-        lambda _profile, _workspace_origin: (
-            _Auth(),
-            "https://dbc-test.cloud.databricks.com",
-        ),
-    )
-    monkeypatch.setattr(
-        inference_proxy,
-        "get_workspace_url_for_profile",
-        lambda _profile: "https://dbc-test.cloud.databricks.com",
-    )
-    respx.post("https://dbc-test.cloud.databricks.com/serving-endpoints/chat/completions").mock(
-        return_value=httpx.Response(400, content=b"")
-    )
-    app = FastAPI()
-    app.include_router(create_inference_proxy_router(store, enabled=True), prefix="/v1")  # type: ignore[arg-type]
-
-    with caplog.at_level(logging.WARNING, logger="omnigent.server.routes.inference_proxy"):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://server",
-        ) as client:
-            response = await client.post(
-                (f"/v1/runners/{runner_id}/sessions/conv_1/inference/completions/chat/completions"),
-                headers={RUNNER_TUNNEL_TOKEN_HEADER: binding_token},
-                json={"model": "databricks-glm-5-3-flash"},
-            )
-
-    assert response.status_code == 400
-    body = response.json()
-    assert body["error"]["type"] == "upstream_error"
-    assert "empty response body" in body["error"]["message"]
-    assert "<empty>" in caplog.text
 
 
 @pytest.mark.asyncio

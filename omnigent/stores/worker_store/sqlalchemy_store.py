@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import asc, select, update
 
@@ -117,7 +117,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
                 )
             )
             result = session.execute(stmt)
-            if result.rowcount != 1:
+            if cast(Any, result).rowcount != 1:
                 return None
             row = session.get(SqlWorker, (current_workspace_id(), worker_id))
             assert row is not None
@@ -127,6 +127,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
         self,
         worker_id: str,
         *,
+        task_id: str | None = None,
         kind: str | None = None,
         target_id: str | None = _UNSET,
         state: str | None = None,
@@ -140,6 +141,8 @@ class SqlAlchemyWorkerStore(WorkerStore):
             row = session.get(SqlWorker, (current_workspace_id(), worker_id))
             if row is None:
                 return None
+            if task_id is not None:
+                row.task_id = task_id
             if kind is not None:
                 row.kind = kind
             if target_id is not _UNSET:

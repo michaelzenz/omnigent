@@ -40,10 +40,16 @@ import httpx
 from fastapi.responses import JSONResponse, Response
 
 from omnigent.native_coding_agents import native_coding_agent_for_harness
+from omnigent.runner.native.orchestration import (
+    _cancel_auto_forwarder_task,
+    _claude_native_bridge_id_for_session,
+    _session_labels_for_runner_spawn,
+)
 from omnigent.runner.resource_registry import SessionResourceRegistry
 
 if TYPE_CHECKING:
     from omnigent.codex_native_bridge import CodexNativeBridgeState
+    from omnigent.harness_plugins import NativeCodingAgent
 
 
 class SubagentDeliveryAck(Protocol):
@@ -75,33 +81,6 @@ class ClientSafeErrorDetail(Protocol):
     """Log an exception and return safe client-facing detail."""
 
     def __call__(self, exc: BaseException, *, context: str) -> str:
-        raise NotImplementedError
-
-
-class CancelAutoForwarderTask(Protocol):
-    """Cancel and await the session's transcript forwarder (app-owned)."""
-
-    async def __call__(self, session_id: str) -> None:
-        raise NotImplementedError
-
-
-class ResolveClaudeBridgeId(Protocol):
-    """Resolve the bridge id label for a claude-native session (app-owned)."""
-
-    async def __call__(self, *, server_client: httpx.AsyncClient | None, session_id: str) -> str:
-        raise NotImplementedError
-
-
-class SessionLabelsForRunnerSpawn(Protocol):
-    """Fetch runner spawn labels for a session (app-owned)."""
-
-    async def __call__(
-        self,
-        *,
-        server_client: httpx.AsyncClient,
-        session_id: str,
-        labels: Mapping[str, str] | None = None,
-    ) -> dict[str, str] | None:
         raise NotImplementedError
 
 
@@ -266,6 +245,52 @@ _UNIFORM_STOP: dict[str, _UniformStop] = {
 }
 
 
+def native_agent_for_cancel(wrapper_label: str | None) -> NativeCodingAgent | None:
+    """Resolve a native agent from a session wrapper or sub-agent wrapper label.
+
+    :param wrapper_label: ``omnigent.wrapper`` value, e.g. ``"goose-native-ui"``
+        or ``"claude-code-native-ui-subagent"``.
+    :returns: The matching :class:`~omnigent.harness_plugins.NativeCodingAgent`,
+        or ``None`` when the label is missing or not native.
+    """
+    from omnigent.native_coding_agents import (
+        NATIVE_CODING_AGENTS,
+        native_coding_agent_for_wrapper_label,
+    )
+
+    agent = native_coding_agent_for_wrapper_label(wrapper_label)
+    if agent is not None:
+        return agent
+    if not wrapper_label:
+        return None
+    for candidate in NATIVE_CODING_AGENTS:
+        if candidate.subagent_wrapper_label == wrapper_label:
+            return candidate
+    return None
+
+
+def native_cancel_capability(wrapper_label: str | None) -> str:
+    """Classify a child's wrapper for parent-side ``sys_cancel_task`` routing.
+
+    Mirrors :meth:`NativeInterruptRunner.stop` instead of comparing one Claude
+    wrapper label:
+
+    * ``"stop"`` — Claude's dedicated stop, or a key in :data:`_UNIFORM_STOP`
+    * ``"best_effort"`` — remaining native agents (Codex/Pi alias stop to
+      interrupt; Antigravity/OpenCode have no stop handler)
+    * ``"inprocess"`` — no native agent for this label
+
+    :param wrapper_label: The work entry's ``omnigent.wrapper`` value.
+    :returns: One of ``"stop"``, ``"best_effort"``, or ``"inprocess"``.
+    """
+    agent = native_agent_for_cancel(wrapper_label)
+    if agent is None:
+        return "inprocess"
+    if agent.key == "claude" or agent.key in _UNIFORM_STOP:
+        return "stop"
+    return "best_effort"
+
+
 class NativeInterruptRunner:
     """Forward interrupt / stop events into a session's native harness bridge."""
 
@@ -280,9 +305,6 @@ class NativeInterruptRunner:
         codex_bridge_state_for_session: CodexBridgeStateForSession,
         client_safe_error_detail: ClientSafeErrorDetail,
         logger: logging.Logger,
-        cancel_auto_forwarder_task: CancelAutoForwarderTask,
-        claude_bridge_id_for_session: ResolveClaudeBridgeId,
-        session_labels_for_runner_spawn: SessionLabelsForRunnerSpawn,
     ) -> None:
         self._server_client = server_client
         self._resource_registry = resource_registry
@@ -291,9 +313,6 @@ class NativeInterruptRunner:
         self._session_sub_agent_names = session_sub_agent_names
         self._codex_bridge_state_for_session = codex_bridge_state_for_session
         self._client_safe_error_detail = client_safe_error_detail
-        self._cancel_auto_forwarder_task = cancel_auto_forwarder_task
-        self._claude_bridge_id_for_session = claude_bridge_id_for_session
-        self._session_labels_for_runner_spawn = session_labels_for_runner_spawn
         self._logger = logger
 
     async def interrupt(self, harness_name: str | None, conv_id: str) -> Response | None:
@@ -413,6 +432,10 @@ class NativeInterruptRunner:
                 module.kill_session, module.bridge_dir_for_session_id(conv_id), timeout_s=1.0
             )
         except RuntimeError as exc:
+            # 503 means the kill attempt failed — including a transient tmux
+            # error against a still-running pane. This is not proof the pane
+            # is already gone. Claude's genuine gone case is
+            # ``TmuxSessionNotAdvertised`` and returns 204 from ``_claude_stop``.
             return JSONResponse(
                 status_code=503,
                 content={
@@ -421,7 +444,7 @@ class NativeInterruptRunner:
                 },
             )
         await self._teardown_session_terminals(conv_id)
-        await self._cancel_auto_forwarder_task(conv_id)
+        await _cancel_auto_forwarder_task(conv_id)
         self._publish_event(conv_id, {"type": "session.status", "status": "idle"})
         delivery_ack = self._mark_subagent_terminal_and_wake(
             conv_id,
@@ -443,7 +466,7 @@ class NativeInterruptRunner:
     async def _claude_interrupt(self, conv_id: str) -> Response:
         from omnigent.claude_native_bridge import bridge_dir_for_bridge_id, inject_interrupt
 
-        bridge_id = await self._claude_bridge_id_for_session(
+        bridge_id = await _claude_native_bridge_id_for_session(
             server_client=self._server_client,
             session_id=conv_id,
         )
@@ -470,7 +493,7 @@ class NativeInterruptRunner:
             kill_session,
         )
 
-        bridge_id = await self._claude_bridge_id_for_session(
+        bridge_id = await _claude_native_bridge_id_for_session(
             server_client=self._server_client,
             session_id=conv_id,
         )
@@ -517,7 +540,7 @@ class NativeInterruptRunner:
         state = await self._codex_bridge_state_for_session(conv_id, action="interrupt")
         if state is None:
             return Response(status_code=204)
-        labels = await self._session_labels_for_runner_spawn(
+        labels = await _session_labels_for_runner_spawn(
             server_client=self._server_client,
             session_id=conv_id,
         )

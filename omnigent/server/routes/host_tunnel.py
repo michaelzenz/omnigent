@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from omnigent.db.db_models import InvalidUuidError, uuid_to_bytes
-from omnigent.debug_logging import set_current_user_id
+from omnigent.debug_logging import debug_event, set_current_user_id
 from omnigent.host.frames import (
     HostConnectionErrorFrame,
     HostCreateDirResultFrame,
@@ -35,6 +35,8 @@ from omnigent.host.frames import (
     HostFsResultFrame,
     HostHarnessReadinessFrame,
     HostHelloFrame,
+    HostImportLocalDoneFrame,
+    HostImportLocalSessionFrame,
     HostInstallHarnessResultFrame,
     HostLaunchRunnerResultFrame,
     HostListDirResultFrame,
@@ -48,8 +50,8 @@ from omnigent.host.frames import (
     HostStatResultFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretResultFrame,
-    HostWorktreeSizesResultFrame,
     HostWorktreeLogFrame,
+    HostWorktreeSizesResultFrame,
     decode_host_frame,
     encode_host_frame,
 )
@@ -208,7 +210,19 @@ def create_host_tunnel_router(
             host_id = uuid_to_bytes(host_id).hex()
         except InvalidUuidError:
             _logger.warning("Refusing host tunnel: malformed host id %r", host_id)
-            await ws.close(code=4003, reason="invalid host id")
+            # Refuse with a real HTTP 400 + body rather than a bare pre-accept
+            # close: the latter reaches the client as an opaque 403 (empty
+            # body), indistinguishable from an auth failure. A 400 that names
+            # the problem lets the host surface an actionable error.
+            await _refuse_upgrade(
+                ws,
+                status=400,
+                reason=(
+                    f"Invalid host id {host_id!r}: host ids must be UUIDs. Set "
+                    "OMNIGENT_HOST_ID to a UUID (or unset it to have one "
+                    "generated) and reconnect."
+                ),
+            )
             return
 
         # Authenticate from the handshake BEFORE accepting the upgrade,
@@ -326,6 +340,7 @@ def create_host_tunnel_router(
                 user_id=tunnel_owner,
                 allow_host_id_reown=allow_host_id_reown,
                 configured_harnesses=frame.configured_harnesses,
+                managed_token=managed_token,
             )
             host_persisted = True
             await asyncio.to_thread(
@@ -361,6 +376,12 @@ def create_host_tunnel_router(
                 frame.version,
                 frame.name,
                 frame.runners,
+                extra=debug_event(
+                    "host_tunnel",
+                    phase="connected",
+                    host_id=host_id,
+                    version=frame.version,
+                ),
             )
             # Proactively null runner bindings for sessions on this host whose
             # pinned runner token is no longer alive (the host reports its live
@@ -463,7 +484,11 @@ def create_host_tunnel_router(
                         )
 
         except WebSocketDisconnect:
-            _logger.warning("Host %s disconnected", host_id)
+            _logger.warning(
+                "Host %s disconnected",
+                host_id,
+                extra=debug_event("host_tunnel", phase="disconnected", host_id=host_id),
+            )
             # Only run disconnect cleanup if we actually registered this
             # host on THIS connection. A connect that failed before
             # register — e.g. the upsert IntegrityError when a peer
@@ -481,7 +506,11 @@ def create_host_tunnel_router(
                             host_id,
                         )
         except Exception as exc:
-            _logger.exception("Host tunnel error for %s", host_id)
+            _logger.exception(
+                "Host tunnel error for %s",
+                host_id,
+                extra=debug_event("host_tunnel", phase="error", host_id=host_id, stage=stage),
+            )
             retryable = stage in {"registration", "registry", "connected"}
             await _send_connection_error(
                 ws,
@@ -883,6 +912,34 @@ async def _receive_loop(
                         "routable_models": frame.routable_models,
                         "error": frame.error,
                     }
+                )
+            continue
+        if isinstance(frame, HostImportLocalSessionFrame):
+            queue = conn.pending_import_local.get(frame.request_id)
+            if queue is not None:
+                s = frame.session
+                queue.put_nowait(
+                    (
+                        "session",
+                        {
+                            "total": frame.total,
+                            "external_session_id": s.external_session_id,
+                            "workspace": s.workspace,
+                            "items": s.items,
+                            "title": s.title,
+                            "source": s.source,
+                        },
+                    )
+                )
+            continue
+        if isinstance(frame, HostImportLocalDoneFrame):
+            queue = conn.pending_import_local.get(frame.request_id)
+            if queue is not None:
+                queue.put_nowait(
+                    (
+                        "done",
+                        {"status": frame.status, "error": frame.error, "failed": frame.failed},
+                    )
                 )
             continue
 

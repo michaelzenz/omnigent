@@ -78,7 +78,7 @@ def register_elicitations_routes(
         session_id: str,
         elicitation_id: str,
         body: ElicitationResult,
-    ) -> dict[str, bool]:
+    ) -> dict[str, bool | float]:
         """
         Resolve an outstanding elicitation by its URL (URL-based
         elicitation).

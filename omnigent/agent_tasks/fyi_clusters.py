@@ -49,10 +49,7 @@ def _claimable_fyi_events(
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
         if (event.owner_user_id or "__anonymous__") != owner_user_id:
             raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-        is_owned_manager_route = (
-            event.state == "routed"
-            and event.manager_id is not None
-        )
+        is_owned_manager_route = event.state == "routed" and event.manager_id is not None
         if event.state not in AMBIGUOUS_EVENT_STATES and not is_owned_manager_route:
             continue
         claimed.append(event_id)

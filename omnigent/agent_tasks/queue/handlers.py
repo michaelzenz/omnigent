@@ -33,6 +33,7 @@ from omnigent.runner.routing import RunnerRouter
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
@@ -254,6 +255,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
             )
             if conv is None:
                 raise DispatchFailed(f"manager {manager.id} session re-creation failed")
+        assert session_id is not None
         self._store.set_queue_conversation(item.key, session_id)
         harness = conv.harness_override or "cursor-native"
         return DispatchTarget(
@@ -265,6 +267,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         """Re-create the manager's session from its own stored snapshot."""
         from omnigent.agent_tasks.bootstrap import ensure_manager_session
 
+        assert self._manager_store is not None
         healed = await ensure_manager_session(
             manager,
             manager_store=self._manager_store,

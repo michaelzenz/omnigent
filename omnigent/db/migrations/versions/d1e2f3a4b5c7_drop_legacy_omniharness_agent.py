@@ -45,10 +45,7 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     legacy_workspaces = bind.execute(
-        sa.text(
-            "SELECT DISTINCT workspace_id FROM agents "
-            "WHERE name = 'omniharness' AND kind = 1"
-        )
+        sa.text("SELECT DISTINCT workspace_id FROM agents WHERE name = 'omniharness' AND kind = 1")
     ).fetchall()
 
     if not legacy_workspaces:
@@ -77,16 +74,11 @@ def upgrade() -> None:
         if new_row is not None:
             new_id = new_row[0]
             bind.execute(
-                sa.text(
-                    "UPDATE conversations SET agent_id = :new_id "
-                    "WHERE agent_id = :old_id"
-                ),
+                sa.text("UPDATE conversations SET agent_id = :new_id WHERE agent_id = :old_id"),
                 {"new_id": new_id, "old_id": legacy_id},
             )
             bind.execute(
-                sa.text(
-                    "DELETE FROM agents WHERE id = :id AND workspace_id = :ws"
-                ),
+                sa.text("DELETE FROM agents WHERE id = :id AND workspace_id = :ws"),
                 {"id": legacy_id, "ws": ws_id},
             )
             _logger.info(
@@ -103,8 +95,7 @@ def upgrade() -> None:
                 {"id": legacy_id, "ws": ws_id},
             )
             _logger.info(
-                "Migrated workspace %s: renamed omniharness agent to "
-                "onih-openai-agents",
+                "Migrated workspace %s: renamed omniharness agent to onih-openai-agents",
                 ws_id,
             )
 

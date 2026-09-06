@@ -52,7 +52,9 @@ def gh_whoami() -> str | None:
     try:
         proc = subprocess.run(
             ["gh", "api", "user", "--jq", ".login"],
-            check=False, capture_output=True, text=True,
+            check=False,
+            capture_output=True,
+            text=True,
         )
     except OSError:
         return None
@@ -62,11 +64,17 @@ def gh_whoami() -> str | None:
 
 
 def gh_pr_snapshot(repo: str, pr_number: int) -> dict[str, Any] | None:
-    return gh_json([
-        "pr", "view", str(pr_number),
-        "--repo", repo,
-        "--json", "state,mergedAt,statusCheckRollup,headRefOid,title",
-    ])
+    return gh_json(
+        [
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            repo,
+            "--json",
+            "state,mergedAt,statusCheckRollup,headRefOid,title",
+        ]
+    )
 
 
 def gh_issue_comments(repo: str, pr_number: int, since: str | None) -> list[dict[str, Any]]:
@@ -160,7 +168,7 @@ def post_task_event(**fields: object) -> bool:
         )
         resp.raise_for_status()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -244,8 +252,7 @@ def main() -> int:
             if ok:
                 state.pop(key, None)
                 continue
-            else:
-                continue  # retry next tick, state unchanged
+            continue  # retry next tick, state unchanged
 
         # ── Checks failed ──
         if checks == "FAILURE" and previous.get("checks") != "FAILURE":
@@ -280,10 +287,9 @@ def main() -> int:
             new_last_comment_at = previous.get("last_comment_at")
 
             # Process issue comments first, then review comments, oldest-first
-            all_comments: list[tuple[str, dict[str, Any]]] = (
-                [("issue", c) for c in issue_comments]
-                + [("review", c) for c in review_comments]
-            )
+            all_comments: list[tuple[str, dict[str, Any]]] = [
+                ("issue", c) for c in issue_comments
+            ] + [("review", c) for c in review_comments]
             all_comments.sort(key=lambda x: x[1].get("created_at", ""))
 
             for source_type, comment in all_comments:
@@ -299,7 +305,9 @@ def main() -> int:
                     repo=str(repo),
                     pr_number=int(pr_number),
                     event_type=f"github.pr.comment.{comment_type}",
-                    title=f"PR #{pr_number} {comment_type.replace('_', ' ')} by {author} in {repo}",
+                    title=(
+                        f"PR #{pr_number} {comment_type.replace('_', ' ')} by {author} in {repo}"
+                    ),
                     source_offset=f"comment:{cid}",
                     payload={
                         "repo": repo,
@@ -315,7 +323,9 @@ def main() -> int:
                 if not ok:
                     break  # retry this PR's remaining comments next tick
                 seen.add(cid)
-                if created_at and (new_last_comment_at is None or created_at > new_last_comment_at):
+                if created_at and (
+                    new_last_comment_at is None or created_at > new_last_comment_at
+                ):
                     new_last_comment_at = created_at
 
             state[key] = {

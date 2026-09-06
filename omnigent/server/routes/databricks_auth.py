@@ -209,7 +209,10 @@ def create_databricks_auth_router(
         except FileNotFoundError:
             return {
                 "auth_url": None,
-                "error": "Databricks CLI not found. Install it with `pip install databricks-sdk` or `brew install databricks`.",
+                "error": (
+                    "Databricks CLI not found. Install it with "
+                    "`pip install databricks-sdk` or `brew install databricks`."
+                ),
             }
         _login_proc = proc
         _login_profile = profile
@@ -218,6 +221,7 @@ def create_databricks_auth_router(
         # Read stdout until we get the OAuth URL (first line starting with https://).
         auth_url: str | None = None
         try:
+            assert proc.stdout is not None
             while True:
                 line = await asyncio.wait_for(proc.stdout.readline(), timeout=10)
                 if not line:

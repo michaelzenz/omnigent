@@ -512,7 +512,12 @@ def test_record_omniharness_usage_splits_combined_purposes(db_uri: str) -> None:
         purpose="profile_selection+smart_routing+workload_classification",
         model=None,
         workload="development",
-        usage={"input_tokens": 300, "output_tokens": 30, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        usage={
+            "input_tokens": 300,
+            "output_tokens": 30,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        },
     )
 
     month = store.list_usage_ledger_months("alice")[0]
@@ -537,7 +542,12 @@ def test_record_omniharness_usage_splits_cost_equally(db_uri: str) -> None:
         purpose="profile_selection+workload_classification",
         model=None,
         workload="development",
-        usage={"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        usage={
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        },
         provider_cost=1.0,
     )
 

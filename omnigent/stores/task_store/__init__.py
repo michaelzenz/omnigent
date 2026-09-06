@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from builtins import list as builtin_list
 from typing import Any
 
 from omnigent.entities import Task, TaskTag
@@ -51,18 +52,16 @@ class TaskStore(ABC):
         """List tasks ordered by ``queue_rank DESC, id DESC``."""
 
     @abstractmethod
-    def list_recent(self, limit: int) -> list[Task]:
+    def list_recent(self, limit: int) -> builtin_list[Task]:
         """List the most recently touched tasks (``updated_at``, falling back to
         ``created_at``), newest first. No state filter — recency only."""
 
     @abstractmethod
-    def list_by_manager_id(self, manager_id: str) -> list[Task]:
+    def list_by_manager_id(self, manager_id: str) -> builtin_list[Task]:
         """List every task bound to one manager."""
 
     @abstractmethod
-    def list_manager_ids(
-        self, *, owner_user_id: str | None = None
-    ) -> list[str]:
+    def list_manager_ids(self, *, owner_user_id: str | None = None) -> builtin_list[str]:
         """Distinct manager ids across live tasks, optionally per owner."""
 
     @abstractmethod
@@ -104,13 +103,13 @@ class TaskStore(ABC):
         """Delete a task and its tags/bindings. Idempotent."""
 
     @abstractmethod
-    def get_tags(self, task_id: str) -> list[TaskTag]:
+    def get_tags(self, task_id: str) -> builtin_list[TaskTag]:
         """Return all tags for a task."""
 
     @abstractmethod
-    def set_tags(self, task_id: str, tags: list[TaskTag]) -> list[TaskTag]:
+    def set_tags(self, task_id: str, tags: builtin_list[TaskTag]) -> builtin_list[TaskTag]:
         """Replace all tags on a task."""
 
     @abstractmethod
-    def list_task_ids_by_tag(self, tag_type: str, tag: str) -> list[str]:
+    def list_task_ids_by_tag(self, tag_type: str, tag: str) -> builtin_list[str]:
         """Return task ids with the given typed tag."""

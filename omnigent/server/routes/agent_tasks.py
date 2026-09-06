@@ -189,7 +189,6 @@ class CreateAgentTaskRequest(BaseModel):
     tags: list[TaskTagInput] = Field(default_factory=list)
     # Manager session the task attaches to at birth. Required by the route:
     # managers are first-class and always created first.
-    manager_id: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -1117,6 +1116,11 @@ def create_agent_tasks_router(
             tags=tags,
         )
         if body.state == "active":
+            if conversation_store is None:
+                raise OmnigentError(
+                    "conversation persistence is not configured on this server",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
             task = await bootstrap_task_manager(
                 task=task,
                 task_store=task_store,
@@ -2061,6 +2065,7 @@ def create_agent_tasks_router(
             body: BootstrapTaskManagerRequest,
         ) -> dict[str, Any]:
             """Bootstrap the manager session for a managed task."""
+            del body
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(task_id, user_id)
             bootstrapped = await bootstrap_task_manager(
@@ -2420,11 +2425,12 @@ def create_agent_tasks_router(
 
             # Move the worker.
             updated = await asyncio.to_thread(
-                worker_store.update_worker,
-                worker.id,
-                task_id=body.task_id,
-                state="idle",
-                needs_response=False,
+                lambda: worker_store.update_worker(
+                    worker.id,
+                    task_id=body.task_id,
+                    state="idle",
+                    needs_response=False,
+                )
             )
             assert updated is not None
 
@@ -3091,7 +3097,7 @@ def create_agent_tasks_router(
                         "Event delivery is already in flight",
                         code=ErrorCode.CONFLICT,
                     )
-            updated = await asyncio.to_thread(
+            await asyncio.to_thread(
                 task_event_store.update_event,
                 event_id,
                 task_id=target_task.id,

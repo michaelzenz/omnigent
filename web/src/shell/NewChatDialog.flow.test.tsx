@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authenticatedFetch } from "@/lib/identity";
+import { clearOptimisticTitles, getOptimisticTitle } from "@/lib/optimisticTitles";
 import type { Host } from "@/hooks/useHosts";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
@@ -131,6 +132,9 @@ vi.mock("@/hooks/RunnerHealthProvider", () => ({
 vi.mock("@/hooks/useConversations", async (importOriginal) => ({
   ...(await importOriginal<typeof UseConversationsModule>()),
   useProjects: () => ({ data: [] }),
+  // Same reason as useProjects above: the landing reads useConversations for
+  // hasNoSessions, so stub it to avoid an authenticatedFetch skewing calls[0].
+  useConversations: () => ({ data: undefined }),
 }));
 // Dynamic harness-label fetching is covered separately. Keep it synchronous
 // here so exact create-POST call-count assertions only observe the POST.
@@ -188,7 +192,6 @@ function promptProfile(overrides: Partial<PromptProfile> = {}): PromptProfile {
     description: null,
     instructions: "",
     enabled: true,
-    archived: false,
     created_at: 1,
     updated_at: 1,
     ...overrides,
@@ -316,6 +319,7 @@ beforeEach(() => {
   // Clear the module-level landing draft so a base branch (or other field)
   // left behind by an unmounting test doesn't seed the next one.
   resetLandingDraft();
+  clearOptimisticTitles();
   localStorage.clear();
   vi.mocked(useHostModelOptions).mockReturnValue({
     data: [
@@ -368,6 +372,41 @@ describe("NewChatLandingScreen create flow", () => {
 
     // On success the screen routes to the freshly created session.
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_new"));
+  });
+
+  it("records the launched workspace under its host without corrupting other recents", async () => {
+    // Write-back hygiene for omnigent:recent-workspaces: the launched path
+    // moves to the front of ITS host's list (deduplicated, not appended
+    // twice), and other hosts' lists survive untouched. A corrupted or
+    // cross-host write here is what later feeds recent[0] into the composer's
+    // generic workspace seeding.
+    localStorage.setItem(
+      RECENT_KEY,
+      JSON.stringify({
+        host_1: ["/Users/corey/projects/other", SEEDED_WORKSPACE],
+        host_2: ["/srv/elsewhere"],
+      }),
+    );
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    // The auto-seed takes the most-recent path for host_1.
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("other"),
+    );
+    typeMessage("inspect the repo");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/c/conv_new"));
+
+    const stored = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "{}") as Record<string, string[]>;
+    // Launched path stays a single front entry — re-launching the same
+    // workspace must not insert a duplicate or reorder the rest.
+    expect(stored.host_1).toEqual(["/Users/corey/projects/other", SEEDED_WORKSPACE]);
+    // Another host's recents are untouched by the write-back.
+    expect(stored.host_2).toEqual(["/srv/elsewhere"]);
   });
 
   it("opens the session on the stream's announcement instead of waiting for the create", async () => {
@@ -605,6 +644,26 @@ describe("NewChatLandingScreen create flow", () => {
         skill: null,
         files: [],
       }),
+    );
+    expect(navigateMock).toHaveBeenCalledWith("/c/conv_new");
+  });
+
+  it("stashes the first prompt as the session's optimistic label", async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    typeMessage("  read the README\nand refactor  ");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    // The sidebar reads this while the server's seed title is still in
+    // flight — same whitespace-collapsed text the seed will carry, so the
+    // swap is invisible.
+    await waitFor(() =>
+      expect(getOptimisticTitle("conv_new")).toBe("read the README and refactor"),
     );
     expect(navigateMock).toHaveBeenCalledWith("/c/conv_new");
   });
@@ -1895,7 +1954,6 @@ describe("NewChatLandingScreen create flow", () => {
       display_name: "OmniHarness",
       harness: "openai-agents",
       builtin: true,
-      enabled: true,
     });
     setAgents([base]);
     promptProfileMocks.rows = [promptProfile({ id: "profile_research", name: "Research" })];
@@ -1934,7 +1992,6 @@ describe("NewChatLandingScreen create flow", () => {
         display_name: "OmniHarness",
         harness: "openai-agents",
         builtin: true,
-        enabled: true,
       }),
     ]);
     vi.mocked(authenticatedFetch).mockResolvedValue({
@@ -1982,5 +2039,56 @@ describe("sanitizeInitialPrompt", () => {
     ["returns empty for empty input", "", ""],
   ])("%s", (_label, input, expected) => {
     expect(sanitizeInitialPrompt(input)).toBe(expected);
+  });
+});
+
+describe("create-session input on touch-primary devices", () => {
+  it("Enter inserts a newline instead of submitting when the pointer is coarse", async () => {
+    // Phones have no practical Shift+Enter, so an Enter-submit in the
+    // create-session composer was an unrecoverable accidental send. On
+    // coarse-pointer devices the composer must let Enter fall through to the
+    // textarea's native newline; sending stays an explicit tap.
+    const matchMediaSpy = vi.spyOn(window, "matchMedia").mockImplementation((query: string) =>
+      query.includes("pointer: coarse")
+        ? ({
+            matches: true,
+            media: query,
+            onchange: null,
+            addListener: () => {},
+            removeListener: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => false,
+          } as MediaQueryList)
+        : ({
+            matches: false,
+            media: query,
+            onchange: null,
+            addListener: () => {},
+            removeListener: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => false,
+          } as MediaQueryList),
+    );
+
+    try {
+      renderLanding();
+      await waitForWorkspaceSeed();
+      const input = screen.getByTestId("new-chat-landing-input");
+      fireEvent.change(input, { target: { value: "first line of a long prompt" } });
+
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      // No session was created and no navigation happened: Enter was not
+      // intercepted, so the composer still holds the user's draft.
+      expect(authenticatedFetch).not.toHaveBeenCalled();
+      expect(navigateMock).not.toHaveBeenCalled();
+
+      fireEvent.focus(screen.getByTestId("new-chat-landing-submit"));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+    } finally {
+      matchMediaSpy.mockRestore();
+    }
   });
 });

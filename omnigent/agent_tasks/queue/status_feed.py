@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from omnigent.agent_tasks.queue.gate import FAILED_STATUS, QUIET_STATUS
 from omnigent.db.utils import now_epoch
@@ -31,6 +32,7 @@ _logger = logging.getLogger(__name__)
 # Statuses that mean "the agent finished its turn". ``waiting`` is *not* here: it means
 # the turn ended but sub-agents are still running, so the broker is still busy.
 _TERMINAL_STATUSES = frozenset({QUIET_STATUS, FAILED_STATUS})
+_StatusObserver = Callable[[str, str], None]
 
 
 class QueueStatusFeed:
@@ -86,7 +88,3 @@ class QueueStatusFeed:
                 session_id,
                 status,
             )
-
-
-# A callable that pushes a status reading into the dispatch gate.
-_StatusObserver = "callable[[str, str], None]"

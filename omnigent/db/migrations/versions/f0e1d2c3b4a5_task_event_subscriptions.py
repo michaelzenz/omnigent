@@ -57,9 +57,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_task_event_subscriptions_source", table_name="task_event_subscriptions"
-    )
+    op.drop_index("ix_task_event_subscriptions_source", table_name="task_event_subscriptions")
     op.drop_table("task_event_subscriptions")
 
     with op.batch_alter_table("task_events") as batch_op:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from builtins import list as builtin_list
 from typing import cast
 
 from sqlalchemy import asc, select
@@ -139,7 +140,9 @@ class SqlAlchemyMemoryStore(MemoryStore):
             session.delete(row)
             return True
 
-    def reorder(self, category_ids: list[str], *, user_id: str | None) -> list[MemoryCategory]:
+    def reorder(
+        self, category_ids: builtin_list[str], *, user_id: str | None
+    ) -> builtin_list[MemoryCategory]:
         with self._session("reorder_memory_categories") as session:
             rows = session.execute(self._owned_stmt(user_id)).scalars().all()
             by_id = {row.id: row for row in rows}

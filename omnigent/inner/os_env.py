@@ -1149,7 +1149,7 @@ def _handle_helper_request(
         path = _resolve_path(cwd, raw_path)
         try:
             _assert_within_reach(cwd, sandbox, path, need_write=False)
-            _assert_read_allowed(sandbox, path)
+            _assert_read_allowed(sandbox, path, cwd)
         except PermissionError as exc:
             return {"error": str(exc)}
         offset_raw = request.get("offset", 1)
@@ -1191,7 +1191,7 @@ def _handle_helper_request(
         path = _resolve_path(cwd, raw_path)
         try:
             _assert_within_reach(cwd, sandbox, path, need_write=True)
-            _assert_read_allowed(sandbox, path)
+            _assert_read_allowed(sandbox, path, cwd)
             _assert_write_allowed(sandbox, path)
         except PermissionError as exc:
             return {"error": str(exc)}
@@ -1238,7 +1238,7 @@ def _handle_helper_request(
         path = _resolve_path(cwd, raw_path)
         try:
             _assert_within_reach(cwd, sandbox, path, need_write=False)
-            _assert_read_allowed(sandbox, path)
+            _assert_read_allowed(sandbox, path, cwd)
         except PermissionError as exc:
             return {"error": str(exc)}
         return _grep_impl(
@@ -1261,7 +1261,7 @@ def _handle_helper_request(
         path = _resolve_path(cwd, raw_path)
         try:
             _assert_within_reach(cwd, sandbox, path, need_write=False)
-            _assert_read_allowed(sandbox, path)
+            _assert_read_allowed(sandbox, path, cwd)
         except PermissionError as exc:
             return {"error": str(exc)}
         return _find_impl(
@@ -1277,7 +1277,7 @@ def _handle_helper_request(
         path = _resolve_path(cwd, raw_path)
         try:
             _assert_within_reach(cwd, sandbox, path, need_write=False)
-            _assert_read_allowed(sandbox, path)
+            _assert_read_allowed(sandbox, path, cwd)
         except PermissionError as exc:
             return {"error": str(exc)}
         return _list_dir_impl(path=path, limit=request.get("limit", 500))
@@ -1302,7 +1302,7 @@ def _handle_helper_request(
             path = _resolve_path(cwd, raw_path)
             try:
                 _assert_within_reach(cwd, sandbox, path, need_write=False)
-                _assert_read_allowed(sandbox, path)
+                _assert_read_allowed(sandbox, path, cwd)
             except PermissionError as exc:
                 return {"error": str(exc)}
             targets.append((path, is_directory))
@@ -1443,11 +1443,15 @@ def _assert_within_reach(
     )
 
 
-def _assert_read_allowed(policy: SandboxPolicy, path: Path) -> None:
+def _assert_read_allowed(policy: SandboxPolicy, path: Path, cwd: Path) -> None:
     roots = policy.read_roots
     if not policy.active or roots is None:
         return
-    if any(_is_within(path, root) for root in roots):
+    if _is_within(path, cwd):
+        return
+    if any(_is_within(path, root) for root in (*roots, *policy.write_roots)):
+        return
+    if any(path == allowed for allowed in policy.write_files):
         return
     raise PermissionError(f"Read access to '{path}' is blocked by sandbox.")
 
@@ -1515,7 +1519,7 @@ def _discover_memory_files_impl(
     for candidate in reversed(candidates):
         try:
             _assert_within_reach(cwd, sandbox, candidate, need_write=False)
-            _assert_read_allowed(sandbox, candidate)
+            _assert_read_allowed(sandbox, candidate, cwd)
             if not candidate.is_file():
                 continue
             file_size = candidate.stat().st_size

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { MessageSquareIcon, XIcon, UnlinkIcon, ArrowLeftRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDeleteTaskAsset, useUntrackWorker } from "@/hooks/useAgentTasks";
@@ -127,7 +126,9 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
                       aria-label={`Open ${label} chat`}
                       className={cn(
                         "inline-flex size-7 items-center justify-center rounded-md border",
-                        selected ? "border-primary bg-primary text-primary-foreground" : "border-border",
+                        selected
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border",
                       )}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -170,10 +171,18 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
         })}
       </ul>
       {confirmUntrack && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setConfirmUntrack(null)}>
-          <div className="w-[360px] max-w-[90vw] rounded-xl border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
+          onClick={() => setConfirmUntrack(null)}
+        >
+          <div
+            className="w-[360px] max-w-[90vw] rounded-xl border border-border bg-background p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <p className="text-sm text-foreground">Untrack this worker from the task?</p>
-            <p className="mt-1 text-xs text-muted-foreground">The session keeps running but won't route updates here.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The session keeps running but won't route updates here.
+            </p>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setConfirmUntrack(null)}>
                 Cancel

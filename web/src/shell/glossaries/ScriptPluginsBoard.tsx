@@ -104,7 +104,10 @@ function PluginRow({ row, nowMs }: { row: BoardRow; nowMs: number }) {
           <div className="flex items-center gap-1.5">
             <span className="truncate font-medium">{row.name}</span>
             {row.builtin && (
-              <Badge variant="outline" className="shrink-0 border-blue-200 bg-blue-50 text-[10px] text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">
+              <Badge
+                variant="outline"
+                className="shrink-0 border-blue-200 bg-blue-50 text-[10px] text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300"
+              >
                 builtin
               </Badge>
             )}
@@ -176,15 +179,7 @@ function PluginRow({ row, nowMs }: { row: BoardRow; nowMs: number }) {
   );
 }
 
-function HostGroup({
-  hostId,
-  rows,
-  nowMs,
-}: {
-  hostId: string;
-  rows: BoardRow[];
-  nowMs: number;
-}) {
+function HostGroup({ hostId, rows, nowMs }: { hostId: string; rows: BoardRow[]; nowMs: number }) {
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">

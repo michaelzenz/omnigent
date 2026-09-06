@@ -24,11 +24,9 @@ from omnigent.host.polling.poll_plugins_paths import (
     iter_plugin_dirs_with_collisions,
 )
 from omnigent.host.polling.pollers.script_plugins_config import (
-    PluginPollConfig,
     PluginPollConfigError,
     load_plugin_poll_config,
     load_script_poll_plugins_defaults,
-    write_plugin_poll_enabled,
 )
 from omnigent.host.polling.singleton_gate import (
     RoleHostResolver,
@@ -97,7 +95,9 @@ class ScriptPollPluginsPoller:
             try:
                 plugin_config = load_plugin_poll_config(plugin_dir, defaults)
             except (PluginPollConfigError, SingletonConfigError) as exc:
-                _logger.warning("Built-in plugin %s skipped — invalid config: %s", builtin.name, exc)
+                _logger.warning(
+                    "Built-in plugin %s skipped — invalid config: %s", builtin.name, exc
+                )
                 self._health.record_config_skip(builtin.name, error=str(exc))
                 continue
             if not plugin_config.enabled:
@@ -116,7 +116,9 @@ class ScriptPollPluginsPoller:
                     ),
                     host_id=ctx.host_id,
                 ):
-                    self._health.record_singleton_skip(builtin.name, interval_s=plugin_config.interval_s)
+                    self._health.record_singleton_skip(
+                        builtin.name, interval_s=plugin_config.interval_s
+                    )
                     continue
             await self._run_builtin_plugin(builtin, ctx=ctx, interval_s=plugin_config.interval_s)
             self._last_run[builtin.name] = now
@@ -135,7 +137,9 @@ class ScriptPollPluginsPoller:
             try:
                 plugin_config = load_plugin_poll_config(plugin_dir, defaults)
             except (PluginPollConfigError, SingletonConfigError) as exc:
-                _logger.warning("Poll plugin %s skipped — invalid config: %s", plugin_dir.name, exc)
+                _logger.warning(
+                    "Poll plugin %s skipped — invalid config: %s", plugin_dir.name, exc
+                )
                 self._health.record_config_skip(plugin_dir.name, error=str(exc))
                 continue
             if not plugin_config.enabled:
@@ -154,9 +158,16 @@ class ScriptPollPluginsPoller:
                     ),
                     host_id=ctx.host_id,
                 ):
-                    self._health.record_singleton_skip(plugin_dir.name, interval_s=plugin_config.interval_s)
+                    self._health.record_singleton_skip(
+                        plugin_dir.name, interval_s=plugin_config.interval_s
+                    )
                     continue
-            await self._run_subprocess_plugin(plugin_dir, ctx=ctx, timeout_s=plugin_config.timeout_s, interval_s=plugin_config.interval_s)
+            await self._run_subprocess_plugin(
+                plugin_dir,
+                ctx=ctx,
+                timeout_s=plugin_config.timeout_s,
+                interval_s=plugin_config.interval_s,
+            )
             self._last_run[plugin_dir.name] = now
 
         await self._health.maybe_post(ctx)
@@ -193,10 +204,14 @@ class ScriptPollPluginsPoller:
             )
         except TimeoutError:
             _logger.warning("Built-in plugin %s timed out", builtin.name)
-            self._health.record_run(builtin.name, outcome="timeout", error="timed out", interval_s=interval_s)
-        except Exception as exc:
+            self._health.record_run(
+                builtin.name, outcome="timeout", error="timed out", interval_s=interval_s
+            )
+        except Exception as exc:  # noqa: BLE001
             _logger.warning("Built-in plugin %s failed: %s", builtin.name, exc)
-            self._health.record_run(builtin.name, outcome="exit_nonzero", error=str(exc), interval_s=interval_s)
+            self._health.record_run(
+                builtin.name, outcome="exit_nonzero", error=str(exc), interval_s=interval_s
+            )
         else:
             self._health.record_run(builtin.name, outcome="ok", interval_s=interval_s)
         finally:
@@ -231,7 +246,12 @@ class ScriptPollPluginsPoller:
             )
         except OSError:
             _logger.warning("Failed to start poll plugin %s", plugin_dir.name, exc_info=True)
-            self._health.record_run(plugin_dir.name, outcome="start_failed", error="failed to start subprocess", interval_s=interval_s)
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="start_failed",
+                error="failed to start subprocess",
+                interval_s=interval_s,
+            )
             return
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
@@ -239,11 +259,26 @@ class ScriptPollPluginsPoller:
             proc.kill()
             await proc.communicate()
             _logger.warning("Poll plugin %s timed out after %.0fs", plugin_dir.name, timeout_s)
-            self._health.record_run(plugin_dir.name, outcome="timeout", error=f"timed out after {timeout_s:.0f}s", interval_s=interval_s)
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="timeout",
+                error=f"timed out after {timeout_s:.0f}s",
+                interval_s=interval_s,
+            )
             return
         if proc.returncode != 0:
             detail = (stderr or stdout).decode(errors="replace").strip()
-            _logger.warning("Poll plugin %s exited %s%s", plugin_dir.name, proc.returncode, f": {detail}" if detail else "")
-            self._health.record_run(plugin_dir.name, outcome="exit_nonzero", error=detail or f"exit {proc.returncode}", interval_s=interval_s)
+            _logger.warning(
+                "Poll plugin %s exited %s%s",
+                plugin_dir.name,
+                proc.returncode,
+                f": {detail}" if detail else "",
+            )
+            self._health.record_run(
+                plugin_dir.name,
+                outcome="exit_nonzero",
+                error=detail or f"exit {proc.returncode}",
+                interval_s=interval_s,
+            )
             return
         self._health.record_run(plugin_dir.name, outcome="ok", interval_s=interval_s)

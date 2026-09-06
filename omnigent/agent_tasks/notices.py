@@ -8,6 +8,7 @@ send time.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 
@@ -122,15 +123,14 @@ def _format_session_batch_notice(events: list) -> str:
         for event in events:
             p: dict = {}
             if event.payload:
-                try:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
                     p = json.loads(event.payload)
-                except (json.JSONDecodeError, TypeError):
-                    pass
             delta = p.get("transcript_delta", "")
             if delta:
                 deltas.append(delta)
         parts = [
-            f"- {event_type}: External session '{session_title}' updated {count} times since last check"
+            f"- {event_type}: External session '{session_title}' updated "
+            f"{count} times since last check"
         ]
         if deltas:
             parts.append(
@@ -252,6 +252,7 @@ def _format_broker_stall_notice(
     *,
     clusters: list | None = None,
 ) -> str:
+    del events
     """Format the notice the broker packager hands the dispatcher.
 
     Returns clustered events and directs the broker to select or create a

@@ -15,7 +15,9 @@ import {
   forkSession,
   getSession,
   getSessionSlim,
+  importLocalSessions,
   interrupt,
+  launchRunner,
   listRunners,
   openSessionStream,
   rewindSession,
@@ -32,6 +34,24 @@ function mockJsonResponse(body: unknown, init?: { ok?: boolean; status?: number 
     statusText: "OK",
     json: async () => body,
   } as unknown as Response;
+}
+
+// An NDJSON streaming response: each line is emitted as its own chunk so the
+// reader sees them arrive one at a time, matching the `/imports/local` stream.
+function mockNdjsonResponse(lines: string[]): Response {
+  const encoder = new TextEncoder();
+  let i = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i < lines.length) {
+        controller.enqueue(encoder.encode(lines[i] + "\n"));
+        i += 1;
+      } else {
+        controller.close();
+      }
+    },
+  });
+  return { ok: true, status: 200, statusText: "OK", body } as unknown as Response;
 }
 
 const fetchMock = vi.fn();
@@ -309,6 +329,49 @@ describe("forkSession", () => {
     expect(JSON.parse(init.body as string)).toEqual({ title: "My clone" });
   });
 
+  it("forwards run-config overrides (model / effort / launch args)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", {
+      modelOverride: "opus",
+      reasoningEffort: "high",
+      terminalLaunchArgs: ["--permission-mode", "auto"],
+      codexBypassSandbox: true,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      model_override: "opus",
+      reasoning_effort: "high",
+      terminal_launch_args: ["--permission-mode", "auto"],
+      codex_bypass_sandbox: true,
+    });
+  });
+
+  it("omits run-config fields left undefined so the fork inherits them", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    // An empty config object (non-native target) sends no run overrides.
+    await forkSession("conv_src", {});
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
   it("requests a server-managed worktree for the fork", async () => {
     fetchMock.mockResolvedValueOnce(
       mockJsonResponse({
@@ -319,10 +382,15 @@ describe("forkSession", () => {
       }),
     );
 
-    await forkSession("conv_src", { upToResponseId: "resp_1", autoWorktree: true });
+    await forkSession("conv_src", {
+      agentId: "agent_target",
+      upToResponseId: "resp_1",
+      autoWorktree: true,
+    });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
+      agent_id: "agent_target",
       up_to_response_id: "resp_1",
       worktree: { mode: "auto" },
     });
@@ -350,6 +418,72 @@ describe("rewindSession", () => {
 });
 
 describe("runner binding", () => {
+  it("sends base branch and auto-fetch when creating a worktree", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ runner_id: "runner_abc" }));
+
+    await launchRunner("host_abc", "conv_abc", "/repo", {
+      branchName: "feature/new",
+      baseBranch: "origin/main",
+      autoFetchBase: true,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      session_id: "conv_abc",
+      workspace: "/repo",
+      git: {
+        branch_name: "feature/new",
+        base_branch: "origin/main",
+        auto_fetch_base: true,
+      },
+    });
+  });
+
+  it("auto-fetches the current ref when creating without an explicit base", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ runner_id: "runner_abc" }));
+
+    await launchRunner("host_abc", "conv_abc", "/repo", {
+      branchName: "feature/current",
+      autoFetchBase: false,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).git).toEqual({
+      branch_name: "feature/current",
+      auto_fetch_base: false,
+    });
+  });
+
+  it("omits base and auto-fetch when reusing a branch or worktree", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ runner_id: "runner_branch" }))
+      .mockResolvedValueOnce(mockJsonResponse({ runner_id: "runner_worktree" }));
+
+    await launchRunner("host_abc", "conv_branch", "/repo", {
+      branchName: "feature/existing",
+      baseBranch: "origin/main",
+      existingBranch: true,
+      autoFetchBase: true,
+    });
+    await launchRunner("host_abc", "conv_worktree", "/repo", {
+      branchName: "feature/worktree",
+      baseBranch: "origin/main",
+      existingWorktree: true,
+      autoFetchBase: true,
+    });
+
+    const branchBody = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    const worktreeBody = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string);
+    expect(branchBody.git).toEqual({
+      branch_name: "feature/existing",
+      existing_branch: true,
+    });
+    expect(worktreeBody.git).toEqual({
+      branch_name: "feature/worktree",
+      existing_worktree: true,
+    });
+  });
+
   it("lists online runners and parses harnesses", async () => {
     fetchMock.mockResolvedValueOnce(
       mockJsonResponse({
@@ -1011,5 +1145,118 @@ describe("approve", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/v1/sessions/conv_abc/elicitations/elic_xyz/resolve");
     expect(JSON.parse(init.body as string)).toEqual({ action: "decline" });
+  });
+});
+
+describe("importLocalSessions", () => {
+  it("streams each session through onSession and returns the final tally", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "First" }),
+        JSON.stringify({ event: "session", session_id: "c2", title: null }),
+        JSON.stringify({ event: "done", imported: 2, already_imported: 1, failed: 0 }),
+      ]),
+    );
+
+    const seen: string[] = [];
+    const result = await importLocalSessions("host_1", "all", 25, (s) => seen.push(s.id));
+
+    expect(seen).toEqual(["c1", "c2"]);
+    expect(result).toEqual({
+      imported: 2,
+      alreadyImported: 1,
+      failed: 0,
+      sessions: [
+        { id: "c1", title: "First" },
+        { id: "c2", title: null },
+      ],
+    });
+    // Hits the streaming endpoint with the snake_case body.
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/imports/local/stream");
+    expect(JSON.parse(init.body as string)).toEqual({
+      host_id: "host_1",
+      source: "all",
+      limit: 25,
+    });
+  });
+
+  it("throws the server's message on a mid-stream error, keeping delivered sessions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "First" }),
+        JSON.stringify({ event: "error", message: "host stalled mid-import" }),
+        JSON.stringify({ event: "done", imported: 1, already_imported: 0, failed: 0 }),
+      ]),
+    );
+
+    const seen: string[] = [];
+    await expect(importLocalSessions("h", "claude", 10, (s) => seen.push(s.id))).rejects.toThrow(
+      "host stalled mid-import",
+    );
+    // The session that streamed before the error was still handed to the caller.
+    expect(seen).toEqual(["c1"]);
+  });
+
+  it("sends an exact session ID with its harness", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "Exact" }),
+        JSON.stringify({ event: "done", imported: 1, already_imported: 0, failed: 0 }),
+      ]),
+    );
+
+    await importLocalSessions("host_1", "codex", 25, undefined, "session-exact");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      host_id: "host_1",
+      source: "codex",
+      limit: 25,
+      session_id: "session-exact",
+    });
+  });
+
+  it("does not fall back to a server that cannot distinguish an exact import", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 404 }));
+
+    await expect(
+      importLocalSessions("host_1", "codex", 25, undefined, "session-exact"),
+    ).rejects.toThrow("Direct session import is not supported");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the buffered endpoint when the stream endpoint 404s", async () => {
+    // Old server: the streaming endpoint is absent, so the client retries the
+    // buffered one and delivers every session through onSession at once.
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 404 }));
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        imported: 2,
+        already_imported: 1,
+        failed: 0,
+        sessions: [
+          { session_id: "c1", title: "First" },
+          { session_id: "c2", title: null },
+        ],
+      }),
+    );
+
+    const seen: string[] = [];
+    const result = await importLocalSessions("host_1", "all", 25, (s) => seen.push(s.id));
+
+    expect(seen).toEqual(["c1", "c2"]);
+    expect(result).toEqual({
+      imported: 2,
+      alreadyImported: 1,
+      failed: 0,
+      sessions: [
+        { id: "c1", title: "First" },
+        { id: "c2", title: null },
+      ],
+    });
+    // First the stream endpoint (404), then the buffered fallback.
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/imports/local/stream");
+    expect(fetchMock.mock.calls[1][0]).toBe("/v1/imports/local");
   });
 });

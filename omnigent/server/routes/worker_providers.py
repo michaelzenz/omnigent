@@ -128,6 +128,7 @@ def create_worker_providers_router(
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
 ) -> APIRouter:
+    del host_store
     router = APIRouter()
 
     @router.get("/worker-providers")

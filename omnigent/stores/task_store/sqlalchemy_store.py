@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from builtins import list as builtin_list
 from typing import Any
 
 from sqlalchemy import asc, delete, desc, func, select, update
@@ -133,7 +134,7 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
-    def list_recent(self, limit: int) -> list[Task]:
+    def list_recent(self, limit: int) -> builtin_list[Task]:
         with self._session() as session:
             stmt = (
                 select(SqlTask)
@@ -148,7 +149,7 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
-    def list_by_manager_id(self, manager_id: str) -> list[Task]:
+    def list_by_manager_id(self, manager_id: str) -> builtin_list[Task]:
         with self._session() as session:
             stmt = (
                 select(SqlTask)
@@ -160,9 +161,7 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
 
-    def list_manager_ids(
-        self, *, owner_user_id: str | None = None
-    ) -> list[str]:
+    def list_manager_ids(self, *, owner_user_id: str | None = None) -> builtin_list[str]:
         with self._session() as session:
             live = [
                 encode_task_state(state)
@@ -177,7 +176,11 @@ class SqlAlchemyTaskStore(TaskStore):
             )
             if owner_user_id is not None:
                 stmt = stmt.where(SqlTask.owner_user_id == owner_user_id)
-            return list(session.execute(stmt).scalars().all())
+            return [
+                manager_id
+                for manager_id in session.execute(stmt).scalars().all()
+                if manager_id is not None
+            ]
 
     def update(
         self,
@@ -210,9 +213,7 @@ class SqlAlchemyTaskStore(TaskStore):
             if goal is not None and row.goal != goal:
                 row.goal = goal
                 changed = True
-            if manager_id is not _UNSET and (
-                row.manager_id != manager_id
-            ):
+            if manager_id is not _UNSET and (row.manager_id != manager_id):
                 row.manager_id = manager_id
                 changed = True
             if owner_user_id is not _UNSET and row.owner_user_id != owner_user_id:
@@ -302,7 +303,7 @@ class SqlAlchemyTaskStore(TaskStore):
             session.delete(row)
             return True
 
-    def get_tags(self, task_id: str) -> list[TaskTag]:
+    def get_tags(self, task_id: str) -> builtin_list[TaskTag]:
         with self._session() as session:
             stmt = (
                 select(SqlTaskTag)
@@ -313,7 +314,7 @@ class SqlAlchemyTaskStore(TaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_tag_to_entity(row) for row in rows]
 
-    def set_tags(self, task_id: str, tags: list[TaskTag]) -> list[TaskTag]:
+    def set_tags(self, task_id: str, tags: builtin_list[TaskTag]) -> builtin_list[TaskTag]:
         with self._session() as session:
             row = session.get(SqlTask, (current_workspace_id(), task_id))
             if row is None:
@@ -337,7 +338,7 @@ class SqlAlchemyTaskStore(TaskStore):
             session.flush()
             return tags
 
-    def list_task_ids_by_tag(self, tag_type: str, tag: str) -> list[str]:
+    def list_task_ids_by_tag(self, tag_type: str, tag: str) -> builtin_list[str]:
         with self._session() as session:
             stmt = (
                 select(SqlTaskTag.task_id)

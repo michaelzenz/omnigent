@@ -258,6 +258,7 @@ class BrokerPackager(Packager):
         similarity_threshold: float = BROKER_TAG_SIMILARITY_THRESHOLD,
         candidate_limit: int = BROKER_CANDIDATE_LIMIT,
     ) -> None:
+        del candidate_limit
         super().__init__(
             store,
             poll_interval_s=poll_interval_s,

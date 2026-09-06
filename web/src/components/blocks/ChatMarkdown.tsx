@@ -16,7 +16,10 @@ import { defaultRemarkPlugins } from "streamdown";
 import remarkBreaks from "remark-breaks";
 import { normalizeExplicitMathDelimiters } from "@/components/ai-elements/mathMarkdown";
 import { MessageResponse } from "@/components/ai-elements/message";
-import { PREVIEW_LINK_ATTR, WORKSPACE_FILE_LINK_ATTR } from "@/components/ai-elements/streamdown-security";
+import {
+  PREVIEW_LINK_ATTR,
+  WORKSPACE_FILE_LINK_ATTR,
+} from "@/components/ai-elements/streamdown-security";
 import { ZoomableImage } from "@/components/ImageLightbox";
 import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { cn } from "@/lib/utils";

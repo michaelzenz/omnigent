@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.inner.databricks_executor import DatabricksCredentials
 from omnigent.inner.executor import (
     CompactionComplete,
@@ -33,12 +32,9 @@ from omnigent.inner.executor import (
 )
 from omnigent.inner.pi_executor import (
     PiExecutor,
-    _PI_COMPACTION_HEADROOM_TOKENS,
-    _PI_COMPACTION_RESERVE_TOKENS,
     _build_models_json,
     _build_onih_models_json,
     _databricks_model_wire_catalog,
-    _estimate_wire_overhead_tokens,
     _generate_extension_js,
     _load_local_pi_models,
     _local_pi_provider_for_model,
@@ -1441,29 +1437,51 @@ class TestPiRpcSession(unittest.TestCase):
 
         _run(_test())
 
+    def test_stdout_at_eof_false_while_reader_running(self):
+        # A read_line timeout while the reader is alive is idle, not EOF.
+        async def _test():
+            rpc = _PiRpcSession()
+            rpc._line_queue = asyncio.Queue()
+            rpc._read_task = asyncio.create_task(asyncio.sleep(30))
+            try:
+                self.assertIsNone(await rpc.read_line(timeout=0.05))
+                self.assertFalse(rpc.stdout_at_eof())
+            finally:
+                rpc._read_task.cancel()
+                await asyncio.gather(rpc._read_task, return_exceptions=True)
 
-# ---------------------------------------------------------------------------
-# compact_session tests
-# ---------------------------------------------------------------------------
+        _run(_test())
 
+    def test_stdout_at_eof_true_when_reader_finished_or_absent(self):
+        async def _test():
+            rpc = _PiRpcSession()
+            rpc._line_queue = asyncio.Queue()
+            # Never started (spawn failed) — nothing more can arrive.
+            self.assertTrue(rpc.stdout_at_eof())
+            # Finished reader (process exited, pipe closed).
+            rpc._read_task = asyncio.create_task(asyncio.sleep(0))
+            await asyncio.sleep(0.01)
+            self.assertTrue(rpc.stdout_at_eof())
 
-class TestPiExecutorCompactSession(unittest.TestCase):
-    def test_compact_without_live_process_raises_conflict(self):
-        with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
-            executor = PiExecutor()
-        with self.assertRaises(OmnigentError) as ctx:
-            asyncio.run(executor.compact_session("conv_1"))
-        self.assertEqual(ctx.exception.code, ErrorCode.CONFLICT)
-        self.assertIn("no live Pi process", ctx.exception.message)
+        _run(_test())
 
+    def test_stdout_at_eof_false_until_buffered_lines_drained(self):
+        # A finished reader with lines still queued is not EOF yet: the
+        # buffered output (and the None sentinel) must be drained first.
+        async def _test():
+            rpc = _PiRpcSession()
+            rpc._line_queue = asyncio.Queue()
+            rpc._line_queue.put_nowait('{"type": "agent_end"}')
+            rpc._line_queue.put_nowait(None)
+            rpc._read_task = asyncio.create_task(asyncio.sleep(0))
+            await asyncio.sleep(0.01)
+            self.assertFalse(rpc.stdout_at_eof())
+            self.assertEqual(await rpc.read_line(timeout=0.05), '{"type": "agent_end"}')
+            self.assertFalse(rpc.stdout_at_eof())
+            self.assertIsNone(await rpc.read_line(timeout=0.05))
+            self.assertTrue(rpc.stdout_at_eof())
 
-class TestEstimateWireOverheadTokens(unittest.TestCase):
-    def test_zero_without_tools_or_prompt(self):
-        self.assertEqual(_estimate_wire_overhead_tokens([], ""), 0)
-
-    def test_scales_with_payload(self):
-        tools = [{"name": f"tool_{i}", "description": "d" * 400} for i in range(40)]
-        self.assertGreater(_estimate_wire_overhead_tokens(tools, "sys" * 1000), 1000)
+        _run(_test())
 
 
 # ---------------------------------------------------------------------------
@@ -1705,59 +1723,6 @@ class TestResolveModel(unittest.TestCase):
 
 
 class TestBuildEnvAndDir(unittest.TestCase):
-    def test_databricks_settings_include_compaction_reserve(self):
-        with (
-            patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"),
-            patch(
-                "omnigent.inner.pi_executor._read_databrickscfg",
-                return_value=DatabricksCredentials(host="https://h.example.com", token="tok"),
-            ),
-        ):
-            executor = PiExecutor(gateway=True)
-
-        tools = [{"name": f"tool_{i}", "description": "d" * 400} for i in range(40)]
-        config = executor._build_env_and_dir(
-            tools, None, None, None, system_prompt="s" * 20000
-        )
-        try:
-            settings_path = Path(config.env["PI_CODING_AGENT_DIR"]) / "settings.json"
-            with open(settings_path) as f:
-                settings = json.load(f)
-            compaction = settings["compaction"]
-            self.assertTrue(compaction["enabled"])
-            self.assertGreater(
-                compaction["reserveTokens"],
-                _PI_COMPACTION_RESERVE_TOKENS + _PI_COMPACTION_HEADROOM_TOKENS,
-            )
-        finally:
-            import shutil
-
-            shutil.rmtree(config.tmp_dir, ignore_errors=True)
-
-    def test_compaction_reserve_is_floor_without_overhead(self):
-        with (
-            patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"),
-            patch(
-                "omnigent.inner.pi_executor._read_databrickscfg",
-                return_value=DatabricksCredentials(host="https://h.example.com", token="tok"),
-            ),
-        ):
-            executor = PiExecutor(gateway=True)
-
-        config = executor._build_env_and_dir([], None, None, None, system_prompt="")
-        try:
-            settings_path = Path(config.env["PI_CODING_AGENT_DIR"]) / "settings.json"
-            with open(settings_path) as f:
-                settings = json.load(f)
-            self.assertEqual(
-                settings["compaction"]["reserveTokens"],
-                _PI_COMPACTION_RESERVE_TOKENS + _PI_COMPACTION_HEADROOM_TOKENS,
-            )
-        finally:
-            import shutil
-
-            shutil.rmtree(config.tmp_dir, ignore_errors=True)
-
     def test_databricks_creates_models_json(self):
         with (
             patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"),
@@ -2195,6 +2160,120 @@ class TestRunTurn(unittest.TestCase):
 
         _run(_test())
 
+    def test_stdout_idle_timeout_during_long_tool_call_keeps_waiting(self):
+        """A silent (>idle budget) tool call must not end the turn.
+
+        The stdout read times out repeatedly while pi's reader is still
+        running (long tool call producing no output); the turn must keep
+        waiting and complete when the final answer eventually arrives,
+        instead of dying with 'Pi process ended without response.'.
+        """
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc.process = MagicMock()
+            fake_rpc.process.returncode = None
+            fake_rpc.process.stdin = _FakeStreamWriter()
+            fake_rpc._stderr_lines = []
+            # A live reader task: pi is running, just silent.
+            fake_rpc._read_task = asyncio.create_task(asyncio.sleep(30))
+
+            async def feed_after_delay():
+                # Stay silent across several idle-timeout windows (the
+                # patched budget is 0.05s), then deliver the turn.
+                await asyncio.sleep(0.3)
+                for line in (
+                    json.dumps({"type": "response", "success": True}),
+                    json.dumps(
+                        {
+                            "type": "message_update",
+                            "assistantMessageEvent": {
+                                "type": "text_delta",
+                                "delta": "Done after long tool",
+                            },
+                        }
+                    ),
+                    json.dumps({"type": "agent_end", "messages": []}),
+                ):
+                    fake_rpc._line_queue.put_nowait(line)
+
+            feeder = asyncio.create_task(feed_after_delay())
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            try:
+                with patch(
+                    "omnigent.inner.pi_executor._TURN_STDOUT_IDLE_TIMEOUT_S",
+                    0.05,
+                ):
+                    events = [
+                        e
+                        async for e in executor.run_turn(
+                            [{"role": "user", "content": "run the long task"}],
+                            [],
+                            "system",
+                        )
+                    ]
+            finally:
+                feeder.cancel()
+                fake_rpc._read_task.cancel()
+                await asyncio.gather(fake_rpc._read_task, return_exceptions=True)
+
+            errors = [e for e in events if isinstance(e, ExecutorError)]
+            self.assertEqual(
+                errors,
+                [],
+                f"idle timeout with a live pi process ended the turn: {errors}",
+            )
+            turn_complete = [e for e in events if isinstance(e, TurnComplete)]
+            self.assertEqual(len(turn_complete), 1)
+            self.assertEqual(turn_complete[0].response, "Done after long tool")
+
+        _run(_test())
+
+    def test_stdout_eof_from_finished_reader_still_errors(self):
+        """A real pi death (reader finished, None sentinel) still errors."""
+
+        async def _test():
+            executor = self._make_executor()
+
+            fake_rpc = _PiRpcSession()
+            fake_rpc._line_queue = asyncio.Queue()
+            fake_rpc._line_queue.put_nowait(None)  # reader's EOF sentinel
+            fake_rpc.process = MagicMock()
+            fake_rpc.process.returncode = None
+            fake_rpc.process.stdin = _FakeStreamWriter()
+            fake_rpc._stderr_lines = []
+            # Finished reader: the process exited and stdout closed.
+            fake_rpc._read_task = asyncio.create_task(asyncio.sleep(0))
+            await asyncio.sleep(0.01)
+
+            async def fake_ensure_rpc(*args, **kwargs):
+                return fake_rpc
+
+            executor._ensure_rpc = fake_ensure_rpc
+
+            events = [
+                e
+                async for e in executor.run_turn(
+                    [{"role": "user", "content": "hello"}],
+                    [],
+                    "system",
+                )
+            ]
+
+            self.assertEqual(len(events), 1)
+            self.assertIsInstance(events[0], ExecutorError)
+            self.assertIn("Pi process ended without response", events[0].message)
+
+        _run(_test())
+
     def test_agent_end_extracts_response_from_messages(self):
         """When no text deltas were streamed, response is extracted from agent_end messages."""
 
@@ -2562,7 +2641,8 @@ class TestRunTurn(unittest.TestCase):
             # The turn should complete normally, not error.
             self.assertFalse(
                 any(isinstance(e, ExecutorError) for e in events),
-                f"Expected no ExecutorError, got {[e for e in events if isinstance(e, ExecutorError)]}",
+                "Expected no ExecutorError, got "
+                f"{[e for e in events if isinstance(e, ExecutorError)]}",
             )
             self.assertTrue(any(isinstance(e, TextChunk) for e in events))
             self.assertTrue(any(isinstance(e, TurnComplete) for e in events))
@@ -5545,3 +5625,62 @@ def test_unsupported_effort_value_fails_the_turn() -> None:
     assert isinstance(events[0], ExecutorError)
     assert events[0].retryable is False
     assert "not supported by pi" in events[0].message
+
+
+def test_run_turn_prompt_command_includes_streaming_behavior():
+    """run_turn must include streamingBehavior='followUp' in the RPC prompt command.
+
+    Without it, a residual race against a still-alive Pi process (e.g. after an
+    interrupt where the reap races the slice) surfaces Pi's raw
+    'Agent is already processing' protocol error instead of queuing the prompt.
+    """
+    with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+        executor = PiExecutor()
+
+    fake_rpc = _PiRpcSession()
+    fake_rpc._line_queue = asyncio.Queue()
+    fake_rpc.process = MagicMock()
+    fake_rpc.process.returncode = None
+    stdin = _FakeStreamWriter()
+    fake_rpc.process.stdin = stdin
+    fake_rpc._stderr_lines = []
+
+    for line in [
+        json.dumps({"type": "response", "success": True}),
+        json.dumps(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_delta", "delta": "hi"},
+            }
+        ),
+        json.dumps({"type": "agent_end", "messages": []}),
+    ]:
+        fake_rpc._line_queue.put_nowait(line)
+
+    async def fake_ensure_rpc(*args, **kwargs):
+        return fake_rpc
+
+    executor._ensure_rpc = fake_ensure_rpc
+
+    async def _test():
+        return [
+            e
+            async for e in executor.run_turn([{"role": "user", "content": "hello"}], [], "system")
+        ]
+
+    events = _run(_test())
+
+    turn_complete = [e for e in events if isinstance(e, TurnComplete)]
+    assert len(turn_complete) == 1
+
+    written = b"".join(stdin.data).decode()
+    commands = [json.loads(line) for line in written.splitlines() if line.strip()]
+    prompts = [c for c in commands if c.get("type") == "prompt"]
+    assert prompts, "expected run_turn to emit a prompt command"
+
+    cmd = prompts[0]
+    assert cmd.get("streamingBehavior") == "followUp", (
+        "RPC prompt command must include streamingBehavior='followUp' so a "
+        "residual race against a still-alive Pi process queues instead of "
+        f"surfacing the raw protocol error; got {cmd!r}"
+    )

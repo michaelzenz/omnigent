@@ -73,6 +73,11 @@ describe("detectIdleTransitions", () => {
     expect(detectIdleTransitions(prev, [conv("a")])).toEqual([]);
   });
 
+  it("ignores an archived conversation that just finished", () => {
+    const prev = statusMap({ a: "running" });
+    expect(detectIdleTransitions(prev, [{ ...conv("a", "idle"), archived: true }])).toEqual([]);
+  });
+
   it("returns only the newly-finished conversations from a mixed list", () => {
     const prev = statusMap({ a: "running", b: "running", c: "idle" });
     const result = detectIdleTransitions(prev, [
@@ -116,6 +121,11 @@ describe("detectNewElicitations", () => {
     // No previous entry -> a page load with already-pending prompts must not
     // fire, mirroring the idle fresh-load behavior.
     expect(detectNewElicitations(new Map(), [convE("a", 2)])).toEqual([]);
+  });
+
+  it("ignores a new prompt on an archived conversation", () => {
+    const prev = new Map([["a", 0]]);
+    expect(detectNewElicitations(prev, [{ ...convE("a", 1), archived: true }])).toEqual([]);
   });
 
   it("ignores a steady elicitation count", () => {
@@ -219,6 +229,15 @@ describe("computeUnreadBadgeIds", () => {
     expect(next.size).toBe(0);
   });
 
+  it("excludes broker sessions even when unseen or awaiting input", () => {
+    const broker = {
+      ...convB("broker", { pending: 1 }),
+      labels: { "omnigent.role": "task_broker" },
+    };
+    const next = computeUnreadBadgeIds([broker], undefined, true, unseenIds("broker"));
+    expect(next.size).toBe(0);
+  });
+
   it("suppresses the actively-viewed session (focused + active)", () => {
     // Focused AND viewing 'a' -> the user is looking at it, so not unread,
     // even though the predicate flags it and it has a pending elicitation.
@@ -271,6 +290,17 @@ describe("computeUnreadBadgeIds", () => {
       },
     );
     expect(calls).toEqual([{ id: "a", updatedAt: 42, status: "failed" }]);
+  });
+
+  it("excludes an archived session, even one awaiting input", () => {
+    // Matches the Inbox page and Inbox badge, which both hide archived rows.
+    const next = computeUnreadBadgeIds(
+      [{ ...convB("a", { pending: 1 }), archived: true }, convB("b", { pending: 1 })],
+      undefined,
+      true,
+      unseenIds("a", "b"),
+    );
+    expect([...next]).toEqual(["b"]);
   });
 
   it("returns an empty set for an empty list", () => {

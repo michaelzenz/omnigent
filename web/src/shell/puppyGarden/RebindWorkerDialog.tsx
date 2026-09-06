@@ -26,9 +26,7 @@ export function RebindWorkerDialog({
   const filtered = useMemo(
     () =>
       tasks.filter(
-        (t) =>
-          t.id === currentTaskId ||
-          t.title.toLowerCase().includes(query.toLowerCase()),
+        (t) => t.id === currentTaskId || t.title.toLowerCase().includes(query.toLowerCase()),
       ),
     [tasks, currentTaskId, query],
   );
@@ -97,25 +95,17 @@ export function RebindWorkerDialog({
                     )}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {task.title}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {task.state}
-                    </span>
+                    <span className="block truncate text-sm font-medium">{task.title}</span>
+                    <span className="text-xs text-muted-foreground">{task.state}</span>
                   </span>
                   {isCurrent && (
-                    <span className="text-xs font-medium text-muted-foreground">
-                      current
-                    </span>
+                    <span className="text-xs font-medium text-muted-foreground">current</span>
                   )}
                 </button>
               );
             })}
             {filtered.length === 0 && (
-              <p className="px-3 py-4 text-center text-sm text-muted-foreground">
-                No tasks found.
-              </p>
+              <p className="px-3 py-4 text-center text-sm text-muted-foreground">No tasks found.</p>
             )}
           </div>
         </div>

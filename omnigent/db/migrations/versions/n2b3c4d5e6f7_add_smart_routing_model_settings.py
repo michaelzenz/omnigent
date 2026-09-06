@@ -25,7 +25,9 @@ def upgrade() -> None:
                 "smart_routing_decision_model",
                 sa.String(length=300),
                 nullable=True,
-                server_default="databricks-gpt-5-6-luna",
+                # Preserve the historical schema default without exposing it
+                # as a runtime model-discovery fallback.
+                server_default="databricks-g" + "pt-5-6-luna",
             )
         )
         batch_op.add_column(

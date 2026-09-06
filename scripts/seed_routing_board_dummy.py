@@ -499,7 +499,9 @@ def _seed_twenty_worker_task() -> str:
                     f"/v1/agent-tasks/{task_id}/items",
                     body={
                         "title": f"Worker {index:02d} item {item_index:02d}",
-                        "instructions": f"Queued backlog item {item_index} for worker {index:02d}.",
+                        "instructions": (
+                            f"Queued backlog item {item_index} for worker {index:02d}."
+                        ),
                         "state": "queued",
                         **dispatch,
                     },
@@ -541,7 +543,8 @@ def _seed_twenty_worker_task() -> str:
         raise RuntimeError(f"Expected {_LOAD_TEST_ASSET_COUNT} assets, got {assets}")
     if heavy_rows != _HEAVY_WORKER_ITEM_COUNT:
         print(
-            f"  warning: expected {_HEAVY_WORKER_ITEM_COUNT} items on heavy worker, got {heavy_rows}"
+            f"  warning: expected {_HEAVY_WORKER_ITEM_COUNT} items "
+            f"on heavy worker, got {heavy_rows}"
         )
     return task_id
 

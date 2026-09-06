@@ -11,8 +11,10 @@ Merges the two migration heads that branched from the common root:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 revision: str = "m9z8y7x6w5v4"
-down_revision: str | None = ("z8a2b3c4d5e6", "z9a3b4c5d6e7")
+down_revision: str | Sequence[str] | None = ("z8a2b3c4d5e6", "z9a3b4c5d6e7")
 branch_labels: str | None = None
 depends_on: str | None = None
 

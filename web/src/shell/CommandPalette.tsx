@@ -21,7 +21,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClockIcon,
   InboxIcon,
-  Maximize2Icon,
   type LucideIcon,
   PanelLeftIcon,
   PanelRightIcon,
@@ -43,7 +42,6 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { InputGroupButton } from "@/components/ui/input-group";
 import { conversationDisplayLabel, getConversationAgentType } from "./sidebarNav";
 
 export interface CommandPaletteProps {
@@ -126,16 +124,6 @@ export function CommandPalette({
   }, [query]);
 
   const close = (): void => onOpenChange(false);
-  const openFullSearch = (): void => {
-    const trimmed = query.trim();
-    if (!trimmed) return;
-    close();
-    navigate(`/search?q=${encodeURIComponent(trimmed)}`);
-  };
-  const updateQuery = (next: string): void => {
-    explicitlySelectedRef.current = false;
-    setQuery(next);
-  };
 
   const actions = useMemo<ActionCommand[]>(
     () => [

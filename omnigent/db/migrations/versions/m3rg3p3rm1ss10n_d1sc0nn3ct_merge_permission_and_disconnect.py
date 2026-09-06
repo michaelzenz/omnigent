@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 revision: str = "m3rg3p3rm1ss10n_d1sc0nn3ct"
-down_revision: str | None = ("e5d9bc8ac650", "zz3a4b5c6d7e")
+down_revision: str | Sequence[str] | None = ("e5d9bc8ac650", "zz3a4b5c6d7e")
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

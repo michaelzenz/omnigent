@@ -258,7 +258,7 @@ def main() -> None:
                     history_hash=last_hash,
                     snippet=snippet,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
             sessions[hint] = {
                 "last_history_hash": last_hash,
@@ -293,7 +293,7 @@ def main() -> None:
                     transcript_delta=delta_text,
                     rewind_at=rewind_at,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
 
             if not track:

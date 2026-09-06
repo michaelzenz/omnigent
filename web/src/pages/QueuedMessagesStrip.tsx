@@ -22,6 +22,16 @@ import {
 import type { QueuedMessage } from "@/store/chatStore";
 import { cn } from "@/lib/utils";
 
+/**
+ * Row action buttons: compact icon buttons on desktop; on mobile (`max-md:`)
+ * they grow to a 44px tap target (Apple HIG / WCAG target size) with a larger,
+ * higher-contrast icon, matching the app's other mobile-adjusted controls.
+ */
+const ACTION_BUTTON_CLASS =
+  "flex shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground max-md:size-11 max-md:text-muted-foreground";
+
+const ACTION_ICON_CLASS = "size-3.5 max-md:size-5";
+
 interface QueuedMessagesStripProps {
   /** Messages waiting to be flushed, in FIFO order (head first). */
   messages: QueuedMessage[];
@@ -89,7 +99,7 @@ function QueuedRow({
     <div
       ref={setDropRef}
       className={cn(
-        "flex items-center gap-1.5 text-sm text-muted-foreground",
+        "flex items-center gap-1.5 text-sm text-muted-foreground max-md:gap-0.5",
         isDragging && "opacity-40",
         isOver && "rounded bg-foreground/5",
       )}
@@ -99,14 +109,17 @@ function QueuedRow({
           type="button"
           ref={setDragRef}
           aria-label="Reorder queued message"
-          className="shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 transition hover:text-foreground focus-visible:text-foreground active:cursor-grabbing"
+          className={cn(
+            ACTION_BUTTON_CLASS,
+            "cursor-grab touch-none text-muted-foreground/50 active:cursor-grabbing max-md:text-muted-foreground/80",
+          )}
           {...attributes}
           {...listeners}
         >
-          <GripVerticalIcon className="size-3.5" aria-hidden="true" />
+          <GripVerticalIcon className={ACTION_ICON_CLASS} aria-hidden="true" />
         </button>
       ) : (
-        <ClockIcon className="size-3.5 shrink-0" aria-hidden="true" />
+        <ClockIcon className={cn(ACTION_ICON_CLASS, "shrink-0")} aria-hidden="true" />
       )}
       {message.kind === "draft" ? (
         <span className="flex shrink-0 items-center gap-1 rounded bg-foreground/5 px-1 py-0.5 text-xs font-medium text-muted-foreground">
@@ -121,13 +134,13 @@ function QueuedRow({
         <button
           type="button"
           aria-label={turnActive ? "Steer draft into running turn" : "Send draft"}
-          className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+          className={cn(ACTION_BUTTON_CLASS, "gap-1 px-1 py-0.5")}
           onClick={() => onSteer(message.queueId)}
         >
           {turnActive ? (
-            <CornerDownRightIcon className="size-3.5" aria-hidden="true" />
+            <CornerDownRightIcon className={ACTION_ICON_CLASS} aria-hidden="true" />
           ) : (
-            <SendIcon className="size-3.5" aria-hidden="true" />
+            <SendIcon className={ACTION_ICON_CLASS} aria-hidden="true" />
           )}
           {turnActive ? "Steer" : "Send"}
         </button>
@@ -135,10 +148,10 @@ function QueuedRow({
         <button
           type="button"
           aria-label="Send now, interrupting the current turn"
-          className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+          className={cn(ACTION_BUTTON_CLASS, "gap-1 px-1 py-0.5")}
           onClick={() => onSendNow(message.queueId)}
         >
-          <SendIcon className="size-3.5" aria-hidden="true" />
+          <SendIcon className={ACTION_ICON_CLASS} aria-hidden="true" />
           Send
         </button>
       ) : null}
@@ -146,28 +159,28 @@ function QueuedRow({
         <button
           type="button"
           aria-label="Steer queued message into running turn"
-          className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+          className={cn(ACTION_BUTTON_CLASS, "gap-1 px-1 py-0.5")}
           onClick={() => onSteer(message.queueId)}
         >
-          <CornerDownRightIcon className="size-3.5" aria-hidden="true" />
+          <CornerDownRightIcon className={ACTION_ICON_CLASS} aria-hidden="true" />
           Steer
         </button>
       ) : null}
       <button
         type="button"
         aria-label="Edit queued message"
-        className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+        className={ACTION_BUTTON_CLASS}
         onClick={() => onEdit(message.queueId)}
       >
-        <PencilIcon className="size-3.5" aria-hidden="true" />
+        <PencilIcon className={ACTION_ICON_CLASS} aria-hidden="true" />
       </button>
       <button
         type="button"
         aria-label="Remove queued message"
-        className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
+        className={ACTION_BUTTON_CLASS}
         onClick={() => onDelete(message.queueId)}
       >
-        <Trash2Icon className="size-3.5" aria-hidden="true" />
+        <Trash2Icon className={ACTION_ICON_CLASS} aria-hidden="true" />
       </button>
     </div>
   );

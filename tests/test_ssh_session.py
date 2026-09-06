@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +19,10 @@ from omnigent.ssh_session import (
     reset_ssh_pool_for_tests,
     ssh_multiplex_options,
 )
+
+
+def _asyncio_with_subprocess(exec_fn: object) -> SimpleNamespace:
+    return SimpleNamespace(**vars(asyncio), create_subprocess_exec=exec_fn)
 
 
 def test_control_path_for_alias_is_stable(tmp_path: Path) -> None:
@@ -66,7 +71,7 @@ async def test_ssh_session_run_uses_multiplex_argv(tmp_path: Path) -> None:
         captured.append(list(argv))
         return _Proc()
 
-    with patch("omnigent.ssh_session.asyncio.create_subprocess_exec", side_effect=_capture_exec):
+    with patch("omnigent.ssh_session.asyncio", _asyncio_with_subprocess(_capture_exec)):
         session = SshSession("arca.ssh", control_dir=tmp_path)
         code, stdout, _stderr = await session.run("echo ok")
 
@@ -116,7 +121,7 @@ async def test_ssh_session_pool_serializes_concurrent_commands(tmp_path: Path) -
         return _Proc()
 
     pool = SshSessionPool(control_dir=tmp_path, max_concurrent_commands=1)
-    with patch("omnigent.ssh_session.asyncio.create_subprocess_exec", side_effect=_capture_exec):
+    with patch("omnigent.ssh_session.asyncio", _asyncio_with_subprocess(_capture_exec)):
         first = asyncio.create_task(pool.run("arca.ssh", "echo one"))
         second = asyncio.create_task(pool.run("other.ssh", "echo two"))
         await asyncio.sleep(0)
@@ -163,7 +168,7 @@ async def test_ssh_session_pool_close_tears_down_master(tmp_path: Path) -> None:
     pool = SshSessionPool(control_dir=tmp_path)
     pool._sessions["arca.ssh"] = session
 
-    with patch("omnigent.ssh_session.asyncio.create_subprocess_exec", side_effect=_capture_exec):
+    with patch("omnigent.ssh_session.asyncio", _asyncio_with_subprocess(_capture_exec)):
         await pool.close()
 
     assert captured

@@ -155,5 +155,5 @@ async def run_event_gc(
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             _logger.warning("event GC tick failed", exc_info=True)

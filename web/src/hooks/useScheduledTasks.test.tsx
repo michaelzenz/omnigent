@@ -41,6 +41,7 @@ const TASK: api.ScheduledTask = {
   workspace: null,
   hostId: null,
   state: "active",
+  catchUp: true,
   lastRunAt: null,
   lastRunStatus: null,
   lastRunConversationId: null,

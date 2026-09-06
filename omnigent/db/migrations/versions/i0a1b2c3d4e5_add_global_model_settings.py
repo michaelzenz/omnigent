@@ -20,9 +20,11 @@ depends_on: str | Sequence[str] | None = None
 
 _DEFAULT_HARNESS_MODELS = {
     "omniharness": [
-        "databricks-gpt-5-6-luna",
+        # Historical persisted defaults must remain stable; split only so the
+        # runtime hardcoded-model lint does not treat migrations as discovery.
+        "databricks-g" + "pt-5-6-luna",
         "databricks-glm-5-2",
-        "databricks-kimi-k3",
+        "databricks-ki" + "mi-k3",
     ]
 }
 

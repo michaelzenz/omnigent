@@ -59,8 +59,7 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
         <div className="space-y-1">
           <p className="text-sm font-medium">Dispatcher</p>
           <p className="text-xs text-muted-foreground">
-            Stopped roles keep their items queued — nothing is dispatched until
-            re-enabled.
+            Stopped roles keep their items queued — nothing is dispatched until re-enabled.
           </p>
         </div>
         <div className="space-y-2 pt-1">

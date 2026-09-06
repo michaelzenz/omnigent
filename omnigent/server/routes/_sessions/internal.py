@@ -92,7 +92,7 @@ async def create_session_internal(
     host registry and stores. ``prompt_profile_store`` is forwarded explicitly
     because managed role sessions select their hidden role manual at creation.
     """
-    resp = await _create_session_from_existing_agent(
+    resp, _project_warnings = await _create_session_from_existing_agent(
         conversation_store,
         agent_store,
         runner_router,
