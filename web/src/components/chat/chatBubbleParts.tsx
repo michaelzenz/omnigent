@@ -18,9 +18,11 @@ import {
   CopyIcon,
   FileTextIcon,
   FolderIcon,
+  ArrowUpToLineIcon,
   GitForkIcon,
   ImageIcon,
   Loader2Icon,
+  PencilIcon,
   XIcon,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -54,6 +56,8 @@ import { ELICITATION_RESPONSE_PREFIX } from "@/lib/blocks";
 import { type Bubble, type RenderItem, bubblesEqual } from "@/lib/renderItems";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { retrySession } from "@/lib/sessionsApi";
+import { useQueryClient } from "@tanstack/react-query";
+import { agentDisplayLabel } from "@/components/AgentInfo";
 import { useChatStore, type PendingUserMessage } from "@/store/chatStore";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import {
@@ -94,6 +98,10 @@ const ATTACHED_RE = /\[Attached(?: file)?:\s*([^\]]*)\]\s*/g;
 // Author labels render only in a shared session; ChatPage provides the
 // value and UserBubble reads it, so the gate lives in one place.
 export const SessionSharedContext = createContext(false);
+
+// Whether the active session allows rewind-and-resend; ChatPage provides the
+// value (permission/read-only gates) and UserBubble reads it.
+export const SessionRewindContext = createContext(false);
 
 export function extractUserText(content: MessageContentBlock[]): string {
   return content
@@ -596,8 +604,36 @@ function useCopyMessage(getText: () => string): {
 
 function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
   const sessionId = useChatStore((s) => s.conversationId);
+  const sessionHarness = useChatStore((s) => s.sessionHarness);
+  const boundAgentId = useChatStore((s) => s.boundAgentId);
+  const rewindAndSend = useChatStore((s) => s.rewindAndSend);
+  const queryClient = useQueryClient();
+  const canRewindSession = useContext(SessionRewindContext);
+  const [editing, setEditing] = useState(false);
+  const [editedText, setEditedText] = useState("");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [rewinding, setRewinding] = useState(false);
+  const [rewindError, setRewindError] = useState<string | null>(null);
+  const [pointerOver, setPointerOver] = useState(false);
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
+  const [suppressChromeUntilLeave, setSuppressChromeUntilLeave] = useState(false);
+  const showTurnChrome = !suppressChromeUntilLeave && (pointerOver || keyboardFocus);
+  const sizeEditorToContent = useCallback((editor: HTMLTextAreaElement): void => {
+    editor.style.height = "auto";
+    editor.style.height = `${Math.min(Math.max(editor.scrollHeight, 96), window.innerHeight * 0.7)}px`;
+  }, []);
+  useLayoutEffect(() => {
+    if (!editing || !editorRef.current) return;
+    sizeEditorToContent(editorRef.current);
+  }, [editing, sizeEditorToContent]);
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
+  // Plain-text path is the common case.
+  // - input_image: render inline <img> when the file is uploaded (file_id
+  //   doesn't start with "pending:"); show a chip while the upload is
+  //   in-flight.
+  // - input_file: always render as a chip (non-image files can't be
+  //   previewed inline).
   const text = extractUserText(bubble.content);
   const images = bubble.content.filter(
     (c): c is Extract<MessageContentBlock, { type: "input_image" }> => c.type === "input_image",
@@ -606,21 +642,142 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
     (c): c is Extract<MessageContentBlock, { type: "input_file" }> => c.type === "input_file",
   );
   // "@"-mentioned workspace files/folders ride in as "[Attached: …]" text
-  // markers (no input_file block), so surface them as chips.
+  // markers (no input_file block), so surface them as chips — otherwise the
+  // marker is stripped and the user can't see what they attached.
   const mentionedChips = extractAttachedPaths(bubble.content);
   // Equality selector so Zustand only re-renders the matching bubble.
   const flashing = useChatStore((s) => s.flashItemId === bubble.itemId);
   const { isCopied, handleCopy } = useCopyMessage(() => text);
   const ts = formatBubbleTimestamp(bubble.createdAtS);
-  // Runtime-injected `[System: ...]` notifications ride in on role=user. When
-  // the content is a pure system marker, swap in a muted centered indicator.
+  const executionContext = bubble.executionContext;
+  const executionProfileNames = (
+    executionContext?.profiles?.length
+      ? executionContext.profiles
+      : executionContext?.profile
+        ? [executionContext.profile]
+        : []
+  ).map(agentDisplayLabel);
+  const executionTargetSummary =
+    [executionContext?.harness, executionContext?.model].filter(Boolean).join(" / ") || null;
+  const fullExecutionSummary = [
+    executionProfileNames.length > 0 ? `Profile: ${executionProfileNames.join(", ")}` : null,
+    executionTargetSummary,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const executionSummary =
+    executionProfileNames.length > 1 && fullExecutionSummary.length > 64
+      ? ["Profile: Multiple", executionTargetSummary].filter(Boolean).join(" · ")
+      : fullExecutionSummary;
+  // Runtime-injected `[System: ...]` notifications (task completion,
+  // timer firings, terminal idle) ride in on role=user. When the content
+  // is a pure system marker — no attached images or files — swap the
+  // normal bubble for a muted centered indicator.
   if (images.length === 0 && fileChips.length === 0 && mentionedChips.length === 0) {
     const parsed = parseSystemMessage(text);
     if (parsed) return <SystemMessageView message={parsed} />;
   }
-  // Badge OTHER contributors' messages only (never your own).
+  // Badge OTHER contributors' messages only (never your own) — an avatar
+  // circle + author-tinted bubble, not an email label.
   const author = bubble.createdBy;
   const showAuthorBadge = shouldShowAuthorBadge(author, getCurrentAuthorId(), isSessionShared);
+  const currentAuthor = getCurrentAuthorId();
+  const canEdit =
+    canRewindSession &&
+    (sessionHarness === "openai-agents" || sessionHarness === "pi") &&
+    !bubble.itemId.startsWith("pend_") &&
+    (author == null || author === currentAuthor);
+
+  const submitEdit = async (): Promise<void> => {
+    if (!boundAgentId || editedText.trim() === "") return;
+    setRewinding(true);
+    setRewindError(null);
+    try {
+      await rewindAndSend(bubble.itemId, editedText, bubble.content, boundAgentId);
+      if (sessionId) {
+        await queryClient.invalidateQueries({ queryKey: ["agent-text-comments", sessionId] });
+      }
+      setEditing(false);
+    } catch (error) {
+      setRewindError(error instanceof Error ? error.message : "Couldn't rewind this message.");
+    } finally {
+      setRewinding(false);
+    }
+  };
+
+  const startEditing = (): void => {
+    if (!canEdit || !text) return;
+    setEditedText(text);
+    setRewindError(null);
+    setEditing(true);
+  };
+
+  if (editing) {
+    return (
+      <Message
+        from="user"
+        data-testid="message-bubble"
+        data-role="user"
+        data-user-message-id={bubble.itemId}
+        className="max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))]"
+      >
+        <form
+          className="ml-auto w-full rounded-xl border bg-muted p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitEdit();
+          }}
+        >
+          {(images.length > 0 || fileChips.length > 0) && (
+            <div className="mb-2 text-xs text-muted-foreground">
+              {[...images, ...fileChips]
+                .map((attachment) => attachment.filename ?? attachment.file_id)
+                .join(", ")}
+            </div>
+          )}
+          <textarea
+            ref={editorRef}
+            autoFocus
+            data-testid="rewind-message-editor"
+            value={editedText}
+            disabled={rewinding}
+            onChange={(event) => {
+              setEditedText(event.target.value);
+              sizeEditorToContent(event.currentTarget);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !rewinding) setEditing(false);
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void submitEdit();
+              }
+            }}
+            className="min-h-24 max-h-[70vh] w-full resize-y overflow-y-auto bg-transparent text-sm outline-none"
+          />
+          {rewindError && <p className="mt-2 text-xs text-destructive">{rewindError}</p>}
+          <div className="mt-2 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={rewinding}
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={rewinding || editedText.trim() === "" || !boundAgentId}
+            >
+              {rewinding && <Loader2Icon className="mr-1 size-3.5 animate-spin" />}
+              Send
+            </Button>
+          </div>
+        </form>
+      </Message>
+    );
+  }
 
   return (
     <Message
@@ -628,11 +785,30 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
       data-testid="message-bubble"
       data-role="user"
       data-user-message-id={bubble.itemId}
-      className="max-w-[640px]"
+      onPointerEnter={() => setPointerOver(true)}
+      onPointerLeave={() => {
+        setPointerOver(false);
+        setSuppressChromeUntilLeave(false);
+      }}
+      onFocusCapture={(event) => {
+        if ((event.target as HTMLElement).matches(":focus-visible")) {
+          setKeyboardFocus(true);
+        }
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setKeyboardFocus(false);
+        }
+      }}
+      className={cn(
+        "max-w-full scroll-mt-[calc(5rem+var(--omnigent-inset-top))] rounded-xl transition-[background-color,backdrop-filter]",
+        showTurnChrome && "bg-background/95 shadow-sm backdrop-blur-md",
+      )}
     >
       <div className="ml-auto flex w-fit max-w-full flex-col items-end">
         {/* w-fit + ml-auto shrink-wrap the row so the author avatar sits
-            immediately left of the right-aligned bubble. */}
+            immediately left of the right-aligned bubble (the bubble's own
+            ml-auto has no free space to absorb inside a fit-width row). */}
         <div className="flex w-fit max-w-full items-center gap-1.5">
           {showAuthorBadge && author && (
             <Tooltip>
@@ -657,12 +833,16 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
           <MessageContent
             className={cn(flashing && "animate-user-msg-flash")}
             // Another contributor's bubble takes their avatar color at low
-            // alpha instead of the default bg-muted.
+            // alpha instead of the default bg-muted, so authorship reads at
+            // a glance without any email text.
             style={
               showAuthorBadge && author ? { backgroundColor: userColorTint(author) } : undefined
             }
           >
-            {/* Inline image previews — one non-wrapping strip. */}
+            {/* Inline image previews — one non-wrapping strip. Wrapping would
+                re-flow the row as each image's width resolves on load, changing
+                the bubble's height and shoving the transcript; scrolling keeps
+                the row exactly one preview tall no matter what lands. */}
             {images.length > 0 && (
               <div className="mb-1.5 flex gap-2 overflow-x-auto">
                 {images.map((img) =>
@@ -735,16 +915,68 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
                 ))}
               </div>
             )}
-            {/* Render user text as markdown, matching the assistant bubble.
-              `breaks` keeps single newlines as line breaks. Empty text renders
-              nothing rather than an empty markdown block. */}
-            {text && <FilePathAwareMessageResponse breaks>{text}</FilePathAwareMessageResponse>}
+            {/* Render user text as markdown, matching the assistant bubble
+              (headings, lists, code fences, file-path links). `breaks` keeps
+              single newlines as line breaks — users type multi-line messages
+              without blank-line paragraph separators and expect their line
+              breaks preserved. Empty text — e.g. an attachments-only message —
+              renders nothing rather than an empty markdown block. */}
+            {text && (
+              <div
+                data-testid="editable-user-message"
+                role={canEdit ? "button" : undefined}
+                tabIndex={canEdit ? 0 : undefined}
+                aria-label={canEdit ? "Edit sent message" : undefined}
+                className={cn(
+                  canEdit &&
+                    "relative cursor-text rounded-sm pr-5 focus-visible:outline-2 focus-visible:outline-ring",
+                )}
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("a, button")) return;
+                  startEditing();
+                }}
+                onKeyDown={(event) => {
+                  if (!canEdit || (event.key !== "Enter" && event.key !== " ")) return;
+                  event.preventDefault();
+                  startEditing();
+                }}
+              >
+                <div data-testid="user-message-text">
+                  <FilePathAwareMessageResponse breaks>{text}</FilePathAwareMessageResponse>
+                </div>
+                {canEdit && (
+                  <PencilIcon
+                    data-testid="sent-message-edit-icon"
+                    aria-hidden
+                    className="pointer-events-none absolute right-0 bottom-0 size-3 text-muted-foreground/70"
+                  />
+                )}
+              </div>
+            )}
           </MessageContent>
         </div>
         {/* Skip an empty row when there is neither a timestamp nor a copy
-            action. 40%-visible on touch, hover/focus-reveal on desktop. */}
-        {(ts || text) && (
-          <div className="flex items-center justify-end gap-3 py-1 opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+            action. 40%-visible on touch (no hover), hover/focus-reveal on
+            desktop. py-1 matches the design prototype's 24px action row;
+            the timestamp rides inside it instead of adding a new row. */}
+        {(executionSummary || ts || text) && (
+          <div
+            data-testid="user-message-actions"
+            className={cn(
+              "flex items-center justify-end gap-3 py-1 opacity-40 transition-opacity",
+              "md:pointer-events-none md:opacity-0",
+              showTurnChrome && "md:pointer-events-auto md:opacity-100",
+            )}
+          >
+            {executionSummary && (
+              <span
+                className="max-w-[420px] truncate select-none text-[11px] leading-4 text-foreground/56"
+                data-testid="message-execution-summary"
+                title={fullExecutionSummary}
+              >
+                {executionSummary}
+              </span>
+            )}
             {ts && (
               <span
                 className="select-none text-[11px] leading-4 text-foreground/56"
@@ -762,6 +994,21 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
                   componentId="chat.message.copy_user"
                 >
                   {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                </MessageAction>
+                <MessageAction
+                  tooltip="Jump to turn start"
+                  size="icon-xxs"
+                  onClick={(event) => {
+                    const message =
+                      event.currentTarget.closest<HTMLElement>("[data-user-message-id]");
+                    event.currentTarget.blur();
+                    setPointerOver(false);
+                    setKeyboardFocus(false);
+                    setSuppressChromeUntilLeave(true);
+                    scrollToUserTurnStart(message);
+                  }}
+                >
+                  <ArrowUpToLineIcon size={14} />
                 </MessageAction>
               </MessageActions>
             )}

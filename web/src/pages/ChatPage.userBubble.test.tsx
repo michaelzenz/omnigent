@@ -1,5 +1,7 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
 import type { Bubble } from "@/lib/renderItems";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { useChatStore } from "@/store/chatStore";
@@ -44,21 +46,30 @@ function assistantBubble(
   };
 }
 
-function renderBubble(bubble: Bubble) {
-  return render(
-    <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
-      <BubbleView bubble={bubble} />
-    </FileViewerContext.Provider>,
+// UserBubble reads the query client (it invalidates comment queries after a
+// rewind-and-resend), so renders must sit under a provider.
+function withProviders(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return (
+    <QueryClientProvider client={client}>
+      <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>{ui}</FileViewerContext.Provider>
+    </QueryClientProvider>
   );
+}
+
+function renderBubble(bubble: Bubble) {
+  return render(withProviders(<BubbleView bubble={bubble} />));
 }
 
 function renderEditableBubble(bubble: Bubble) {
   return render(
-    <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
+    withProviders(
       <SessionRewindContext.Provider value>
         <BubbleView bubble={bubble} />
-      </SessionRewindContext.Provider>
-    </FileViewerContext.Provider>,
+      </SessionRewindContext.Provider>,
+    ),
   );
 }
 
@@ -130,11 +141,7 @@ describe("UserBubble system messages", () => {
     const { rerender } = renderBubble(userBubble("[System: timer build fired]"));
     expect(screen.getByTestId("system-message")).toBeInTheDocument();
 
-    rerender(
-      <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
-        <BubbleView bubble={userBubble("build finished")} />
-      </FileViewerContext.Provider>,
-    );
+    rerender(withProviders(<BubbleView bubble={userBubble("build finished")} />));
 
     expect(screen.queryByTestId("system-message")).toBeNull();
     expect(screen.getByText("build finished")).toBeInTheDocument();
@@ -296,9 +303,7 @@ describe("UserBubble copy button", () => {
   it("aligns a sticky message with its roof so the response remains visible", () => {
     render(
       <div data-testid="scroll-root" style={{ overflowY: "auto" }}>
-        <FileViewerContext.Provider value={FILE_VIEWER_NOOP}>
-          <BubbleView bubble={userBubble("jump me")} />
-        </FileViewerContext.Provider>
+        {withProviders(<BubbleView bubble={userBubble("jump me")} />)}
       </div>,
     );
     const scroller = screen.getByTestId("scroll-root");
@@ -400,8 +405,10 @@ describe("UserBubble execution summary", () => {
 
     const summary = screen.getByTestId("message-execution-summary");
     expect(summary).toHaveTextContent("Profile: Multiple · omniharness / databricks-gpt-5-6-luna");
-    expect(summary.title).toContain("Managed Table Migration Specialist");
-    expect(summary.title).toContain("Predictive Optimization Reviewer");
+    // agentDisplayLabel capitalizes the first letter only; the tooltip must
+    // still carry every full profile name rather than the collapsed label.
+    expect(summary.title).toContain("Managed table migration specialist");
+    expect(summary.title).toContain("Predictive optimization reviewer");
   });
 });
 

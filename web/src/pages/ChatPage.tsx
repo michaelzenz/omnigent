@@ -2,7 +2,6 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
-  createContext,
   memo,
   useCallback,
   useDeferredValue,
@@ -154,6 +153,7 @@ export {
   LatestTurnSpacer,
   ReleaseBottomLockOnResponseEnd,
   ScrollToBottomOnSend,
+  SessionRewindContext,
   SessionSharedContext,
   UserMessageNavConnected,
   WORKING_MESSAGES,
@@ -180,6 +180,7 @@ export {
 export type { ConversationScroller } from "@/components/chat/chatBubbleParts";
 import {
   type ConversationScroller,
+  SessionRewindContext,
   SessionSharedContext,
   computeIsWorking,
 } from "@/components/chat/chatBubbleParts";
@@ -296,7 +297,6 @@ import {
 } from "@/lib/bottomLockPreferences";
 
 const EMPTY_AGENT_TEXT_THREADS: AgentTextThread[] = [];
-export const SessionRewindContext = createContext(false);
 
 /** Server-info as consumers see it: the probe's result, or "loading". */
 type ServerInfoValue = ServerInfo | "loading";
