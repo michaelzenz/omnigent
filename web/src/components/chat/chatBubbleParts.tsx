@@ -1174,9 +1174,15 @@ export function ConversationScrollPosition({
       if (saved.wasAtBottom && followBottomOnFallbackRef.current) finishAtBottom();
       else restore();
     } else {
-      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-      if (followBottomOnFallbackRef.current) followConversationBottom(el);
-      else {
+      // No saved position. With the lock on, StickToBottom owns initial
+      // positioning (its own settle parks one pixel short of the maximum) —
+      // writing here would override that park by a pixel and shift the whole
+      // transcript. Only the lock-off path pins explicitly, because the
+      // released library never will.
+      if (followBottomOnFallbackRef.current) {
+        followConversationBottom(el);
+      } else {
+        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
         takeConversationScrollControl(el);
         releaseBottomLock();
       }
