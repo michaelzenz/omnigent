@@ -65,6 +65,8 @@ puppygarden_api(
 )
 ```
 
+
+
 ## Handling routed events
 
 The manager packager wraps routed events into a dispatch notice and sends
@@ -115,11 +117,11 @@ item — or even the same task.
   )
   ```
 - **Split** an existing item — create a new item for the split portion,
-  and narrow the original's title/instructions.
+and narrow the original's title/instructions.
 - **Resolve** an item that is already done — `POST /v1/task-items/{id}/resolve`
-  with `{"resolution":"reject_item"}`.
+with `{"resolution":"reject_item"}`.
 - **Ack** an event that needs no item — `POST /v1/agent-tasks/{id}/ack`
-  marks events reconciled without creating a task item.
+marks events reconciled without creating a task item.
 
 **Step 3 — create new items (with worker assignment).** For events that
 don't fit any existing item, create one and assign a worker lane at
@@ -170,11 +172,11 @@ gets it working again, it un-halts and the badge clears.
 You steer each task through its states via `PATCH /v1/agent-tasks/<id>`:
 
 - `pending` — tasks you create are **born pending**: the user reviews and
-  confirms to activate. (User-created tasks are born active.)
+confirms to activate. (User-created tasks are born active.)
 - `agent-resolved` — the task looks done. It sorts to the board's end
-  with a distinct badge. **Not final**: when a new relevant event lands,
-  move it back to `pending`. Prefer this over endless `active` — the
-  board should show what needs attention.
+with a distinct badge. **Not final**: when a new relevant event lands,
+move it back to `pending`. Prefer this over endless `active` — the
+board should show what needs attention.
 - `idle` — do not set manually; tasks auto-idle after a quiet week.
 
 Typical flow: create task (pending) → user confirms (active) → work →
@@ -227,20 +229,23 @@ puppygarden_api(
 )
 ```
 
+
+
 ## Item kinds you can suggest
 
 Include but not limited to:
-* **Investigate**: investigate the issue
-* **Code**: do the coding
-* **Verify**: verify the result is correct / the change takes effect
-* **Human Verify**: after agent work, write a script/notebook + a one-line
-  command so the user can manually verify
-* **Human action**: when only the user can do the next step (console
-  access, manual approval, local env), create an item with
-  `kind: "human_action"` — no `worker_id`, no `instructions`; the what/why/
-  how goes in `description`. The user marks it done on the card.
 
-**Never stay silent after a `worker.execution.finished` event** — always
+- **Investigate**: investigate the issue
+- **Code**: do the coding
+- **Verify**: verify the result is correct / the change takes effect
+- **Human Verify**: after agent work, write a script/notebook + a one-line
+command so the user can manually verify
+- **Human action**: when only the user can do the next step (console
+access, manual approval, local env), create an item with
+`kind: "human_action"` — no `worker_id`, no `instructions`; the what/why/
+how goes in `description`. The user marks it done on the card.
+
+**Never stay silent after a** `worker.execution.finished` **event** — always
 react: suggest the next taskItem or a human action, or mark the task
 `agent-resolved` if the work is done (say so in the Overview). If there is
 already a final task-complete confirmation pending, don't add another.
@@ -253,22 +258,29 @@ they finished the human step. Verify the action took effect when you can
 blocking — and ack the event like any routed event.
 
 # Follow up
+
 While most of the cases you can ONLY suggest taskItems, to provide an immersive experience, you are allowed to follow up, for ex:
-* user sent a message, set a timmer runs 2d later, which check if there is reply or reaction, if not create a taskItem saying: `follow up with XXX with message "Gentle bump <message composed based on context>"`
-* user told a worker to set automerge label on the pr, then use poller to monitor the pr status every 2min. In poller script, issue an event for either pr merged or CI failure, this will later be routed to you, so that you can suggest "CI failed, investigate the issue" or "pr merged, verify the code works in staging"
+
+- user sent a message, set a timmer runs 2d later, which check if there is reply or reaction, if not create a taskItem saying: `follow up with XXX with message "Gentle bump <message composed based on context>"`
+- user told a worker to set automerge label on the pr, then use poller to monitor the pr status every 2min. In poller script, issue an event for either pr merged or CI failure, this will later be routed to you, so that you can suggest "CI failed, investigate the issue" or "pr merged, verify the code works in staging"
 
 To reduce token cost, use the special infra below, for EX add the code that directly call the slack mcp to get the new messages.
 
 # Special Infra
+
 There are two infra you can use in this system
+
 ## Script Poller
+
 See `<host.puppygarden.root>/docs/POLL_PLUGINS.md`, you can create arbitrary poller, program it such that when it sees status change, send an event with taskId so that the event will fast route to you. Look at the folder to find out what you can use, if nothing useful, create new one.
+
 ## Automation
+
 Use `sys_scheduled_task_create` to schedule a recurring agent session on an RRULE schedule. For example, "check this PR every hour" or "remind me tomorrow at 9am". Automations run full agent sessions with MCP tools, have a catch-up toggle for missed runs, and can be managed via `sys_scheduled_task_list` / `sys_scheduled_task_update` / `sys_scheduled_task_delete`.
 
 **ALWAYS PROCESS AN EVENT**: follow the above manual.
 
-If an owned routed event needs no further action, dismiss it directly:
+If a routed event needs no further action, dismiss it directly:
 
 ```
 puppygarden_api(
@@ -277,5 +289,8 @@ puppygarden_api(
 )
 ```
 
+
+
 # Appendix
+
 In case you need it, `<host.puppygarden.root>/docs/API_REFERENCE.md` contains all the APIs.

@@ -12,10 +12,9 @@ from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.manager_discovery import _LIVE_TASK_STATES
 from omnigent.agent_tasks.routing import route_event_to_task
-from omnigent.agent_tasks.session_labels import ADOPTION_DISMISSED_LABEL
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent, Worker
+from omnigent.entities import Task, TaskEvent
 from omnigent.entities.conversation import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
@@ -35,7 +34,9 @@ _logger = logging.getLogger(__name__)
 SESSION_ADOPTED = "session.adopted"
 
 
-def _extract_last_turn_text(conversation_store: ConversationStore, session_id: str) -> tuple[str | None, str | None]:
+def _extract_last_turn_text(
+    conversation_store: ConversationStore, session_id: str
+) -> tuple[str | None, str | None]:
     """Return (last_user_message, last_agent_response) from the last turn.
 
     Collects all assistant text messages after the last user message,
@@ -54,7 +55,8 @@ def _extract_last_turn_text(conversation_store: ConversationStore, session_id: s
             text_parts = [
                 block.get("text", "")
                 for block in (data.content or [])
-                if isinstance(block, dict) and block.get("type") in ("input_text", "output_text", "text")
+                if isinstance(block, dict)
+                and block.get("type") in ("input_text", "output_text", "text")
             ]
             text = " ".join(text_parts).strip()
             if not text:
@@ -73,6 +75,7 @@ def _extract_last_turn_text(conversation_store: ConversationStore, session_id: s
     except Exception:
         pass
     return last_user_message, last_agent_response or None
+
 
 # Orphan adoption is active: sessions that finish a turn with no existing
 @dataclass
@@ -318,17 +321,29 @@ def emit_turn_finished_event_unbound(
     """
     if _context is None:
         return
+    # Dedup: skip if there's already a pending (awaiting_grouping or routed)
+    # turn-finished event for this session — the broker hasn't processed the
+    # previous one yet, so a new turn just updates the existing signal.
+    existing = _context.task_event_store.list_events(
+        event_type=SESSION_TURN_FINISHED_EVENT_TYPE,
+    )
+    for ev in existing:
+        if ev.source_key == session_id and ev.state in ("awaiting_grouping", "routed"):
+            return
     session_title = conv.title if conv is not None else session_id
     last_user_message, last_agent_response = _extract_last_turn_text(
         _context.conversation_store, session_id
     )
-    payload = json.dumps({
-        "session_id": session_id,
-        "session_title": session_title,
-        "status": "idle",
-        "last_user_message": last_user_message,
-        "last_agent_response": last_agent_response,
-    }, ensure_ascii=False)
+    payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_title": session_title,
+            "status": "idle",
+            "last_user_message": last_user_message,
+            "last_agent_response": last_agent_response,
+        },
+        ensure_ascii=False,
+    )
     title = f"Session turn finished: {session_title}"
     try:
         _context.task_event_store.create_event(
@@ -409,13 +424,16 @@ def emit_turn_finished_event(
     last_user_message, last_agent_response = _extract_last_turn_text(
         _context.conversation_store, session_id
     )
-    payload = json.dumps({
-        "session_id": session_id,
-        "session_title": session_title,
-        "status": status,
-        "last_user_message": last_user_message,
-        "last_agent_response": last_agent_response,
-    }, ensure_ascii=False)
+    payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_title": session_title,
+            "status": status,
+            "last_user_message": last_user_message,
+            "last_agent_response": last_agent_response,
+        },
+        ensure_ascii=False,
+    )
     title = f"Session turn finished: {session_title}"
 
     for manager_id, owner in manager_owner.items():

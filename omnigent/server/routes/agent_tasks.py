@@ -183,6 +183,7 @@ class CreateAgentTaskRequest(BaseModel):
     goal: str
     description: str | None = None
     internal_note: str | None = None
+    manager_id: str | None = None
     state: str = "active"
     priority: int = Field(default=2, ge=0, le=3)
     tags: list[TaskTagInput] = Field(default_factory=list)

@@ -58,10 +58,7 @@ def _format_manager_notice(
         scope = "this manager"
     lines = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
     if unassigned_count:
-        lines.append(
-            f"[{unassigned_count} manager-routed event(s) have no task; "
-            "select an existing task or create one before reconciling them.]"
-        )
+        lines.append(f"[{unassigned_count} manager-routed event(s) have no task]")
     # Group session events by source_key for summarization.
     session_groups: dict[str, list] = {}
     other_events: list = []
@@ -136,7 +133,9 @@ def _format_session_batch_notice(events: list) -> str:
             f"- {event_type}: External session '{session_title}' updated {count} times since last check"
         ]
         if deltas:
-            parts.append(f"  Combined transcript delta ({len(deltas)} updates):\n" + "\n---\n".join(deltas))
+            parts.append(
+                f"  Combined transcript delta ({len(deltas)} updates):\n" + "\n---\n".join(deltas)
+            )
         parts.append(
             "  Review the delta. Update item states if the work is done. "
             "If follow-up is needed, suggest a new taskItem (Copy button)."
@@ -260,13 +259,7 @@ def _format_broker_stall_notice(
     """
     from omnigent.agent_tasks.broker_inbox import event_notice_entry
 
-    prompt = (
-        "[System: route these events to managers] "
-        "List the active managers and compare their descriptions with each "
-        "cluster. Route each cluster to the best host-compatible manager. "
-        "If none fits, create a manager with an accurate scope description, "
-        "then route the cluster to it. Do not select or create tasks."
-    )
+    prompt = "[System: route these events to managers]\n"
     payload: dict[str, object] = {
         "prompt": prompt,
         "clusters": [
