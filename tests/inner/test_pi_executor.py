@@ -1,6 +1,7 @@
 """Tests for PiExecutor."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -876,7 +877,7 @@ class TestToolServer(unittest.TestCase):
             server = _ToolServer()
             await server.start()
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 return {"sum": args.get("a", 0) + args.get("b", 0)}
 
             server._tool_executor = executor
@@ -906,7 +907,7 @@ class TestToolServer(unittest.TestCase):
             server = _ToolServer()
             await server.start()
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 raise ValueError("boom")
 
             server._tool_executor = executor
@@ -969,7 +970,7 @@ class TestToolServer(unittest.TestCase):
             server = _ToolServer()
             await server.start()
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 # A dict carrying values json.dumps rejects by default.
                 return {
                     "when": datetime(2026, 6, 18, 12, 0, 0, tzinfo=timezone.utc),
@@ -1028,7 +1029,7 @@ class TestToolServer(unittest.TestCase):
             server = _ToolServer()
             await server.start()
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 return {
                     "when": datetime(2026, 6, 18, 12, 0, 0, tzinfo=timezone.utc),
                     "tags": {1, 2, 3},
@@ -1096,7 +1097,7 @@ class TestToolServer(unittest.TestCase):
 
             dispatched = False
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 nonlocal dispatched
                 dispatched = True
                 return {"ok": True}
@@ -1135,7 +1136,7 @@ class TestToolServer(unittest.TestCase):
 
             dispatched = False
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 nonlocal dispatched
                 dispatched = True
                 return {"ok": True}
@@ -1197,7 +1198,7 @@ class TestToolServer(unittest.TestCase):
 
             executed = False
 
-            async def executor(name, args):
+            async def executor(name, args, tool_call_id=None):
                 nonlocal executed
                 executed = True
                 return {"ok": True}
@@ -2085,6 +2086,9 @@ class TestRunTurn(unittest.TestCase):
             fake_rpc = _PiRpcSession()
             fake_rpc._line_queue = asyncio.Queue()
             fake_rpc._line_queue.put_nowait(None)  # EOF
+            # The real reader task sets _eof before the sentinel is drained;
+            # without it the run loop classifies the None as an idle timeout.
+            fake_rpc._eof = True
             fake_rpc.process = MagicMock()
             fake_rpc.process.returncode = None
             fake_rpc.process.stdin = _FakeStreamWriter()
@@ -2429,22 +2433,26 @@ class TestRunTurn(unittest.TestCase):
 
             lines = [
                 # First prompt rejected: "already processing"
-                json.dumps({
-                    "type": "response",
-                    "success": False,
-                    "command": "prompt",
-                    "error": (
-                        "Agent is already processing. "
-                        "Specify streamingBehavior ('steer' or 'followUp') "
-                        "to queue the message."
-                    ),
-                }),
+                json.dumps(
+                    {
+                        "type": "response",
+                        "success": False,
+                        "command": "prompt",
+                        "error": (
+                            "Agent is already processing. "
+                            "Specify streamingBehavior ('steer' or 'followUp') "
+                            "to queue the message."
+                        ),
+                    }
+                ),
                 # Retried prompt with followUp: accepted
                 json.dumps({"type": "response", "success": True}),
-                json.dumps({
-                    "type": "message_update",
-                    "assistantMessageEvent": {"type": "text_delta", "delta": "hi"},
-                }),
+                json.dumps(
+                    {
+                        "type": "message_update",
+                        "assistantMessageEvent": {"type": "text_delta", "delta": "hi"},
+                    }
+                ),
                 json.dumps({"type": "message_end", "message": {"stopReason": "stop"}}),
                 json.dumps({"type": "agent_end", "messages": []}),
             ]
@@ -2479,9 +2487,7 @@ class TestRunTurn(unittest.TestCase):
             self.assertTrue(any(isinstance(e, TurnComplete) for e in events))
 
             # Verify the second prompt command included streamingBehavior=followUp.
-            sent_commands = [
-                json.loads(d.decode()) for d in fake_rpc.process.stdin.data
-            ]
+            sent_commands = [json.loads(d.decode()) for d in fake_rpc.process.stdin.data]
             prompt_cmds = [c for c in sent_commands if c.get("type") == "prompt"]
             self.assertEqual(len(prompt_cmds), 2)
             self.assertNotIn("streamingBehavior", prompt_cmds[0])
@@ -2507,7 +2513,12 @@ class TestRunTurn(unittest.TestCase):
 
             lines = [
                 json.dumps({"type": "response", "success": True}),
-                json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "hello"}}),
+                json.dumps(
+                    {
+                        "type": "message_update",
+                        "assistantMessageEvent": {"type": "text_delta", "delta": "hello"},
+                    }
+                ),
                 json.dumps({"type": "message_end", "message": {"stopReason": "stop"}}),
                 json.dumps({"type": "compaction_start"}),
                 # Pi exits after compaction_start — no compaction_end, no agent_end.
@@ -2538,7 +2549,9 @@ class TestRunTurn(unittest.TestCase):
             # Must have CompactionStarted followed by CompactionComplete,
             # so the UI's "Compacting…" indicator is dismissed even when Pi
             # dies mid-compaction.
-            compaction_events = [e for e in events if isinstance(e, (CompactionStarted, CompactionComplete))]
+            compaction_events = [
+                e for e in events if isinstance(e, (CompactionStarted, CompactionComplete))
+            ]
             self.assertEqual(len(compaction_events), 2)
             self.assertIsInstance(compaction_events[0], CompactionStarted)
             self.assertIsInstance(compaction_events[1], CompactionComplete)
@@ -2570,23 +2583,27 @@ class TestRunTurn(unittest.TestCase):
                 # Pi is mid-compaction from a prior turn when our prompt is
                 # rejected with "already processing".
                 json.dumps({"type": "compaction_start"}),
-                json.dumps({
-                    "type": "response",
-                    "success": False,
-                    "command": "prompt",
-                    "error": (
-                        "Agent is already processing. "
-                        "Specify streamingBehavior ('steer' or 'followUp') "
-                        "to queue the message."
-                    ),
-                }),
+                json.dumps(
+                    {
+                        "type": "response",
+                        "success": False,
+                        "command": "prompt",
+                        "error": (
+                            "Agent is already processing. "
+                            "Specify streamingBehavior ('steer' or 'followUp') "
+                            "to queue the message."
+                        ),
+                    }
+                ),
                 # Retried prompt with followUp: rejected again.
-                json.dumps({
-                    "type": "response",
-                    "success": False,
-                    "command": "prompt",
-                    "error": "Agent is already processing.",
-                }),
+                json.dumps(
+                    {
+                        "type": "response",
+                        "success": False,
+                        "command": "prompt",
+                        "error": "Agent is already processing.",
+                    }
+                ),
             ]
             for line in lines:
                 fake_rpc._line_queue.put_nowait(line)
@@ -2608,7 +2625,9 @@ class TestRunTurn(unittest.TestCase):
             # CompactionStarted must be followed by CompactionComplete even
             # though the turn failed — otherwise the "Compacting…" indicator
             # stays stuck.
-            compaction_events = [e for e in events if isinstance(e, (CompactionStarted, CompactionComplete))]
+            compaction_events = [
+                e for e in events if isinstance(e, (CompactionStarted, CompactionComplete))
+            ]
             self.assertEqual(len(compaction_events), 2)
             self.assertIsInstance(compaction_events[0], CompactionStarted)
             self.assertIsInstance(compaction_events[1], CompactionComplete)
@@ -5260,6 +5279,12 @@ def _live_session_executor(
         system_prompt="system",
         model=None,
         applied_thinking=applied_thinking,
+        # Match the reuse gate in _ensure_rpc: the fingerprint must equal the
+        # hash it computes for the test's tool list ([]) or the fake session
+        # is torn down and respawned, which the MagicMock process can't survive.
+        tool_schema_fingerprint=hashlib.sha256(
+            json.dumps([], sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest(),
     )
     return executor, rpc
 

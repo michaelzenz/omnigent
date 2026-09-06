@@ -46,6 +46,35 @@ async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
     return agent_id
 
 
+@pytest.fixture()
+def manager_id(db_uri: str, manager_agent_id: str) -> str:
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+
+    manager_conversation_id = _uid("ingress-mgr-conv")
+    SqlAlchemyConversationStore(db_uri).create_conversation(
+        conversation_id=manager_conversation_id,
+        title="Ingress manager",
+        agent_id=manager_agent_id,
+        host_id=_uid("host_ingress"),
+        workspace="/tmp/ingress-test",
+    )
+    manager_row_id = _uid("ingress-mgr-row")
+    SqlAlchemyManagerStore(db_uri).upsert(
+        manager_row_id,
+        conversation_id=manager_conversation_id,
+        owner_user_id="__anonymous__",
+        role_key="manager:default",
+        description="Owns ingress work.",
+        host_id=_uid("host_ingress"),
+        workspace="/tmp/ingress-test",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=manager_agent_id,
+    )
+    return manager_row_id
+
+
 async def _broker_profile(client: httpx.AsyncClient, manager_agent_id: str) -> None:
     await put_agent_role_profile(
         client,
@@ -59,6 +88,7 @@ async def _broker_profile(client: httpx.AsyncClient, manager_agent_id: str) -> N
 async def test_ingress_auto_routes_matching_task(
     client: httpx.AsyncClient,
     manager_agent_id: str,
+    manager_id: str,
 ) -> None:
     await _broker_profile(client, manager_agent_id)
     created = await client.post(
@@ -67,6 +97,7 @@ async def test_ingress_auto_routes_matching_task(
             "title": "Upload retries",
             "goal": "all uploads retry to success",
             "state": "active",
+            "manager_id": manager_id,
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )
@@ -93,14 +124,21 @@ async def test_ingress_auto_routes_matching_task(
 async def test_ingress_broadcasts_to_subscribers(
     client: httpx.AsyncClient,
     manager_agent_id: str,
+    manager_id: str,
 ) -> None:
     await _broker_profile(client, manager_agent_id)
     task_ids: list[str] = []
     for title in ("Land PR #123", "Follow-up work"):
         created = await client.post(
             "/v1/agent-tasks",
-            json={"title": title, "goal": f"{title} goal", "state": "active"},
+            json={
+                "title": title,
+                "goal": f"{title} goal",
+                "state": "active",
+                "manager_id": manager_id,
+            },
         )
+        assert created.status_code == 200, created.text
         task_ids.append(created.json()["id"])
     for task_id in task_ids:
         subscribed = await client.post(
@@ -200,6 +238,7 @@ async def test_ingress_rejects_session_internal_types(client: httpx.AsyncClient)
 async def test_complete_requires_routed_state(
     client: httpx.AsyncClient,
     manager_agent_id: str,
+    manager_id: str,
 ) -> None:
     await _broker_profile(client, manager_agent_id)
     await client.post(
@@ -208,6 +247,7 @@ async def test_complete_requires_routed_state(
             "title": "Upload retries",
             "goal": "all uploads retry to success",
             "state": "active",
+            "manager_id": manager_id,
             "tags": [{"tag_type": "repo", "tag": "omnigent-fork"}],
         },
     )

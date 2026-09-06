@@ -17,9 +17,7 @@ from pathlib import Path
 
 import omnigent
 from omnigent.inner.codex_executor import codex_skill_sources, select_codex_skill_dirs
-from omnigent.runner.native.orchestration import (
-    _ensure_orchestrator_skills_in_bundle,
-)
+from omnigent.runner.app import _ensure_orchestrator_skills_in_bundle
 
 SKILL_NAME = "build-omnigent"
 

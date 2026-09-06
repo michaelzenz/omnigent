@@ -30,11 +30,12 @@ import yaml
 from omnigent.entities.session_resources import SessionResourceView
 from omnigent.runner import create_runner_app
 from omnigent.runner import tool_dispatch as _tool_dispatch
-from omnigent.runner.app import _resolve_harness_config, _spec_with_workdir_paths
-from omnigent.runner.native.orchestration import (
+from omnigent.runner.app import (
     ResolvedSpec,
     _ensure_orchestrator_skills_in_bundle,
+    _resolve_harness_config,
     _resolve_sub_agent_spec_entry,
+    _spec_with_workdir_paths,
 )
 from omnigent.runner.resource_registry import SessionResourceRegistry
 from omnigent.spec.parser import parse
@@ -261,9 +262,7 @@ async def test_native_terminal_ensure_launches_against_child_bundle(
     # The ensure endpoint dispatches through the native provider registry's
     # launch adapter, which forwards ``ctx.bundle_dir`` to the builder — so the
     # builder is patched where the adapter looks it up.
-    monkeypatch.setattr(
-        f"omnigent.runner.native.orchestration.{target}", _capture_auto_create(calls)
-    )
+    monkeypatch.setattr(f"omnigent.runner.app.{target}", _capture_auto_create(calls))
     monkeypatch.setattr(SessionResourceRegistry, "get_terminal_resource", _no_terminal)
 
     app = create_runner_app(

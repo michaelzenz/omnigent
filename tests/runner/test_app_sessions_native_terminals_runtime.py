@@ -2366,7 +2366,7 @@ async def test_cold_start_agy_conversation_waits_for_model_readiness(
     """StartCascade runs only after models appear and the settling delay passes."""
     import omnigent.antigravity_native_rpc as rpc_mod
     from omnigent import antigravity_native_bridge as bridge_mod
-    from omnigent.runner.native import orchestration as runner_app_mod
+    from omnigent.runner import app as runner_app_mod
 
     monkeypatch.setattr(bridge_mod, "_BRIDGE_ROOT", tmp_path / "antigravity-native")
     session_id = "158889f76b7143cd97d1c564db115235"
@@ -2441,7 +2441,7 @@ async def test_cold_start_agy_conversation_model_timeout_keeps_placeholder(
     """A bound RPC port without models never receives StartCascade."""
     import omnigent.antigravity_native_rpc as rpc_mod
     from omnigent import antigravity_native_bridge as bridge_mod
-    from omnigent.runner.native import orchestration as runner_app_mod
+    from omnigent.runner import app as runner_app_mod
 
     monkeypatch.setattr(bridge_mod, "_BRIDGE_ROOT", tmp_path / "antigravity-native")
     session_id = "4908a3a50e4c4323a3f0183013ea79ba"
@@ -3194,8 +3194,8 @@ async def test_cold_start_agy_conversation_accepts_a_locally_owned_cascade(
     """The happy path still persists: our own agy wrote the conversation here."""
     import omnigent.antigravity_native_rpc as rpc_mod
     from omnigent import antigravity_native_bridge as bridge_mod
+    from omnigent.runner import app as orchestration_mod
     from omnigent.runner import app as runner_app_mod
-    from omnigent.runner.native import orchestration as orchestration_mod
 
     monkeypatch.setattr(bridge_mod, "_BRIDGE_ROOT", tmp_path / "antigravity-native")
     session_id = "bb44894f77886259ee71e892a9e2af11"

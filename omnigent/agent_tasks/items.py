@@ -38,6 +38,8 @@ def _require_worker_owner_scope(
     home_owner = home.owner_user_id if home is not None else None
     if home_owner is not None and home_owner != owner_user_id:
         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+
+
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -395,6 +397,7 @@ async def resolve_task_item(
         task_event_store=task_event_store,
         worker_store=worker_store,
         conversation_store=conversation_store,
+        manager_store=getattr(app_state, "manager_store", None),
         session_creator=session_creator,
         app_state=app_state,
         user_id=user_id,

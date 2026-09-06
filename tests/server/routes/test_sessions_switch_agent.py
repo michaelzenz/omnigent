@@ -190,6 +190,10 @@ class _LoadedAgentStub:
 
         class _Spec:
             def __init__(self, hk: str) -> None:
+                # spec.name is read for the pi-target fork-history check; a
+                # value that is never ONIH_PI_TARGET keeps the stub out of
+                # that branch.
+                self.name = "test-agent"
                 self.executor = _Executor(hk)
 
         self.spec = _Spec(harness_kind)

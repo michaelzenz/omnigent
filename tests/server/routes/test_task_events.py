@@ -8,11 +8,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import (
-    TASK_BROKER_ROLE,
-    TASK_MANAGER_AGENT_NAME,
-    resolve_task_agent_id,
-)
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
+from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -51,6 +48,7 @@ def _register_manager(
     )
     SqlAlchemyManagerStore(db_uri).upsert(
         conversation_id,
+        conversation_id=conversation_id,
         owner_user_id=owner_user_id,
         role_key="manager:default",
         description="Owns routed build events.",
@@ -63,10 +61,13 @@ def _patch_host_session_launch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_profile_id(client: httpx.AsyncClient, db_uri: str) -> str:
-    del client
+async def manager_agent_profile_id(db_uri: str) -> str:
+    """Register a standalone agent for manager conversations and profiles."""
     _seed_live_host(db_uri, "host_test")
-    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name="task-manager", bundle_location="test:///bundle")
+    return agent_id
 
 
 @pytest_asyncio.fixture()
@@ -90,10 +91,14 @@ async def _put_broker_profile(
 
 async def test_resolve_routes_event_and_bootstraps_manager(
     client: httpx.AsyncClient,
+    db_uri: str,
     manager_agent_profile_id: str,
     task_event_store: SqlAlchemyTaskEventStore,
 ) -> None:
     await _put_broker_profile(client, manager_agent_profile_id)
+    # Managers are first-class: register one and attach the task at birth.
+    manager_id = _uid("resolve-event-manager")
+    _register_manager(db_uri, conversation_id=manager_id, agent_id=manager_agent_profile_id)
     event_id = _uid("event_resolve")
     task_event_store.create_event(
         event_id=event_id,
@@ -103,8 +108,13 @@ async def test_resolve_routes_event_and_bootstraps_manager(
     )
     create_resp = await client.post(
         "/v1/agent-tasks",
-        json={"title": "Upload retries", "goal": "all uploads retry to success"},
+        json={
+            "title": "Upload retries",
+            "goal": "all uploads retry to success",
+            "manager_id": manager_id,
+        },
     )
+    assert create_resp.status_code == 200, create_resp.text
     task_id = create_resp.json()["id"]
 
     resolve_resp = await client.post(
@@ -302,7 +312,7 @@ async def test_batch_route_manager_rejects_host_mismatch(
         db_uri,
         conversation_id=manager_id,
         agent_id=manager_agent_profile_id,
-        host_id="manager-host",
+        host_id=_uid("manager-host"),
     )
     event_id = _uid("other-host-event")
     task_event_store.create_event(
@@ -391,32 +401,58 @@ async def test_event_handling_rejects_another_owner(
     assert task_event_store.get_event(event_id).state == "routed"
 
 
-async def test_bootstrap_rejects_dead_manager_session(
+async def test_bootstrap_heals_dead_manager_session(
     client: httpx.AsyncClient,
-    manager_agent_profile_id: str,
     db_uri: str,
 ) -> None:
-    await _put_broker_profile(client, manager_agent_profile_id)
-    _seed_live_host(db_uri, "dead-session-host")
-    dead_conversation_id = _uid("dead_conv")
+    """A dead manager session pointer is healed from the manager row snapshot."""
+    _seed_live_host(db_uri, "heal-session-host")
+    # The heal re-creates the session from the manager row, which loads the
+    # agent spec — use a seeded built-in agent with a loadable bundle.
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    loadable = next(
+        (
+            a
+            for a in agent_store.list().data
+            if a.bundle_location and a.bundle_location != "test:///bundle"
+        ),
+        None,
+    )
+    assert loadable is not None, "no seeded built-in agent with a loadable bundle"
+    manager_id = _uid("heal-manager")
+    SqlAlchemyManagerStore(db_uri).upsert(
+        manager_id,
+        conversation_id=None,
+        owner_user_id="__anonymous__",
+        role_key="manager:default",
+        description="Owns routed build events.",
+        host_id=_uid("heal-session-host"),
+        workspace="/tmp/task-event-manager",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=loadable.id,
+    )
     create_resp = await client.post(
         "/v1/agent-tasks",
         json={
             "title": "Dead session task",
-            "goal": "Reject stale manager sessions",
+            "goal": "Heal stale manager sessions",
+            "manager_id": manager_id,
         },
     )
     assert create_resp.status_code == 200, create_resp.text
     task_id = create_resp.json()["id"]
-    SqlAlchemyTaskStore(db_uri).update(
-        task_id,
-        manager_id=dead_conversation_id,
-    )
+
     bootstrap_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/bootstrap",
         json={},
     )
-    assert bootstrap_resp.status_code == 409
+    assert bootstrap_resp.status_code == 200, bootstrap_resp.text
+    healed = SqlAlchemyManagerStore(db_uri).get(manager_id)
+    assert healed is not None
+    assert healed.conversation_id is not None
 
 
 async def test_ambiguous_inbox_clusters_stalled_events(

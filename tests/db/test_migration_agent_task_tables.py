@@ -50,7 +50,7 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     assert "priority" not in columns
     assert "summary" not in columns
     assert "source_internal_session_id" in columns
-    assert "manager_conversation_id" in columns
+    assert "manager_id" in columns
     assert "source_session_id" not in columns
     assert "selected_routing_attempt_id" not in columns
     assert "search_text" not in columns
@@ -64,31 +64,34 @@ def test_migration_creates_all_tables(db_engine: Engine) -> None:
     # A task names the roles that run it; the agent behind each role lives on
     # the role definition.
     assert "agent_profile_id" not in task_columns
-    assert {"manager_role_key", "worker_role_key"} <= task_columns
+    assert "manager_role_key" in task_columns
+    assert "worker_role_key" not in task_columns
     assert task_column_defs["goal"]["nullable"] is False
     task_indexes = {index["name"] for index in sa.inspect(db_engine).get_indexes("tasks")}
     assert "ix_tasks_manager_role_key" in task_indexes
     assert "ix_tasks_agent_profile_id" not in task_indexes
-    event_indexes = {
-        index["name"] for index in sa.inspect(db_engine).get_indexes("task_events")
-    }
+    event_indexes = {index["name"] for index in sa.inspect(db_engine).get_indexes("task_events")}
     assert "ix_task_events_manager_state" in event_indexes
 
-    manager_columns = {
-        column["name"] for column in sa.inspect(db_engine).get_columns("managers")
-    }
+    manager_columns = {column["name"] for column in sa.inspect(db_engine).get_columns("managers")}
     assert {
         "workspace_id",
+        "id",
         "conversation_id",
         "owner_user_id",
         "role_key",
+        "title",
         "description",
+        "host_id",
+        "workspace",
+        "harness",
+        "model",
+        "agent_profile_id",
+        "prompt_profile_id",
         "created_at",
         "updated_at",
     } == manager_columns
-    manager_indexes = {
-        index["name"] for index in sa.inspect(db_engine).get_indexes("managers")
-    }
+    manager_indexes = {index["name"] for index in sa.inspect(db_engine).get_indexes("managers")}
     assert "ix_managers_owner" in manager_indexes
 
 
@@ -153,7 +156,7 @@ def test_manager_backfill_detaches_shared_conversation_from_other_owners(
                     "task_id": alice_task,
                     "event_type": "build.failed",
                     "title": "Alice event",
-                    "state": 5,
+                    "state": 6,
                     "created_at": 1,
                 },
             )
@@ -162,8 +165,9 @@ def test_manager_backfill_detaches_shared_conversation_from_other_owners(
             manager_owner = conn.execute(
                 sa.text("SELECT owner_user_id FROM managers")
             ).scalar_one()
-            bindings = dict(
-                conn.execute(
+            bindings = {
+                row[0]: row[1]
+                for row in conn.execute(
                     sa.text(
                         "SELECT id, manager_conversation_id FROM tasks "
                         "WHERE id IN (:anonymous_task, :alice_task)"
@@ -173,7 +177,7 @@ def test_manager_backfill_detaches_shared_conversation_from_other_owners(
                         "alice_task": alice_task,
                     },
                 )
-            )
+            }
             event_manager, event_owner = conn.execute(
                 sa.text(
                     "SELECT manager_conversation_id, owner_user_id FROM task_events "
@@ -207,66 +211,6 @@ def test_role_definitions_are_global_and_sessions_per_user(db_engine: Engine) ->
     assert {"user_id", "role", "conversation_id"} <= session_columns
 
 
-def test_workers_carry_a_role_or_an_agent(db_engine: Engine) -> None:
-    """Managed lanes resolve their agent through a role; adopted ones name it."""
-    worker_columns = {column["name"] for column in sa.inspect(db_engine).get_columns("workers")}
-    assert {"role_key", "agent_profile_id"} <= worker_columns
-    assert "profile_id" not in worker_columns
-
-    task_id = bytes.fromhex("cccccccccccccccccccccccccccccccc")
-    agent_id = bytes.fromhex("dddddddddddddddddddddddddddddddd")
-    with db_engine.begin() as conn:
-        conn.execute(
-            sa.text(
-                "INSERT INTO workers "
-                "(workspace_id, id, task_id, role_key, agent_profile_id, kind, created_at) "
-                "VALUES (0, :id, :task_id, 'worker:default', NULL, 'managed', 1)"
-            ),
-            {"id": bytes.fromhex("e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"), "task_id": task_id},
-        )
-        conn.execute(
-            sa.text(
-                "INSERT INTO workers "
-                "(workspace_id, id, task_id, role_key, agent_profile_id, kind, created_at) "
-                "VALUES (0, :id, :task_id, NULL, :agent_id, 'external', 1)"
-            ),
-            {
-                "id": bytes.fromhex("e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"),
-                "task_id": task_id,
-                "agent_id": agent_id,
-            },
-        )
-
-    with db_engine.begin() as conn:
-        with pytest.raises(IntegrityError):
-            conn.execute(
-                sa.text(
-                    "INSERT INTO workers "
-                    "(workspace_id, id, task_id, role_key, agent_profile_id, kind, created_at) "
-                    "VALUES (0, :id, :task_id, 'worker:default', :agent_id, 'managed', 1)"
-                ),
-                {
-                    "id": bytes.fromhex("e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3"),
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                },
-            )
-
-    with db_engine.begin() as conn:
-        with pytest.raises(IntegrityError):
-            conn.execute(
-                sa.text(
-                    "INSERT INTO workers "
-                    "(workspace_id, id, task_id, role_key, agent_profile_id, kind, created_at) "
-                    "VALUES (0, :id, :task_id, 'worker:default', NULL, 'external', 1)"
-                ),
-                {
-                    "id": bytes.fromhex("e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"),
-                    "task_id": task_id,
-                },
-            )
-
-
 def test_tasks_state_check_enforced(db_engine: Engine) -> None:
     """Invalid task state codes are rejected."""
     with db_engine.begin() as conn:
@@ -274,9 +218,9 @@ def test_tasks_state_check_enforced(db_engine: Engine) -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO tasks "
-                    "(workspace_id, id, manager_role_key, worker_role_key, title, goal, "
+                    "(workspace_id, id, manager_role_key, title, goal, "
                     "state, created_at) "
-                    "VALUES (0, :id, 'manager:default', 'worker:default', 't', 'g', 99, 1)"
+                    "VALUES (0, :id, 'manager:default', 't', 'g', 99, 1)"
                 ),
                 {"id": bytes.fromhex("0ecf75a6ff1ff86bcc1902eb0951ef45")},
             )

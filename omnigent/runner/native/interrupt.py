@@ -40,11 +40,6 @@ import httpx
 from fastapi.responses import JSONResponse, Response
 
 from omnigent.native_coding_agents import native_coding_agent_for_harness
-from omnigent.runner.native.orchestration import (
-    _cancel_auto_forwarder_task,
-    _claude_native_bridge_id_for_session,
-    _session_labels_for_runner_spawn,
-)
 from omnigent.runner.resource_registry import SessionResourceRegistry
 
 if TYPE_CHECKING:
@@ -80,6 +75,33 @@ class ClientSafeErrorDetail(Protocol):
     """Log an exception and return safe client-facing detail."""
 
     def __call__(self, exc: BaseException, *, context: str) -> str:
+        raise NotImplementedError
+
+
+class CancelAutoForwarderTask(Protocol):
+    """Cancel and await the session's transcript forwarder (app-owned)."""
+
+    async def __call__(self, session_id: str) -> None:
+        raise NotImplementedError
+
+
+class ResolveClaudeBridgeId(Protocol):
+    """Resolve the bridge id label for a claude-native session (app-owned)."""
+
+    async def __call__(self, *, server_client: httpx.AsyncClient | None, session_id: str) -> str:
+        raise NotImplementedError
+
+
+class SessionLabelsForRunnerSpawn(Protocol):
+    """Fetch runner spawn labels for a session (app-owned)."""
+
+    async def __call__(
+        self,
+        *,
+        server_client: httpx.AsyncClient,
+        session_id: str,
+        labels: Mapping[str, str] | None = None,
+    ) -> dict[str, str] | None:
         raise NotImplementedError
 
 
@@ -258,6 +280,9 @@ class NativeInterruptRunner:
         codex_bridge_state_for_session: CodexBridgeStateForSession,
         client_safe_error_detail: ClientSafeErrorDetail,
         logger: logging.Logger,
+        cancel_auto_forwarder_task: CancelAutoForwarderTask,
+        claude_bridge_id_for_session: ResolveClaudeBridgeId,
+        session_labels_for_runner_spawn: SessionLabelsForRunnerSpawn,
     ) -> None:
         self._server_client = server_client
         self._resource_registry = resource_registry
@@ -266,6 +291,9 @@ class NativeInterruptRunner:
         self._session_sub_agent_names = session_sub_agent_names
         self._codex_bridge_state_for_session = codex_bridge_state_for_session
         self._client_safe_error_detail = client_safe_error_detail
+        self._cancel_auto_forwarder_task = cancel_auto_forwarder_task
+        self._claude_bridge_id_for_session = claude_bridge_id_for_session
+        self._session_labels_for_runner_spawn = session_labels_for_runner_spawn
         self._logger = logger
 
     async def interrupt(self, harness_name: str | None, conv_id: str) -> Response | None:
@@ -393,7 +421,7 @@ class NativeInterruptRunner:
                 },
             )
         await self._teardown_session_terminals(conv_id)
-        await _cancel_auto_forwarder_task(conv_id)
+        await self._cancel_auto_forwarder_task(conv_id)
         self._publish_event(conv_id, {"type": "session.status", "status": "idle"})
         delivery_ack = self._mark_subagent_terminal_and_wake(
             conv_id,
@@ -415,7 +443,7 @@ class NativeInterruptRunner:
     async def _claude_interrupt(self, conv_id: str) -> Response:
         from omnigent.claude_native_bridge import bridge_dir_for_bridge_id, inject_interrupt
 
-        bridge_id = await _claude_native_bridge_id_for_session(
+        bridge_id = await self._claude_bridge_id_for_session(
             server_client=self._server_client,
             session_id=conv_id,
         )
@@ -442,7 +470,7 @@ class NativeInterruptRunner:
             kill_session,
         )
 
-        bridge_id = await _claude_native_bridge_id_for_session(
+        bridge_id = await self._claude_bridge_id_for_session(
             server_client=self._server_client,
             session_id=conv_id,
         )
@@ -489,7 +517,7 @@ class NativeInterruptRunner:
         state = await self._codex_bridge_state_for_session(conv_id, action="interrupt")
         if state is None:
             return Response(status_code=204)
-        labels = await _session_labels_for_runner_spawn(
+        labels = await self._session_labels_for_runner_spawn(
             server_client=self._server_client,
             session_id=conv_id,
         )

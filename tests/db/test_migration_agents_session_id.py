@@ -310,13 +310,11 @@ def test_upgrade_does_not_cascade_delete_conversations(tmp_path: Path) -> None:
     clear_engine_cache()
 
 
-def test_agents_session_id_downgrade_round_trip(tmp_path: Path) -> None:
-    """Downgrade restores session_id from conversations.agent_id and drops kind.
+def test_agents_session_id_downgrade_refused_at_manager_identity(tmp_path: Path) -> None:
+    """Downgrading from head crosses the irreversible manager-identity migration.
 
-    Uses a raw engine (no auto-migration) to avoid SQLite FK enforcement issues:
-    the o1a2b3c4d5e6 downgrade re-adds fk_agents_session_id (ON DELETE CASCADE),
-    and subsequent batch_alter_table calls on conversations would cascade-delete
-    agents if PRAGMA foreign_keys is ON. A raw engine keeps FK enforcement off.
+    Uses a raw engine (no auto-migration) so PRAGMA foreign_keys stays OFF;
+    the seeded rows also prove the upgraded (head) schema accepts them.
     """
     db_path = tmp_path / "downgrade.db"
     uri = f"sqlite:///{db_path}"
@@ -369,26 +367,17 @@ def test_agents_session_id_downgrade_round_trip(tmp_path: Path) -> None:
             )
         )
 
-    # Downgrade to n1a2b3c4d5e6 (runs o1a2b3c4d5e6 downgrade which restores session_id).
+    # Downgrade to n1a2b3c4d5e6 would traverse the whole chain below head,
+    # but the manager-identity migration refuses any downgrade crossing it.
     config2 = _build_alembic_config(uri)
-    with raw_engine.begin() as conn:
-        config2.attributes["connection"] = conn
-        command.downgrade(config2, "n1a2b3c4d5e6")
+    with pytest.raises(NotImplementedError):
+        with raw_engine.begin() as conn:
+            config2.attributes["connection"] = conn
+            command.downgrade(config2, "n1a2b3c4d5e6")
 
-    # kind must be gone, session_id must be back.
+    # The refused downgrade leaves the schema at head.
     columns = {c["name"] for c in sa.inspect(raw_engine).get_columns("agents")}
-    assert "kind" not in columns
-    assert "session_id" in columns
-
-    # The session-scoped agent should have session_id back-populated from
-    # conversations.agent_id; the template agent should have NULL.
-    with raw_engine.begin() as conn:
-        rows = {
-            row[0]: row[1]
-            for row in conn.execute(sa.text("SELECT id, session_id FROM agents ORDER BY id"))
-        }
-    assert rows["23803e78ca1677e73a1d8c6275de4150"] is None
-    assert rows["372d0296768feff7262c605c5553d1da"] == "8e32600337d08f59ad381caf96a90659"
+    assert "kind" in columns
 
     raw_engine.dispose()
     clear_engine_cache()

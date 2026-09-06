@@ -119,7 +119,6 @@ from omnigent.server.routes._host_worktree import CreatedWorktree
 from omnigent.server.routes._session_create_validation import (
     validate_existing_host_workspace,
 )
-from omnigent.server.routes._workspace_validation import WorkspaceValidationResult
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
 # leaf module; import them here so this module and its re-exporters see the same
@@ -229,6 +228,7 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     set_server_runner_router,
     user_session_stream,
 )
+from omnigent.server.routes._workspace_validation import WorkspaceValidationResult
 from omnigent.server.schemas import (
     BackgroundTaskInfo,
     ChildSessionSummary,
@@ -551,8 +551,15 @@ def _discovery_key(user_id: str | None) -> str:
     :param user_id: Authenticated user id, e.g. ``"alice@example.com"``, or
         ``None`` in single-user / no-auth mode.
     :returns: ``user_id`` when set, else :data:`_SHARED_DISCOVERY_KEY`.
+        The reserved ``"local"`` single-user identity shares the same
+        discovery channel as ``None`` so host imports and browser tabs
+        converge on one fan-out key.
     """
-    return user_id if user_id is not None else _SHARED_DISCOVERY_KEY
+    from omnigent.server.auth import RESERVED_USER_LOCAL
+
+    if user_id is None or user_id == RESERVED_USER_LOCAL:
+        return _SHARED_DISCOVERY_KEY
+    return user_id
 
 
 def _announce_session_added(user_id: str | None, session_id: str) -> None:
@@ -588,8 +595,7 @@ async def _maybe_adopt_session(session_id: str) -> None:
         health_store = get_plugin_health_store()
         plugins = health_store.list(kind="poll")
         watcher_enabled = any(
-            p.plugin.name == "session_watcher" and p.plugin.enabled
-            for p in plugins
+            p.plugin.name == "session_watcher" and p.plugin.enabled for p in plugins
         )
         if not watcher_enabled:
             return
@@ -4054,6 +4060,7 @@ def _publish_status(
     # server-side status transitions funnel through _publish_status and
     # would otherwise miss the feed.
     from omnigent.server.routes._sessions.common import _queue_status_feed
+
     if _queue_status_feed is not None:
         asyncio.create_task(_queue_status_feed.notify(session_id, status))
     # Event-driven scheduled-run completion. A terminal edge (idle = the turn
@@ -4069,7 +4076,11 @@ def _publish_status(
     if status == "idle":
         session_live_state.persist_scheduled_run_completion(session_id, "succeeded")
         # Fire-and-forget: check if this session needs adoption after a turn.
-        asyncio.create_task(_maybe_adopt_session(session_id))
+        # Skipped when there's no running loop (sync callers).
+        try:
+            asyncio.create_task(_maybe_adopt_session(session_id))
+        except RuntimeError:
+            pass
     elif status == "failed":
         # Canonical server-side broken-turn signal: every server-originated
         # failed turn (runner disconnect mid-turn, setup/dispatch failure,

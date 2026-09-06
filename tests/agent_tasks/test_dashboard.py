@@ -6,7 +6,6 @@ import uuid
 
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.executions import start_execution_for_item
-from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.db.utils import now_epoch
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -45,7 +44,6 @@ def test_inbox_only_unassigned_awaiting_ack(db_uri: str) -> None:
     worker = worker_store.create_worker(
         _uid("worker_slot"),
         task_id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
     )
     item_store.create_item(
         _uid("assigned"),
@@ -116,7 +114,6 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     worker = worker_store.create_worker(
         _uid("worker_lane"),
         task_id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
     )
     running_item = item_store.create_item(
         _uid("running_item"),

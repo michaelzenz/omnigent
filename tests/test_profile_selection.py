@@ -28,7 +28,9 @@ class _Store:
     def get(self, profile_id: str) -> PromptProfile | None:
         return next((profile for profile in self.profiles if profile.id == profile_id), None)
 
-    def list(self, *, enabled_only: bool = False) -> list[PromptProfile]:
+    def list(
+        self, *, enabled_only: bool = False, visible_only: bool = False
+    ) -> list[PromptProfile]:
         return [profile for profile in self.profiles if not enabled_only or profile.enabled]
 
 

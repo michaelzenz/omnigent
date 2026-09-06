@@ -10807,7 +10807,7 @@ def test_codex_discover_thread_and_forward_writes_routing_summary_on_timeout(
     """A startup timeout records the launch routing summary in the bridge error (#2745)."""
     from omnigent import codex_native_forwarder as _fwd
     from omnigent.codex_native_bridge import read_bridge_startup_error
-    from omnigent.runner.native import orchestration as native_orch
+    from omnigent.runner import app as app_mod
 
     bridge_dir = tmp_path / "bridge"
     bridge_dir.mkdir()
@@ -10822,7 +10822,7 @@ def test_codex_discover_thread_and_forward_writes_routing_summary_on_timeout(
             return None
 
     asyncio.run(
-        native_orch._codex_discover_thread_and_forward(
+        app_mod._codex_discover_thread_and_forward(
             session_id="conv_test",
             bridge_dir=bridge_dir,
             codex_ws_url="ws://127.0.0.1:9999",

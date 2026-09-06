@@ -135,7 +135,15 @@ def test_completed_item_is_done(store: SqlAlchemyAgentQueueStore) -> None:
     assert completed.completed_at == _NOW + 5
 
 
-def test_failed_dispatch_halts_only_its_own_queue(store: SqlAlchemyAgentQueueStore) -> None:
+def test_failed_dispatch_requeues_and_isolates_queues(
+    store: SqlAlchemyAgentQueueStore,
+) -> None:
+    """A failed dispatch re-queues with backoff; only that queue is touched.
+
+    Dispatch failures never park work (the queue stays active so the
+    dispatcher keeps trying — a runner restart heals it on its own); the
+    failure must also not leak into unrelated queues.
+    """
     failing = _worker_key("slot-a")
     healthy = _worker_key("slot-b")
     store.enqueue(_uid("a"), failing, "notice")
@@ -143,53 +151,52 @@ def test_failed_dispatch_halts_only_its_own_queue(store: SqlAlchemyAgentQueueSto
 
     failed = store.fail_dispatch(_uid("a"), failing, error="no runner bound", now=_NOW)
     assert failed is not None
-    assert failed.state == "dispatch_failed"
+    # Re-queued behind the non-retryable backoff window, not parked.
+    assert failed.state == "queued"
     assert failed.last_error == "no runner bound"
+    assert failed.not_before == _NOW + 300
 
-    halted = store.get_queue(failing)
-    assert halted is not None
-    assert halted.state == "halted"
-    assert halted.last_error == "no runner bound"
-    assert halted.inflight_item_id is None
+    queue = store.get_queue(failing)
+    assert queue is not None
+    assert queue.state == "active"
+    assert queue.last_error == "no runner bound"
+    assert queue.inflight_item_id is None
 
     other = store.get_queue(healthy)
     assert other is not None
     assert other.state == "active"
+    assert other.last_error is None
 
 
-def test_halted_queue_is_not_scanned_and_does_not_retry(
-    store: SqlAlchemyAgentQueueStore,
-) -> None:
+def test_failed_item_retries_after_backoff(store: SqlAlchemyAgentQueueStore) -> None:
+    """A dispatch-failed item sits out its backoff, then retries.
+
+    The queue keeps draining meanwhile: the failed item is gated by its own
+    ``not_before`` (the dispatcher picks ``next`` first), then re-enters the
+    scan once the backoff window passes.
+    """
     key = _worker_key()
     store.enqueue(_uid("poison"), key, "notice")
-    store.enqueue(_uid("next"), key, "notice")
     store.fail_dispatch(_uid("poison"), key, error="boom", now=_NOW)
 
-    assert store.due_queues(now=_NOW) == []
-    assert store.acquire_lease(key, "replica-1", now=_NOW, ttl_s=30) is None
+    # The failed item is gated by its backoff window, not dropped: the
+    # dispatcher pick returns None until the window passes, then the item
+    # comes back.
+    assert store.next_dispatchable_item(key, now=_NOW) is None
+    assert store.next_dispatchable_item(key, now=_NOW + 299) is None
+    retried = store.next_dispatchable_item(key, now=_NOW + 300)
+    assert retried is not None
+    assert retried.id == _uid("poison")
 
 
-def test_resume_clears_the_halt_and_re_arms(store: SqlAlchemyAgentQueueStore) -> None:
-    key = _worker_key()
-    store.enqueue(_uid("poison"), key, "notice")
-    store.enqueue(_uid("next"), key, "notice")
-    store.fail_dispatch(_uid("poison"), key, error="boom", now=_NOW)
-
-    resumed = store.set_queue_state(key, "active")
-    assert resumed is not None
-    assert resumed.state == "active"
-    assert resumed.last_error is None
-    # The failed item stays failed; the queue drains from the next one.
-    assert [q.key for q in store.due_queues(now=_NOW)] == [key]
-    head = store.next_dispatchable_item(key, now=_NOW)
-    assert head is not None
-    assert head.id == _uid("next")
-
-
-def test_cancel_dispatch_failed_item_clears_the_halt(
+def test_cancel_removes_the_requeued_failed_item(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
-    """Cancel is the complete recovery for a dispatch-failed item, not two-step."""
+    """Cancelling a dispatch-failed item removes it; the queue keeps running.
+
+    There is no halt to clear anymore — the item re-queued with backoff, so
+    cancel just deletes it and the slot drains from the next item.
+    """
     key = _worker_key()
     store.enqueue(_uid("poison"), key, "notice")
     store.enqueue(_uid("next"), key, "notice")
@@ -202,12 +209,15 @@ def test_cancel_dispatch_failed_item_clears_the_halt(
     queue = store.get_queue(key)
     assert queue is not None
     assert queue.state == "active"
-    assert queue.last_error is None
-    # The slot drains from the next item, no resume needed.
-    assert [q.key for q in store.due_queues(now=_NOW)] == [key]
+    # The failure note persists until the next event rewrites it (intended:
+    # cancel does not rewrite queue history).
+    assert queue.last_error == "boom"
+    # The dispatcher pick is not blocked, and the queue-level scan gate set
+    # by the failure opens once its backoff passes.
     head = store.next_dispatchable_item(key, now=_NOW)
     assert head is not None
     assert head.id == _uid("next")
+    assert [q.key for q in store.due_queues(now=_NOW + 300)] == [key]
 
 
 def test_cancel_is_idempotent_on_already_cancelled(
@@ -307,10 +317,14 @@ def test_claimed_source_ids_cover_open_items_only(
     assert store.list_claimed_source_ids("broker", _OWNER) == set()
 
 
-def test_watchdog_parks_a_stuck_in_flight_item(
+def test_watchdog_requeues_a_stuck_in_flight_item(
     store: SqlAlchemyAgentQueueStore,
 ) -> None:
-    """An agent that went away leaves interrupted work, not finished work."""
+    """An agent that went away mid-item leaves the work retryable, not done.
+
+    The in-flight slot is freed and the item re-queues behind a backoff with
+    the failure recorded — never marked finished, never parked.
+    """
     key = _worker_key()
     store.enqueue(_uid("a"), key, "notice")
     store.enqueue(_uid("b"), key, "notice")
@@ -320,15 +334,16 @@ def test_watchdog_parks_a_stuck_in_flight_item(
 
     reclaimed = store.reclaim_stale_inflight(now=_NOW + 7200, max_inflight_s=3600)
     assert [item.id for item in reclaimed] == [_uid("a")]
-    assert reclaimed[0].state == "interrupted"
+    assert reclaimed[0].state == "queued"
+    assert reclaimed[0].last_error == "agent went away while the item was in flight"
+    assert reclaimed[0].not_before == _NOW + 7200 + 30
+    assert reclaimed[0].retry_count == 1
     assert reclaimed[0].completed_at is None
 
     queue = store.get_queue(key)
     assert queue is not None
     assert queue.inflight_item_id is None
-    # Halted, so "b" waits behind the parked item until the user retries or
-    # cancels it rather than silently running out of order.
-    assert queue.state == "halted"
+    assert queue.state == "active"
 
 
 def test_parked_items_keep_their_source_claims(

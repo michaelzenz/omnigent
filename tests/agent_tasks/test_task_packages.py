@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +12,6 @@ import pytest
 
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.items import create_task_item, resolve_task_item
-from omnigent.agent_tasks.role_keys import WORKER_DEFAULT_ROLE_KEY
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
@@ -23,7 +23,6 @@ from omnigent.agent_tasks.task_packages import (
 )
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag, TaskTag
-from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -100,6 +99,7 @@ def test_create_task_package_reconciles_events(stores) -> None:
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
         tags=[
             EventTag(tag_type="repo", tag="acme/widgets"),
         ],
@@ -140,6 +140,7 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
         "github.pr.checks_failed",
         "checks failed",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
         source="poll",
         source_key="org/repo#891",
     )
@@ -148,6 +149,7 @@ def test_reconcile_events_extends_paused_package_item(stores) -> None:
         "github.pr.review_comment",
         "new comment",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
         source="poll",
         source_key="org/repo#891",
     )
@@ -186,7 +188,9 @@ def test_reconcile_events_batch_dedups_shared_event(stores) -> None:
     item_store = stores["item"]
     e1, e2, e3 = (_uid(f"dedup-{i}") for i in range(3))
     for eid, etype in ((e1, "build.finished"), (e2, "build.failed"), (e3, "build.finished")):
-        event_store.create_event(eid, etype, "flaky", state="awaiting_grouping")
+        event_store.create_event(
+            eid, etype, "flaky", state="awaiting_grouping", owner_user_id=_uid("owner")
+        )
 
     task = task_store.create(
         _uid("dedup-task"),
@@ -453,28 +457,37 @@ def test_package_reconcile_rejects_event_routed_to_another_manager(stores) -> No
 
 
 @pytest.mark.asyncio
-async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str) -> None:
+async def test_resolve_inbox_item_enqueues_accepted_package(stores, db_uri: str) -> None:
+    """Accepting an inbox item queues an item.dispatch for the worker slot."""
+    from omnigent.entities import AgentQueueKey
+    from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
+    from omnigent.stores.worker_provider_store.sqlalchemy_store import (
+        SqlAlchemyWorkerProviderStore,
+    )
+
     task_store = stores["task"]
     event_store = stores["event"]
     item_store = stores["item"]
     agent_store = stores["agent"]
-    conversation_store = stores["conversation"]
-    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
-    manager_agent_id = generate_agent_id()
-    agent_store.create(manager_agent_id, name="task-manager", bundle_location="test:///bundle")
-    profile_store.upsert(
-        "manager:default",
-        kind="manager",
-        agent_profile_id=manager_agent_id,
-    )
+    worker_store = stores["worker"]
+
     worker_agent_id = generate_agent_id()
     agent_store.create(worker_agent_id, name="worker", bundle_location="test:///bundle")
+    provider_store = SqlAlchemyWorkerProviderStore(db_uri)
+    provider_store.create(
+        _uid("package-worker-provider"),
+        name="Package worker provider",
+        kind="internal",
+        configuration=json.dumps({"agent_id": worker_agent_id}),
+    )
+
     event_id = _uid("resolve-event")
     event_store.create_event(
         event_id,
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
     )
     pending_task = create_task_package(
         owner_user_id=_uid("owner"),
@@ -484,27 +497,77 @@ async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
-        worker_store=stores["worker"],
+        worker_store=worker_store,
     )
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    manager_agent_id = generate_agent_id()
+    agent_store.create(manager_agent_id, name="task-manager", bundle_location="test:///bundle")
+    profile_store.upsert("manager:default", kind="manager", agent_profile_id=manager_agent_id)
     task = accept_task_package(
         task=pending_task,
         task_store=task_store,
         task_role_profile_store=profile_store,
     )
-    worker_store = stores["worker"]
+
+    # Managers are first-class: attach one before resolving items.
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+
+    manager_id = _uid("package-manager")
+    stores["conversation"].create_conversation(
+        conversation_id=manager_id,
+        title="Package manager",
+        agent_id=manager_agent_id,
+        host_id=_uid("host"),
+        workspace="/tmp/omnigent-task-test",
+    )
+    SqlAlchemyManagerStore(db_uri).upsert(
+        manager_id,
+        conversation_id=manager_id,
+        owner_user_id=_uid("owner"),
+        role_key="manager:default",
+        description="Owns packaged work.",
+        host_id=_uid("host"),
+        workspace="/tmp/omnigent-task-test",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=manager_agent_id,
+    )
+    task_store.update(task.id, manager_id=manager_id)
+    task = task_store.get(task.id)
+    assert task is not None
+
     item = item_store.list_items_for_task(task.id, state="pending")[0]
 
-    # Assign a worker lane before resolving (manager sweep).
+    # Create a durable worker from the provider snapshot, then assign it.
+    provider = provider_store.get(_uid("package-worker-provider"))
+    assert provider is not None
+    configuration = json.loads(provider.configuration)
+    snapshot = json.dumps(
+        {
+            "version": 2,
+            "provider_id": provider.id,
+            "kind": provider.kind,
+            "configuration": configuration,
+            "launch": {"host_id": _uid("host"), "workspace": "/tmp/omnigent-task-test"},
+        },
+        sort_keys=True,
+    )
     worker = worker_store.create_worker(
         uuid.uuid4().hex,
         task.id,
-        role_key=WORKER_DEFAULT_ROLE_KEY,
         kind="managed",
+        provider_name=provider.name,
+        provider_configuration=snapshot,
+        state="uninitialized",
     )
     item_store.update_item(item.id, worker_id=worker.id)
 
+    # With a queue store wired, accept enqueues for the worker slot — the
+    # dispatcher spawns the worker off the request path.
+    queue_store = SqlAlchemyAgentQueueStore(db_uri)
+
     async def _mock_session_creator(*, body, request, user_id, **kwargs):
-        return conversation_store.create_conversation(
+        return stores["conversation"].create_conversation(
             title=body.title or "Task manager",
             agent_id=body.agent_id,
             host_id=body.host_id,
@@ -512,38 +575,37 @@ async def test_resolve_inbox_item_activates_accepted_package(stores, db_uri: str
         )
 
     updated, execution = await resolve_task_item(
-        item=item,
+        item=item_store.get_item(item.id),
         resolution="edit_and_dispatch",
         task=task,
         task_store=task_store,
         task_item_store=item_store,
         task_event_store=event_store,
         worker_store=worker_store,
-        conversation_store=conversation_store,
-        role_profile=TaskRoleProfile(
-            role=WORKER_DEFAULT_ROLE_KEY,
-            kind="worker",
-            agent_profile_id=worker_agent_id,
-            harness="cursor",
-            model="composer-2.5",
-            host_id=_uid("host"),
-            workspace="/tmp/omnigent-task-test",
-            created_at=1,
-        ),
+        conversation_store=stores["conversation"],
+        agent_queue_store=queue_store,
+        owner_user_id=_uid("owner"),
+        session_creator=_mock_session_creator,
         edited_payload={
             "host_id": _uid("host"),
             "workspace": "/tmp/omnigent-task-test",
             "harness": "cursor",
             "model": "composer-2.5",
         },
-        session_creator=_mock_session_creator,
         app_state=SimpleNamespace(),
     )
-    assert updated.state == "running"
-    assert execution is not None
+    assert updated.state == "queued"
+    assert execution is None
+
+    queued = queue_store.list_items(
+        AgentQueueKey(role="worker", owner_user_id=_uid("owner"), scope_id=worker.id)
+    )
+    assert len(queued) == 1
+    assert queued[0].kind == "item.dispatch"
+    assert queued[0].source_ids == [item.id]
+
     activated = task_store.get(task.id)
     assert activated is not None
-    assert activated.state == "active"
     assert activated.manager_id is not None
 
 
@@ -560,6 +622,7 @@ async def test_skip_inbox_items_keeps_paused_task(stores) -> None:
             "github.pr.checks_failed",
             "PR checks failed",
             state="awaiting_grouping",
+            owner_user_id=_uid("owner"),
         )
     task = create_task_package(
         owner_user_id=_uid("owner"),
@@ -613,6 +676,7 @@ def test_accept_task_package(stores, db_uri: str) -> None:
         "github.pr.checks_failed",
         "failure",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
     )
     pending_task = create_task_package(
         owner_user_id=_uid("owner"),
@@ -642,6 +706,7 @@ def test_reject_task_package(stores) -> None:
         "github.pr.checks_failed",
         "another failure",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
     )
     reject_task = create_task_package(
         owner_user_id=_uid("owner"),
@@ -717,6 +782,7 @@ def test_create_task_package_born_attached(stores) -> None:
         "github.pr.checks_failed",
         "PR checks failed",
         state="awaiting_grouping",
+        owner_user_id=_uid("owner"),
         tags=[EventTag(tag_type="repo", tag="acme/widgets")],
     )
     manager_conv_id = _uid("manager_conv")

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import httpx
 import pytest
 import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
 from omnigent.db.utils import generate_agent_id
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -16,6 +16,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.worker_provider_store.sqlalchemy_store import SqlAlchemyWorkerProviderStore
 from tests.server.routes.agent_task_api import put_agent_role_profile
 
 
@@ -27,8 +28,10 @@ def _uid(seed: str) -> str:
 def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Skip host liveness checks — route tests don't run a real host."""
 
-    async def _skip_validation(*args: object, **kwargs: object) -> str | None:
-        return kwargs.get("workspace")
+    from omnigent.server.routes._workspace_validation import WorkspaceValidationResult
+
+    async def _skip_validation(*args: object, **kwargs: object) -> WorkspaceValidationResult:
+        return WorkspaceValidationResult(canonical_path=kwargs.get("workspace") or "")
 
     monkeypatch.setattr(
         "omnigent.server.routes.sessions._validate_session_workspace",
@@ -75,9 +78,12 @@ def _patch_host_validation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest_asyncio.fixture()
-async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
-    del client
-    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
+async def manager_agent_id(db_uri: str) -> str:
+    """Register a standalone agent for manager conversations and profiles."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name="task-manager", bundle_location="test:///bundle")
+    return agent_id
 
 
 @pytest_asyncio.fixture()
@@ -100,6 +106,20 @@ async def manager_role_key(
 
 
 @pytest_asyncio.fixture()
+async def manager_id(
+    client: httpx.AsyncClient,
+    manager_role_key: str,
+) -> str:
+    """Create a first-class manager and return its durable id."""
+    resp = await client.post(
+        "/v1/agent-tasks/managers",
+        json={"role_key": "manager:default", "description": "Owns packaged work."},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+@pytest_asyncio.fixture()
 async def worker_agent_id(db_uri: str) -> str:
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
@@ -108,14 +128,17 @@ async def worker_agent_id(db_uri: str) -> str:
 
 
 @pytest_asyncio.fixture()
-async def worker_role_key(client: httpx.AsyncClient, worker_agent_id: str) -> str:
-    """Register the worker role a resolved package item is handed to."""
-    resp = await client.post(
-        "/v1/agent-tasks/roles/worker",
-        json={"slug": "packager", "agent_profile_id": worker_agent_id},
+async def worker_provider_id(db_uri: str, worker_agent_id: str) -> str:
+    """Register an internal Worker Provider backed by the worker agent."""
+    provider_store = SqlAlchemyWorkerProviderStore(db_uri)
+    provider_id = _uid("worker-provider")
+    provider_store.create(
+        provider_id,
+        name="Test worker provider",
+        kind="internal",
+        configuration=json.dumps({"agent_id": worker_agent_id}),
     )
-    assert resp.status_code == 200, resp.text
-    return resp.json()["role"]
+    return provider_id
 
 
 def _seed_live_host(db_uri: str, seed: str) -> str:
@@ -130,6 +153,14 @@ def _bootstrap_body() -> dict[str, str]:
         "workspace": "/tmp/omnigent-task-test",
         "harness": "cursor",
         "model": "composer-2.5",
+    }
+
+
+def _assignment(worker_provider_id: str) -> dict[str, str]:
+    return {
+        "provider_id": worker_provider_id,
+        "host_id": _uid("package-resolve-host"),
+        "workspace": "/tmp/omnigent-task-test",
     }
 
 
@@ -180,7 +211,7 @@ async def test_create_task_package_lists_as_paused_task(
 async def test_accept_package_promotes_pending_task(
     client: httpx.AsyncClient,
     manager_agent_id: str,
-    manager_role_key: str,
+    manager_id: str,
     db_uri: str,
 ) -> None:
     """Accepting a pending package moves it to idle and locks the manager role."""
@@ -204,6 +235,13 @@ async def test_accept_package_promotes_pending_task(
     assert created.status_code == 200
     task_id = created.json()["id"]
 
+    # Managers are first-class: attach one before the package can be accepted.
+    attached = await client.patch(
+        f"/v1/agent-tasks/{task_id}",
+        json={"manager_id": manager_id},
+    )
+    assert attached.status_code == 200, attached.text
+
     accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["state"] == "idle"
@@ -218,8 +256,8 @@ async def test_accept_package_promotes_pending_task(
 
 async def test_resolve_inbox_item_activates_accepted_package(
     client: httpx.AsyncClient,
-    worker_role_key: str,
-    manager_role_key: str,
+    worker_provider_id: str,
+    manager_id: str,
     db_uri: str,
 ) -> None:
     """Go on an accepted package inbox item dispatches a worker."""
@@ -246,6 +284,12 @@ async def test_resolve_inbox_item_activates_accepted_package(
     )
     assert created.status_code == 200
     task_id = created.json()["id"]
+    # Managers are first-class: attach one before the package can be accepted.
+    attached = await client.patch(
+        f"/v1/agent-tasks/{task_id}",
+        json={"manager_id": manager_id},
+    )
+    assert attached.status_code == 200, attached.text
     accepted = await client.post(f"/v1/agent-tasks/{task_id}/accept-package")
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["manager_id"] is not None
@@ -254,7 +298,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
     item = item_store.list_items_for_task(task_id, state="pending")[0]
     assigned = await client.post(
         f"/v1/agent-tasks/{task_id}/workers/assign",
-        json={"assignments": [{"item_id": item.id, "role_key": worker_role_key}]},
+        json={"assignments": [{"item_id": item.id, **_assignment(worker_provider_id)}]},
     )
     assert assigned.status_code == 200, assigned.text
 
@@ -262,10 +306,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
         f"/v1/task-items/{item.id}/resolve",
         json={
             "resolution": "edit_and_dispatch",
-            "edited_payload": {
-                "worker_role_key": worker_role_key,
-                **_bootstrap_body(),
-            },
+            "edited_payload": _bootstrap_body(),
         },
     )
     assert resolved.status_code == 200, resolved.text
@@ -283,7 +324,7 @@ async def test_resolve_inbox_item_activates_accepted_package(
 
 async def test_resolve_inbox_item_requires_accepted_package(
     client: httpx.AsyncClient,
-    worker_role_key: str,
+    worker_provider_id: str,
     db_uri: str,
 ) -> None:
     """Dispatching from a still-pending package is rejected."""
@@ -314,10 +355,7 @@ async def test_resolve_inbox_item_requires_accepted_package(
         f"/v1/task-items/{item.id}/resolve",
         json={
             "resolution": "edit_and_dispatch",
-            "edited_payload": {
-                "worker_role_key": worker_role_key,
-                **_bootstrap_body(),
-            },
+            "edited_payload": _bootstrap_body(),
         },
     )
     assert resolved.status_code == 409

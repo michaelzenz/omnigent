@@ -49,7 +49,6 @@ from omnigent.agent_tasks.constants import (
 from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
-    SESSION_TURN_FINISHED_EVENT_TYPE,
 )
 from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
 from omnigent.db.utils import now_epoch
@@ -69,6 +68,7 @@ from omnigent.stores.user_role_session_store import UserRoleSessionStore
 def _is_session_event(event_type: str) -> bool:
     """Whether this event is a session-watcher event subject to cooldown + per-session grouping."""
     return event_type.startswith("session.") or event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE
+
 
 _logger = logging.getLogger(__name__)
 
@@ -375,7 +375,9 @@ class BrokerPackager(Packager):
     async def _is_idle(self, key: AgentQueueKey) -> bool:
         conversation_id = await self._broker_conversation_id(key.owner_user_id)
         if conversation_id is None:
-            return False
+            # No session yet: treat as idle so the flush path provisions the
+            # broker on demand instead of holding the events forever.
+            return True
         status = self._status_reader.status_for(conversation_id)
         # None = no status reported yet (cold cache after restart). Treat as
         # idle so events flush to the dispatcher, which will retry delivery.
@@ -491,8 +493,7 @@ class ManagerPackager(Packager):
                 if e.task_id is not None and e.task_id in title_by_task
             }
             task_states = {
-                task.id: task.state
-                for task in self._task_store.list_by_manager_id(manager_id)
+                task.id: task.state for task in self._task_store.list_by_manager_id(manager_id)
             }
             # Split session events (cooldown + per-session grouping) from
             # other routed events (existing single-batch behavior).

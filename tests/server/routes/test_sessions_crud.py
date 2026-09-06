@@ -39,7 +39,14 @@ async def omniharness_session_id(db_uri: str) -> str:
     agent_store = SqlAlchemyAgentStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="omniharness", bundle_location="test:///bundle")
+    # Onih identity is the target name, not the legacy "omniharness" alias.
+    # The app fixture already seeds the built-in; reuse it.
+    from omnigent.execution_targets import ONIH_OPENAI_AGENTS_TARGET
+
+    existing = agent_store.get_by_name(ONIH_OPENAI_AGENTS_TARGET)
+    if existing is not None:
+        return conv_store.create_conversation(agent_id=existing.id).id
+    agent_store.create(agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///bundle")
     return conv_store.create_conversation(agent_id=agent_id).id
 
 

@@ -5,20 +5,32 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import pytest
 
 from omnigent.agent_tasks.event_types import HUMAN_ACTION_DONE_EVENT_TYPE
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from tests.server.routes.agent_task_api import seed_owned_manager
 
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
 
 
-async def _create_pending_task(client: httpx.AsyncClient, seed: str) -> str:
+@pytest.fixture()
+def manager_id(db_uri: str) -> str:
+    return seed_owned_manager(db_uri, "human-action")
+
+
+async def _create_pending_task(client: httpx.AsyncClient, manager_id: str, seed: str) -> str:
     # Pending tasks skip the inline manager bootstrap.
     resp = await client.post(
         "/v1/agent-tasks",
-        json={"title": f"task-{seed}", "goal": "goal", "state": "pending"},
+        json={
+            "title": f"task-{seed}",
+            "goal": "goal",
+            "state": "pending",
+            "manager_id": manager_id,
+        },
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["id"]
@@ -39,8 +51,8 @@ async def _create_human_action(client: httpx.AsyncClient, task_id: str, title: s
     return resp.json()
 
 
-async def test_create_human_action_item(client: httpx.AsyncClient) -> None:
-    task_id = await _create_pending_task(client, "ha-route-create")
+async def test_create_human_action_item(client: httpx.AsyncClient, manager_id: str) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-create")
     body = await _create_human_action(client, task_id, "Rotate the key")
     assert body["kind"] == "human_action"
     assert body["state"] == "pending"
@@ -48,8 +60,10 @@ async def test_create_human_action_item(client: httpx.AsyncClient) -> None:
     assert body["instructions"] is None
 
 
-async def test_create_human_action_rejects_instructions(client: httpx.AsyncClient) -> None:
-    task_id = await _create_pending_task(client, "ha-route-instructions")
+async def test_create_human_action_rejects_instructions(
+    client: httpx.AsyncClient, manager_id: str
+) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-instructions")
     resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={"title": "Bad", "kind": "human_action", "instructions": "steps"},
@@ -57,8 +71,10 @@ async def test_create_human_action_rejects_instructions(client: httpx.AsyncClien
     assert resp.status_code == 400
 
 
-async def test_create_item_rejects_unknown_kind(client: httpx.AsyncClient) -> None:
-    task_id = await _create_pending_task(client, "ha-route-bad-kind")
+async def test_create_item_rejects_unknown_kind(
+    client: httpx.AsyncClient, manager_id: str
+) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-bad-kind")
     resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={"title": "Bad", "kind": "robot_action"},
@@ -66,8 +82,8 @@ async def test_create_item_rejects_unknown_kind(client: httpx.AsyncClient) -> No
     assert resp.status_code == 422
 
 
-async def test_resolve_mark_done(client: httpx.AsyncClient, db_uri: str) -> None:
-    task_id = await _create_pending_task(client, "ha-route-mark-done")
+async def test_resolve_mark_done(client: httpx.AsyncClient, db_uri: str, manager_id: str) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-mark-done")
     item = await _create_human_action(client, task_id, "Rotate the key")
 
     resp = await client.post(
@@ -90,8 +106,8 @@ async def test_resolve_mark_done(client: httpx.AsyncClient, db_uri: str) -> None
     assert resp.status_code == 409
 
 
-async def test_mark_done_rejects_work_item(client: httpx.AsyncClient) -> None:
-    task_id = await _create_pending_task(client, "ha-route-work-item")
+async def test_mark_done_rejects_work_item(client: httpx.AsyncClient, manager_id: str) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-work-item")
     resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={"title": "Regular work", "state": "pending"},
@@ -105,8 +121,10 @@ async def test_mark_done_rejects_work_item(client: httpx.AsyncClient) -> None:
     assert resp.status_code == 409
 
 
-async def test_dismiss_human_action_emits_no_event(client: httpx.AsyncClient, db_uri: str) -> None:
-    task_id = await _create_pending_task(client, "ha-route-dismiss")
+async def test_dismiss_human_action_emits_no_event(
+    client: httpx.AsyncClient, db_uri: str, manager_id: str
+) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-dismiss")
     item = await _create_human_action(client, task_id, "Rotate the key")
 
     resp = await client.post(
@@ -120,8 +138,10 @@ async def test_dismiss_human_action_emits_no_event(client: httpx.AsyncClient, db
     assert event_store.list_events(state="routed", task_id=task_id) == []
 
 
-async def test_accept_human_action_rejected_with_clear_message(client: httpx.AsyncClient) -> None:
-    task_id = await _create_pending_task(client, "ha-route-accept")
+async def test_accept_human_action_rejected_with_clear_message(
+    client: httpx.AsyncClient, manager_id: str
+) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-accept")
     item = await _create_human_action(client, task_id, "Rotate the key")
 
     resp = await client.post(

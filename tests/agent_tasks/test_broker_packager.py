@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
-from omnigent.agent_tasks.broker_inbox import cluster_events_by_similarity
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.queue.packagers import (
     DEFAULT_PACKAGER_AGE_THRESHOLD_S,
@@ -17,10 +16,9 @@ from omnigent.agent_tasks.queue.packagers import (
     BrokerPackager,
     _StatusReader,
     configure_broker_packager,
-    get_broker_packager,
 )
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import AgentQueueKey, EventTag, TaskEvent, TaskTag
+from omnigent.entities import AgentQueueKey, EventTag, TaskTag
 from omnigent.runtime import init as init_runtime
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import RESERVED_USER_LOCAL
@@ -131,6 +129,11 @@ def _lazy_packager(
     """Build a broker packager wired for on-demand session bootstrap, with no role."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_store.create(generate_agent_id(), name="task-broker", bundle_location="test:///bundle")
+    from omnigent.execution_targets import ONIH_PUPPYGARDEN_TARGET
+
+    agent_store.create(
+        generate_agent_id(), name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///bundle"
+    )
     conversation_store = SqlAlchemyConversationStore(db_uri)
     artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
     init_runtime(
@@ -397,8 +400,7 @@ async def test_no_live_broker_holds_events(broker_setup: dict) -> None:
 
 def test_defaults_are_configurable_constants() -> None:
     assert DEFAULT_PACKAGER_POLL_INTERVAL_S == 5.0
-    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 15
-
+    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 180
 
 
 @pytest.mark.asyncio
@@ -450,7 +452,6 @@ async def test_similar_events_packaged_without_task_selection_instructions(
     assert "adopt" not in payload["prompt"].lower()
     assert "fyi" not in payload["prompt"].lower()
     assert "match-tasks" not in payload["prompt"].lower()
-
 
 
 @pytest.mark.asyncio
@@ -619,9 +620,7 @@ async def test_discovered_session_and_other_event_share_clustered_notice(
     assert len(items) == 1
     notice = json.loads(items[0].payload)
     event_types = {
-        event["event_type"]
-        for cluster in notice["clusters"]
-        for event in cluster["events"]
+        event["event_type"] for cluster in notice["clusters"] for event in cluster["events"]
     }
     assert event_types == {"build.finished", "external.session.discovered"}
     assert "candidate_task_ids" not in notice

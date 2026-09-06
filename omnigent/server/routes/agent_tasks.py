@@ -30,10 +30,10 @@ from omnigent.agent_tasks.agent_builtins import (
 )
 from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
-    spawn_manager_session,
+    ensure_puppygarden_project,
     resolve_bootstrap_params,
+    spawn_manager_session,
 )
-from omnigent.agent_tasks.bootstrap import ensure_puppygarden_project
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
 from omnigent.agent_tasks.broker_session import (
     ensure_role_profile,
@@ -92,17 +92,17 @@ from omnigent.agent_tasks.task_match import (
     routable_tasks,
     task_tags_from_event_tags,
 )
-from omnigent.agent_tasks.task_search import (
-    SEARCH_MATCH_LIMIT,
-    SEARCH_RECENT_LIMIT,
-    rank_tasks_by_text,
-)
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
     accept_task_package,
     create_task_package,
     reconcile_events_to_task_batch,
     reject_task_package,
+)
+from omnigent.agent_tasks.task_search import (
+    SEARCH_MATCH_LIMIT,
+    SEARCH_RECENT_LIMIT,
+    rank_tasks_by_text,
 )
 from omnigent.agent_tasks.workers import worker_for_item
 from omnigent.db.enum_codecs import TASK_STATE
@@ -186,6 +186,9 @@ class CreateAgentTaskRequest(BaseModel):
     state: str = "active"
     priority: int = Field(default=2, ge=0, le=3)
     tags: list[TaskTagInput] = Field(default_factory=list)
+    # Manager session the task attaches to at birth. Required by the route:
+    # managers are first-class and always created first.
+    manager_id: str | None = None
 
     @field_validator("title")
     @classmethod
@@ -1093,8 +1096,7 @@ def create_agent_tasks_router(
         user_id = require_user(request, auth_provider)
         if body.manager_id is None:
             raise OmnigentError(
-                "manager_id is required; create a manager via "
-                "POST /agent-tasks/managers first",
+                "manager_id is required; create a manager via POST /agent-tasks/managers first",
                 code=ErrorCode.INVALID_INPUT,
             )
         await _require_owned_manager(body.manager_id, user_id)
@@ -1564,9 +1566,7 @@ def create_agent_tasks_router(
         )
         role_profiles: list = []
         if task_role_profile_store is not None:
-            profiles = await asyncio.to_thread(
-                task_role_profile_store.list_roles, kind="manager"
-            )
+            profiles = await asyncio.to_thread(task_role_profile_store.list_roles, kind="manager")
             role_profiles = manager_role_profile_response(profiles)
         return {
             "object": "list",
@@ -1745,13 +1745,13 @@ def create_agent_tasks_router(
                     recent = [bound_task] + [t for t in recent if t.id != bound_task.id]
         recent = recent[:SEARCH_RECENT_LIMIT]
 
-        candidates = _filter_tasks_for_user(
-            await asyncio.to_thread(task_store.list), user_id
-        )
+        candidates = _filter_tasks_for_user(await asyncio.to_thread(task_store.list), user_id)
         matches = rank_tasks_by_text(candidates, q, limit=limit) if q.strip() else []
         tag_matches: list = []
         if event_id:
-            events = await asyncio.to_thread(load_events, [event_id], task_event_store=task_event_store)
+            events = await asyncio.to_thread(
+                load_events, [event_id], task_event_store=task_event_store
+            )
             tag_matches = await asyncio.to_thread(
                 rank_tasks_for_events,
                 events=events,
@@ -1933,6 +1933,7 @@ def create_agent_tasks_router(
         if agent_queue_store is not None:
             from omnigent.db.utils import now_epoch
             from omnigent.entities import AgentQueueKey
+
             if task.manager_id is not None:
                 manager_key = AgentQueueKey(
                     role="manager",
@@ -3008,6 +3009,7 @@ def create_agent_tasks_router(
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
+                manager_store=manager_store,
                 session_creator=session_creator,
                 app_state=request.app.state,
                 user_id=user_id,
@@ -3059,11 +3061,7 @@ def create_agent_tasks_router(
                     f"Cannot reroute an event in state {event.state!r}",
                     code=ErrorCode.CONFLICT,
                 )
-            if (
-                event.task_id == target_task.id
-                and event.manager_id
-                == target_task.manager_id
-            ):
+            if event.task_id == target_task.id and event.manager_id == target_task.manager_id:
                 return {
                     "id": event.id,
                     "object": "task.event",

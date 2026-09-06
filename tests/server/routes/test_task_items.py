@@ -5,10 +5,7 @@ from __future__ import annotations
 import uuid
 
 import httpx
-import pytest_asyncio
 
-from omnigent.agent_tasks.agent_builtins import TASK_MANAGER_AGENT_NAME, resolve_task_agent_id
-from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 
 
@@ -16,15 +13,8 @@ def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
 
 
-@pytest_asyncio.fixture()
-async def manager_agent_id(client: httpx.AsyncClient, db_uri: str) -> str:
-    del client
-    return resolve_task_agent_id(SqlAlchemyAgentStore(db_uri), TASK_MANAGER_AGENT_NAME)
-
-
 async def test_list_task_items_filters_by_state(
     client: httpx.AsyncClient,
-    manager_agent_id: str,
     db_uri: str,
 ) -> None:
     """GET items supports state filters and returns internal_note."""

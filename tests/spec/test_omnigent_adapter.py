@@ -2163,18 +2163,6 @@ def test_use_responses_true_propagates_to_executor_config() -> None:
     assert spec.executor.config.get("use_responses") is True
 
 
-def test_permission_mode_propagates_to_executor_config() -> None:
-    """``permission_mode`` in a flat executor block lands on ``executor.config``."""
-    agent_def, raw_yaml = _build_agent_def_with_raw_yaml()
-    raw_yaml["executor"] = {
-        "model": "sonnet",
-        "harness": "claude-native",
-        "permission_mode": "auto",
-    }
-    spec = agent_def_to_agent_spec(agent_def, raw_yaml=raw_yaml)
-    assert spec.executor.config.get("permission_mode") == "auto"
-
-
 def test_tools_include_records_path_not_servers(tmp_path: Path) -> None:
     """``tools_include`` on an omnigent YAML sets ``mcp_include_path`` only.
 

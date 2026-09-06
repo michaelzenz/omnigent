@@ -31,29 +31,25 @@ def test_create_and_get_round_trip(store: SqlAlchemyTaskStore) -> None:
     )
     assert task.id == _uid("task_1")
     assert task.manager_id == _uid("conv_mgr")
-    # A task names the roles that run it, not the agent profiles behind them.
+    # A task names the manager role that runs it; workers come from providers.
     assert task.manager_role_key == "manager:default"
-    assert task.worker_role_key == "worker:default"
     loaded = store.get(_uid("task_1"))
     assert loaded == task
 
 
-def test_create_accepts_custom_role_keys(store: SqlAlchemyTaskStore) -> None:
-    """Manager and worker lanes can be pointed at custom glossary roles."""
+def test_create_accepts_custom_manager_role_key(store: SqlAlchemyTaskStore) -> None:
+    """The manager lane can be pointed at a custom glossary role."""
     task_id = _uid("task_roles")
     store.create(
         task_id=task_id,
         title="Research spike",
         goal="Research spike complete",
         manager_role_key="manager:research",
-        worker_role_key="worker:reviewer",
     )
     loaded = store.get(task_id)
     assert loaded is not None
     assert loaded.manager_role_key == "manager:research"
-    assert loaded.worker_role_key == "worker:reviewer"
     assert store.count_by_manager_role_key("manager:research") == 1
-    assert store.count_by_worker_role_key("worker:reviewer") == 1
 
 
 def test_set_tags_replaces_task_tags(store: SqlAlchemyTaskStore) -> None:
@@ -99,13 +95,15 @@ def test_delete_removes_tags_and_workers(store: SqlAlchemyTaskStore) -> None:
     worker_store.create_worker(
         _uid("worker_delete"),
         task_id,
-        role_key="worker:default",
-        session_id=session_id,
+        target_id=session_id,
     )
     assert store.delete(task_id) is True
     assert store.get(task_id) is None
     assert store.get_tags(task_id) == []
-    assert worker_store.get_by_session_id(session_id) is None
+    # Workers are durable: deleting the task marks them deleted, not removed.
+    worker = worker_store.get_by_target_id(session_id)
+    assert worker is not None
+    assert worker.state == "deleted"
 
 
 def test_list_recent_orders_by_last_touch(store: SqlAlchemyTaskStore) -> None:

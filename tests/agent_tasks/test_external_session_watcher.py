@@ -45,7 +45,8 @@ def test_external_event_type_constants() -> None:
 # ── Worker store: get_by_external_hint ──────────────────────────────
 
 
-def test_get_by_external_hint_finds_external_worker(db_uri: str) -> None:
+def test_get_by_target_id_finds_external_worker(db_uri: str) -> None:
+    """External workers are keyed by the watcher's session hint on target_id."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
@@ -64,36 +65,18 @@ def test_get_by_external_hint_finds_external_worker(db_uri: str) -> None:
         _uid("worker_hint"),
         task_id,
         kind=WORKER_KIND_EXTERNAL,
-        agent_profile_id=agent_id,
-        session_id=conv.id,
+        target_id=hint,
     )
-    # The create_worker API doesn't set external_session_hint yet;
-    # update it directly via the SQLAlchemy session for the test.
-    from sqlalchemy import update as sa_update
 
-    from omnigent.db.db_models import SqlWorker, current_workspace_id
-    from omnigent.db.utils import get_or_create_engine, make_managed_session_maker
-
-    engine = get_or_create_engine(db_uri)
-    session_maker = make_managed_session_maker(engine)
-    with session_maker() as session:
-        session.execute(
-            sa_update(SqlWorker)
-            .where(SqlWorker.workspace_id == current_workspace_id())
-            .where(SqlWorker.id == worker.id)
-            .values(external_session_hint=hint)
-        )
-        session.flush()
-
-    found = worker_store.get_by_external_hint(hint)
+    found = worker_store.get_by_target_id(hint)
     assert found is not None
     assert found.id == worker.id
     assert found.task_id == task_id
 
 
-def test_get_by_external_hint_returns_none_for_unknown(db_uri: str) -> None:
+def test_get_by_target_id_returns_none_for_unknown(db_uri: str) -> None:
     worker_store = SqlAlchemyWorkerStore(db_uri)
-    assert worker_store.get_by_external_hint("nonexistent-hint") is None
+    assert worker_store.get_by_target_id("nonexistent-hint") is None
 
 
 # ── purge_old_events with event_type filter ─────────────────────────
@@ -185,11 +168,7 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
     """An external.session.updated event with a known hint auto-routes to the task."""
     from types import SimpleNamespace
 
-    from sqlalchemy import update as sa_update
-
     from omnigent.agent_tasks.ingress import ingress_event
-    from omnigent.db.db_models import SqlWorker, current_workspace_id
-    from omnigent.db.utils import get_or_create_engine, make_managed_session_maker
 
     agent_store = SqlAlchemyAgentStore(db_uri)
     task_store = SqlAlchemyTaskStore(db_uri)
@@ -202,10 +181,25 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
     mgr_conv = conv_store.create_conversation(
         title="Mgr", agent_id=agent_id, host_id=_uid("hm"), workspace="/tmp"
     )
-    task_id = _uid("task_route")
-    task_store.create(task_id, "Route task", "route goal", manager_id=mgr_conv.id)
+    # Managers are first-class: register the durable row the task points at.
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 
-    worker_conv = conv_store.create_conversation(
+    manager_row = SqlAlchemyManagerStore(db_uri).upsert(
+        _uid("route_mgr"),
+        conversation_id=mgr_conv.id,
+        owner_user_id="__anonymous__",
+        role_key="manager:default",
+        description="Route manager",
+        host_id=_uid("hm"),
+        workspace="/tmp",
+        harness="cursor",
+        model="composer-2.5",
+        agent_profile_id=agent_id,
+    )
+    task_id = _uid("task_route")
+    task_store.create(task_id, "Route task", "route goal", manager_id=manager_row.id)
+
+    _worker_conv = conv_store.create_conversation(
         kind="sub_agent",
         title="Ext worker",
         parent_conversation_id=mgr_conv.id,
@@ -213,24 +207,13 @@ async def test_ingress_auto_routes_external_session_updated_by_hint(
         host_id=_uid("hw"),
         workspace="/tmp",
     )
-    worker = worker_store.create_worker(
+    hint = "codex-session-route-test"
+    worker_store.create_worker(
         _uid("worker_route"),
         task_id,
         kind=WORKER_KIND_EXTERNAL,
-        agent_profile_id=agent_id,
-        session_id=worker_conv.id,
+        target_id=hint,
     )
-    hint = "codex-session-route-test"
-    engine = get_or_create_engine(db_uri)
-    session_maker = make_managed_session_maker(engine)
-    with session_maker() as session:
-        session.execute(
-            sa_update(SqlWorker)
-            .where(SqlWorker.workspace_id == current_workspace_id())
-            .where(SqlWorker.id == worker.id)
-            .values(external_session_hint=hint)
-        )
-        session.flush()
 
     payload = json.dumps({"session_hint": hint, "transcript_delta": "new work"})
     event = event_store.create_event(
@@ -338,9 +321,7 @@ def test_propose_external_session_adoption_uses_existing_task(db_uri: str) -> No
         title="Mgr", agent_id=agent_id, host_id=_uid("hm3"), workspace="/tmp"
     )
     task_id = _uid("task_existing")
-    task_store.create(
-        task_id, "Existing task", "existing goal", manager_id=mgr_conv.id
-    )
+    task_store.create(task_id, "Existing task", "existing goal", manager_id=mgr_conv.id)
 
     hint = "codex-propose-existing"
     task, proposal = propose_external_session_adoption(
@@ -398,7 +379,6 @@ async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> N
         adopt_external_session,
         propose_external_session_adoption,
     )
-    from omnigent.agent_tasks.bootstrap import resolve_bootstrap_params
 
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
@@ -420,29 +400,25 @@ async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> N
         task_event_store=event_store,
         owner_user_id="__anonymous__",
     )
-    # Set up manager conversation for the task
-    task_store.update(task.id, manager_id=mgr_conv.id)
+    # Managers are first-class: register the durable row and point the task
+    # at it; bootstrap heals the session from the row when needed.
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 
-    from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
-    from omnigent.entities.task_role_profile import TaskRoleProfile
-
-    role_profile = TaskRoleProfile(
-        role=TASK_BROKER_ROLE,
-        kind="broker",
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager_row = manager_store.upsert(
+        _uid("adopt_mgr"),
+        conversation_id=mgr_conv.id,
+        owner_user_id="__anonymous__",
+        role_key="manager:default",
+        description="Adoption manager",
+        host_id=_uid("hm4"),
+        workspace="/tmp",
+        harness="cursor",
+        model="composer-2.5",
         agent_profile_id=agent_id,
-        harness="cursor",
-        model="composer-2.5",
-        host_id=_uid("hm4"),
-        workspace="/tmp",
-        created_at=1,
     )
-    params = resolve_bootstrap_params(
-        host_id=_uid("hm4"),
-        workspace="/tmp",
-        harness="cursor",
-        model="composer-2.5",
-        role_profile=role_profile,
-    )
+    task_store.update(task.id, manager_id=manager_row.id)
+
     _, adopted = await adopt_external_session(
         session_hint=hint,
         task_id=task.id,
@@ -450,15 +426,14 @@ async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> N
         task_event_store=event_store,
         worker_store=worker_store,
         conversation_store=conv_store,
-        params=params,
         proposal_event=proposal,
-        session_creator=None,
+        session_creator=_mock_session_creator(conv_store),
         app_state=SimpleNamespace(),
     )
     assert adopted.event_type == "session.adopted"
     assert adopted.task_id == task.id
 
-    worker = worker_store.get_by_external_hint(hint)
+    worker = worker_store.get_by_target_id(hint)
     assert worker is not None
     assert worker.task_id == task.id
     assert worker.kind == "external"
@@ -508,6 +483,7 @@ def test_format_manager_notice_includes_external_update_delta() -> None:
         {
             "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
             "title": "External session update",
+            "source_key": "codex-delta",
             "payload": json.dumps(
                 {
                     "session_hint": "codex-delta",
@@ -535,6 +511,7 @@ def test_format_manager_notice_includes_rewind() -> None:
         {
             "event_type": EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
             "title": "External session rewind",
+            "source_key": "codex-rewind",
             "payload": json.dumps(
                 {
                     "session_hint": "codex-rewind",
@@ -557,7 +534,7 @@ def test_format_manager_notice_includes_rewind() -> None:
 @pytest.mark.asyncio
 async def test_purge_old_events_purges_stale_adoption_proposals(db_uri: str) -> None:
     """Adoption proposals in routed state older than 1 day are purged."""
-    from omnigent.agent_tasks.adoption import SESSION_ADOPTION_PROPOSAL
+    from omnigent.agent_tasks.event_types import SESSION_ADOPTION_PROPOSAL
 
     event_store = SqlAlchemyTaskEventStore(db_uri)
     now = int(time.time())

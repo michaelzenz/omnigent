@@ -31,10 +31,15 @@ def test_internal_configuration_keeps_only_execution_target_and_model() -> None:
 
 
 def test_fresh_default_provider_uses_omniharness(db_uri: str) -> None:
+    """The seeded Default Worker binds the onih-openai-agents execution target."""
+    from omnigent.execution_targets import ONIH_OPENAI_AGENTS_TARGET
+
     agent_store = SqlAlchemyAgentStore(db_uri)
     provider_store = SqlAlchemyWorkerProviderStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="omniharness", bundle_location="test:///omniharness")
+    agent_store.create(
+        agent_id, name=ONIH_OPENAI_AGENTS_TARGET, bundle_location="test:///omniharness"
+    )
 
     ensure_default_worker_provider(provider_store, agent_store)
 

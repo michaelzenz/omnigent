@@ -280,7 +280,7 @@ def test_load_opencode_session_preserves_messages_files_and_tools(
         "arguments": '{"command":"rg TODO"}',
         "call_id": "call_1",
     }
-    assert dumped[3] == {"call_id": "call_1", "output": "TODO.md:1:item"}
+    assert dumped[3] == {"call_id": "call_1", "output": "TODO.md:1:item", "tool_status": "success"}
     assert dumped[4]["content"] == [{"type": "output_text", "text": "Done."}]
     assert {item.response_id for item in imported.items[1:]} == {"opencode:msg_assistant"}
 
@@ -549,10 +549,16 @@ def test_load_codex_session_normalizes_response_items(tmp_path: Path) -> None:
     assert imported.items[3].data.model_dump() == {
         "call_id": "call_1",
         "output": "first line\nsecond line",
+        "error": None,
+        "name": None,
+        "tool_status": "success",
     }
     assert imported.items[5].data.model_dump() == {
         "call_id": "call_2",
         "output": "",
+        "error": None,
+        "name": None,
+        "tool_status": "success",
     }
 
 
@@ -1000,6 +1006,9 @@ def test_load_pi_session_preserves_tool_calls_and_results(tmp_path: Path) -> Non
     assert imported.items[2].data.model_dump() == {
         "call_id": "call-1",
         "output": "README.md",
+        "error": None,
+        "name": None,
+        "tool_status": "success",
     }
 
 

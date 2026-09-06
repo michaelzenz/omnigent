@@ -3,20 +3,35 @@
 from __future__ import annotations
 
 import httpx
+import pytest
+
+from tests.server.routes.agent_task_api import seed_owned_manager
 
 
-async def _create_task(client: httpx.AsyncClient, title: str = "Watch PRs") -> str:
+@pytest.fixture()
+def manager_id(db_uri: str) -> str:
+    return seed_owned_manager(db_uri, "evt-sub")
+
+
+async def _create_task(
+    client: httpx.AsyncClient, manager_id: str, title: str = "Watch PRs"
+) -> str:
     # Pending tasks skip manager bootstrap, so no live host is required.
     created = await client.post(
         "/v1/agent-tasks",
-        json={"title": title, "goal": f"{title} goal", "state": "pending"},
+        json={
+            "title": title,
+            "goal": f"{title} goal",
+            "state": "pending",
+            "manager_id": manager_id,
+        },
     )
     assert created.status_code == 200, created.text
     return created.json()["id"]
 
 
-async def test_event_subscription_crud(client: httpx.AsyncClient) -> None:
-    task_id = await _create_task(client)
+async def test_event_subscription_crud(client: httpx.AsyncClient, manager_id: str) -> None:
+    task_id = await _create_task(client, manager_id)
 
     created = await client.post(
         f"/v1/agent-tasks/{task_id}/event-subscriptions",
@@ -42,8 +57,10 @@ async def test_event_subscription_crud(client: httpx.AsyncClient) -> None:
     assert listed.json()["data"] == []
 
 
-async def test_event_subscription_create_is_idempotent(client: httpx.AsyncClient) -> None:
-    task_id = await _create_task(client)
+async def test_event_subscription_create_is_idempotent(
+    client: httpx.AsyncClient, manager_id: str
+) -> None:
+    task_id = await _create_task(client, manager_id)
     body = {"source": "poll_plugin:github_pr", "source_key": "org/repo#456"}
     first = await client.post(f"/v1/agent-tasks/{task_id}/event-subscriptions", json=body)
     second = await client.post(f"/v1/agent-tasks/{task_id}/event-subscriptions", json=body)
@@ -55,9 +72,12 @@ async def test_event_subscription_create_is_idempotent(client: httpx.AsyncClient
     assert len(listed.json()["data"]) == 1
 
 
-async def test_event_subscription_delete_scoped_to_task(client: httpx.AsyncClient) -> None:
-    task_id = await _create_task(client, "Owner task")
-    other_task_id = await _create_task(client, "Other task")
+async def test_event_subscription_delete_scoped_to_task(
+    client: httpx.AsyncClient,
+    manager_id: str,
+) -> None:
+    task_id = await _create_task(client, manager_id, "Owner task")
+    other_task_id = await _create_task(client, manager_id, "Other task")
     created = await client.post(
         f"/v1/agent-tasks/{task_id}/event-subscriptions",
         json={"source": "ci", "source_key": "build-1"},

@@ -37,7 +37,7 @@ from omnigent.version import VERSION
 if TYPE_CHECKING:
     from types import TracebackType
 
-    from omnigent.runner.native import ResolvedSpec
+    from omnigent.runner.app import ResolvedSpec
     from omnigent.runner.transports.ws_tunnel.serve import _ASGIApp
 
 _RUNNER_SERVER_URL_ENV_VAR = "RUNNER_SERVER_URL"
@@ -1140,7 +1140,7 @@ async def _resolve_agent_spec_from_server(
     :raises RuntimeError: If the server returns a non-200 status
         other than 404.
     """
-    from omnigent.runner.native import ResolvedSpec
+    from omnigent.runner.app import ResolvedSpec
     from omnigent.spec import load
 
     if session_id is None:
@@ -1423,7 +1423,7 @@ def create_app(
         # Each is spawned in its own session (survives the runner's death), and a
         # host-initiated stop tears the runner down without a per-session DELETE,
         # so without this they orphan as lingering ``codex`` processes.
-        from omnigent.runner.native import teardown_all_codex_native_app_servers
+        from omnigent.runner.app import teardown_all_codex_native_app_servers
 
         with contextlib.suppress(Exception):
             await teardown_all_codex_native_app_servers()

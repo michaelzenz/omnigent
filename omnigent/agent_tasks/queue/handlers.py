@@ -253,9 +253,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
                 session_id,
             )
             if conv is None:
-                raise DispatchFailed(
-                    f"manager {manager.id} session re-creation failed"
-                )
+                raise DispatchFailed(f"manager {manager.id} session re-creation failed")
         self._store.set_queue_conversation(item.key, session_id)
         harness = conv.harness_override or "cursor-native"
         return DispatchTarget(
@@ -438,8 +436,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             session_creator=self._session_creator,
             app_state=self._app_state,
             user_id=(
-                None if item.key.owner_user_id == "__anonymous__"
-                else item.key.owner_user_id
+                None if item.key.owner_user_id == "__anonymous__" else item.key.owner_user_id
             ),
         )
         params = resolve_dispatch_params(
@@ -468,6 +465,7 @@ class WorkerDispatchHandler(RoleDispatchHandler):
             task_event_store=self._task_event_store,
             worker_store=self._worker_store,
             conversation_store=self._conversation_store,
+            manager_store=getattr(self._app_state, "manager_store", None),
             session_creator=self._session_creator,
             app_state=self._app_state,
             idempotency_key=item.id,

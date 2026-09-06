@@ -222,7 +222,9 @@ _CHILD_ID = "conv_child_files"
 
 def _spec_with_subagent() -> SimpleNamespace:
     """A parent-spec stub declaring one ``worker`` sub-agent (no harness CLI)."""
-    return SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")])
+    return SimpleNamespace(
+        allowed_tools=None, sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)]
+    )
 
 
 def _spawn_server_handler(

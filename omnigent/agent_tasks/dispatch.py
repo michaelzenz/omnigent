@@ -108,6 +108,7 @@ async def dispatch_worker_for_item(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
+    manager_store: Any | None = None,
     session_creator: Any | None = None,
     app_state: Any | None = None,
     user_id: str | None = None,
@@ -126,9 +127,27 @@ async def dispatch_worker_for_item(
         )
     if item.task_id != task.id:
         raise OmnigentError("Task item does not belong to task", code=ErrorCode.INVALID_INPUT)
+    # task.manager_id is the durable manager row id; its conversation_id is
+    # the swappable session pointer (healed by bootstrap before dispatch).
+    if manager_store is None:
+        raise OmnigentError(
+            "manager persistence is not wired; cannot resolve manager session",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+    manager = await asyncio.to_thread(manager_store.get, task.manager_id)
+    if manager is None:
+        raise OmnigentError(
+            f"task {task.id} references manager {task.manager_id} which does not exist",
+            code=ErrorCode.NOT_FOUND,
+        )
+    if manager.conversation_id is None:
+        raise OmnigentError(
+            f"manager {task.manager_id} has no session; bootstrap the task first",
+            code=ErrorCode.CONFLICT,
+        )
     manager_conv = await asyncio.to_thread(
         conversation_store.get_conversation,
-        task.manager_id,
+        manager.conversation_id,
     )
     if manager_conv is None:
         raise OmnigentError(
