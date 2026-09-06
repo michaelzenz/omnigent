@@ -215,7 +215,7 @@ def _resolve_extension_state(
     # Distribution metadata is an external installation boundary. Preserve the
     # rest of the server if global discovery itself fails before per-plugin
     # failure isolation can apply.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _logger.warning("could not discover installed extensions (%s)", exc, exc_info=True)
         return ExtensionPluginState(manifests=(), load_errors={"registry": str(exc)})
 
@@ -234,7 +234,7 @@ def _resolve_extension_assets(
                 ", ".join(sorted(overrides)),
             )
         return build_asset_index(state, overrides=overrides)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _logger.warning("could not build extension asset index (%s)", exc, exc_info=True)
         return {}, {"registry": str(exc)}
 
@@ -966,7 +966,7 @@ def _ensure_default_acp_agents(
 
         configured = list(acp_agents())
         shadowed: frozenset[str] = shadowed_builtin_acp_rows(configured)
-    except Exception:  # noqa: BLE001 — a malformed acp: block must never break startup
+    except Exception:
         _logger.debug("acp agent seeding skipped (config unreadable)", exc_info=True)
         configured = []
         shadowed = frozenset()
@@ -2637,6 +2637,7 @@ def create_app(
         file_store=file_store,
         artifact_store=artifact_store,
         prompt_profile_store=prompt_profile_store,
+        project_store=project_store,
     )
 
     @app.get("/health")
