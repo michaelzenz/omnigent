@@ -337,7 +337,7 @@ function TranscriptImpl({
         chat-scroll-fade mask. */}
         <TranscriptScrollbar scroller={scroller} topInset={hasTasks ? 12 : undefined} />
         <ConversationScrollPosition
-          conversationId={conversationId}
+          conversationId={conversationKey ?? null}
           scroller={scroller}
           followBottomOnFallback={bottomLockEnabled}
         />
