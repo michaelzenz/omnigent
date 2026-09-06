@@ -1572,20 +1572,14 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
   const prepareSendScroll = useCallback(() => {
     const current = scroller;
     if (!current) return;
-    const { el, state, stopScroll } = current;
-    if (!bottomLockEnabled) {
-      takeConversationScrollControl(el);
-      stopScroll();
-      state.isAtBottom = false;
-      state.escapedFromLock = true;
-      return;
-    }
-    const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
-    if (atBottom) {
+    // Lock on: sending follows the response (jump to the latest message),
+    // matching the preference's description and the library's contract.
+    if (bottomLockEnabled) {
       setSendScrollNonce((n) => n + 1);
       return;
     }
-    // Sending does not imply "follow" while the reader is looking at history.
+    // Lock off: sending must not yank a reader parked in history.
+    const { el, state, stopScroll } = current;
     takeConversationScrollControl(el);
     stopScroll();
     state.isAtBottom = false;

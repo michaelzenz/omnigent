@@ -108,6 +108,9 @@ def test_scroll_position_restored_after_leaving_and_returning(
     expect(page.locator(_USER)).to_have_count(6, timeout=30_000)
     expect(page.locator(_ASSISTANT)).to_have_count(6, timeout=30_000)
 
+    # The transcript remounts on return, so the previously tagged element is
+    # gone — re-tag the fresh scroller, then read the restored offset.
+    page.evaluate(_TAG_SCROLLER)
     restored = page.evaluate(_READ_SCROLLER)
     # Restored to the parked region, NOT jumped to the bottom. The anchor is a
     # user message, so the exact pixel can differ from the parked scrollTop —
