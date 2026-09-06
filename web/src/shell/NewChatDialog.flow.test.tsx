@@ -558,10 +558,15 @@ describe("NewChatLandingScreen create flow", () => {
     fireEvent.change(input, { target: { value: "start a session" } });
 
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(authenticatedFetch).not.toHaveBeenCalled();
+    // Plain Enter must not CREATE a session. (The landing page also fires
+    // unrelated mount-time fetches, e.g. worktree sizes, so assert on the
+    // create endpoint specifically rather than on all authenticated fetches.)
+    expect(authenticatedFetch).not.toHaveBeenCalledWith("/v1/sessions", expect.anything());
 
     fireEvent.keyDown(input, { key: "Enter", metaKey: true });
-    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith("/v1/sessions", expect.anything()),
+    );
   });
 
   it("does not create a session when Enter confirms active IME composition", async () => {
