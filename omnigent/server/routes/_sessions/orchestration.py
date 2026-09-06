@@ -815,7 +815,6 @@ def _build_session_list_item(
     conv: Conversation,
     *,
     agent_names_by_id: Mapping[str, str | None],
-    agent_role_flags_by_id: Mapping[str, bool],
     grants: list[SessionPermission],
     user_id: str | None,
     user_is_admin: bool,
@@ -842,8 +841,6 @@ def _build_session_list_item(
     :param agent_names_by_id: Map from agent id to display name, as
         returned by ``agent_store.get_names()``,
         e.g. ``{"ag_abc": "research-agent"}``.
-    :param agent_role_flags_by_id: Map from agent id to its role-only
-        visibility flag.
     :param grants: All permission grants for this conversation, as
         returned by ``permission_store.list_for_sessions()[conv.id]``.
         Empty list when permissions are disabled.
@@ -913,7 +910,6 @@ def _build_session_list_item(
         id=conv.id,
         agent_id=conv.agent_id,
         agent_name=agent_names_by_id.get(conv.agent_id),
-        agent_is_role=agent_role_flags_by_id.get(conv.agent_id, False),
         status=_list_status_with_starting(
             _session_status_with_child_rollup(conv.id, child_session_ids, conv.live_status),
             conv.id,
@@ -8897,7 +8893,7 @@ async def _create_session_from_existing_agent(
         permission_store=permission_store,
         conversation_store=conversation_store,
     )
-    if body.parent_session_id is None and (not agent.enabled or agent.archived):
+    if body.parent_session_id is None and not agent.enabled:
         raise OmnigentError(
             f"Agent {agent.name!r} is disabled.",
             code=ErrorCode.CONFLICT,
@@ -8967,7 +8963,7 @@ async def _create_session_from_existing_agent(
             permission_store=permission_store,
             conversation_store=conversation_store,
         )
-        if not agent.enabled or agent.archived:
+        if not agent.enabled:
             raise OmnigentError(
                 f"Agent {agent.name!r} is disabled.",
                 code=ErrorCode.CONFLICT,

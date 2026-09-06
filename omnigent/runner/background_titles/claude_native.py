@@ -7,8 +7,6 @@ import contextlib
 import json
 import logging
 import os
-from collections.abc import Callable
-from typing import Any, cast
 
 from omnigent.debug_logging import runner_primary_session_id
 from omnigent.runner.background_titles.service import (
@@ -27,7 +25,7 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
         build_native_claude_terminal_env,
         resolve_native_claude_config,
     )
-    from omnigent.runner.app import _claude_terminal_env_unset
+    from omnigent.runner.native.orchestration import _claude_terminal_env_unset
 
     try:
         claude_config = resolve_native_claude_config(spec=None)
@@ -67,8 +65,7 @@ async def generate_background_title(context: BackgroundTitleContext) -> str | No
     command, launch_args = resolve_claude_launch("claude", args)
     env = dict(os.environ)
     env.update(build_native_claude_terminal_env(claude_config))
-    env_unset = cast(Callable[[Any], set[str]], _claude_terminal_env_unset)
-    for name in env_unset(claude_config):
+    for name in _claude_terminal_env_unset(claude_config):
         env.pop(name, None)
 
     process = await asyncio.create_subprocess_exec(

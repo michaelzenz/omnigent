@@ -74,7 +74,7 @@ def is_onih_target_name(name: str | None) -> bool:
 
 def is_onih_agent(agent: Agent | None) -> bool:
     """Return whether an agent belongs to a built-in Onih target."""
-    if agent is None or agent.is_role:
+    if agent is None:
         return False
     root_name = agent.name.split(" (switch ", 1)[0].split(" (fork ", 1)[0]
     return is_onih_target_name(root_name)

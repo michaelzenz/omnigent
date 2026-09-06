@@ -121,7 +121,6 @@ interface SessionListItemWire {
   id: string;
   agent_id?: string | null;
   agent_name?: string | null;
-  agent_is_role?: boolean;
   // Session creation epoch — proxy for "when the user last ran this agent",
   // used to pick the newest among same-named uploads / templates.
   created_at?: number | null;
@@ -197,7 +196,7 @@ async function scanSessionAgents(): Promise<ScannedSessionAgent[]> {
   for (const session of body.data) {
     // Rows without an agent_name are orphaned (agent row deleted); skip
     // them, matching useAgents' sessions-derived list.
-    if (!session.agent_id || !session.agent_name || session.agent_is_role === true) continue;
+    if (!session.agent_id || !session.agent_name) continue;
     if (seen.has(session.agent_id)) continue;
     seen.set(session.agent_id, {
       agentId: session.agent_id,

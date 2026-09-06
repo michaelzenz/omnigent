@@ -290,12 +290,7 @@ class SqlAgent(OmnigentBase):
     kind: Mapped[int] = mapped_column(SmallInteger)
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # True for role-bound agent profiles (the prompt backing a glossary role).
-    # Hidden from the public GET /v1/agents catalog so they don't clutter the
-    # New Chat picker; lookups by id/name are unaffected.
-    is_role: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
-    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
     __table_args__ = (
         CheckConstraint("kind IN (1, 2)", name="ck_agents_kind"),

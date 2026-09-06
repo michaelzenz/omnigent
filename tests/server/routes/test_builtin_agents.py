@@ -52,6 +52,25 @@ async def test_list_builtin_agents_seeded(
     assert _seeded_agent in ids
 
 
+async def test_list_builtin_agents_include_disabled(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent = agent_store.create(
+        generate_agent_id(),
+        name="disabled-catalog-agent",
+        bundle_location="test:///disabled-catalog",
+    )
+    agent_store.set_enabled(agent.id, False)
+
+    default_response = await client.get("/v1/agents?limit=100")
+    included_response = await client.get("/v1/agents?limit=100&include_disabled=true")
+
+    assert agent.id not in {row["id"] for row in default_response.json()["data"]}
+    assert agent.id in {row["id"] for row in included_response.json()["data"]}
+
+
 async def test_list_builtin_agents_response_shape(
     client: httpx.AsyncClient,
     _seeded_agent: str,

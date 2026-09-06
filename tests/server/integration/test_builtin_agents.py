@@ -514,19 +514,20 @@ async def test_builtin_delete_is_rejected(
     assert agent_store.get(agent_id) is not None
 
 
-async def test_custom_delete_archives_profile(
+async def test_custom_delete_removes_profile_and_artifact(
     agent_store: SqlAlchemyAgentStore,
+    artifact_store: LocalArtifactStore,
     agents_client: httpx.AsyncClient,
 ) -> None:
-    agent = agent_store.create("bb" * 16, "custom", "custom/bundle")
+    location = "custom/bundle"
+    artifact_store.put(location, b"bundle")
+    agent = agent_store.create("bb" * 16, "custom", location)
 
     response = await agents_client.delete(f"/v1/agents/{agent.id}")
 
     assert response.status_code == 204
-    archived = agent_store.get(agent.id)
-    assert archived is not None
-    assert archived.archived is True
-    assert archived.enabled is False
+    assert agent_store.get(agent.id) is None
+    assert artifact_store.exists(location) is False
 
 
 async def test_only_custom_agent_can_be_deleted(
@@ -538,7 +539,7 @@ async def test_only_custom_agent_can_be_deleted(
     response = await agents_client.delete(f"/v1/agents/{agent.id}")
 
     assert response.status_code == 204
-    assert agent_store.get(agent.id).archived is True
+    assert agent_store.get(agent.id) is None
 
 
 async def test_multipart_create_persists_profile_and_metadata(

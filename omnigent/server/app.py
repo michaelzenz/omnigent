@@ -628,7 +628,6 @@ def _ensure_builtin_agent(
     *,
     name: str,
     bundle_bytes: bytes,
-    is_role: bool = False,
 ) -> None:
     """
     Register or refresh a built-in template agent from its bundle.
@@ -664,9 +663,6 @@ def _ensure_builtin_agent(
         ``replace`` and ``evict``.
     :param name: Built-in agent's unique name, e.g. ``"polly"``.
     :param bundle_bytes: Freshly built gzipped tarball of the spec.
-    :param is_role: True for a role-bound profile hidden from the public
-        catalog; applied to both new and existing rows so a reseed flips
-        the flag on rows that predate the column.
     """
     import hashlib
 
@@ -675,10 +671,6 @@ def _ensure_builtin_agent(
     bundle_hash = hashlib.sha256(bundle_bytes).hexdigest()
     existing = agent_store.get_by_name(name)
     if existing is not None:
-        # Keep the visibility flag in sync with the seed's intent: existing
-        # rows that predate the is_role column default to false, so a reseed
-        # flips role-bound profiles to hidden on the next boot.
-        agent_store.set_is_role(existing.id, is_role)
         new_loc = f"{existing.id}/{bundle_hash}"
         # Sha-segment compare: legacy rows keep an ``ag_``-prefixed left
         # segment (physical artifact key); only the sha encodes content.
@@ -710,7 +702,7 @@ def _ensure_builtin_agent(
     agent_id = builtin_agent_id(name)
     bundle_key = f"{agent_id}/{bundle_hash}"
     artifact_store.put(bundle_key, bundle_bytes)
-    agent_store.create(agent_id, name, bundle_key, is_role=is_role)
+    agent_store.create(agent_id, name, bundle_key)
     agent_cache.evict(agent_id)
     _logger.info("Registered built-in %s agent as %s", name, agent_id)
 

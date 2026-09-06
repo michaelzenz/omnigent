@@ -209,11 +209,6 @@
       "AgentObject": {
         "description": "API representation of a registered agent.",
         "properties": {
-          "archived": {
-            "default": false,
-            "title": "Archived",
-            "type": "boolean"
-          },
           "builtin": {
             "default": false,
             "description": "Whether this is a server-*seeded* built-in agent (deterministic, name-derived id) as opposed to an operator/user-registered template (random id, e.g. via `omnigent server --agent`) or a session-scoped upload. The Web UI's new-session picker uses this to decide whether a same-named `omnigent run` upload may shadow the catalog entry: seeded built-ins are protected, while a user-registered template is superseded by a newer same-named upload. Always `False` for session-scoped agents.",
@@ -6781,12 +6776,6 @@
             "title": "Agent Id",
             "type": "string"
           },
-          "agent_is_role": {
-            "default": false,
-            "description": "Whether the bound agent is reserved for a managed role profile and should be excluded from agent pickers.",
-            "title": "Agent Is Role",
-            "type": "boolean"
-          },
           "agent_name": {
             "anyOf": [
               {
@@ -11430,7 +11419,7 @@
     },
     "/v1/agents/{agent_id}": {
       "delete": {
-        "description": "Archive a custom template agent.",
+        "description": "Permanently delete a custom template agent.",
         "operationId": "delete_agent_v1_agents__agent_id__delete",
         "parameters": [
           {

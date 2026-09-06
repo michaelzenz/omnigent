@@ -79,7 +79,7 @@ def _provider_response(
         if agent is None:
             available = False
             unavailable_reason = "Select an available execution target"
-        elif not agent.enabled or agent.archived:
+        elif not agent.enabled:
             available = False
             unavailable_reason = "The selected execution target is unavailable"
     return {

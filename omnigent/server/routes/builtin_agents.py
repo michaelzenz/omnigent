@@ -13,7 +13,7 @@ built-ins, then creates a session with
 ``POST /v1/sessions {agent_id, host_id, workspace}``. See
 ``designs/BUILTIN_AGENTS.md``.
 
-The catalog also supports durable bundle upload, editing, and archive.
+The catalog also supports durable bundle upload, editing, and deletion.
 """
 
 from __future__ import annotations
@@ -141,7 +141,6 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         # upload supersede the latter.
         builtin=agent.session_id is None and agent.id == builtin_agent_id(agent.name),
         enabled=agent.enabled,
-        archived=agent.archived,
         is_multi_agent=is_multi_agent,
         subagent_count=subagent_count,
         default_harness=harness,
@@ -324,14 +323,19 @@ def create_builtin_agents_router(
 
     @router.delete("/agents/{agent_id}", status_code=204)
     async def delete_agent(request: Request, agent_id: str) -> Response:
-        """Archive a custom template agent."""
+        """Permanently delete a custom template agent."""
         _require_user(request, auth_provider)
         agent = await asyncio.to_thread(agent_store.get, agent_id)
         if agent is None or agent.session_id is not None:
             raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
         if agent.id == builtin_agent_id(agent.name):
             raise OmnigentError("Built-in agents cannot be deleted.", code=ErrorCode.CONFLICT)
-        await asyncio.to_thread(agent_store.archive, agent_id)
+        deleted = await asyncio.to_thread(agent_store.delete, agent_id)
+        if not deleted:
+            raise OmnigentError(f"Agent not found: {agent_id!r}", code=ErrorCode.NOT_FOUND)
+        await asyncio.to_thread(agent_cache.evict, agent_id)
+        if artifact_store is not None:
+            await asyncio.to_thread(artifact_store.delete, agent.bundle_location)
         return Response(status_code=204)
 
     return router

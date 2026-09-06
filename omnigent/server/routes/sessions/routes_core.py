@@ -1306,12 +1306,10 @@ def register_core_routes(
             (
                 perms_by_conv,
                 agent_names_by_id,
-                agent_role_flags_by_id,
                 child_ids_by_parent,
             ) = await asyncio.gather(
                 asyncio.to_thread(permission_store.list_for_sessions, conv_ids),
                 asyncio.to_thread(agent_store.get_names, unique_agent_ids),
-                asyncio.to_thread(agent_store.get_role_flags, unique_agent_ids),
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
@@ -1323,9 +1321,8 @@ def register_core_routes(
                 else False
             )
         else:
-            agent_names_by_id, agent_role_flags_by_id, child_ids_by_parent = await asyncio.gather(
+            agent_names_by_id, child_ids_by_parent = await asyncio.gather(
                 asyncio.to_thread(agent_store.get_names, unique_agent_ids),
-                asyncio.to_thread(agent_store.get_role_flags, unique_agent_ids),
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
@@ -1341,7 +1338,6 @@ def register_core_routes(
             _build_session_list_item(
                 conv,
                 agent_names_by_id=agent_names_by_id,
-                agent_role_flags_by_id=agent_role_flags_by_id,
                 grants=perms_by_conv.get(conv.id, []),
                 user_id=user_id,
                 user_is_admin=user_is_admin,
@@ -1462,12 +1458,10 @@ def register_core_routes(
         conv_ids = [c.id for c in convs]
         (
             agent_names_by_id,
-            agent_role_flags_by_id,
             child_ids_by_parent,
             comments_fingerprints,
         ) = await asyncio.gather(
             asyncio.to_thread(agent_store.get_names, unique_agent_ids),
-            asyncio.to_thread(agent_store.get_role_flags, unique_agent_ids),
             asyncio.to_thread(
                 conversation_store.list_child_conversation_ids_by_parent,
                 conv_ids,
@@ -1479,7 +1473,6 @@ def register_core_routes(
             _build_session_list_item(
                 conv,
                 agent_names_by_id=agent_names_by_id,
-                agent_role_flags_by_id=agent_role_flags_by_id,
                 grants=perms_by_conv.get(conv.id, []),
                 user_id=user_id,
                 user_is_admin=user_is_admin,

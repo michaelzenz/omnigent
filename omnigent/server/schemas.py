@@ -302,7 +302,6 @@ class AgentObject(BaseModel):
     terminals: list[str] = Field(default_factory=list)
     builtin: bool = False
     enabled: bool = True
-    archived: bool = False
     is_multi_agent: bool = False
     subagent_count: int = 0
     default_harness: str | None = None
@@ -2774,8 +2773,6 @@ class SessionListItem(BaseModel):
     :param agent_name: Human-readable name of the bound agent,
         e.g. ``"research-agent"``. ``None`` when the agent row
         cannot be found.
-    :param agent_is_role: Whether the bound agent is reserved for a
-        managed role profile and should be excluded from agent pickers.
     :param status: Derived session lifecycle status.
     :param created_at: Unix epoch seconds of creation.
     :param updated_at: Unix epoch seconds of last update.
@@ -2869,7 +2866,6 @@ class SessionListItem(BaseModel):
     id: str
     agent_id: str
     agent_name: str | None = None
-    agent_is_role: bool = False
     status: Literal["idle", "running", "waiting", "failed"]
     created_at: int
     updated_at: int
