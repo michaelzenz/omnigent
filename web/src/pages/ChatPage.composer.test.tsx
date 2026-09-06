@@ -58,6 +58,7 @@ vi.mock("@/lib/agentLabels", async (importOriginal) => ({
 import type { ElicitationBlock } from "@/lib/blocks";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Composer, isSubagentRoutingEligible, shouldQueueSend } from "./ChatPage";
+import { writeSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import type { Session } from "@/lib/types";
 import type { QueuedMessage } from "@/store/chatStore";
 import {
@@ -366,6 +367,21 @@ describe("Composer slash-command menu", () => {
     cleanup();
     vi.restoreAllMocks();
     setOmnigentHostConfig({});
+    localStorage.clear();
+  });
+
+  it("requires Command or Ctrl+Enter when configured", () => {
+    writeSendMessageShortcut("command-enter");
+    const onSend = vi.fn();
+    render(<Composer {...composerProps({ onSend })} />);
+    const ta = textarea();
+    fireEvent.change(ta, { target: { value: "hello there" } });
+
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(ta, { key: "Enter", metaKey: true });
+    expect(onSend).toHaveBeenCalledWith("hello there", undefined);
   });
 
   it("highlights the first match as soon as the menu opens", () => {

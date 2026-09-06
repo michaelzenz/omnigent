@@ -275,6 +275,17 @@ function installUpdateBridge(config: UpdateConfig = DEFAULT_UPDATE_CONFIG) {
 }
 
 describe("SettingsPage", () => {
+  it("configures the send-message keyboard shortcut", () => {
+    renderPage("/settings/shortcuts");
+    const select = screen.getByTestId("send-message-shortcut-select");
+
+    expect(select).toHaveValue("enter");
+    fireEvent.change(select, { target: { value: "command-enter" } });
+    expect(select).toHaveValue("command-enter");
+    expect(localStorage.getItem("omnigent:send-message-shortcut")).toBe("command-enter");
+    expect(screen.getByText("Command/Ctrl + Enter")).toBeInTheDocument();
+  });
+
   it("renders composer shortcut guidance as two accessible lines", () => {
     renderPage("/settings/general");
     const toggle = screen.getByTestId("composer-submit-with-mod-enter-toggle");

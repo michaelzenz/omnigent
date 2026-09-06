@@ -81,6 +81,7 @@ import {
 } from "@/lib/nativeCodingAgents";
 import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
 import { isComposerSendKey, readSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
+import { readSendMessageShortcut } from "@/lib/sendMessagePreferences";
 import {
   buildMentionPreamble,
   detectMentionAt,
@@ -2532,7 +2533,9 @@ function ComposerImpl({
   onViewportShrinkPinScroll,
 }: ComposerProps) {
   const [value, setValue] = useState("");
-  const [submitWithModEnter] = useState(() => readSubmitWithModEnter());
+  const [submitWithModEnter] = useState(
+    () => readSubmitWithModEnter() || readSendMessageShortcut() === "command-enter",
+  );
   const [files, setFiles] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
