@@ -7162,7 +7162,19 @@ async def _run_compact_locked(
                 f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/compact-harness",
                 timeout=250.0,
             )
-            if response.status_code >= 400:
+            if response.status_code < 400:
+                return
+            if response.status_code == 409 and "no_live_process" in response.text:
+                # The harness has no live Pi process (e.g. after an interrupt
+                # or failed turn abandoned the executor). Fall through to
+                # server-side compaction of the stored history below — the
+                # next Pi spawn replays the compacted canonical history.
+                _logger.info(
+                    "Native Pi compaction unavailable for %s (no live process); "
+                    "falling back to server-side compaction",
+                    session_id,
+                )
+            else:
                 raise OmnigentError(
                     f"Pi compaction failed: {response.text}",
                     code=(
@@ -7171,13 +7183,19 @@ async def _run_compact_locked(
                         else ErrorCode.INTERNAL_ERROR
                     ),
                 )
-            return
         if spec.llm is not None:
             llm_config = spec.llm
         elif spec.executor.model is not None:
             from omnigent.spec.types import LLMConfig
 
             llm_config = LLMConfig(model=spec.executor.model, connection=spec.executor.connection)
+        elif conv.model_override:
+            # Pi agents pin their model per session (e.g. the onih-pi spec
+            # declares no model at all); the session's own override is the
+            # model whose context the summary replaces.
+            from omnigent.spec.types import LLMConfig
+
+            llm_config = LLMConfig(model=conv.model_override)
         else:
             harness = spec.executor.harness_kind
             raise OmnigentError(

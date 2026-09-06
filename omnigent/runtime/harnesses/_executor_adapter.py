@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from omnigent.errors import ElicitationDeclinedError, OmnigentError
+from omnigent.errors import ElicitationDeclinedError, ErrorCode, OmnigentError
 from omnigent.inner.executor import (
     CompactionComplete,
     CompactionStarted,
@@ -39,6 +39,7 @@ from omnigent.inner.executor import (
     TurnCancelled,
     TurnComplete,
 )
+from omnigent.inner.pi_executor import NO_LIVE_PI_PROCESS_MESSAGE
 from omnigent.inner.tracing import TracingContext, is_tracing_enabled
 from omnigent.policies.types import FAIL_CLOSED_PHASES
 from omnigent.runtime.harnesses._scaffold import HarnessApp, PolicyVerdictPayload, TurnContext
@@ -160,7 +161,19 @@ class ExecutorAdapter(HarnessApp):
         compact = getattr(executor, "compact_session", None)
         if compact is None:
             return await super()._handle_compact_event()
-        payload = await compact(self._session_key)
+        try:
+            payload = await compact(self._session_key)
+        except OmnigentError as exc:
+            if exc.code == ErrorCode.CONFLICT and exc.message.startswith(
+                NO_LIVE_PI_PROCESS_MESSAGE
+            ):
+                # Stable marker so the runner/server can fall back to
+                # server-side compaction of the stored history.
+                return JSONResponse(
+                    status_code=409,
+                    content={"error": "no_live_process", "detail": exc.message},
+                )
+            raise
         return JSONResponse(status_code=200, content=payload)
 
     async def run_turn(self, request: CreateResponseRequest, ctx: TurnContext) -> None:

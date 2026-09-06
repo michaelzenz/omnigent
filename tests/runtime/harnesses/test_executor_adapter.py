@@ -2342,3 +2342,46 @@ async def test_run_turn_installs_the_choice_bridge_only_where_supported() -> Non
         assert installed is expected, type(executor).__name__
         # The yes/no bridge is installed on both — the choice bridge is additive.
         assert getattr(executor, "_elicitation_handler", None) is not None
+
+
+async def test_compact_maps_no_live_process_to_structured_409() -> None:
+    """A no-live-process compaction failure surfaces as 409 no_live_process.
+
+    The runner/server key off this marker to fall back to server-side
+    compaction of the stored history instead of dead-ending the session.
+    """
+    from omnigent.errors import ErrorCode, OmnigentError
+    from omnigent.inner.pi_executor import NO_LIVE_PI_PROCESS_MESSAGE
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+
+    class _NoLiveCompactExecutor(Executor):
+        async def compact_session(self, session_key: str) -> dict[str, Any]:
+            raise OmnigentError(
+                f"{NO_LIVE_PI_PROCESS_MESSAGE}; send a message to respawn the "
+                "session first, then compact",
+                code=ErrorCode.CONFLICT,
+            )
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _NoLiveCompactExecutor(), session_key="sk")
+    resp = await adapter._handle_compact_event()
+
+    assert resp.status_code == 409
+    body = json.loads(resp.body)
+    assert body["error"] == "no_live_process"
+    assert "no live Pi process" in body["detail"]
+
+
+async def test_compact_reraises_other_conflicts() -> None:
+    """Only the no-live-process marker maps to no_live_process; the rest raise."""
+    import pytest
+
+    from omnigent.errors import ErrorCode, OmnigentError
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+
+    class _AbortedCompactExecutor(Executor):
+        async def compact_session(self, session_key: str) -> dict[str, Any]:
+            raise OmnigentError("Pi compaction was aborted", code=ErrorCode.CONFLICT)
+
+    adapter = ExecutorAdapter(executor_factory=lambda: _AbortedCompactExecutor(), session_key="sk")
+    with pytest.raises(OmnigentError):
+        await adapter._handle_compact_event()

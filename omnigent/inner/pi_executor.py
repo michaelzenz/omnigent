@@ -57,6 +57,7 @@ from omnigent.inner.agent_env import clean_agent_env
 from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.llms.context_window import lookup_model_context_window
 from omnigent.model_metadata import ModelWireAPI
@@ -108,6 +109,16 @@ from .executor import (
 logger = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS_RE = re.compile(r"\b(429|5\d{2})\s+status\s+code\b", re.IGNORECASE)
+
+# Pi's default auto-compaction reserve (settings-manager.js) and the extra
+# headroom we add on top for per-turn growth and estimator error.
+_PI_COMPACTION_RESERVE_TOKENS = 16 * 1024
+_PI_COMPACTION_HEADROOM_TOKENS = 16 * 1024
+
+# Stable marker for "compaction needs a live Pi session and none exists".
+# The harness adapter maps this to a 409 no_live_process response so the
+# runner/server can fall back to server-side compaction of stored history.
+NO_LIVE_PI_PROCESS_MESSAGE = "no live Pi process for this conversation"
 
 
 def _is_transient_error(message: str) -> bool:
@@ -936,6 +947,30 @@ def _local_pi_provider_for_model(
         ):
             matches.append(provider_id)
     return matches[0] if len(matches) == 1 else None
+
+
+def _estimate_wire_overhead_tokens(tools: Sequence[Mapping[str, Any]], system_prompt: str) -> int:
+    """Estimate request tokens pi's compaction trigger does not see.
+
+    Pi's auto-compaction trigger compares its session-token view against
+    ``contextWindow - reserveTokens``, but the wire request also carries the
+    system prompt and every bridged tool schema. When that overhead is large
+    the trigger only fires after the real request has already passed the
+    provider's hard limit — the turn dies before compaction can help. The
+    reserve therefore adds this estimate on top of pi's default.
+
+    Rough by design (tiktoken, cl100k_base): it only positions the trigger,
+    it is not an authoritative count.
+    """
+    if not tools and not system_prompt:
+        return 0
+    serialized = json.dumps(list(tools), default=str) + system_prompt
+    try:
+        import tiktoken
+
+        return len(tiktoken.get_encoding("cl100k_base").encode(serialized))
+    except Exception:  # noqa: BLE001 — estimator must never block a spawn
+        return len(serialized) // 4
 
 
 def _local_pi_settings(
@@ -2390,31 +2425,39 @@ class PiExecutor(Executor):
             return False
 
     async def compact_session(self, session_key: str) -> _JsonObject:
-        """Run Pi's native compactor and return its canonical recovery payload."""
+        """Run Pi's native compactor and return its canonical recovery payload.
+
+        Raises OmnigentError so harness error mapping turns failures into
+        structured responses the runner can surface, instead of a bare 500.
+        """
         state = self._session_states.get(session_key)
         if state is None or state.rpc is None:
-            raise RuntimeError("no live Pi process for this conversation")
+            raise OmnigentError(
+                f"{NO_LIVE_PI_PROCESS_MESSAGE}; send a message to respawn the "
+                "session first, then compact",
+                code=ErrorCode.CONFLICT,
+            )
         rpc = state.rpc
         command_id = f"compact_{session_key}"
         await rpc.send_command({"type": "compact", "id": command_id})
         while True:
             line = await rpc.read_line(timeout=180.0)
             if line is None:
-                raise RuntimeError("Pi exited during compaction")
+                raise OmnigentError("Pi exited during compaction", code=ErrorCode.INTERNAL_ERROR)
             event = json.loads(line)
             if event.get("type") != "compaction_end":
                 continue
             result = event.get("result")
             if not isinstance(result, dict):
                 if event.get("aborted"):
-                    raise RuntimeError("Pi compaction was aborted")
+                    raise OmnigentError("Pi compaction was aborted", code=ErrorCode.CONFLICT)
                 error_message = str(event.get("errorMessage", "Pi compaction failed"))
                 if "already compacted" in error_message.lower():
                     # Benign: the session was just compacted (e.g. a second
                     # /compact right after a successful one). Return an
                     # idempotent no-op so callers don't tear anything down.
                     return {"already_compacted": True, "summary": "", "total_tokens": 0}
-                raise RuntimeError(error_message)
+                raise OmnigentError(error_message, code=ErrorCode.INTERNAL_ERROR)
             await rpc.send_command({"type": "get_messages", "id": f"messages_{command_id}"})
             while True:
                 messages_line = await rpc.read_line(timeout=15.0)
@@ -2427,7 +2470,10 @@ class PiExecutor(Executor):
                 ):
                     continue
                 if not messages_event.get("success", True):
-                    raise RuntimeError(str(messages_event.get("error", "Pi get_messages failed")))
+                    raise OmnigentError(
+                        str(messages_event.get("error", "Pi get_messages failed")),
+                        code=ErrorCode.INTERNAL_ERROR,
+                    )
                 data = messages_event.get("data")
                 messages = data.get("messages") if isinstance(data, dict) else None
                 return {
@@ -2622,6 +2668,7 @@ class PiExecutor(Executor):
         tool_server_port: int | None,
         tool_server_token: str | None,
         model: str | None,
+        system_prompt: str = "",
     ) -> PiSubprocessConfig:
         """Build env dict, temp dir, and extra CLI args for a Pi subprocess.
 
@@ -2637,7 +2684,19 @@ class PiExecutor(Executor):
             ``models.json`` on the gateway path so the
             ``provider/<model>`` selector resolves. ``None`` when no model
             is pinned (Pi picks its own default).
+        :param system_prompt: The system prompt this run will send, used to
+            size the auto-compaction reserve alongside the tool schemas.
         """
+        compaction_settings = {
+            "compaction": {
+                "enabled": True,
+                "reserveTokens": (
+                    _PI_COMPACTION_RESERVE_TOKENS
+                    + _estimate_wire_overhead_tokens(tools, system_prompt)
+                    + _PI_COMPACTION_HEADROOM_TOKENS
+                ),
+            }
+        }
         env = dict(self._env)
         tmp_dir = tempfile.mkdtemp(prefix="omnigent_pi_")
         extra_args: list[str] = list(self._extra_args)
@@ -2682,6 +2741,7 @@ class PiExecutor(Executor):
                 if self._local_config_dir is not None and self._local_models is not None
                 else self._retry_policy.pi.settings()
             )
+            settings = {**settings, **compaction_settings}
             config_dir = pathlib.Path(tmp_dir)
             if self._launch_options.isolated_resources:
                 fingerprint_payload = {
@@ -2721,7 +2781,7 @@ class PiExecutor(Executor):
 
                 prepare_managed_pi_agent_dir(
                     config_dir,
-                    overlay=self._retry_policy.pi.settings(),
+                    overlay={**self._retry_policy.pi.settings(), **compaction_settings},
                 )
             env["PI_CODING_AGENT_DIR"] = str(config_dir)
         elif self._local_models is not None and self._local_config_dir is not None:
@@ -2735,11 +2795,14 @@ class PiExecutor(Executor):
             settings_path = config_dir / "settings.json"
             settings_path.write_text(
                 json.dumps(
-                    _local_pi_settings(
-                        self._local_config_dir,
-                        self._local_models,
-                        self._retry_policy.pi.settings(),
-                    ),
+                    {
+                        **_local_pi_settings(
+                            self._local_config_dir,
+                            self._local_models,
+                            self._retry_policy.pi.settings(),
+                        ),
+                        **compaction_settings,
+                    },
                     indent=2,
                     sort_keys=True,
                 )
@@ -2928,7 +2991,7 @@ class PiExecutor(Executor):
         tool_server_port = await self._ensure_tool_server(tools)
         tool_server_token = self._tool_server.token if self._tool_server is not None else None
         subprocess_config = self._build_env_and_dir(
-            tools, tool_server_port, tool_server_token, effective_model
+            tools, tool_server_port, tool_server_token, effective_model, system_prompt
         )
         env = subprocess_config.env
         tmp_dir = subprocess_config.tmp_dir
