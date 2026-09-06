@@ -1440,7 +1440,9 @@ def _merge_request_client_tools(
     cannot invoke client tools at all.
 
     Builtins win on a name clash: a request tool must not shadow a
-    policy-enforced server-side builtin of the same name.
+    policy-enforced server-side builtin of the same name. Client tools
+    are caller-owned and not subject to the agent-level builtin
+    allowlist — the caller decides what it injects.
 
     :param spec_tools: Spec-derived builtin + MCP tool schemas, each in
         nested OpenAI format, e.g.
@@ -7181,8 +7183,8 @@ def create_runner_app(
 
         from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
         from omnigent.tools.preferences import (
+            filter_builtins_by_allowlist,
             filter_tool_schemas,
-            filter_tool_schemas_by_allowlist,
             get_disabled_tools,
         )
 
@@ -7191,9 +7193,9 @@ def create_runner_app(
         _relay_disabled = await get_disabled_tools(server_client)
         if _relay_disabled:
             relay_schemas = filter_tool_schemas(relay_schemas, _relay_disabled)
-        _relay_allowed = _relay_spec.allowed_tools if _relay_spec is not None else None
+        _relay_allowed = _relay_spec.allowed_builtin_tools if _relay_spec is not None else None
         if _relay_allowed:
-            relay_schemas = filter_tool_schemas_by_allowlist(relay_schemas, _relay_allowed)
+            relay_schemas = filter_builtins_by_allowlist(relay_schemas, _relay_allowed)
 
         _captured_session_id = session_id
 
@@ -7705,6 +7707,18 @@ def create_runner_app(
             for _os_schema in build_os_env_tool_schemas():
                 if _os_schema.get("name") not in _existing_names:
                     all_tools.append(_os_schema)
+            # Agent-level builtin allowlist (``allowed_builtin_tools:``).
+            # Applied HERE, before MCP schemas are merged below, so the
+            # filter is plain membership on the builtin-only surface —
+            # no name-shape sniffing. MCP tools pass untouched; they are
+            # governed by the per-server ``tools:`` gate.
+            _allowed_builtins = (
+                cached_spec.allowed_builtin_tools if cached_spec is not None else None
+            )
+            if _allowed_builtins:
+                from omnigent.tools.preferences import filter_builtins_by_allowlist
+
+                all_tools = filter_builtins_by_allowlist(all_tools, _allowed_builtins)
             _session_tool_schemas[conv] = all_tools
 
         if cached_spec and cached_spec.mcp_servers:
@@ -7760,20 +7774,19 @@ def create_runner_app(
             # builtins eager, but replace the potentially large MCP surface with
             # two small discovery/dispatch tools before building the request.
             merged_tools = openai_agents_lazy_tool_schemas(merged_tools)
-        # Filter out globally disabled tools (admin tool-preferences panel)
-        # and apply the agent-level allowlist (``allowed_tools:`` in YAML).
+        # Filter out globally disabled tools (admin tool-preferences panel).
+        # The agent-level builtin allowlist was already applied at the
+        # builtin-assembly point (before the MCP merge); the merged list
+        # here is spec tools (filtered) + client tools — client tools are
+        # caller-owned and intentionally not allowlist-bound.
         from omnigent.tools.preferences import (
             filter_tool_schemas,
-            filter_tool_schemas_by_allowlist,
             get_disabled_tools,
         )
 
         _disabled = await get_disabled_tools(server_client)
         if _disabled:
             merged_tools = filter_tool_schemas(merged_tools, _disabled)
-        _allowed = cached_spec.allowed_tools if cached_spec is not None else None
-        if _allowed:
-            merged_tools = filter_tool_schemas_by_allowlist(merged_tools, _allowed)
         if merged_tools:
             harness_body["tools"] = merged_tools
         _spec_names = {

@@ -88,7 +88,7 @@ class SqlAlchemyTaskRoleProfileStore(TaskRoleProfileStore):
                     kind=kind or role_kind_from_key(role),
                     agent_profile_id=agent_profile_id,
                     prompt_profile_id=prompt_profile_id,
-                    harness=harness or (defaults.harness if defaults else None),
+                    harness=harness,
                     model=(
                         None if clear_model else model or (defaults.model if defaults else None)
                     ),

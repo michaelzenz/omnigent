@@ -9,11 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.constants import (
-    DEFAULT_TASK_HARNESS,
-    DEFAULT_TASK_WORKSPACE,
-    resolve_task_harness,
-)
+from omnigent.agent_tasks.constants import DEFAULT_TASK_WORKSPACE
 from omnigent.entities import Manager, Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -40,7 +36,7 @@ class BootstrapParams:
 
     host_id: str
     workspace: str
-    harness: str
+    harness: str | None
     model: str | None
     agent_profile_id: str
     prompt_profile_id: str | None = None
@@ -50,18 +46,19 @@ def resolve_bootstrap_params(
     *,
     host_id: str | None,
     workspace: str | None,
-    harness: str | None,
     model: str | None,
     role_profile: TaskRoleProfile | None,
 ) -> BootstrapParams:
-    """Merge explicit bootstrap inputs over the role's defaults."""
+    """Merge explicit bootstrap inputs over the role's defaults.
+
+    Engine comes from the bound bundle; the role row's harness column is
+    the only override source and stays NULL for builtin roles.
+    """
     resolved_host_id = host_id or (role_profile.host_id if role_profile else None)
     resolved_workspace = os.path.expanduser(
         workspace or (role_profile.workspace if role_profile else None) or DEFAULT_TASK_WORKSPACE
     )
-    resolved_harness = resolve_task_harness(
-        harness or (role_profile.harness if role_profile else None) or DEFAULT_TASK_HARNESS
-    )
+    resolved_harness = role_profile.harness if role_profile else None
     resolved_model = (
         model if model is not None else (role_profile.model if role_profile else None)
     ) or None
@@ -154,7 +151,6 @@ def build_role_session_request(
     params = resolve_bootstrap_params(
         host_id=profile.host_id,
         workspace=profile.workspace,
-        harness=profile.harness,
         model=profile.model,
         role_profile=profile,
     )

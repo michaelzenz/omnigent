@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-# Broker: triages and routes stalled events.
-DEFAULT_BROKER_HARNESS = "openai-agents"
-DEFAULT_BROKER_MODEL = "databricks-glm-5-2"
+# Role engine/harness comes from the bound execution-target bundle
+# (executor.config.harness) — roles carry no harness default and users
+# cannot change the execution model. The role row's harness column is
+# only a rarely-used explicit override and stays NULL for builtin roles.
 
-# Task manager/worker/reviewer agents.
-DEFAULT_TASK_HARNESS = "openai-agents"
-DEFAULT_TASK_MODEL = "databricks-glm-5-2"
 DEFAULT_TASK_WORKSPACE = "~/"
 
 AUTO_ROUTE_MIN_CONFIDENCE = 0.6
@@ -38,12 +36,3 @@ DISPATCHABLE_ITEM_STATES = frozenset({"pending"})
 # attach flow spawns a new manager. Permissive at v2 launch; tune from logged
 # attach decisions.
 MANAGER_TASK_CAPACITY = 1_000_000
-
-
-def resolve_task_harness(harness: str) -> str:
-    """Return a runnable harness id for managed task agents."""
-    if harness == "cursor":
-        return "cursor-native"
-    if harness == "claude":
-        return "claude-native"
-    return harness

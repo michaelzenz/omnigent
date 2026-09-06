@@ -3609,8 +3609,8 @@ async def test_sys_session_send_reuses_existing_child_session(
                 server_client=server_client,
                 conversation_id="conv_parent",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="claude", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="claude", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
                 publish_event=_capturing_publish_event(published),
@@ -3686,8 +3686,8 @@ async def test_sys_session_send_named_child_retries_without_rejected_actor(
                 server_client=server_client,
                 conversation_id="conv_parent_retry",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="worker", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )
@@ -3755,8 +3755,8 @@ async def test_sys_session_send_existing_child_retries_without_rejected_actor(
                 server_client=server_client,
                 conversation_id="conv_parent_existing",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="worker", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )
@@ -3785,11 +3785,11 @@ def _spec_with_subagent_harness(harness: str) -> SimpleNamespace:
     :returns: A structural parent-spec stub for ``execute_tool``.
     """
     return SimpleNamespace(
-        allowed_tools=None,
+        allowed_builtin_tools=None,
         sub_agents=[
             SimpleNamespace(
                 name="worker",
-                allowed_tools=None,
+                allowed_builtin_tools=None,
                 executor=SimpleNamespace(type="omnigent", config={"harness": harness}),
             )
         ],
@@ -3806,11 +3806,11 @@ def _spec_with_subagent_effort(harness: str, effort: str | None) -> SimpleNamesp
     :returns: A structural parent-spec stub for ``execute_tool``.
     """
     return SimpleNamespace(
-        allowed_tools=None,
+        allowed_builtin_tools=None,
         sub_agents=[
             SimpleNamespace(
                 name="worker",
-                allowed_tools=None,
+                allowed_builtin_tools=None,
                 executor=SimpleNamespace(
                     type="omnigent",
                     config={"harness": harness},
@@ -4959,8 +4959,8 @@ async def test_sys_session_send_completion_drains_from_parent_inbox(
                 server_client=server_client,
                 conversation_id="conv_parent_inbox",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="worker", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )
@@ -5069,8 +5069,8 @@ async def test_subagent_inbox_cleanup_does_not_unregister_next_turn(
                     server_client=server_client,
                     conversation_id=parent_id,
                     agent_spec=SimpleNamespace(
-                        allowed_tools=None,
-                        sub_agents=[SimpleNamespace(name="worker", allowed_tools=None)],
+                        allowed_builtin_tools=None,
+                        sub_agents=[SimpleNamespace(name="worker", allowed_builtin_tools=None)],
                     ),
                     session_inbox=session_inbox,
                 )
@@ -5727,8 +5727,8 @@ async def test_sys_cancel_task_stops_subagent_and_dedupes_late_completion(
                 server_client=server_client,
                 conversation_id="conv_parent_cancel",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="runner", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="runner", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )
@@ -8739,8 +8739,8 @@ async def test_sys_session_send_session_id_posts_to_direct_child(
                 server_client=server_client,
                 conversation_id="conv_caller",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="researcher", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="researcher", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )
@@ -8799,8 +8799,8 @@ async def test_sys_session_send_session_id_rejects_non_child() -> None:
                 server_client=server_client,
                 conversation_id="conv_caller",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="researcher", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="researcher", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )
@@ -8915,8 +8915,8 @@ async def test_sys_session_send_rejects_both_session_id_and_named_target() -> No
                 server_client=server_client,
                 conversation_id="conv_parent_ambiguous",
                 agent_spec=SimpleNamespace(
-                    allowed_tools=None,
-                    sub_agents=[SimpleNamespace(name="claude", allowed_tools=None)],
+                    allowed_builtin_tools=None,
+                    sub_agents=[SimpleNamespace(name="claude", allowed_builtin_tools=None)],
                 ),
                 session_inbox=session_inbox,
             )

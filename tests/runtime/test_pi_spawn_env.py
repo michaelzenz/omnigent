@@ -94,6 +94,34 @@ def test_builtin_onih_pi_does_not_pin_a_default_model() -> None:
     assert spec.executor.model is None
 
 
+def test_builtin_onih_puppygarden_maps_pi_executor_config(tmp_path: Path) -> None:
+    """
+    The onih-puppygarden bundle (broker/manager restricted profile) runs
+    the pi harness, and its stringified executor booleans map to the
+    ``HARNESS_PI_*`` env vars the harness wrap reads.
+
+    Regression guard: the spec parser stringifies scalar executor config
+    values, so ``native_tools: false`` arrives as ``"False"`` — the
+    stringified-boolean branch in ``_build_pi_spawn_env`` must handle it.
+    """
+    spec = load(Path("omnigent/resources/examples/onih-puppygarden"))
+
+    assert spec.executor.harness_kind == "pi"
+    assert "puppygarden_api" in (spec.allowed_builtin_tools or [])
+    assert "*__*" not in (spec.allowed_builtin_tools or [])
+    assert spec.skills_filter == "none"
+
+    env = _build_pi_spawn_env(spec, workdir=None)
+
+    assert env["HARNESS_PI_PERSISTENT_SESSION"] == "1"
+    assert env["HARNESS_PI_CANONICAL_REBUILD"] == "1"
+    assert env["HARNESS_PI_ISOLATED_RESOURCES"] == "1"
+    assert env["HARNESS_PI_NATIVE_TOOLS"] == "0"
+    assert env["HARNESS_PI_NATIVE_SKILLS"] == "0"
+    assert env["HARNESS_PI_SYSTEM_PROMPT_MODE"] == "replace"
+    assert env["HARNESS_PI_SKILLS_FILTER"] == '"none"'
+
+
 def test_server_proxy_configures_pi_without_remote_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

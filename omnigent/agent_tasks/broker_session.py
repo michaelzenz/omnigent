@@ -8,10 +8,7 @@ import uuid
 from typing import Any
 
 from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
-from omnigent.agent_tasks.constants import (
-    DEFAULT_TASK_WORKSPACE,
-    resolve_task_harness,
-)
+from omnigent.agent_tasks.constants import DEFAULT_TASK_WORKSPACE
 from omnigent.agent_tasks.role_keys import (
     TASK_SECRETARY_ROLE_KEY,
     is_manager_role_key,
@@ -138,7 +135,6 @@ def ensure_role_profile(
         role,
         agent_profile_id=omniharness.id,
         prompt_profile_id=prompt_profile_id,
-        harness="openai-agents",
         host_id=host_id,
         workspace=DEFAULT_TASK_WORKSPACE,
     )
@@ -181,7 +177,7 @@ def get_or_create_role_profile(
 def _broker_labels_for_profile(profile: TaskRoleProfile) -> dict[str, str]:
     """Build the role + native presentation labels for a broker session."""
     labels = {ROLE_LABEL: BROKER_ROLE_VALUE}
-    native_agent = native_coding_agent_for_harness(resolve_task_harness(profile.harness or ""))
+    native_agent = native_coding_agent_for_harness(profile.harness or "")
     if native_agent is not None:
         labels.update(native_agent.presentation_labels)
     return labels
@@ -380,7 +376,7 @@ def apply_broker_session_labels(
     harness: str,
 ) -> None:
     labels = {ROLE_LABEL: BROKER_ROLE_VALUE}
-    native_agent = native_coding_agent_for_harness(resolve_task_harness(harness))
+    native_agent = native_coding_agent_for_harness(harness)
     if native_agent is not None:
         labels.update(native_agent.presentation_labels)
     conversation_store.set_labels(conversation_id, labels)
