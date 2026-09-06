@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { Profiler, useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserMessageBlock } from "@/lib/blocks";
+import { captureActiveConversationScroll } from "@/lib/conversationScrollPositions";
 import { useChatStore } from "@/store/chatStore";
 import {
   BottomLockController,
@@ -116,7 +117,7 @@ describe("ConversationScrollPosition", () => {
       }),
     );
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
-    const metrics = { scrollTop: 640, scrollHeight: 2400, clientHeight: 800 };
+    const metrics = { scrollTop: 0, scrollHeight: 2400, clientHeight: 800 };
     const scrollRoot = document.createElement("div");
     setScrollMetrics(scrollRoot, metrics);
     stickContext.scrollRef.current = scrollRoot;
@@ -131,8 +132,11 @@ describe("ConversationScrollPosition", () => {
         followBottomOnFallback
       />,
     );
-    fireEvent.scroll(scrollRoot);
-    metrics.scrollTop = 1600;
+    // New-session init parks at the bottom; the reader then scrolls up to 640.
+    metrics.scrollTop = 640;
+    // Switching away captures the reading position ahead of the store switch
+    // (ChatPage's urlConvId effect), so the init scroll can't lose it.
+    captureActiveConversationScroll("conv-scroll-restore");
     view.rerender(
       <ConversationScrollPosition
         conversationId="conv-other-session"
