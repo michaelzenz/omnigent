@@ -102,9 +102,11 @@ def test_scroll_position_restored_after_leaving_and_returning(
     parked = page.evaluate(_READ_SCROLLER)
     assert parked["scrollTop"] < parked["maxScrollTop"] - 50
 
-    # Leave for another session, then come back.
-    page.goto(f"{base_url}/c/{session_b}")
-    page.goto(f"{base_url}/c/{session_a}")
+    # Leave for another session, then come back — via the sidebar, the way a
+    # user does: a full page.goto reload would tear down the SPA and skip the
+    # capture-on-switch effect this feature relies on.
+    page.locator(f'a[href="/c/{session_b}"]').click()
+    page.locator(f'a[href="/c/{session_a}"]').click()
     expect(page.locator(_USER)).to_have_count(6, timeout=30_000)
     expect(page.locator(_ASSISTANT)).to_have_count(6, timeout=30_000)
 
