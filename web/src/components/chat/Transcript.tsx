@@ -38,14 +38,22 @@ import {
   subscribeChatTopButtonMode,
 } from "@/lib/chatTopButtonPreferences";
 import {
+  DEFAULT_BOTTOM_LOCK_ENABLED,
+  readBottomLockEnabled,
+  subscribeBottomLockEnabled,
+} from "@/lib/bottomLockPreferences";
+import {
   type ConversationScroller,
+  BottomLockController,
   BubbleView,
+  ConversationScrollPosition,
   ConversationScrollRefBridge,
   HistoryAutoLoader,
   HistoryLoadingIndicator,
   JumpToTopButton,
   KeepBottomOnViewportResize,
   LatestTurnSpacer,
+  ReleaseBottomLockOnResponseEnd,
   ScrollToBottomOnSend,
   UserMessageNavConnected,
   WorkingIndicator,
@@ -141,6 +149,12 @@ function TranscriptImpl({
     readChatTopButtonMode,
     () => DEFAULT_CHAT_TOP_BUTTON_MODE,
   );
+  const bottomLockEnabled = useSyncExternalStore(
+    subscribeBottomLockEnabled,
+    readBottomLockEnabled,
+    () => DEFAULT_BOTTOM_LOCK_ENABLED,
+  );
+  const status = useChatStore((s) => s.status);
 
   // Comment-thread turns have their own surface. Hide their source items and
   // responses from the main transcript once both projections are available;
@@ -331,8 +345,10 @@ function TranscriptImpl({
             )}
           >
             {/* Scroll helpers — must live inside StickToBottom to access context. */}
-            <ScrollToBottomOnSend nonce={sendScrollNonce} />
-            <KeepBottomOnViewportResize />
+            <BottomLockController enabled={bottomLockEnabled} />
+            <ScrollToBottomOnSend nonce={sendScrollNonce} enabled={bottomLockEnabled} />
+            <ReleaseBottomLockOnResponseEnd status={status} enabled={bottomLockEnabled} />
+            {bottomLockEnabled && <KeepBottomOnViewportResize />}
             <ConversationScrollRefBridge onScroller={setScroller} />
             <HistoryAutoLoader scrollElement={scroller?.el ?? null} />
             {bubbles.length === 0 && !showWorkingIndicator && !mcpStartupActive ? (
@@ -411,6 +427,11 @@ function TranscriptImpl({
         {/* Constant-height scrollbar. Sibling of Conversation so it escapes the
         chat-scroll-fade mask. */}
         <TranscriptScrollbar scroller={scroller} topInset={hasPinnedStatus ? 12 : undefined} />
+        <ConversationScrollPosition
+          conversationId={conversationId}
+          scroller={scroller}
+          followBottomOnFallback={bottomLockEnabled}
+        />
         {/* Hover the top edge to reveal a pill that loads all older history. */}
         {chatTopButtonMode !== "off" && (
           <JumpToTopButton
