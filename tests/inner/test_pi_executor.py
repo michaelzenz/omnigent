@@ -33,9 +33,12 @@ from omnigent.inner.executor import (
 )
 from omnigent.inner.pi_executor import (
     PiExecutor,
+    _PI_COMPACTION_HEADROOM_TOKENS,
+    _PI_COMPACTION_RESERVE_TOKENS,
     _build_models_json,
     _build_onih_models_json,
     _databricks_model_wire_catalog,
+    _estimate_wire_overhead_tokens,
     _generate_extension_js,
     _load_local_pi_models,
     _local_pi_provider_for_model,
@@ -1454,6 +1457,15 @@ class TestPiExecutorCompactSession(unittest.TestCase):
         self.assertIn("no live Pi process", ctx.exception.message)
 
 
+class TestEstimateWireOverheadTokens(unittest.TestCase):
+    def test_zero_without_tools_or_prompt(self):
+        self.assertEqual(_estimate_wire_overhead_tokens([], ""), 0)
+
+    def test_scales_with_payload(self):
+        tools = [{"name": f"tool_{i}", "description": "d" * 400} for i in range(40)]
+        self.assertGreater(_estimate_wire_overhead_tokens(tools, "sys" * 1000), 1000)
+
+
 # ---------------------------------------------------------------------------
 # PiExecutor constructor tests
 # ---------------------------------------------------------------------------
@@ -1693,6 +1705,59 @@ class TestResolveModel(unittest.TestCase):
 
 
 class TestBuildEnvAndDir(unittest.TestCase):
+    def test_databricks_settings_include_compaction_reserve(self):
+        with (
+            patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"),
+            patch(
+                "omnigent.inner.pi_executor._read_databrickscfg",
+                return_value=DatabricksCredentials(host="https://h.example.com", token="tok"),
+            ),
+        ):
+            executor = PiExecutor(gateway=True)
+
+        tools = [{"name": f"tool_{i}", "description": "d" * 400} for i in range(40)]
+        config = executor._build_env_and_dir(
+            tools, None, None, None, system_prompt="s" * 20000
+        )
+        try:
+            settings_path = Path(config.env["PI_CODING_AGENT_DIR"]) / "settings.json"
+            with open(settings_path) as f:
+                settings = json.load(f)
+            compaction = settings["compaction"]
+            self.assertTrue(compaction["enabled"])
+            self.assertGreater(
+                compaction["reserveTokens"],
+                _PI_COMPACTION_RESERVE_TOKENS + _PI_COMPACTION_HEADROOM_TOKENS,
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
+    def test_compaction_reserve_is_floor_without_overhead(self):
+        with (
+            patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"),
+            patch(
+                "omnigent.inner.pi_executor._read_databrickscfg",
+                return_value=DatabricksCredentials(host="https://h.example.com", token="tok"),
+            ),
+        ):
+            executor = PiExecutor(gateway=True)
+
+        config = executor._build_env_and_dir([], None, None, None, system_prompt="")
+        try:
+            settings_path = Path(config.env["PI_CODING_AGENT_DIR"]) / "settings.json"
+            with open(settings_path) as f:
+                settings = json.load(f)
+            self.assertEqual(
+                settings["compaction"]["reserveTokens"],
+                _PI_COMPACTION_RESERVE_TOKENS + _PI_COMPACTION_HEADROOM_TOKENS,
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
     def test_databricks_creates_models_json(self):
         with (
             patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"),
