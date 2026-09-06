@@ -103,6 +103,7 @@ _ENV_OS_ENV = "HARNESS_PI_OS_ENV"
 _ENV_SKILLS_FILTER = "HARNESS_PI_SKILLS_FILTER"
 _ENV_BUNDLE_DIR = "HARNESS_PI_BUNDLE_DIR"
 _ENV_AGENT_NAME = "HARNESS_PI_AGENT_NAME"
+_ENV_HISTORY_WINDOW_TURNS = "HARNESS_PI_HISTORY_WINDOW_TURNS"
 _ENV_GATEWAY_BASE_URL = "HARNESS_PI_GATEWAY_BASE_URL"
 _ENV_GATEWAY_BASE_URLS = "HARNESS_PI_GATEWAY_BASE_URLS"
 _ENV_GATEWAY_OPENAI_WIRE_API = "HARNESS_PI_GATEWAY_OPENAI_WIRE_API"
@@ -246,6 +247,8 @@ def _build_pi_executor() -> Executor:
     bundle_dir = Path(bundle_dir_raw) if bundle_dir_raw else None
     agent_name_raw = os.environ.get(_ENV_AGENT_NAME, "").strip()
     agent_name = agent_name_raw or None
+    history_window_raw = os.environ.get(_ENV_HISTORY_WINDOW_TURNS, "").strip()
+    history_window_turns = int(history_window_raw) if history_window_raw.isdigit() else 0
     persistent_session = _parse_truthy(_ENV_PERSISTENT_SESSION, default=False)
     canonical_rebuild = _parse_truthy(_ENV_CANONICAL_REBUILD, default=False)
     session_dir_raw = os.environ.get(_ENV_SESSION_DIR, "").strip()
@@ -266,6 +269,7 @@ def _build_pi_executor() -> Executor:
         isolated_resources=_parse_truthy(_ENV_ISOLATED_RESOURCES, default=False),
         native_tools=_parse_truthy(_ENV_NATIVE_TOOLS, default=True),
         native_skills=_parse_truthy(_ENV_NATIVE_SKILLS, default=True),
+        history_window_turns=history_window_turns,
     )
     return PiExecutor(
         cwd=os.environ.get(_ENV_CWD) or os.environ.get("OMNIGENT_RUNNER_WORKSPACE"),

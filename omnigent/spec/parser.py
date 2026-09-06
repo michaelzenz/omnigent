@@ -297,6 +297,21 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         )
     allowed_builtin_tools = [str(t) for t in raw_allowed] if raw_allowed else None
 
+    # Top-level ``history_window_turns:`` bounds the prompt to the last N
+    # user turns (stateless router agents). ``None`` = full history.
+    raw_window = raw.get("history_window_turns")
+    if raw_window is not None and (not isinstance(raw_window, int) or isinstance(raw_window, bool)):
+        raise OmnigentError(
+            "top-level 'history_window_turns' must be a positive integer",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if raw_window is not None and raw_window < 1:
+        raise OmnigentError(
+            "top-level 'history_window_turns' must be a positive integer",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    history_window_turns = raw_window
+
     # Honor ``prompt:`` as the legacy alias for ``instructions:`` (per
     # ``_OMNIGENT_SYSTEM_PROMPT_KEYS``); ``instructions:`` wins if both set.
     raw_instructions = raw.get("instructions")
@@ -344,6 +359,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         spawn=spawn,
         agent_session_sharing=agent_session_sharing,
         allowed_builtin_tools=allowed_builtin_tools,
+        history_window_turns=history_window_turns,
     )
 
 

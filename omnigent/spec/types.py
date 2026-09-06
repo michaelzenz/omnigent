@@ -1613,4 +1613,13 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     # narrow the surface — globally disabled tools (admin
     # tool-preferences panel) remain blocked even if listed here.
     allowed_builtin_tools: list[str] | None = None
+    # Rolling context window for stateless router-style agents (e.g.
+    # PuppyGarden broker/manager on the pi harness). When set, the Pi
+    # extension's "context" hook truncates every LLM call to the last N
+    # turns — a turn is counted at user-message boundaries but the kept
+    # tail includes the assistant reply and its tool calls/results, so
+    # the model always sees complete recent exchanges. Prior context is
+    # deliberately dropped because these agents keep state in the task
+    # store, not in chat history. ``None`` (default) = full history.
+    history_window_turns: int | None = None
     source_rel_dir: str | None = field(default=None, compare=False)

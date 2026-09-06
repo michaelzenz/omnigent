@@ -13,6 +13,13 @@ executor:
     native_tools: false
     native_skills: false
 
+# Stateless-router context window: the extension's "context" hook truncates
+# every LLM call to the last N turns (counted at user-message boundaries;
+# the kept tail includes the assistant reply and its tool calls/results) —
+# broker/manager keep state in the task store, not in chat history, so the
+# accumulated Pi session is never sent to the model beyond this window.
+history_window_turns: 5
+
 # The restricted profile exposes no skill loader (load_skill is not in
 # allowed_builtin_tools); skills: none makes that explicit instead of relying
 # on the native_skills override.
