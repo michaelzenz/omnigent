@@ -225,6 +225,37 @@ def _resolve_os_env() -> OSEnvSpec:
     )
 
 
+def _resolve_provider_request_log() -> str:
+    """Resolve the pi provider-request log path.
+
+    Precedence: the ``OMNIGENT_PI_PROVIDER_REQUEST_LOG`` env var, then the
+    ``harness.pi.provider_request_log`` config key. The config fallback
+    exists because the env var only reaches pi through the spawning
+    process's environment — role sessions (broker/manager) get their
+    runners spawned by the host daemon, whose env predates any manual
+    export, so daemon-spawned pi processes silently lose it. The config
+    file is read by the harness wrap itself, independent of spawn chain.
+
+    :returns: The log file path (``~`` expanded), or ``""`` when unset.
+    """
+    from pathlib import Path as _Path
+
+    env_value = os.environ.get("OMNIGENT_PI_PROVIDER_REQUEST_LOG", "").strip()
+    if env_value:
+        return env_value
+    try:
+        from omnigent.config import load_effective_config
+
+        cfg = load_effective_config()
+        value = (cfg.get("harness") or {}).get("pi") if isinstance(cfg.get("harness"), dict) else None
+        value = value.get("provider_request_log") if isinstance(value, dict) else None
+        if isinstance(value, str) and value.strip():
+            return _Path(value.strip()).expanduser().as_posix()
+    except Exception:  # noqa: BLE001 — config is a fallback; never break executor construction
+        pass
+    return ""
+
+
 def _build_pi_executor() -> Executor:
     """
     Construct a :class:`PiExecutor` from env-var config.
@@ -245,6 +276,12 @@ def _build_pi_executor() -> Executor:
     """
     bundle_dir_raw = os.environ.get(_ENV_BUNDLE_DIR, "").strip()
     bundle_dir = Path(bundle_dir_raw) if bundle_dir_raw else None
+    # Provider-request log: env var first, config fallback second. Set into
+    # os.environ so _clean_pi_env (exact-allowlisted) passes it to the pi
+    # subprocess, where the bridge extension reads it.
+    provider_request_log = _resolve_provider_request_log()
+    if provider_request_log:
+        os.environ["OMNIGENT_PI_PROVIDER_REQUEST_LOG"] = provider_request_log
     agent_name_raw = os.environ.get(_ENV_AGENT_NAME, "").strip()
     agent_name = agent_name_raw or None
     history_window_raw = os.environ.get(_ENV_HISTORY_WINDOW_TURNS, "").strip()
