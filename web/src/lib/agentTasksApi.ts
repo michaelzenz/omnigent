@@ -787,6 +787,17 @@ export async function fetchManagers(): Promise<TaskManagerSummary[]> {
   return body.managers;
 }
 
+/** Delete a manager: its session conversation, its queued work, and its row. */
+export async function deleteManager(managerId: string): Promise<void> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/managers/${encodeURIComponent(managerId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
 export interface QueueEventBacklogRow {
   role: string;
   scope_id: string | null;
