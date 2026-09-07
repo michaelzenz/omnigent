@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArchiveIcon, Loader2Icon, MoreHorizontalIcon, Trash2Icon } from "lucide-react";
+import { ArchiveIcon, Loader2Icon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,13 +10,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useArchiveAgentTask, usePermanentlyDeleteAgentTask } from "@/hooks/useAgentTasks";
 
 interface TaskActionsMenuProps {
@@ -29,7 +22,6 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
   const deleteTask = usePermanentlyDeleteAgentTask(taskId);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const isArchived = taskState === "archived";
@@ -39,7 +31,6 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
     try {
       await archiveTask.mutateAsync();
       setArchiveOpen(false);
-      setDropdownOpen(false);
     } catch {
       // mutation error is handled by the hook
     }
@@ -50,7 +41,6 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
     try {
       await deleteTask.mutateAsync();
       setDeleteOpen(false);
-      setDropdownOpen(false);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Failed to delete task");
     }
@@ -58,49 +48,47 @@ export function TaskActionsMenu({ taskId, taskState }: TaskActionsMenuProps) {
 
   return (
     <>
-      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0"
-            disabled={pending}
-            aria-label="More actions"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {pending ? (
-              <Loader2Icon className="size-4 animate-spin" />
-            ) : (
-              <MoreHorizontalIcon className="size-4" />
-            )}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-          {!isArchived && (
-            <DropdownMenuItem
-              onClick={() => {
-                setDropdownOpen(false);
-                setArchiveOpen(true);
-              }}
-            >
-              <ArchiveIcon className="size-4" />
-              Archive
-            </DropdownMenuItem>
+      {!isArchived && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0"
+          disabled={pending}
+          aria-label="Archive task"
+          title="Archive task"
+          onClick={(e) => {
+            e.stopPropagation();
+            setArchiveOpen(true);
+          }}
+        >
+          {archiveTask.isPending ? (
+            <Loader2Icon className="size-4 animate-spin" />
+          ) : (
+            <ArchiveIcon className="size-4" />
           )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => {
-              setDropdownOpen(false);
-              setDeleteOpen(true);
-            }}
-          >
-            <Trash2Icon className="size-4" />
-            Delete permanently
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </Button>
+      )}
+      {/* "!" beats ghost's hover:bg-muted in the CSS cascade. */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 hover:bg-destructive/10!"
+        disabled={pending}
+        aria-label="Delete task permanently"
+        title="Delete task permanently"
+        onClick={(e) => {
+          e.stopPropagation();
+          setDeleteOpen(true);
+        }}
+      >
+        {deleteTask.isPending ? (
+          <Loader2Icon className="size-4 animate-spin" />
+        ) : (
+          <XIcon className="size-4 text-destructive" />
+        )}
+      </Button>
 
       <Dialog open={archiveOpen} onOpenChange={setArchiveOpen}>
         <DialogContent onClick={(e) => e.stopPropagation()}>
