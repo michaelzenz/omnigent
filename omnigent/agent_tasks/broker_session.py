@@ -89,6 +89,24 @@ def resolve_first_live_host_id(host_store: HostStore, owner: str) -> str | None:
     return None
 
 
+def _agent_profile_matches_role(
+    existing: TaskRoleProfile,
+    agent_store: AgentStore,
+) -> bool:
+    """Whether the profile's bound agent is the role's current execution target.
+
+    Roles whose binding predates `execution_target_for_role` (or rows
+    seeded before a target re-mapping) carry a stale agent_profile_id;
+    treat any mismatch as stale so the caller rebinds to the correct
+    target instead of silently keeping the old bundle.
+    """
+    agent = agent_store.get(existing.agent_profile_id)
+    if agent is None:
+        return False
+    expected = execution_target_for_role(existing.role)
+    return agent.name == expected
+
+
 def ensure_role_profile(
     *,
     role: str,
@@ -106,6 +124,7 @@ def ensure_role_profile(
         and (host_store is None or existing.host_id is not None)
         and existing.agent_profile_id is not None
         and agent_store.get(existing.agent_profile_id) is not None
+        and _agent_profile_matches_role(existing, agent_store)
     ):
         return existing
 
@@ -157,6 +176,7 @@ def get_or_create_role_profile(
         and existing.host_id is not None
         and existing.agent_profile_id is not None
         and agent_store.get(existing.agent_profile_id) is not None
+        and _agent_profile_matches_role(existing, agent_store)
     ):
         return existing
 
