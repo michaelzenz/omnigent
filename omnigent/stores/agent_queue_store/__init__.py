@@ -211,13 +211,14 @@ class AgentQueueStore(ABC):
 
     @abstractmethod
     def set_role_dispatch_stopped(self, role: str, stopped: bool) -> None:
-        """Add *role* to (``stopped=True``) or remove it from (``False``) the
-        global dispatch stoplist. Idempotent either way.
+        """Add a stop key to (``stopped=True``) or remove it (``False``) from
+        the global dispatch stoplist. Keys are bare roles or scope-qualified
+        ``role:scope_id`` composites for a single queue. Idempotent either way.
         """
 
     @abstractmethod
     def get_dispatch_stoplist(self) -> frozenset[str]:
-        """Return roles currently excluded from dispatch."""
+        """Return stop keys currently excluded from dispatch."""
 
     # ── Control plane ──────────────────────────────────
 

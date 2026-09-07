@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from omnigent.agent_tasks.constants import TERMINAL_EVENT_STATES
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueKey
 from omnigent.errors import ErrorCode, OmnigentError
@@ -37,10 +38,15 @@ class PatchQueueItemRequest(BaseModel):
 
 
 class DispatchStoplistRequest(BaseModel):
-    """One role's entry on the global dispatch stoplist."""
+    """One dispatch stoplist entry.
+
+    ``scope_id`` narrows the stop to a single queue of the role (e.g. one
+    manager's queue); omitted, the whole role is stopped.
+    """
 
     role: str
     stopped: bool
+    scope_id: str | None = None
 
 
 def create_agent_queues_router(
@@ -74,7 +80,11 @@ def create_agent_queues_router(
 
     @router.get("/agent-queues/dispatch-stoplist")
     async def get_dispatch_stoplist(request: Request) -> dict[str, Any]:
-        """Roles the dispatcher currently refuses to dispatch."""
+        """Stop keys the dispatcher currently refuses to dispatch.
+
+        Keys are bare roles ("broker") or scope-qualified roles
+        ("manager:<manager_id>") for a single queue.
+        """
         require_user(request, auth_provider)
         stopped = await asyncio.to_thread(agent_queue_store.get_dispatch_stoplist)
         return {"object": "list", "data": sorted(stopped)}
@@ -84,18 +94,50 @@ def create_agent_queues_router(
         request: Request,
         body: DispatchStoplistRequest,
     ) -> dict[str, Any]:
-        """Add a role to (or remove it from) the global dispatch stoplist.
+        """Add an entry to (or remove it from) the global dispatch stoplist.
 
-        The dispatcher skips a stopped role's queues entirely — items stay
-        queued and resume on their own when the role is re-enabled.
+        The dispatcher skips a stopped target entirely: its queues keep
+        their items queued and resume on their own when re-enabled. With
+        ``scope_id`` set, only that one queue of the role is stopped.
         """
         require_user(request, auth_provider)
+        stop_key = f"{body.role}:{body.scope_id}" if body.scope_id else body.role
         await asyncio.to_thread(
             agent_queue_store.set_role_dispatch_stopped,
-            body.role,
+            stop_key,
             body.stopped,
         )
-        return {"role": body.role, "stopped": body.stopped}
+        return {"role": body.role, "scope_id": body.scope_id, "stopped": body.stopped}
+
+    @router.get("/agent-queues/event-backlog")
+    async def get_event_backlog() -> dict[str, Any]:
+        """Count events waiting per dispatch queue.
+
+        The broker's queue holds ``awaiting_grouping`` + ``pending_triage``
+        events; each manager's queue holds the ``routed`` events addressed
+        to it. Leftover non-terminal states (transient ingress states, the
+        FYI bucket) are reported under ``other`` — they are not dispatched.
+        """
+        if task_event_store is None:
+            return {"object": "list", "data": [], "other": {}}
+        counts = await asyncio.to_thread(task_event_store.count_events_by_state)
+        by_manager = await asyncio.to_thread(task_event_store.count_routed_events_by_manager)
+        broker_count = counts.get("awaiting_grouping", 0) + counts.get("pending_triage", 0)
+        data: list[dict[str, Any]] = [{"role": "broker", "scope_id": None, "count": broker_count}]
+        data.extend(
+            {"role": "manager", "scope_id": manager_id, "count": count}
+            for manager_id, count in sorted(by_manager.items())
+        )
+        routed_unassigned = counts.get("routed", 0) - sum(by_manager.values())
+        other = {
+            state: count
+            for state, count in counts.items()
+            if state not in TERMINAL_EVENT_STATES
+            and state not in {"awaiting_grouping", "pending_triage", "routed"}
+        }
+        if routed_unassigned > 0:
+            other["routed_unassigned"] = routed_unassigned
+        return {"object": "list", "data": data, "other": other}
 
     @router.get("/agent-queues/{role}/items")
     async def list_queue_items(

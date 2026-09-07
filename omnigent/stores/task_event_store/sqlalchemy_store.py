@@ -225,6 +225,24 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             rows = session.execute(stmt).all()
             return {decode_task_event_state(state): count for state, count in rows}
 
+    def count_routed_events_by_manager(self) -> dict[str, int]:
+        """Count ``routed`` events per destination manager (manager_id keyed)."""
+        with self._session() as session:
+            routed_state = encode_task_event_state("routed")
+            stmt = (
+                select(SqlTaskEvent.manager_id, func.count())
+                .where(SqlTaskEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskEvent.state == routed_state)
+                .where(SqlTaskEvent.manager_id.is_not(None))
+                .group_by(SqlTaskEvent.manager_id)
+            )
+            rows = session.execute(stmt).all()
+            counts: dict[str, int] = {}
+            for manager_id, count in rows:
+                if manager_id is not None:
+                    counts[manager_id] = count
+            return counts
+
     def update_event(
         self,
         event_id: str,

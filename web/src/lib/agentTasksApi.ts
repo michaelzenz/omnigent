@@ -748,30 +748,59 @@ export async function updateScriptPollPlugin(
   }
 }
 
-/** Roles the dispatcher currently refuses to dispatch (the global stoplist). */
+/** Stop keys the dispatcher currently refuses to dispatch.
+ *
+ * Keys are bare roles ("broker") or scope-qualified ("manager:<id>") for a
+ * single manager's queue.
+ */
 export async function fetchDispatchStoplist(): Promise<string[]> {
   const res = await authenticatedFetch("/v1/agent-queues/dispatch-stoplist");
   const body = await readJson<{ data: string[] }>(res);
   return body.data;
 }
 
-export interface TaskEventStat {
-  state: string;
-  count: number;
-}
-
-/** In-flight event counts per state (terminal states excluded server-side). */
-export async function fetchTaskEventStats(): Promise<TaskEventStat[]> {
-  const res = await authenticatedFetch("/v1/task-events/stats");
-  const body = await readJson<{ data: TaskEventStat[] }>(res);
-  return body.data;
-}
-
-export async function setRoleDispatchStopped(role: string, stopped: boolean): Promise<void> {
+export async function setRoleDispatchStopped(
+  role: string,
+  stopped: boolean,
+  scopeId?: string | null,
+): Promise<void> {
   const res = await authenticatedFetch("/v1/agent-queues/dispatch-stoplist", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role, stopped }),
+    body: JSON.stringify({ role, stopped, scope_id: scopeId ?? null }),
   });
   if (!res.ok) await readJsonOrApiError(res);
+}
+
+export interface TaskManagerSummary {
+  id: string;
+  conversation_id: string | null;
+  title: string;
+  role_key: string;
+  task_count: number;
+}
+
+/** The caller's registered first-class managers. */
+export async function fetchManagers(): Promise<TaskManagerSummary[]> {
+  const res = await authenticatedFetch("/v1/agent-tasks/managers");
+  const body = await readJson<{ managers: TaskManagerSummary[] }>(res);
+  return body.managers;
+}
+
+export interface QueueEventBacklogRow {
+  role: string;
+  scope_id: string | null;
+  count: number;
+}
+
+export interface EventBacklog {
+  data: QueueEventBacklogRow[];
+  /** Non-dispatched in-flight states (transient ingress, FYI bucket). */
+  other: Record<string, number>;
+}
+
+/** Waiting event counts per dispatch queue (broker + per manager). */
+export async function fetchEventBacklog(): Promise<EventBacklog> {
+  const res = await authenticatedFetch("/v1/agent-queues/event-backlog");
+  return readJson<EventBacklog>(res);
 }

@@ -653,3 +653,71 @@ async def test_completion_resolves_task_from_execution(worker_setup: dict) -> No
     assert events[0].task_id == other_task_id
     home_events = event_store.list_events(state="routed", task_id=worker_setup["task_id"])
     assert home_events == []
+
+
+def test_event_backlog_counts_queues_and_other(db_uri: str) -> None:
+    """GET event-backlog counts broker-queue events, per-manager routed, and other."""
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    for index, state in enumerate(
+        ["awaiting_grouping", "awaiting_grouping", "pending_triage", "classified_fyi"],
+    ):
+        event_store.create_event(
+            _uid(f"backlog-event-{index}"),
+            "build.finished",
+            f"Backlog event {index}",
+            state=state,
+        )
+    manager_a = _uid("backlog-manager-a")
+    manager_b = _uid("backlog-manager-b")
+    for index, manager_id in enumerate([manager_a, manager_a, manager_b, None]):
+        event_store.create_event(
+            _uid(f"backlog-routed-{index}"),
+            "build.finished",
+            f"Routed event {index}",
+            state="routed",
+            manager_id=manager_id,
+        )
+    event_store.create_event(
+        _uid("backlog-terminal"),
+        "build.finished",
+        "Settled event",
+        state="reconciled",
+    )
+
+    app = FastAPI()
+    app.include_router(
+        create_agent_queues_router(
+            SqlAlchemyAgentQueueStore(db_uri), task_event_store=event_store
+        ),
+        prefix="/v1",
+    )
+    body = TestClient(app).get("/v1/agent-queues/event-backlog").json()
+
+    counts = {(row["role"], row["scope_id"]): row["count"] for row in body["data"]}
+    assert counts[("broker", None)] == 3  # awaiting_grouping + pending_triage
+    assert counts[("manager", manager_a)] == 2
+    assert counts[("manager", manager_b)] == 1
+    # Terminal states never appear; unrouted events surface under "other".
+    assert body["other"] == {"classified_fyi": 1, "routed_unassigned": 1}
+
+
+def test_dispatch_stoplist_scope_entry(db_uri: str) -> None:
+    """A scoped stoplist PUT stores manager:<id>; the GET returns the raw key."""
+    app = FastAPI()
+    app.include_router(create_agent_queues_router(SqlAlchemyAgentQueueStore(db_uri)), prefix="/v1")
+    client = TestClient(app)
+
+    stopped = client.put(
+        "/v1/agent-queues/dispatch-stoplist",
+        json={"role": "manager", "stopped": True, "scope_id": _uid("scoped-manager")},
+    )
+    assert stopped.status_code == 200
+    keys = client.get("/v1/agent-queues/dispatch-stoplist").json()["data"]
+    assert keys == [f"manager:{_uid('scoped-manager')}"]
+
+    cleared = client.put(
+        "/v1/agent-queues/dispatch-stoplist",
+        json={"role": "manager", "stopped": False, "scope_id": _uid("scoped-manager")},
+    )
+    assert cleared.status_code == 200
+    assert client.get("/v1/agent-queues/dispatch-stoplist").json()["data"] == []
