@@ -42,6 +42,7 @@ class SshPhaseRequest(BaseModel):
     next_attempt_at: int | None = None
     last_error: str | None = None
     increment_attempt: bool = False
+    reset_attempt: bool = False
     release: bool = False
 
 
@@ -185,6 +186,7 @@ def create_host_ssh_router(
             next_attempt_at=body.next_attempt_at,
             last_error=body.last_error,
             increment_attempt=body.increment_attempt,
+            reset_attempt=body.reset_attempt,
             release=body.release,
         )
         return {

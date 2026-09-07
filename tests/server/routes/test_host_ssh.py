@@ -236,3 +236,35 @@ async def test_managed_sandbox_hosts_are_rejected(tmp_path) -> None:
     assert assignments.status_code == 403
     assert claimed.status_code == 403
     assert "managed sandbox" in assignments.json()["detail"]
+
+
+async def test_phase_reset_attempt_clears_counter(tmp_path) -> None:
+    app, store = _build_app(tmp_path)
+    profile = SshConnectionProfile(
+        id="conn-1", label="Box", alias="box", created_at="2026-01-01T00:00:00+00:00"
+    )
+    store.sync_connections({profile.id: profile}, bundle_version="test", owner="alice@example.com")
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        claim = await client.post(
+            "/v1/host/ssh/connections/conn-1/claim",
+            json={"lease_seconds": 30},
+            headers=_HOST_HEADER,
+        )
+        assert claim.json()["claimed"] is True
+        for _ in range(3):
+            await client.post(
+                "/v1/host/ssh/connections/conn-1/phase",
+                json={"generation": 0, "phase": "backoff", "increment_attempt": True},
+                headers=_HOST_HEADER,
+            )
+        assert store.snapshots("alice@example.com")["conn-1"].attempt == 3
+
+        ok = await client.post(
+            "/v1/host/ssh/connections/conn-1/phase",
+            json={"generation": 0, "phase": "ready", "reset_attempt": True},
+            headers=_HOST_HEADER,
+        )
+        assert ok.json()["accepted"] is True
+        assert store.snapshots("alice@example.com")["conn-1"].attempt == 0
