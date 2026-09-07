@@ -45,6 +45,7 @@ from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
     resolve_dispatch_params,
 )
+from omnigent.agent_tasks.event_types import BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE
 from omnigent.agent_tasks.fyi_clusters import (
     create_fyi_cluster,
     list_fyi_board_cards,
@@ -70,6 +71,7 @@ from omnigent.agent_tasks.manager_discovery import (
 from omnigent.agent_tasks.manager_role_profile import (
     get_or_create_manager_role_profile,
 )
+from omnigent.agent_tasks.resolve import dismiss_task_event
 from omnigent.agent_tasks.role_keys import (
     MANAGER_DEFAULT_ROLE_KEY,
     MANAGER_ROLE_PREFIX,
@@ -86,6 +88,7 @@ from omnigent.agent_tasks.role_keys import (
 from omnigent.agent_tasks.task_match import (
     _LIVE_TASK_STATES,
     collect_event_tags,
+    live_tasks,
     load_events,
     rank_tasks_for_events,
     ranked_task_payload,
@@ -1595,6 +1598,92 @@ def create_agent_tasks_router(
             "object": "list",
             "managers": [_manager_to_response(manager) for manager in managers],
             "role_profiles": role_profiles,
+        }
+
+    @router.post("/agent-tasks/spawn-manager-notice")
+    async def spawn_manager_notice(request: Request) -> dict[str, Any]:
+        """Ask the broker to spin up manager(s) for every unmanaged task.
+
+        Collects the caller's live tasks with no manager, renders one notice
+        listing them, and queues it to the broker as a single
+        ``broker.spawn_manager.request`` event (born ``awaiting_grouping`` so
+        the broker packager delivers it like any other event). A still-pending
+        earlier request is superseded — dismissed and replaced by a fresh
+        event carrying the current list — rather than duplicated.
+        """
+
+        def _one_line(text: str) -> str:
+            return " ".join(text.split())
+
+        user_id = require_user(request, auth_provider)
+        owner = _effective_user_id(user_id)
+
+        def _collect() -> list[Task]:
+            return [
+                task
+                for task in live_tasks(task_store)
+                if not task.manager_id
+                and (task.owner_user_id is None or task.owner_user_id == owner)
+            ]
+
+        unmanaged = await asyncio.to_thread(_collect)
+
+        # Supersede a still-pending earlier request: the store cannot rewrite
+        # an event's payload, so dismiss it — the fresh event below carries the
+        # current list. Claimed events are already in flight; leave them alone.
+        pending = [
+            event
+            for event in await asyncio.to_thread(
+                task_event_store.list_events,
+                state="awaiting_grouping",
+                event_type=BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE,
+            )
+            if event.owner_user_id in (None, owner)
+        ]
+        claimed: set[str] = set()
+        if agent_queue_store is not None:
+            claimed = await asyncio.to_thread(
+                agent_queue_store.list_claimed_source_ids,
+                TASK_BROKER_ROLE,
+                owner,
+            )
+        superseded = 0
+        for stale in (event for event in pending if event.id not in claimed):
+            await dismiss_task_event(event=stale, task_event_store=task_event_store)
+            superseded += 1
+
+        if not unmanaged:
+            return {
+                "object": "agent.task.spawn_manager_notice",
+                "unmanaged_count": 0,
+                "superseded": superseded,
+                "event_id": None,
+            }
+
+        task_list = [[task.id, task.title] for task in unmanaged]
+        notice_lines = [
+            "Assign following tasks to active managers or spin up new managers",
+            *(f"[{task_id}, {_one_line(title)}]" for task_id, title in task_list),
+        ]
+        event_id = uuid.uuid4().hex
+        await asyncio.to_thread(
+            task_event_store.create_event,
+            event_id,
+            BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE,
+            f"Spawn manager(s) and assign {len(unmanaged)} unmanaged task(s)",
+            source="board",
+            state="awaiting_grouping",
+            payload=json.dumps(
+                {"notice": "\n".join(notice_lines), "tasks": task_list},
+                ensure_ascii=False,
+            ),
+            owner_user_id=owner,
+        )
+        return {
+            "object": "agent.task.spawn_manager_notice",
+            "unmanaged_count": len(unmanaged),
+            "superseded": superseded,
+            "event_id": event_id,
         }
 
     @router.post("/agent-tasks/managers")

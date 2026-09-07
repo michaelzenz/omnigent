@@ -10,6 +10,7 @@ export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
     description: "Broker package waiting for a manager",
     state: "pending",
     manager_role_key: "manager:default",
+    manager_id: null,
     manager_conversation_id: null,
   },
   {
@@ -18,6 +19,7 @@ export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
     description: "Fix upload retries and get CI green",
     state: "active",
     manager_role_key: "manager:default",
+    manager_id: "fixture-manager",
     manager_conversation_id: "fixture-mgr-session",
   },
 ];

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from urllib.parse import quote
 
@@ -11,6 +12,7 @@ import pytest_asyncio
 
 from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE, TASK_SECRETARY_ROLE
 from omnigent.agent_tasks.broker_session import NO_HOST_AVAILABLE_MESSAGE
+from omnigent.agent_tasks.event_types import BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import EventTag
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
@@ -466,6 +468,96 @@ async def test_list_managers_includes_zero_task_manager_metadata(
     assert manager["role_key"] == "manager:uploads"
     assert manager["capacity"] > 0
     assert manager["task_count"] == 0
+
+
+async def test_spawn_manager_notice_collects_unmanaged_tasks(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """One broker event lists every unmanaged live task owned by the caller."""
+    task_store = SqlAlchemyTaskStore(db_uri)
+    unmanaged_a = _uid("unmanaged-a")
+    unmanaged_b = _uid("unmanaged-b")
+    task_store.create(unmanaged_a, "Unmanaged A", "goal a", owner_user_id="__anonymous__")
+    task_store.create(unmanaged_b, "Unmanaged\nB", "goal b", owner_user_id="__anonymous__")
+    # Managed, another owner's, and non-live (archived) tasks are excluded.
+    task_store.create(
+        _uid("managed"),
+        "Managed",
+        "goal",
+        owner_user_id="__anonymous__",
+        manager_id=_uid("some-manager"),
+    )
+    task_store.create(_uid("foreign"), "Foreign", "goal", owner_user_id="someone-else")
+    task_store.create(
+        _uid("archived"),
+        "Archived",
+        "goal",
+        owner_user_id="__anonymous__",
+        state="archived",
+    )
+
+    resp = await client.post("/v1/agent-tasks/spawn-manager-notice")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["unmanaged_count"] == 2
+    assert body["event_id"]
+
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    event = event_store.get_event(body["event_id"])
+    assert event is not None
+    assert event.event_type == BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE
+    assert event.state == "awaiting_grouping"
+    assert event.owner_user_id == "__anonymous__"
+    payload = json.loads(event.payload or "{}")
+    assert sorted(payload["tasks"]) == sorted(
+        [[unmanaged_a, "Unmanaged A"], [unmanaged_b, "Unmanaged\nB"]]
+    )
+    lines = payload["notice"].split("\n")
+    assert lines[0] == "Please spin up manager(s) and assign following tasks to the new managers"
+    # Multi-line titles are flattened onto one line; list order is store order.
+    assert sorted(lines[1:]) == sorted(
+        [f"[{unmanaged_a}, Unmanaged A]", f"[{unmanaged_b}, Unmanaged B]"]
+    )
+
+    # A second call supersedes the still-pending request instead of duplicating.
+    second = await client.post("/v1/agent-tasks/spawn-manager-notice")
+    assert second.status_code == 200, second.text
+    assert second.json()["superseded"] == 1
+    pending = event_store.list_events(
+        state="awaiting_grouping",
+        event_type=BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE,
+    )
+    assert [e.id for e in pending] == [second.json()["event_id"]]
+
+
+async def test_spawn_manager_notice_without_unmanaged_tasks(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """With nothing to assign the endpoint reports zero and creates no event."""
+    task_store = SqlAlchemyTaskStore(db_uri)
+    task_store.create(
+        _uid("managed"),
+        "Managed",
+        "goal",
+        owner_user_id="__anonymous__",
+        manager_id=_uid("some-manager"),
+    )
+
+    resp = await client.post("/v1/agent-tasks/spawn-manager-notice")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["unmanaged_count"] == 0
+    assert body["event_id"] is None
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    assert (
+        event_store.list_events(
+            state="awaiting_grouping",
+            event_type=BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE,
+        )
+        == []
+    )
 
 
 async def test_create_manager_registers_top_level_manager_role(

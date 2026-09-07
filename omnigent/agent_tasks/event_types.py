@@ -40,6 +40,12 @@ EXTERNAL_SESSION_UPDATED_EVENT_TYPE = "external.session.updated"
 # for the same session.
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 
+# A user-initiated request (board config) asking the broker to spin up
+# manager(s) and assign the listed unmanaged tasks to them. The payload
+# carries the task list; born ``awaiting_grouping`` so the broker packager
+# polls it like any other event.
+BROKER_SPAWN_MANAGER_REQUEST_EVENT_TYPE = "broker.spawn_manager.request"
+
 
 def is_session_internal_event(event_type: str) -> bool:
     """Return whether an event belongs to the session adoption lane."""
