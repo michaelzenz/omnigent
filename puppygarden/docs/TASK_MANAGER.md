@@ -141,6 +141,29 @@ Call it unconditionally when you
 route a turn-finished event. The session's id is in the event's payload
 (`session_id`), not the event id.
 
+**Step 2c — harvest artifacts as task assets (turn-finished events).**
+When the transcript shows the session created an online artifact — a
+design doc, notebook, dashboard, PR, or any other linkable output —
+attach it to the task so the task card carries everything produced:
+
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/assets",
+  body={
+    "kind": "url",
+    "category": "documents",  # code | tests | documents | logs | other
+    "title": "<short human-readable artifact name>",
+    "url": "<artifact URL>"
+  }
+)
+```
+
+- Pick the closest category: docs → `documents`, source
+  changes → `code`, query/notebook -> `data_science`, tables->`tables`.
+- Also include the pages it reference, like SOP/table/design/slack thread. Be picky, do not include everything it reads, but the ones that's useful, but always include everything it created. One asset per URL.
+- Skip when the turn produced no new artifacts — silence is fine.
+
 **Step 3 — create new items (with worker assignment).** For events that
 don't fit any existing item, create one and assign a worker lane at
 creation time:
