@@ -815,3 +815,16 @@ export async function fetchEventBacklog(): Promise<EventBacklog> {
   const res = await authenticatedFetch("/v1/agent-queues/event-backlog");
   return readJson<EventBacklog>(res);
 }
+
+/** Dismiss every event waiting on one dispatch queue. */
+export async function dismissQueueBacklog(
+  role: string,
+  scopeId?: string | null,
+): Promise<{ dismissed: number; cancelled_items: number }> {
+  const res = await authenticatedFetch("/v1/agent-queues/dismiss-backlog", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, scope_id: scopeId ?? null }),
+  });
+  return readJsonOrApiError(res);
+}

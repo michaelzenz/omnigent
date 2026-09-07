@@ -243,6 +243,23 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                     counts[manager_id] = count
             return counts
 
+    def dismiss_events(self, event_ids: list[str]) -> int:
+        if not event_ids:
+            return 0
+        with self._session() as session:
+            terminal = [
+                encode_task_event_state(name) for name in ("reconciled", "dismissed", "failed")
+            ]
+            stmt = (
+                update(SqlTaskEvent)
+                .where(SqlTaskEvent.workspace_id == current_workspace_id())
+                .where(SqlTaskEvent.id.in_(event_ids))
+                .where(SqlTaskEvent.state.not_in(terminal))
+                .values(state=encode_task_event_state("dismissed"), updated_at=now_epoch())
+            )
+            result = cast(Any, session.execute(stmt))
+            return cast(int, result.rowcount or 0)
+
     def update_event(
         self,
         event_id: str,

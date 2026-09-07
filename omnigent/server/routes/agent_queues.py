@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE, TASK_MANAGER_ROLE
 from omnigent.agent_tasks.constants import TERMINAL_EVENT_STATES
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueKey
@@ -46,6 +47,13 @@ class DispatchStoplistRequest(BaseModel):
 
     role: str
     stopped: bool
+    scope_id: str | None = None
+
+
+class DismissBacklogRequest(BaseModel):
+    """Identifies the queue whose waiting events should be dismissed."""
+
+    role: str
     scope_id: str | None = None
 
 
@@ -138,6 +146,86 @@ def create_agent_queues_router(
         if routed_unassigned > 0:
             other["routed_unassigned"] = routed_unassigned
         return {"object": "list", "data": data, "other": other}
+
+    @router.post("/agent-queues/dismiss-backlog")
+    async def dismiss_queue_backlog(
+        request: Request,
+        body: DismissBacklogRequest,
+    ) -> dict[str, Any]:
+        """Dismiss every event waiting on one dispatch queue. User-only, bulk.
+
+        The broker's queue covers ``awaiting_grouping`` + ``pending_triage``;
+        a manager's queue covers the ``routed`` events addressed to it.
+        Queued (not yet dispatched) notices for that queue are cancelled so
+        stale prompts are not delivered; in-flight items finish naturally.
+        """
+        require_user(request, auth_provider)
+        if task_event_store is None:
+            raise OmnigentError(
+                "task event store is not configured on this server",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        if body.role == TASK_BROKER_ROLE:
+            events = [
+                event
+                for state in ("awaiting_grouping", "pending_triage")
+                for event in await asyncio.to_thread(
+                    task_event_store.list_events,
+                    state=state,
+                )
+            ]
+        elif body.role == TASK_MANAGER_ROLE:
+            if body.scope_id is None:
+                raise OmnigentError(
+                    "scope_id is required to dismiss a manager's backlog",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            events = [
+                event
+                for event in await asyncio.to_thread(
+                    task_event_store.list_events,
+                    state="routed",
+                )
+                if event.manager_id == body.scope_id
+            ]
+        else:
+            raise OmnigentError(
+                f"unsupported queue role: {body.role}",
+                code=ErrorCode.INVALID_INPUT,
+            )
+
+        # Cancel queued notices for the queue so dismissed events are not
+        # delivered as stale prompts. In-flight items finish naturally.
+        cancelled = 0
+        if agent_queue_store is not None:
+            for queue in await asyncio.to_thread(
+                agent_queue_store.list_queues,
+                role=body.role,
+            ):
+                if body.role == TASK_MANAGER_ROLE and queue.scope_id != body.scope_id:
+                    continue
+                key = AgentQueueKey(
+                    role=queue.role,
+                    owner_user_id=queue.owner_user_id,
+                    scope_id=queue.scope_id,
+                )
+                for item in await asyncio.to_thread(
+                    agent_queue_store.list_items,
+                    key,
+                    state="queued",
+                ):
+                    await asyncio.to_thread(
+                        agent_queue_store.cancel_item,
+                        item.id,
+                        now=now_epoch(),
+                    )
+                    cancelled += 1
+
+        dismissed = await asyncio.to_thread(
+            task_event_store.dismiss_events,
+            [event.id for event in events],
+        )
+        return {"dismissed": dismissed, "cancelled_items": cancelled}
 
     @router.get("/agent-queues/{role}/items")
     async def list_queue_items(

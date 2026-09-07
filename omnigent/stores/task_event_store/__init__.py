@@ -87,6 +87,16 @@ class TaskEventStore(ABC):
         """Count ``routed`` events per destination manager (manager_id keyed)."""
 
     @abstractmethod
+    def dismiss_events(self, event_ids: list[str]) -> int:
+        """Bulk-dismiss events (board bulk actions).
+
+        Rows already in a terminal state are skipped, so a concurrent
+        reconcile is never overwritten.
+
+        :returns: Number of events dismissed.
+        """
+
+    @abstractmethod
     def update_event(
         self,
         event_id: str,
