@@ -1240,8 +1240,6 @@ def create_app(
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     ssh_host_installation_store: SshHostInstallationStore | None = None,
-    ssh_tunnel_host: str = "127.0.0.1",
-    ssh_tunnel_port: int | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
     extra_routers: list[tuple[Any, str, list[str]]] | None = None,
     policy_modules: list[str] | None = None,
@@ -1907,31 +1905,7 @@ def create_app(
             )
             app_inst.state.execution_reconciler_task = execution_reconciler_task
 
-        ssh_host_manager = None
-        # The reverse tunnel forwards to this server's own listener, so without a
-        # known port there is nothing valid to point remote hosts at.
-        if (
-            host_store is not None
-            and ssh_host_installation_store is not None
-            and ssh_tunnel_port is not None
-        ):
-            from omnigent.server.ssh_host_manager import SshHostInstallationManager
-
-            ssh_host_manager = SshHostInstallationManager(
-                store=ssh_host_installation_store,
-                host_store=host_store,
-                local_host=ssh_tunnel_host,
-                local_port=ssh_tunnel_port,
-            )
-            app_inst.state.ssh_host_manager = ssh_host_manager
-            try:
-                await ssh_host_manager.start()
-            except Exception:
-                _logger.exception(
-                    "SSH host installation manager failed to start; continuing without it"
-                )
-                app_inst.state.ssh_host_manager = None
-                ssh_host_manager = None
+        app_inst.state.ssh_logs = SshLogRing()
 
         managed_sandbox_reaper: ManagedSandboxReaper | None = None
         if sandbox_config is not None and sandbox_config.reaper.enabled:
@@ -1956,11 +1930,6 @@ def create_app(
             # Run completion is event-driven (the _publish_status hook) plus a
             # lazy-on-read stale backstop — there is no run-reconciler task to
             # cancel. Only the per-job scheduler holds timers that need stopping.
-            if ssh_host_manager is not None:
-                await ssh_host_manager.stop()
-                from omnigent.ssh_session import shutdown_ssh_pool
-
-                await shutdown_ssh_pool()
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
             if event_gc_task is not None:
@@ -2028,7 +1997,6 @@ def create_app(
     app.state.prompt_profile_store = prompt_profile_store
     app.state.model_settings_store = model_settings_store
     app.state.tool_preferences_store = tool_preferences_store
-    app.state.ssh_host_manager = None
     app.state.sandbox_config = sandbox_config
     app.state.project_store = project_store
     app.state.manager_store = manager_store
@@ -3170,11 +3138,26 @@ def create_app(
         prefix="/v1",
         tags=["dictation"],
     )
+    from omnigent.server.routes.host_ssh import create_host_ssh_router
+    from omnigent.server.ssh_logs import SshLogRing
+
+    app.state.ssh_logs = SshLogRing()
     app.include_router(
         create_ssh_connections_router(
             ssh_store=ssh_host_installation_store,
             auth_provider=auth_provider,
-            permission_store=permission_store,
+            host_registry=host_registry,
+            ssh_logs=app.state.ssh_logs,
+        ),
+        prefix="/v1",
+        tags=["ssh"],
+    )
+    app.include_router(
+        create_host_ssh_router(
+            ssh_store=ssh_host_installation_store,
+            host_store=host_store,
+            host_registry=host_registry,
+            ssh_logs=app.state.ssh_logs,
         ),
         prefix="/v1",
         tags=["ssh"],
@@ -3825,6 +3808,22 @@ def create_app(
         async def _on_hosts_changed(_host_id: str, owner: str | None) -> None:
             announce_hosts_changed(owner)
 
+        async def _on_host_disconnected(_host_id: str, owner: str | None) -> None:
+            announce_hosts_changed(owner)
+            # The desktop app is the only SSH executor; while it is gone, its
+            # in-flight provisioning rows cannot progress. Surface that in the
+            # settings UI instead of a stale phase. Rows already ready keep
+            # their state — remote daemons stay up independently.
+            if owner is not None and ssh_host_installation_store is not None:
+                try:
+                    await asyncio.to_thread(
+                        ssh_host_installation_store.pause_unfinished_for_owner,
+                        owner,
+                        "Desktop app (host daemon) is offline — SSH setup paused",
+                    )
+                except Exception:
+                    _logger.exception("Failed to pause SSH rows for offline host")
+
         async def _on_duplicate_daemon(
             host_id: str,
             owner: str | None,
@@ -3845,7 +3844,7 @@ def create_app(
                 runner_exit_reports=runner_exit_reports,
                 on_runner_exited=_on_runner_exited,
                 on_host_connect=_on_hosts_changed,
-                on_host_disconnect=_on_hosts_changed,
+                on_host_disconnect=_on_host_disconnected,
                 on_host_update=_on_hosts_changed,
                 on_duplicate_daemon=_on_duplicate_daemon,
                 conversation_store=conversation_store,

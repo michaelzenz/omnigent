@@ -84,6 +84,8 @@ class HostFrameKind(str, Enum):
     IMPORT_LOCAL_DONE = "host.import_local_done"
     WORKTREE_SIZES = "host.worktree_sizes"
     WORKTREE_SIZES_RESULT = "host.worktree_sizes_result"
+    SSH_PROBE = "host.ssh_probe"
+    SSH_PROBE_RESULT = "host.ssh_probe_result"
 
 
 # ── Frame dataclasses ────────────────────────────────────
@@ -392,6 +394,38 @@ class HostStatResultFrame:
     canonical_path: str | None = None
     error: str | None = None
     git_branch: str | None = None
+
+
+@dataclass
+class HostSshProbeFrame:
+    """Server → host: probe one SSH config alias from the host machine.
+
+    The settings UI's "test connection" must run where the SSH executor
+    runs — the user's desktop app — so the alias resolves against that
+    machine's ``~/.ssh/config`` and agent.
+
+    :param request_id: Unique ID for correlating the result.
+    :param alias: SSH config alias to probe.
+    """
+
+    request_id: str
+    alias: str
+
+
+@dataclass
+class HostSshProbeResultFrame:
+    """Host → server: outcome of an SSH probe.
+
+    :param request_id: Correlates to the :class:`HostSshProbeFrame`.
+    :param ok: Whether the alias connected.
+    :param message: Human-readable outcome for the settings UI.
+    :param latency_ms: Round-trip latency when known, else ``None``.
+    """
+
+    request_id: str
+    ok: bool
+    message: str = ""
+    latency_ms: int | None = None
 
 
 @dataclass
@@ -1112,6 +1146,8 @@ HostFrame = (
     | HostImportLocalDoneFrame
     | HostWorktreeSizesFrame
     | HostWorktreeSizesResultFrame
+    | HostSshProbeFrame
+    | HostSshProbeResultFrame
 )
 
 
@@ -1592,6 +1628,24 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "error": frame.error,
             }
         )
+    if isinstance(frame, HostSshProbeFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.SSH_PROBE.value,
+                "request_id": frame.request_id,
+                "alias": frame.alias,
+            }
+        )
+    if isinstance(frame, HostSshProbeResultFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.SSH_PROBE_RESULT.value,
+                "request_id": frame.request_id,
+                "ok": frame.ok,
+                "message": frame.message,
+                "latency_ms": frame.latency_ms,
+            }
+        )
     raise TypeError(f"unknown host frame type: {type(frame).__name__}")
 
 
@@ -1740,6 +1794,10 @@ def _decode_known_host_frame(
             return _decode_worktree_sizes(msg)
         case HostFrameKind.WORKTREE_SIZES_RESULT:
             return _decode_worktree_sizes_result(msg)
+        case HostFrameKind.SSH_PROBE:
+            return _decode_ssh_probe(msg)
+        case HostFrameKind.SSH_PROBE_RESULT:
+            return _decode_ssh_probe_result(msg)
 
     raise ValueError(f"unhandled host frame kind: {kind.value!r}")  # pragma: no cover
 
@@ -2586,4 +2644,25 @@ def _decode_worktree_sizes_result(msg: _JsonObject) -> HostWorktreeSizesResultFr
         total_bytes=total_bytes,
         calculated_at=float(calculated_at),
         error=_optional_nullable_str(msg, "error"),
+    )
+
+
+def _decode_ssh_probe(msg: _JsonObject) -> HostSshProbeFrame:
+    """Decode a host.ssh_probe request frame."""
+    return HostSshProbeFrame(
+        request_id=_required_str(msg, "request_id"),
+        alias=_required_str(msg, "alias"),
+    )
+
+
+def _decode_ssh_probe_result(msg: _JsonObject) -> HostSshProbeResultFrame:
+    """Decode a host.ssh_probe_result frame."""
+    latency = msg.get("latency_ms")
+    if latency is not None and (not isinstance(latency, int) or isinstance(latency, bool)):
+        raise ValueError("frame field must be an int or null: 'latency_ms'")
+    return HostSshProbeResultFrame(
+        request_id=_required_str(msg, "request_id"),
+        ok=_required_bool(msg, "ok"),
+        message=_optional_nullable_str(msg, "message") or "",
+        latency_ms=latency,
     )

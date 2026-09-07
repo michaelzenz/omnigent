@@ -643,7 +643,7 @@ _BOOLEAN_CONFIG_KEYS: frozenset[str] = frozenset({_AUTO_OPEN_CONVERSATION_CONFIG
 _CONFIG_TRUE_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 _CONFIG_FALSE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 _ConfigValue: TypeAlias = (
-    str | int | float | bool | None | list["_ConfigValue"] | dict[str, "_ConfigValue"]
+    str | int | float | bool | list["_ConfigValue"] | dict[str, "_ConfigValue"] | None
 )
 
 _GLOBAL_AGENTS_DIR: Path = Path.home() / ".omnigent" / "agents"
@@ -741,7 +741,7 @@ _HOST_DAEMON_PROXY_ENV_ALLOWLIST: frozenset[str] = frozenset(
     }
 )
 _HostJsonValue: TypeAlias = (
-    str | int | float | bool | None | list["_HostJsonValue"] | dict[str, "_HostJsonValue"]
+    str | int | float | bool | list["_HostJsonValue"] | dict[str, "_HostJsonValue"] | None
 )
 _HostJsonObject: TypeAlias = dict[str, _HostJsonValue]
 _HostSessionRow: TypeAlias = dict[str, _HostJsonValue]
@@ -4366,8 +4366,6 @@ def server(
         auth_provider=auth_provider,
         host_store=host_store,
         ssh_host_installation_store=ssh_host_installation_store,
-        ssh_tunnel_host="127.0.0.1",
-        ssh_tunnel_port=port,
         account_store=account_store,
         policy_modules=cfg.get("policy_modules"),
         debug_router_modules=config_str_list(cfg.get("debug_router_modules")),

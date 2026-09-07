@@ -47,6 +47,7 @@ from omnigent.host.frames import (
     HostRunnerExitedFrame,
     HostRunnerStatusResultFrame,
     HostSkillInventoryFrame,
+    HostSshProbeResultFrame,
     HostStatResultFrame,
     HostStopRunnerResultFrame,
     HostStoreSecretResultFrame,
@@ -750,6 +751,18 @@ async def _receive_loop(
                         "type": frame.type,
                         "canonical_path": frame.canonical_path,
                         "error": frame.error,
+                    }
+                )
+            continue
+
+        if isinstance(frame, HostSshProbeResultFrame):
+            probe_future = conn.pending_ssh_probes.pop(frame.request_id, None)
+            if probe_future is not None and not probe_future.done():
+                probe_future.set_result(
+                    {
+                        "ok": frame.ok,
+                        "message": frame.message,
+                        "latency_ms": frame.latency_ms,
                     }
                 )
             continue

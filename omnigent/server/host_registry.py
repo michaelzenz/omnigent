@@ -328,6 +328,11 @@ class HostConnection:
     pending_model_options: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict,
     )
+    # In-flight SSH probes forwarded from the settings UI; resolved when the
+    # host sends host.ssh_probe_result. Values carry ok/message/latency_ms.
+    pending_ssh_probes: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
     # Import streams one session per frame, so the tunnel pushes each onto a
     # per-request queue the /imports/local handler drains (vs a single future).
     # Each item is a ("session", dict) or ("done", dict) tuple.

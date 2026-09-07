@@ -66,7 +66,7 @@ def main() -> None:
         engine.dispose()
 
     store = SshHostInstallationStore(args.database_uri)
-    existing = {profile.id: profile for profile in store.profiles()}
+    existing = {profile.id: profile for profile in store.profiles("local")}
     for profile in profiles:
         prior = existing.get(profile.id)
         if prior is not None and prior.alias != profile.alias:
@@ -79,9 +79,9 @@ def main() -> None:
     )
     package_index_url = settings.get("package_index_url")
     store.update_settings(
+        owner="local",
         package_index_url=str(package_index_url) if package_index_url else None,
         npm_registry_url=None,
-        updated_by="manual-config-migration",
     )
 
     backup = args.config.with_name(f"{args.config.name}.ssh-backup-{timestamp}")

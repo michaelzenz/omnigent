@@ -1,4 +1,4 @@
-"""Durable state store for server-managed SSH host installations."""
+"""Durable state store for user-scoped SSH host installations."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import Engine, and_, or_, select, update
+from sqlalchemy import Engine, or_, select, update
 from sqlalchemy.engine import CursorResult
 
 from omnigent.db.db_models import SqlSshHostInstallation, SqlSshSettings, current_workspace_id
@@ -58,20 +58,21 @@ def _entity(row: SqlSshHostInstallation) -> SshHostInstallation:
 
 
 class SshHostInstallationStore:
-    """SQLAlchemy-backed lifecycle state and CAS leases."""
+    """SQLAlchemy-backed lifecycle state and CAS leases, scoped per user."""
 
     def __init__(self, storage_location: str) -> None:
         self._engine: Engine = get_or_create_engine(storage_location)
         self._session = make_managed_session_maker(self._engine, immediate=True)
 
-    def profiles(self) -> list[SshConnectionProfile]:
-        """Return active SSH profiles in creation order."""
+    def profiles(self, owner: str) -> list[SshConnectionProfile]:
+        """Return the owner's active SSH profiles in creation order."""
         with self._session() as session:
             rows = (
                 session.execute(
                     select(SqlSshHostInstallation)
                     .where(
                         SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                        SqlSshHostInstallation.owner == owner,
                         SqlSshHostInstallation.desired_state == "connected",
                     )
                     .order_by(
@@ -92,17 +93,20 @@ class SshHostInstallationStore:
                 for row in rows
             ]
 
-    def get_settings(self) -> SshSettings:
-        """Return workspace SSH settings, creating their stable namespace."""
+    def get_settings(self, owner: str) -> SshSettings:
+        """Return the owner's SSH settings, creating their stable namespace."""
         with self._session() as session:
             workspace_id = current_workspace_id()
-            row = session.get(SqlSshSettings, workspace_id)
+            row = session.get(SqlSshSettings, (workspace_id, owner))
             if row is None:
                 row = SqlSshSettings(
                     workspace_id=workspace_id,
+                    user_id=owner,
                     package_index_url=None,
+                    npm_registry_url=None,
                     remote_namespace=secrets.token_hex(6),
                     updated_at=now_epoch(),
+                    updated_by=owner,
                 )
                 session.add(row)
             return SshSettings(
@@ -114,21 +118,27 @@ class SshHostInstallationStore:
     def update_settings(
         self,
         *,
+        owner: str,
         package_index_url: str | None,
         npm_registry_url: str | None,
-        updated_by: str | None = None,
     ) -> SshSettings:
-        """Persist workspace SSH settings without changing their namespace."""
+        """Persist the owner's SSH settings without changing their namespace."""
         with self._session() as session:
             workspace_id = current_workspace_id()
-            row = session.execute(
-                select(SqlSshSettings)
-                .where(SqlSshSettings.workspace_id == workspace_id)
-                .with_for_update()
-            ).scalar_one_or_none()
+            row = (
+                session.execute(
+                    select(SqlSshSettings).where(
+                        SqlSshSettings.workspace_id == workspace_id,
+                        SqlSshSettings.user_id == owner,
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if row is None:
                 row = SqlSshSettings(
                     workspace_id=workspace_id,
+                    user_id=owner,
                     remote_namespace=secrets.token_hex(6),
                     updated_at=now_epoch(),
                 )
@@ -136,7 +146,7 @@ class SshHostInstallationStore:
             row.package_index_url = package_index_url
             row.npm_registry_url = npm_registry_url
             row.updated_at = now_epoch()
-            row.updated_by = updated_by
+            row.updated_by = owner
             return SshSettings(
                 package_index_url=row.package_index_url,
                 npm_registry_url=row.npm_registry_url,
@@ -150,13 +160,14 @@ class SshHostInstallationStore:
         bundle_version: str,
         owner: str,
     ) -> None:
-        """Create missing rows and detach rows no longer in config."""
+        """Sync one user's connection set without touching other users' rows."""
         now = now_epoch()
         with self._session() as session:
             rows = (
                 session.execute(
                     select(SqlSshHostInstallation).where(
                         SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                        SqlSshHostInstallation.owner == owner,
                     )
                 )
                 .scalars()
@@ -164,7 +175,6 @@ class SshHostInstallationStore:
             )
             existing = {row.connection_id: row for row in rows}
             for connection_id, profile in profiles.items():
-                profile_owner = profile.owner or owner
                 try:
                     profile_created_at = int(
                         datetime.fromisoformat(profile.created_at).timestamp()
@@ -179,7 +189,7 @@ class SshHostInstallationStore:
                             label=profile.label,
                             ssh_alias=profile.alias,
                             host_id=uuid.uuid4().hex,
-                            owner=profile_owner,
+                            owner=owner,
                             desired_state="connected",
                             phase="queued",
                             generation=0,
@@ -192,9 +202,6 @@ class SshHostInstallationStore:
                     )
                 else:
                     changed = False
-                    if row.owner != profile_owner:
-                        row.owner = profile_owner
-                        changed = True
                     if row.label != profile.label:
                         row.label = profile.label
                         changed = True
@@ -224,33 +231,73 @@ class SshHostInstallationStore:
                     row.next_attempt_at = now
                     row.updated_at = now
 
-    def list_candidates(self, *, now: int | None = None) -> list[SshHostInstallation]:
-        """List due rows whose lease is absent or expired."""
-        current = now_epoch() if now is None else now
+    def rows_for_owner(self, owner: str) -> list[SshHostInstallation]:
+        """List every installation row for one user, including detaching rows."""
         with self._session() as session:
-            rows = session.execute(
-                select(SqlSshHostInstallation)
-                .where(
-                    SqlSshHostInstallation.workspace_id == current_workspace_id(),
-                    or_(
-                        SqlSshHostInstallation.desired_state == "connected",
-                        and_(
-                            SqlSshHostInstallation.desired_state == "detached",
-                            SqlSshHostInstallation.phase == "detaching",
-                        ),
-                    ),
-                    or_(
-                        SqlSshHostInstallation.lease_expires_at.is_(None),
-                        SqlSshHostInstallation.lease_expires_at <= current,
-                    ),
-                    or_(
-                        SqlSshHostInstallation.next_attempt_at.is_(None),
-                        SqlSshHostInstallation.next_attempt_at <= current,
-                    ),
+            rows = (
+                session.execute(
+                    select(SqlSshHostInstallation)
+                    .where(
+                        SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                        SqlSshHostInstallation.owner == owner,
+                    )
+                    .order_by(SqlSshHostInstallation.updated_at)
                 )
-                .order_by(SqlSshHostInstallation.updated_at)
-            ).scalars()
+                .scalars()
+                .all()
+            )
             return [_entity(row) for row in rows]
+
+    def requeue_connected_for_owner(self, owner: str) -> bool:
+        """Re-run installation for the owner's connected rows (e.g. registry change)."""
+        now = now_epoch()
+        with self._session() as session:
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(SqlSshHostInstallation)
+                    .where(
+                        SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                        SqlSshHostInstallation.owner == owner,
+                        SqlSshHostInstallation.desired_state == "connected",
+                    )
+                    .values(
+                        phase="queued",
+                        generation=SqlSshHostInstallation.generation + 1,
+                        next_attempt_at=now,
+                        last_error=None,
+                        updated_at=now,
+                    )
+                ),
+            )
+            return result.rowcount > 0
+
+    def requeue_stale_versions(self, owner: str, current_version: str) -> bool:
+        """Queue the owner's rows whose recorded bundle version lagged the server."""
+        now = now_epoch()
+        with self._session() as session:
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(SqlSshHostInstallation)
+                    .where(
+                        SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                        SqlSshHostInstallation.owner == owner,
+                        SqlSshHostInstallation.desired_state == "connected",
+                        SqlSshHostInstallation.bundle_version != current_version,
+                        SqlSshHostInstallation.phase != "ready",
+                    )
+                    .values(
+                        phase="queued",
+                        generation=SqlSshHostInstallation.generation + 1,
+                        bundle_version=current_version,
+                        next_attempt_at=now,
+                        last_error=None,
+                        updated_at=now,
+                    )
+                ),
+            )
+            return result.rowcount > 0
 
     def acquire(
         self,
@@ -371,8 +418,8 @@ class SshHostInstallationStore:
             )
             return result.rowcount == 1
 
-    def retry_now(self, connection_id: str) -> bool:
-        """Clear backoff and queue an immediate retry."""
+    def retry_now(self, connection_id: str, *, owner: str) -> bool:
+        """Clear backoff and queue an immediate retry for one of the owner's rows."""
         now = now_epoch()
         with self._session() as session:
             result = cast(
@@ -382,6 +429,7 @@ class SshHostInstallationStore:
                     .where(
                         SqlSshHostInstallation.workspace_id == current_workspace_id(),
                         SqlSshHostInstallation.connection_id == connection_id,
+                        SqlSshHostInstallation.owner == owner,
                         SqlSshHostInstallation.desired_state == "connected",
                     )
                     .values(
@@ -395,12 +443,37 @@ class SshHostInstallationStore:
             )
             return result.rowcount == 1
 
-    def snapshots(self) -> dict[str, SshHostInstallation]:
-        """Return every installation in the current workspace, keyed by id."""
+    def snapshots(self, owner: str) -> dict[str, SshHostInstallation]:
+        """Return every installation of one user, keyed by connection id."""
         with self._session() as session:
             rows = session.execute(
                 select(SqlSshHostInstallation).where(
                     SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                    SqlSshHostInstallation.owner == owner,
                 )
             ).scalars()
             return {row.connection_id: _entity(row) for row in rows}
+
+    def pause_unfinished_for_owner(self, owner: str, message: str) -> None:
+        """Mark the owner's in-flight rows as paused while their daemon is offline.
+
+        Rows already ``ready`` keep their state: the remote daemons stay up
+        independently, and their online status is tracked via host liveness.
+        """
+        now = now_epoch()
+        with self._session() as session:
+            session.execute(
+                update(SqlSshHostInstallation)
+                .where(
+                    SqlSshHostInstallation.workspace_id == current_workspace_id(),
+                    SqlSshHostInstallation.owner == owner,
+                    SqlSshHostInstallation.desired_state == "connected",
+                    SqlSshHostInstallation.phase.not_in(("ready", "paused_offline")),
+                )
+                .values(
+                    phase="paused_offline",
+                    last_error=message,
+                    next_attempt_at=now,
+                    updated_at=now,
+                )
+            )

@@ -82,6 +82,8 @@ from omnigent.host.frames import (
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
     HostSkillInventoryFrame,
+    HostSshProbeFrame,
+    HostSshProbeResultFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
@@ -1257,7 +1259,7 @@ class HostProcess:
                 self._reap_orphans_once()
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 — a reaper must never die on a stray error
+            except Exception:
                 _logger.debug("orphan reaper sweep failed", exc_info=True)
 
     def _reap_orphans_once(self) -> int:
@@ -2168,7 +2170,7 @@ class HostProcess:
                     runner_id,
                     session_id,
                 )
-            except Exception:  # noqa: BLE001 — must never die unobserved
+            except Exception:
                 _logger.warning(
                     "Failed to stop superseded runner %s for session %s; "
                     "the process may linger until it exits on its own",
@@ -2300,7 +2302,7 @@ class HostProcess:
             try:
                 await ws.send(frame)
                 return
-            except Exception:  # noqa: BLE001 — any send failure parks the report
+            except Exception:
                 _logger.debug(
                     "Could not send runner_exited for %s; queueing for reconnect",
                     runner_id,
@@ -2397,6 +2399,23 @@ class HostProcess:
             type=entry_type,
             canonical_path=canonical,
             git_branch=git_branch,
+        )
+
+    async def _handle_ssh_probe(self, frame: HostSshProbeFrame) -> HostSshProbeResultFrame:
+        """Handle a ``host.ssh_probe`` request from the server.
+
+        Probes the alias from this machine — the same machine the SSH
+        attach executor runs on — so the settings UI's "test connection"
+        reflects what the executor can actually reach.
+        """
+        from omnigent.ssh_probe import SshProbeRequest, probe_ssh
+
+        result = await probe_ssh(SshProbeRequest(alias=frame.alias))
+        return HostSshProbeResultFrame(
+            request_id=frame.request_id,
+            ok=result.ok,
+            message=result.message,
+            latency_ms=result.latency_ms,
         )
 
     async def _handle_import_local(
@@ -3113,7 +3132,7 @@ class HostProcess:
 
         try:
             rows = await codex_launch_catalog()
-        except Exception:  # noqa: BLE001 — no catalog, never a crash
+        except Exception:
             _logger.warning("Codex model catalog unavailable", exc_info=True)
             return None
         if rows is None:
@@ -3137,7 +3156,7 @@ class HostProcess:
         try:
             config = await asyncio.to_thread(resolve_native_claude_config, spec=None)
             rows = await claude_launch_catalog(config)
-        except Exception:  # noqa: BLE001 — no catalog, never a crash
+        except Exception:
             _logger.warning("Claude model catalog unavailable", exc_info=True)
             return None
         if rows is None:
@@ -3663,7 +3682,7 @@ class HostProcess:
         try:
             result = await asyncio.to_thread(calculate_worktree_sizes, repo_path)
             cache.put(repo_path, result)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _logger.warning(
                 "Background worktree size recalc failed for %s", repo_path, exc_info=True
             )
@@ -3816,7 +3835,7 @@ class HostProcess:
                     "Reaped %d orphaned native bridge dir(s) from prior runs",
                     reaped_bridge_dirs,
                 )
-        except Exception:  # noqa: BLE001 — housekeeping must never block registration
+        except Exception:
             _logger.debug("native bridge-dir orphan sweep failed", exc_info=True)
         # Detect wake from system suspend (laptop sleep) and force-drop the
         # then-dead tunnel so the reconnect loop reattaches within seconds
@@ -3879,12 +3898,14 @@ class HostProcess:
                 PollScheduler,
                 ScriptPollPluginsPoller,
             )
+            from omnigent.host.ssh_attach import SshAttachExecutor
 
             self._poll_scheduler = PollScheduler(
                 server_url=self._server_url,
                 host_id=self._identity.host_id,
             )
             self._poll_scheduler.register(ScriptPollPluginsPoller())
+            self._poll_scheduler.register(SshAttachExecutor())
             await self._poll_scheduler.start()
             backoff = _RECONNECT_BASE_S
             while True:
@@ -4355,7 +4376,7 @@ class HostProcess:
                     self._auth_token_factory_resolved = True
             if self._auth_token_factory is not None:
                 return self._auth_token_factory()
-        except Exception:  # noqa: BLE001
+        except Exception:
             _logger.debug("Could not obtain auth token", exc_info=True)
         return None
 
@@ -4681,6 +4702,8 @@ class HostProcess:
             await ws.send(encode_host_frame(await self._handle_runner_status(frame)))
         elif isinstance(frame, HostStatFrame):
             await ws.send(encode_host_frame(self._handle_stat(frame)))
+        elif isinstance(frame, HostSshProbeFrame):
+            await ws.send(encode_host_frame(await self._handle_ssh_probe(frame)))
         elif isinstance(frame, HostListDirFrame):
             await ws.send(encode_host_frame(self._handle_list_dir(frame)))
         elif isinstance(frame, HostCreateDirFrame):
