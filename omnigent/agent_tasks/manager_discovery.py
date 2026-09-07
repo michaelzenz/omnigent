@@ -33,7 +33,7 @@ class ManagerInfo:
     conversation_id: str | None
     host_id: str
     workspace: str
-    harness: str
+    harness: str | None
     role_key: str
     description: str
     title: str
@@ -57,9 +57,11 @@ def list_active_managers(
     when a session is shared — since that is the real load against capacity.
 
     Managers missing any field required to re-create their session (host,
-    workspace, harness, agent profile) are filtered out: the row is
-    self-describing, so an incomplete snapshot is a registration bug, not a
-    state to default around.
+    workspace, agent profile) are filtered out: the row is self-describing,
+    so an incomplete snapshot is a registration bug, not a state to default
+    around. The harness column is NOT required — the engine comes from the
+    bound execution-target bundle; the column is only an explicit override
+    and stays NULL for builtin roles.
 
     The session pointer is allowed to be dead — the identity is durable and
     dispatch-time healing re-creates the session from this same snapshot.
@@ -69,16 +71,14 @@ def list_active_managers(
         if (
             not manager.host_id
             or not manager.workspace
-            or not manager.harness
             or not manager.agent_profile_id
         ):
             _logger.warning(
                 "manager %s has an incomplete execution snapshot "
-                "(host=%r workspace=%r harness=%r agent_profile=%r); skipping",
+                "(host=%r workspace=%r agent_profile=%r); skipping",
                 manager.id,
                 manager.host_id,
                 manager.workspace,
-                manager.harness,
                 manager.agent_profile_id,
             )
             continue
