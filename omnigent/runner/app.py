@@ -11200,6 +11200,21 @@ def create_runner_app(
             return JSONResponse(status_code=200, content=event)
         except NoLiveHarnessError:
             return JSONResponse(status_code=409, content={"error": "no_live_harness"})
+        except httpx.HTTPStatusError as exc:
+            # Surface the harness's own error body — str(exc) is only the
+            # generic "Server error '<status>' for url ..." one-liner, which
+            # hides the actual reason (e.g. no live inner session).
+            harness_status = exc.response.status_code
+            _logger.warning(
+                "Native harness compaction failed for %s: %s %s",
+                session_id,
+                harness_status,
+                exc.response.text[:500] or "<empty>",
+            )
+            return JSONResponse(
+                status_code=harness_status if 400 <= harness_status < 500 else 502,
+                content={"error": "harness_compaction_failed", "detail": exc.response.text},
+            )
         except Exception as exc:  # noqa: BLE001
             await process_manager.release(session_id)
             _logger.warning("Native harness compaction failed for %s", session_id, exc_info=True)
