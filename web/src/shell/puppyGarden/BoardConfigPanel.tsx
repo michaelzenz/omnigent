@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BanIcon, Loader2Icon, RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
+import { BanIcon, BotIcon, Loader2Icon, RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -17,11 +17,13 @@ import {
   type TaskManagerSummary,
   deleteManager,
   dismissQueueBacklog,
+  fetchAgentTasks,
   fetchDispatchStoplist,
   fetchEventBacklog,
   fetchManagers,
   resetBrokerSession,
   setRoleDispatchStopped,
+  spawnManagerNotice,
 } from "@/lib/agentTasksApi";
 
 // The dispatcher's stoplist stores bare role keys ("broker") or
@@ -83,6 +85,27 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
     label: string;
     count: number;
   } | null>(null);
+  // Mirror the server's spawn-manager-notice eligibility (live_tasks = active +
+  // idle with no manager) so the count and the button enablement match what
+  // the endpoint would collect.
+  const { data: unmanagedTasks = [] } = useQuery({
+    queryKey: ["agent-tasks", "unmanaged"],
+    queryFn: async () => {
+      const [active, idle] = await Promise.all([
+        fetchAgentTasks("active"),
+        fetchAgentTasks("idle"),
+      ]);
+      return [...active, ...idle].filter((task) => !task.manager_id);
+    },
+    enabled,
+  });
+  const spawnNotice = useMutation({
+    mutationFn: spawnManagerNotice,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["event-backlog"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "unmanaged"] });
+    },
+  });
   const resetBroker = useMutation({
     mutationFn: resetBrokerSession,
     onSuccess: () => {
@@ -270,6 +293,43 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
               .join(", ")}
           </p>
         ) : null}
+
+        <section className="space-y-2 border-t pt-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Unmanaged tasks</p>
+              <p className="text-xs text-muted-foreground">
+                {unmanagedTasks.length === 0
+                  ? "Every live task has a manager."
+                  : `${unmanagedTasks.length} live task${unmanagedTasks.length === 1 ? "" : "s"} without a manager. One notice lists them all for the broker to assign to new/active manager(s).`}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={disabled || spawnNotice.isPending || unmanagedTasks.length === 0}
+              onClick={() => spawnNotice.mutate()}
+            >
+              {spawnNotice.isPending ? <Loader2Icon className="animate-spin" /> : <BotIcon />}
+              Reassign Unmanaged Tasks
+            </Button>
+          </div>
+          {spawnNotice.isError ? (
+            <p className="text-xs text-destructive">{String(spawnNotice.error)}</p>
+          ) : null}
+          {spawnNotice.data ? (
+            <p className="text-xs text-muted-foreground">
+              {spawnNotice.data.unmanaged_count === 0
+                ? "No unmanaged tasks — nothing sent."
+                : `Broker notice queued for ${spawnNotice.data.unmanaged_count} task${spawnNotice.data.unmanaged_count === 1 ? "" : "s"}.`}
+              {spawnNotice.data.superseded > 0
+                ? ` Replaced ${spawnNotice.data.superseded} pending request${spawnNotice.data.superseded === 1 ? "" : "s"}.`
+                : ""}
+            </p>
+          ) : null}
+        </section>
       </DialogContent>
 
       <Dialog

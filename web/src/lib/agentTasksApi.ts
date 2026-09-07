@@ -6,6 +6,7 @@ export interface AgentTaskSummary {
   description: string | null;
   state: string;
   manager_role_key: string;
+  manager_id: string | null;
   manager_conversation_id: string | null;
   goal?: string;
   created_at?: number;
@@ -518,6 +519,20 @@ export async function rejectAgentTaskPackage(taskId: string): Promise<AgentTaskS
     { method: "POST" },
   );
   return readJsonOrApiError<AgentTaskSummary>(res);
+}
+
+export interface SpawnManagerNoticeResult {
+  unmanaged_count: number;
+  superseded: number;
+  event_id: string | null;
+}
+
+/** Queue one broker notice asking it to spawn manager(s) for unmanaged tasks. */
+export async function spawnManagerNotice(): Promise<SpawnManagerNoticeResult> {
+  const res = await authenticatedFetch("/v1/agent-tasks/spawn-manager-notice", {
+    method: "POST",
+  });
+  return readJsonOrApiError<SpawnManagerNoticeResult>(res);
 }
 
 export async function fetchAgentRoleProfile(role: string): Promise<SecretaryProfile> {
