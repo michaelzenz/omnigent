@@ -1001,21 +1001,6 @@ def _manager_to_response(manager: ManagerInfo) -> dict[str, Any]:
     }
 
 
-def _manager_to_response_from_row(manager, *, task_count: int) -> dict[str, Any]:
-    """Serialize a manager from its durable row (portfolio not loaded)."""
-    return {
-        "id": manager.id,
-        "conversation_id": manager.conversation_id,
-        "title": manager.title or manager.description,
-        "host_id": manager.host_id,
-        "workspace": manager.workspace,
-        "description": manager.description,
-        "role_key": manager.role_key,
-        "task_count": task_count,
-        "capacity": MANAGER_TASK_CAPACITY,
-    }
-
-
 def create_agent_tasks_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
@@ -1658,30 +1643,24 @@ def create_agent_tasks_router(
             app_state=request.app.state,
             user_id=user_id,
         )
-        managers = await asyncio.to_thread(
-            list_active_managers,
-            owner_user_id=owner,
-            manager_store=manager_store,
-            task_store=task_store,
-        )
-        info = next((item for item in managers if item.manager_id == manager.id), None)
-        if info is None:
-            # The manager row exists and its session was created — discovery
-            # filtering (or a transient read) must not fail the creation.
-            # Re-read the durable row and build the response from it.
-            _logger.warning(
-                "created manager %s missing from active-managers listing; "
-                "responding from the durable row",
-                manager.id,
+        row = await asyncio.to_thread(manager_store.get, manager.id)
+        if row is None:
+            raise OmnigentError(
+                "created manager is unavailable",
+                code=ErrorCode.INTERNAL_ERROR,
             )
-            row = await asyncio.to_thread(manager_store.get, manager.id)
-            if row is None:
-                raise OmnigentError(
-                    "created manager is unavailable",
-                    code=ErrorCode.INTERNAL_ERROR,
-                )
-            return _manager_to_response_from_row(row, task_count=0)
-        return _manager_to_response(info)
+        tasks = await asyncio.to_thread(task_store.list_by_manager_id, manager.id)
+        return {
+            "id": manager.id,
+            "conversation_id": manager.conversation_id,
+            "title": manager.title or manager.description,
+            "host_id": manager.host_id,
+            "workspace": manager.workspace,
+            "description": manager.description,
+            "role_key": manager.role_key,
+            "task_count": len(tasks),
+            "capacity": MANAGER_TASK_CAPACITY,
+        }
 
     @router.patch("/agent-tasks/managers/self")
     async def update_manager_self(
