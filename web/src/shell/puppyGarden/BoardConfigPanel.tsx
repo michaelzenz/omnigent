@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcwIcon, Loader2Icon, SettingsIcon, XIcon } from "lucide-react";
+import { BanIcon, Loader2Icon, RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,7 @@ import {
   TASK_BROKER_ROLE,
   type TaskManagerSummary,
   deleteManager,
+  dismissQueueBacklog,
   fetchDispatchStoplist,
   fetchEventBacklog,
   fetchManagers,
@@ -76,6 +77,12 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
     refetchInterval: enabled ? 10_000 : false,
   });
   const [managerPendingDelete, setManagerPendingDelete] = useState<TaskManagerSummary | null>(null);
+  const [dismissTarget, setDismissTarget] = useState<{
+    role: string;
+    scopeId: string | null;
+    label: string;
+    count: number;
+  } | null>(null);
   const resetBroker = useMutation({
     mutationFn: resetBrokerSession,
     onSuccess: () => {
@@ -98,6 +105,14 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
       await queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
     },
     onSettled: () => setManagerPendingDelete(null),
+  });
+  const dismissBacklogMutation = useMutation({
+    mutationFn: ({ role, scopeId }: { role: string; scopeId: string | null }) =>
+      dismissQueueBacklog(role, scopeId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["event-backlog"] });
+    },
+    onSettled: () => setDismissTarget(null),
   });
   const mutation = useMutation({
     mutationFn: ({
@@ -192,6 +207,18 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
                     </span>
                   </span>
                   <span className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Dismiss all waiting events for ${label}`}
+                      title="Dismiss all waiting events"
+                      disabled={disabled || dismissBacklogMutation.isPending || count === 0}
+                      onClick={() => setDismissTarget({ role, scopeId, label, count })}
+                    >
+                      <BanIcon className="size-3.5 text-destructive" />
+                      <span className="sr-only">Dismiss all waiting events</span>
+                    </Button>
                     {manager ? (
                       <Button
                         type="button"
@@ -244,6 +271,60 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
           </p>
         ) : null}
       </DialogContent>
+
+      <Dialog
+        open={dismissTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) setDismissTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">
+              Dismiss {dismissTarget?.count ?? 0} waiting event
+              {(dismissTarget?.count ?? 0) === 1 ? "" : "s"} for {dismissTarget?.label}?
+            </DialogTitle>
+            <DialogDescription>
+              {dismissTarget?.role === TASK_BROKER_ROLE
+                ? "All events waiting on the broker (awaiting grouping + pending triage) are marked dismissed. Queued broker notices are cancelled; in-flight notices finish naturally. This cannot be undone."
+                : "All routed events addressed to this manager are marked dismissed, and its queued notices are cancelled. This cannot be undone."}
+            </DialogDescription>
+          </DialogHeader>
+          {dismissBacklogMutation.isError ? (
+            <p className="text-sm text-destructive">{String(dismissBacklogMutation.error)}</p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={dismissBacklogMutation.isPending}
+              onClick={() => setDismissTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={dismissBacklogMutation.isPending}
+              onClick={() => {
+                if (dismissTarget) {
+                  dismissBacklogMutation.mutate({
+                    role: dismissTarget.role,
+                    scopeId: dismissTarget.scopeId,
+                  });
+                }
+              }}
+            >
+              {dismissBacklogMutation.isPending ? (
+                <Loader2Icon className="mr-2 size-4 animate-spin" />
+              ) : (
+                <BanIcon className="mr-2 size-4" />
+              )}
+              Dismiss all
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={managerPendingDelete !== null}

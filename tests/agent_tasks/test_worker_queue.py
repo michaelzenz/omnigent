@@ -24,6 +24,7 @@ from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFA
 from omnigent.db.utils import generate_agent_id, now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, Worker
 from omnigent.entities.task_role_profile import TaskRoleProfile
+from omnigent.errors import OmnigentError
 from omnigent.server.routes.agent_queues import create_agent_queues_router
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -721,3 +722,72 @@ def test_dispatch_stoplist_scope_entry(db_uri: str) -> None:
     )
     assert cleared.status_code == 200
     assert client.get("/v1/agent-queues/dispatch-stoplist").json()["data"] == []
+
+
+def test_dismiss_backlog_broker_and_manager_scope(db_uri: str) -> None:
+    """POST dismiss-backlog dismisses a queue's waiting events and cancels its queued notices."""
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    for index, state in enumerate(["awaiting_grouping", "pending_triage"]):
+        event_store.create_event(
+            _uid(f"db-broker-{index}"),
+            "build.finished",
+            f"Broker intake {index}",
+            state=state,
+        )
+    manager_a = _uid("db-mgr-a")
+    manager_b = _uid("db-mgr-b")
+    for index, manager_id in enumerate([manager_a, manager_a, manager_b]):
+        event_store.create_event(
+            _uid(f"db-routed-{index}"),
+            "build.finished",
+            f"Routed {index}",
+            state="routed",
+            manager_id=manager_id,
+        )
+    event_store.create_event(
+        _uid("db-reconciled"),
+        "build.finished",
+        "Already settled",
+        state="reconciled",
+    )
+
+    queue_store = SqlAlchemyAgentQueueStore(db_uri)
+    broker_key = AgentQueueKey(role="broker", owner_user_id="owner-dbx")
+    queue_store.enqueue(_uid("db-broker-item"), broker_key, "notice", payload="x")
+    manager_key = AgentQueueKey(role="manager", owner_user_id="owner-dbx", scope_id=manager_a)
+    queue_store.enqueue(_uid("db-manager-item"), manager_key, "notice", payload="x")
+
+    app = FastAPI()
+    app.include_router(
+        create_agent_queues_router(queue_store, task_event_store=event_store),
+        prefix="/v1",
+    )
+    client = TestClient(app)
+
+    resp = client.post("/v1/agent-queues/dismiss-backlog", json={"role": "broker"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"dismissed": 2, "cancelled_items": 1}
+    assert event_store.get_event(_uid("db-broker-0")).state == "dismissed"
+    assert event_store.get_event(_uid("db-broker-1")).state == "dismissed"
+    assert queue_store.list_items(broker_key, state="queued") == []
+    # Routed events and the reconciled guard are untouched by the broker pass.
+    assert event_store.get_event(_uid("db-routed-0")).state == "routed"
+    assert event_store.get_event(_uid("db-reconciled")).state == "reconciled"
+
+    resp = client.post(
+        "/v1/agent-queues/dismiss-backlog",
+        json={"role": "manager", "scope_id": manager_a},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"dismissed": 2, "cancelled_items": 1}
+    assert event_store.get_event(_uid("db-routed-0")).state == "dismissed"
+    assert event_store.get_event(_uid("db-routed-1")).state == "dismissed"
+    # The sibling manager's events and queue are untouched.
+    assert event_store.get_event(_uid("db-routed-2")).state == "routed"
+    assert queue_store.list_items(manager_key, state="queued") == []
+
+    # Manager dismiss requires a scope.
+    with pytest.raises(OmnigentError):
+        client.post("/v1/agent-queues/dismiss-backlog", json={"role": "manager"})
