@@ -141,7 +141,7 @@ def _format_session_batch_notice(events: list) -> str:
         return (
             f"- {event_type}: Session '{session_title}' finished {count} turns since last check\n"
             f"  Session ID: {session_id}\n"
-            f"  Read the session transcript to see what was done. "
+            f"  Read the recent session transcript to see what was done. "
             f"Reconcile into task items if relevant."
         )
     if event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE:
@@ -213,7 +213,7 @@ def _format_turn_finished_notice(event) -> str:
     return (
         f"- {event.event_type}: Session '{session_title}' finished a turn\n"
         f"  Session ID: {session_id}\n"
-        f"  Read the session transcript to see what was done. "
+        f"  Read the recent session transcript to see what was done. "
         f"Reconcile into task items if relevant."
     )
 
