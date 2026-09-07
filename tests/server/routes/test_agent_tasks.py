@@ -1053,3 +1053,59 @@ async def test_create_and_delete_task_asset(client: httpx.AsyncClient) -> None:
     # Deleting a missing asset is a 404.
     missing = await client.delete(f"/v1/agent-tasks/{task_id}/assets/{asset_id}")
     assert missing.status_code == 404
+
+
+async def test_delete_manager_cleans_up_session_events_and_tasks(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    manager_agent_id: str,
+) -> None:
+    """DELETE manager removes its row + session and unwinds its pending work."""
+    manager_id = _register_manager(
+        db_uri,
+        conversation_id=_uid("delete-manager"),
+        agent_id=manager_agent_id,
+    )
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    event_store.create_event(
+        _uid("delete-manager-routed"),
+        "build.finished",
+        "Routed to the doomed manager",
+        state="routed",
+        manager_id=manager_id,
+    )
+    task_store = SqlAlchemyTaskStore(db_uri)
+    task = task_store.create(
+        _uid("delete-manager-task"),
+        "Doomed manager task",
+        "bound to the deleted manager",
+        owner_user_id="__anonymous__",
+        manager_id=manager_id,
+    )
+    from omnigent.entities.agent_queue import AgentQueueKey
+    from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
+
+    queue_store = SqlAlchemyAgentQueueStore(db_uri)
+    queue_key = AgentQueueKey(role="manager", owner_user_id="__anonymous__", scope_id=manager_id)
+    queue_store.enqueue(_uid("delete-manager-item"), queue_key, "notice")
+
+    resp = await client.delete(f"/v1/agent-tasks/managers/{manager_id}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted"] is True
+
+    # Row and session are gone.
+    assert SqlAlchemyManagerStore(db_uri).get(manager_id) is None
+    assert SqlAlchemyConversationStore(db_uri).get_conversation(manager_id) is None
+    # Routed events return to the broker's intake.
+    routed = event_store.list_events(state="awaiting_grouping")
+    assert any(event.id == _uid("delete-manager-routed") for event in routed)
+    # The task survives but is detached.
+    updated_task = task_store.get(task.id)
+    assert updated_task is not None
+    assert updated_task.manager_id is None
+    # Queued work for the dead queue is cancelled.
+    assert queue_store.list_items(queue_key, state="queued") == []
+
+    # Deleting again is a 404.
+    again = await client.delete(f"/v1/agent-tasks/managers/{manager_id}")
+    assert again.status_code == 404

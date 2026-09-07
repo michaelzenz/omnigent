@@ -1658,6 +1658,70 @@ def create_agent_tasks_router(
             )
         return _manager_to_response(info)
 
+    @router.delete("/agent-tasks/managers/{manager_id}")
+    async def delete_manager(request: Request, manager_id: str) -> dict[str, Any]:
+        """Delete a manager: its session and its dispatch queue's pending work.
+
+        Cancels the manager queue's queued items, releases its routed events
+        back to ``awaiting_grouping`` (the broker re-routes them), detaches
+        its tasks, deletes the manager session conversation, and removes the
+        durable manager row. In-flight queue items are left to finish
+        naturally.
+        """
+        user_id = require_user(request, auth_provider)
+        owner = _effective_user_id(user_id)
+        if manager_store is None:
+            raise OmnigentError(
+                "manager management is not configured on this server",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        manager = await asyncio.to_thread(manager_store.get, manager_id)
+        if manager is None or (manager.owner_user_id or "__anonymous__") != owner:
+            raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
+
+        # Cancel queued queue items — with the row gone nothing would ever
+        # deliver them. In-flight items finish naturally.
+        if agent_queue_store is not None:
+            manager_key = AgentQueueKey(
+                role="manager",
+                owner_user_id=owner,
+                scope_id=manager.id,
+            )
+            for state in ("queued", "dispatch_failed", "interrupted"):
+                for item in await asyncio.to_thread(
+                    agent_queue_store.list_items,
+                    manager_key,
+                    state=state,
+                ):
+                    await asyncio.to_thread(
+                        agent_queue_store.cancel_item,
+                        item.id,
+                        now=now_epoch(),
+                    )
+
+        # Release routed events back to awaiting_grouping so the broker
+        # re-routes them to a live manager.
+        for event in await asyncio.to_thread(task_event_store.list_events, state="routed"):
+            if event.manager_id != manager.id:
+                continue
+            await asyncio.to_thread(
+                task_event_store.update_event,
+                event.id,
+                state="awaiting_grouping",
+            )
+
+        # Detach tasks so their next events do not route into the deleted
+        # manager's queue.
+        for task in await asyncio.to_thread(task_store.list_by_manager_id, manager.id):
+            await asyncio.to_thread(task_store.update, task.id, manager_id=None)
+
+        if conversation_store is not None and manager.conversation_id is not None:
+            await conversation_store.delete_conversation(manager.conversation_id)
+        deleted = await asyncio.to_thread(manager_store.delete, manager.id)
+        if not deleted:
+            raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
+        return {"id": manager.id, "object": "agent.manager", "deleted": True}
+
     @router.patch("/agent-tasks/managers/self")
     async def update_manager_self(
         request: Request,
