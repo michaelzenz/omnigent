@@ -409,7 +409,7 @@ async def test_tasks_sharing_one_manager_share_one_queue(manager_setup: dict) ->
 
 def test_defaults_are_configurable_constants() -> None:
     assert DEFAULT_PACKAGER_POLL_INTERVAL_S == 5.0
-    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 180
+    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 30
 
 
 @pytest.mark.asyncio

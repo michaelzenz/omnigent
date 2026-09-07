@@ -400,7 +400,7 @@ async def test_no_live_broker_holds_events(broker_setup: dict) -> None:
 
 def test_defaults_are_configurable_constants() -> None:
     assert DEFAULT_PACKAGER_POLL_INTERVAL_S == 5.0
-    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 180
+    assert DEFAULT_PACKAGER_AGE_THRESHOLD_S == 30
 
 
 @pytest.mark.asyncio

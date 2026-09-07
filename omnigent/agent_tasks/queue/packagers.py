@@ -84,7 +84,7 @@ DEFAULT_PACKAGER_POLL_INTERVAL_S = 5.0
 
 # Minimum age before a partial batch is flushed to a ready-but-not-full agent.
 # Unified with session event cooldown — all events wait the same window.
-DEFAULT_PACKAGER_AGE_THRESHOLD_S = 180
+DEFAULT_PACKAGER_AGE_THRESHOLD_S = 30
 
 # ── Base class ───────────────────────────────────────
 
