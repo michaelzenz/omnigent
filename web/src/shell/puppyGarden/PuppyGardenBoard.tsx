@@ -150,6 +150,7 @@ export function PuppyGardenBoard() {
                 priority={task.priority}
                 state={task.state}
                 managerRoleKey={task.manager_role_key}
+                managerId={task.manager_id}
                 isLast={index === allTasks.length - 1}
                 onMovedToEnd={markExplicitMove}
               />

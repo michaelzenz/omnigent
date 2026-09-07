@@ -114,6 +114,7 @@ export interface TaskDashboard {
     title: string;
     description: string | null;
     state: string;
+    manager_id: string | null;
     manager_conversation_id: string | null;
     goal?: string;
     created_at?: number;

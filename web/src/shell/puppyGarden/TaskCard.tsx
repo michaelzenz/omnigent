@@ -51,6 +51,8 @@ interface TaskCardProps {
   priority?: number;
   state: string;
   managerRoleKey: string;
+  /** Durable manager owning this task, when the board list knows it. */
+  managerId?: string | null;
   isLast?: boolean;
   onMovedToEnd?: (taskId: string) => () => void;
 }
@@ -153,6 +155,7 @@ export function TaskCard({
   priority = 2,
   state,
   managerRoleKey,
+  managerId,
   isLast = false,
   onMovedToEnd,
 }: TaskCardProps) {
@@ -170,6 +173,10 @@ export function TaskCard({
   const effectiveDescription = task?.description ?? description;
   const effectiveCreatedAt = task?.created_at ?? createdAt;
   const effectivePriority = task?.priority ?? priority;
+  // The dashboard is fresher than the board list; fall back to the prop only
+  // before it loads. Pending packages are manager-less by design — not "unmanaged".
+  const effectiveManagerId = task ? (task.manager_id ?? null) : (managerId ?? null);
+  const unmanaged = !effectiveManagerId && !isPending;
   const packageActionPending = acceptPackage.isPending || rejectPackage.isPending;
   const [managerHoldPending, setManagerHoldPending] = useState(false);
   const [managerHoldError, setManagerHoldError] = useState<string | null>(null);
@@ -199,6 +206,15 @@ export function TaskCard({
               >
                 {state === "agent-resolved" ? "resolved" : state}
               </Badge>
+              {unmanaged ? (
+                <Badge
+                  variant="outline"
+                  title="No manager owns this task — use the board config to spawn manager(s)"
+                  className="shrink-0 border-[1.5px] border-[rgba(239,68,68,0.6)] bg-[rgba(239,68,68,0.07)] text-[#b91c1c] dark:bg-[rgba(239,68,68,0.08)] dark:text-[#f87171]"
+                >
+                  Unmanaged
+                </Badge>
+              ) : null}
               {dashboard?.derived.has_running_workers ? (
                 <Loader2Icon
                   className="size-4 animate-spin text-muted-foreground"

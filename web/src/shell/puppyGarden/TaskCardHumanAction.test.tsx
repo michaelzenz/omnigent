@@ -35,6 +35,7 @@ function dashboardWith(overrides: Partial<TaskDashboard>): TaskDashboard {
       title: "Ship it",
       description: null,
       state: "active",
+      manager_id: null,
       manager_conversation_id: null,
     },
     derived: { has_running_workers: false },
