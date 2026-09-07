@@ -39,7 +39,7 @@ from omnigent.agent_tasks.broker_session import (
     ensure_role_profile,
     get_or_create_role_profile,
 )
-from omnigent.agent_tasks.constants import MANAGER_TASK_CAPACITY
+from omnigent.agent_tasks.constants import MANAGER_TASK_CAPACITY, TAG_ROUTER_ENABLED
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
@@ -814,7 +814,6 @@ def _require_session_supported_role(role: str) -> None:
 
 def _role_session_labels(role: str, harness: str) -> dict[str, str]:
     """Build the labels dict for a role session (role + native presentation)."""
-    from omnigent.agent_tasks.constants import resolve_task_harness
     from omnigent.agent_tasks.session_labels import (
         BROKER_ROLE_VALUE,
         ROLE_LABEL,
@@ -828,7 +827,7 @@ def _role_session_labels(role: str, harness: str) -> dict[str, str]:
         labels = {ROLE_LABEL: SECRETARY_ROLE_VALUE}
     else:
         labels = {}
-    native_agent = native_coding_agent_for_harness(resolve_task_harness(harness))
+    native_agent = native_coding_agent_for_harness(harness)
     if native_agent is not None:
         labels.update(native_agent.presentation_labels)
     return labels
@@ -1629,7 +1628,6 @@ def create_agent_tasks_router(
         params = resolve_bootstrap_params(
             host_id=None,
             workspace=None,
-            harness=None,
             model=None,
             role_profile=profile,
         )
@@ -1835,7 +1833,9 @@ def create_agent_tasks_router(
         candidates = _filter_tasks_for_user(await asyncio.to_thread(task_store.list), user_id)
         matches = rank_tasks_by_text(candidates, q, limit=limit) if q.strip() else []
         tag_matches: list = []
-        if event_id:
+        if event_id and TAG_ROUTER_ENABLED:
+            # Tag matching is part of the deprecated scorer; suppressed
+            # unless the router flag is restored.
             events = await asyncio.to_thread(
                 load_events, [event_id], task_event_store=task_event_store
             )
@@ -3532,14 +3532,6 @@ def create_agent_tasks_router(
             """Bind a watcher-discovered external session to a task."""
             user_id = require_user(request, auth_provider)
             task = await _get_task_or_404(body.task_id, user_id)
-            profile = await _manager_role_profile_for_task(task, user_id)
-            params = resolve_bootstrap_params(
-                host_id=body.host_id,
-                workspace=body.workspace,
-                harness=body.harness,
-                model=body.model,
-                role_profile=profile,
-            )
             proposal = await asyncio.to_thread(
                 find_open_external_adoption_proposal,
                 task_event_store,
@@ -3552,7 +3544,6 @@ def create_agent_tasks_router(
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
-                params=params,
                 proposal_event=proposal,
                 session_creator=session_creator,
                 app_state=request.app.state,

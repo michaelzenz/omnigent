@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
@@ -50,7 +51,11 @@ from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
 )
-from omnigent.agent_tasks.notices import _format_broker_stall_notice, _format_manager_notice
+from omnigent.agent_tasks.notices import (
+    _format_broker_stall_notice,
+    _format_manager_notice,
+    _format_task_roster,
+)
 from omnigent.db.utils import now_epoch
 from omnigent.entities import AgentQueueItem, AgentQueueKey, TaskEvent
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -97,12 +102,9 @@ class _PendingBatch:
     # these at their defaults.
     clusters: list[AmbiguousEventCluster] | None = None
     is_orphan: bool = False
-    # Manager-only: task_id → title for the batch's events, so the notice can
-    # label each event with its task when one manager spans several tasks.
-    task_titles: dict[str, str] | None = None
-    # Manager-only: task_id → state for every task on this manager session,
-    # for the roster footer (not just the batch's tasks).
-    task_states: dict[str, str] | None = None
+    # Manager-only: (task_id, title, state) in rank order — rendered into
+    # the roster text injected as per-turn instructions at dispatch.
+    task_roster: list[tuple[str, str, str]] | None = None
 
     @property
     def oldest_age_s(self) -> float:
@@ -460,12 +462,6 @@ class ManagerPackager(Packager):
         events = self._task_event_store.list_events(state="routed")
         if not events:
             return []
-        title_by_task: dict[str, str] = {}
-        for task_id in {event.task_id for event in events if event.task_id is not None}:
-            task = self._task_store.get(task_id)
-            if task is None:
-                continue
-            title_by_task[task_id] = task.title
         grouped: dict[tuple[str, str], list[TaskEvent]] = {}
         for event in events:
             if event.manager_id is None:
@@ -488,14 +484,12 @@ class ManagerPackager(Packager):
             unclaimed = [e for e in task_events if e.id not in claimed]
             if not unclaimed:
                 continue
-            task_titles = {
-                e.task_id: title_by_task[e.task_id]
-                for e in unclaimed
-                if e.task_id is not None and e.task_id in title_by_task
-            }
-            task_states = {
-                task.id: task.state for task in self._task_store.list_by_manager_id(manager_id)
-            }
+            # Rank-ordered portfolio roster (queue_rank desc, archived
+            # excluded) — the manager's candidate menu for unassigned events.
+            task_roster = [
+                (task.id, task.title, task.state)
+                for task in self._task_store.list_by_manager_id(manager_id)
+            ]
             # Split session events (cooldown + per-session grouping) from
             # other routed events (existing single-batch behavior).
             session_events: list[TaskEvent] = []
@@ -513,8 +507,7 @@ class ManagerPackager(Packager):
                     _PendingBatch(
                         key=key,
                         events=other_events,
-                        task_titles=task_titles,
-                        task_states=task_states,
+                        task_roster=task_roster,
                     )
                 )
             # Session events: one batch per source_key (per session), so all
@@ -528,8 +521,7 @@ class ManagerPackager(Packager):
                     _PendingBatch(
                         key=key,
                         events=session_evts,
-                        task_titles=task_titles,
-                        task_states=task_states,
+                        task_roster=task_roster,
                     )
                 )
         return batches
@@ -575,18 +567,46 @@ class ManagerPackager(Packager):
     async def _flush(self, batch: _PendingBatch) -> AgentQueueItem | None:
         if batch.key.scope_id is None:
             return None
-        notice = _format_manager_notice(
-            batch.events,
-            task_titles=batch.task_titles,
-            task_states=batch.task_states,
-        )
+        events_text = _format_manager_notice(batch.events)
+        roster_text = _format_task_roster(batch.task_roster or [])
+        # JSON envelope: the handler splits delivery — events as the user
+        # message, roster as per-turn instructions (system prompt).
+        payload = build_notice_payload(events_text=events_text, roster_text=roster_text)
         return self._store.enqueue(
             uuid.uuid4().hex,
             batch.key,
             "notice",
             source_ids=[event.id for event in batch.events],
-            payload=notice,
+            payload=payload,
         )
+
+
+def parse_notice_payload(payload: str | None) -> tuple[str, str | None]:
+    """Split a manager notice payload into ``(events_text, roster_text)``.
+
+    New payloads are JSON envelopes ``{"events", "roster"}``. Legacy
+    plain-text payloads (pre-envelope, in-flight at deploy time) are
+    treated as events-only with no roster.
+    """
+    if not payload or not payload.strip():
+        return "", None
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return payload, None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("events"), str):
+        return payload, None
+    roster = parsed.get("roster")
+    return parsed["events"], roster if isinstance(roster, str) and roster.strip() else None
+
+
+def build_notice_payload(
+    *,
+    events_text: str,
+    roster_text: str | None,
+) -> str:
+    """Render the manager notice queue payload as the dispatch envelope."""
+    return json.dumps({"events": events_text, "roster": roster_text})
 
 
 # ── Status reader interface ─────────────────────────

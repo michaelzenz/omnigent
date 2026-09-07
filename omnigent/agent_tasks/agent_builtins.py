@@ -18,26 +18,26 @@ TASK_MANAGER_ROLE = "manager"
 
 @dataclass(frozen=True)
 class TaskRoleDefaults:
-    """Non-prompt defaults used while creating a role binding."""
+    """Non-prompt defaults used while creating a role binding.
 
-    harness: str
+    Engine comes from the bound execution-target bundle; roles pin only
+    the model (bundles declare no executor.model) and a description.
+    """
+
     model: str
     description: str | None = None
 
 
 TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
     TASK_BROKER_ROLE: TaskRoleDefaults(
-        harness="openai-agents",
         model="databricks-glm-5-2",
         description="Triages incoming events and routes work to tasks.",
     ),
     TASK_SECRETARY_ROLE: TaskRoleDefaults(
-        harness="openai-agents",
         model="databricks-glm-5-2",
         description="Helps the user steer PuppyGarden.",
     ),
     MANAGER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
-        harness="openai-agents",
         model="databricks-glm-5-2",
         description="Owns a task, plans work, and supervises Workers.",
     ),

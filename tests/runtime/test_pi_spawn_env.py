@@ -94,6 +94,37 @@ def test_builtin_onih_pi_does_not_pin_a_default_model() -> None:
     assert spec.executor.model is None
 
 
+def test_builtin_onih_puppygarden_maps_pi_executor_config(tmp_path: Path) -> None:
+    """
+    The onih-puppygarden bundle (broker/manager restricted profile) runs
+    the pi harness with a rolling context window. Its stringified
+    executor booleans map to the ``HARNESS_PI_*`` env vars the harness
+    wrap reads.
+
+    Regression guard: the spec parser stringifies scalar executor config
+    values, so ``native_tools: false`` arrives as ``"False"`` — the
+    stringified-boolean branch in ``_build_pi_spawn_env`` must handle it.
+    """
+    spec = load(Path("omnigent/resources/examples/onih-puppygarden"))
+
+    assert spec.executor.harness_kind == "pi"
+    assert "puppygarden_api" in (spec.allowed_builtin_tools or [])
+    assert "*__*" not in (spec.allowed_builtin_tools or [])
+    assert spec.skills_filter == "none"
+    assert spec.history_window_turns == 5
+
+    env = _build_pi_spawn_env(spec, workdir=None)
+
+    assert env["HARNESS_PI_PERSISTENT_SESSION"] == "1"
+    assert env["HARNESS_PI_CANONICAL_REBUILD"] == "1"
+    assert env["HARNESS_PI_ISOLATED_RESOURCES"] == "1"
+    assert env["HARNESS_PI_NATIVE_TOOLS"] == "0"
+    assert env["HARNESS_PI_NATIVE_SKILLS"] == "0"
+    assert env["HARNESS_PI_SYSTEM_PROMPT_MODE"] == "replace"
+    assert env["HARNESS_PI_SKILLS_FILTER"] == '"none"'
+    assert env["HARNESS_PI_HISTORY_WINDOW_TURNS"] == "5"
+
+
 def test_server_proxy_configures_pi_without_remote_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -291,3 +322,29 @@ def test_no_ucode_pi_entry_leaves_model_to_executor_default(
     assert env["HARNESS_PI_DATABRICKS_PROFILE"] == "oss"
     # No producer model — the executor's profile-path default applies.
     assert "HARNESS_PI_MODEL" not in env
+
+
+def test_history_window_absent_by_default_and_off_by_default() -> None:
+    """No ``history_window_turns`` in the spec → no window env var.
+
+    Ordinary Pi agents keep full history; only bundles that opt in
+    (onih-puppygarden) carry the env.
+    """
+    spec = load(Path("omnigent/resources/examples/onih-pi"))
+    assert spec.history_window_turns is None
+
+    env = _build_pi_spawn_env(spec, workdir=None)
+    assert "HARNESS_PI_HISTORY_WINDOW_TURNS" not in env
+
+
+def test_history_window_env_maps_to_launch_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``HARNESS_PI_HISTORY_WINDOW_TURNS`` reaches PiLaunchOptions."""
+    from omnigent.inner.pi_harness import _build_pi_executor
+
+    monkeypatch.setenv("HARNESS_PI_HISTORY_WINDOW_TURNS", "3")
+    executor = _build_pi_executor()
+    assert executor._launch_options.history_window_turns == 3
+
+    monkeypatch.delenv("HARNESS_PI_HISTORY_WINDOW_TURNS")
+    executor = _build_pi_executor()
+    assert executor._launch_options.history_window_turns == 0

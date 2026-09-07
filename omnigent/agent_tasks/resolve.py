@@ -27,6 +27,18 @@ _DISMISSABLE_STATES = frozenset(
         "routed",
     }
 )
+# States where a dismiss is a no-op: the event already landed somewhere
+# (reconciled into a task item, acked, fanned out) or settled terminally.
+# Managers are told to ALWAYS dismiss leftover events after triage, so an
+# already-settled event must be left untouched rather than rejected.
+_DISMISS_NOOP_STATES = frozenset(
+    {
+        "reconciled",
+        "dismissed",
+        "failed",
+        "broadcast",
+    }
+)
 
 
 async def dismiss_task_event(
@@ -34,13 +46,20 @@ async def dismiss_task_event(
     event: TaskEvent,
     task_event_store: TaskEventStore,
 ) -> TaskEvent:
-    """Mark an event dismissed without routing it to a manager."""
-    if event.state not in _DISMISSABLE_STATES:
-        raise OmnigentError(
-            f"Cannot dismiss event in state {event.state!r}",
-            code=ErrorCode.CONFLICT,
-        )
-    updated = task_event_store.update_event(event.id, state="dismissed")
+    """Mark an event dismissed without routing it to a manager.
+
+    Idempotent: the event's CURRENT state is re-read from the store before
+    dismissing — an event already in a settled state (reconciled, acked,
+    dismissed, failed, broadcast) is returned unchanged, even when the
+    caller holds a stale snapshot. Dismiss only applies to events still
+    awaiting triage.
+    """
+    current = task_event_store.get_event(event.id)
+    if current is None:
+        raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
+    if current.state in _DISMISS_NOOP_STATES or current.state not in _DISMISSABLE_STATES:
+        return current
+    updated = task_event_store.update_event(current.id, state="dismissed")
     if updated is None:
         raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
     return updated

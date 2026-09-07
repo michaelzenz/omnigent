@@ -1610,6 +1610,7 @@ def create_app(
                     app_state=app_inst.state,
                     manager_store=manager_store,
                     session_creator=_session_creator,
+                    prompt_profile_store=prompt_profile_store,
                 )
             worker_handler: WorkerDispatchHandler | None = None
             if task_store is not None and task_item_store is not None and worker_store is not None:

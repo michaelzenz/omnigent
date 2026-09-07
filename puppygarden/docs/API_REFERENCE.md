@@ -195,7 +195,10 @@ target asynchronously; successful initialization records the target system's
 ## Task agent roles
 
 `{role}` is a PuppyGarden role slug. Broker, secretary, and manager roles always
-run on OmniHarness and reference hidden PromptProfile manuals. Custom manager
+run on OmniHarness and reference hidden PromptProfile manuals. Broker and manager
+roles run on the Pi engine via the restricted read-only `onih-puppygarden`
+execution target; secretary uses the general-purpose `onih-openai-agents` target
+on the openai-agents SDK harness. Custom manager
 roles are created through `roles/manager`; the seeded default manager cannot be
 deleted. Worker configuration belongs to Worker Providers, not roles.
 

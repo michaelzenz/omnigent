@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 
+from omnigent.agent_tasks.constants import MANAGER_CANDIDATE_INSPECT_LIMIT, MANAGER_ROSTER_MAX_TOKENS
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
@@ -26,20 +27,51 @@ def _is_session_event(event_type: str) -> bool:
     return event_type.startswith("session.") or event_type == EXTERNAL_SESSION_UPDATED_EVENT_TYPE
 
 
-def _format_manager_notice(
-    events: list,
-    task_titles: dict | None = None,
-    task_states: dict | None = None,
-) -> str:
-    """Format the notice the manager packager hands the dispatcher.
+def _format_task_roster(
+    roster: list[tuple[str, str, str]],
+    *,
+    max_tokens: int = MANAGER_ROSTER_MAX_TOKENS,
+) -> str | None:
+    """Render the rank-ordered task roster, capped at a token budget.
+
+    ``roster`` is ``(task_id, title, state)`` in rank order (the board's
+    ordering). Lines beyond the ~4-chars/token budget collapse into a
+    count plus a pointer to the listing API so the manager can fetch the
+    rest. Returns ``None`` for an empty roster.
+    """
+    if not roster:
+        return None
+    budget_chars = max(0, max_tokens * 4)
+    lines: list[str] = []
+    used = 0
+    kept = 0
+    for task_id, title, state in roster:
+        line = f"{task_id} — {title} ({state})"
+        cost = len(line) + 1
+        if used + cost > budget_chars and lines:
+            break
+        lines.append(line)
+        used += cost
+        kept += 1
+    header = f"[Task roster — ranked, inspect up to {MANAGER_CANDIDATE_INSPECT_LIMIT} via POST /v1/agent-tasks/batch]"
+    remaining = len(roster) - kept
+    if remaining > 0:
+        lines.append(
+            f"… and {remaining} more ranked lower — list only if necessary via "
+            "GET /v1/agent-tasks?manager_conversation_id=<your session id>"
+        )
+    return "\n".join([header, *lines])
+
+
+def _format_manager_notice(events: list) -> str:
+    """Format the EVENTS text of the manager notice (the user message).
 
     One notice per manager session per dispatch — possibly spanning several
     tasks when tasks share a manager — listing every routed event the manager
-    has not yet reconciled. Events without a task are explicitly manager-routed
-    so the manager can select or create their task. Session events for the same
-    session are summarized as a single entry.
+    has not yet reconciled. The task ROSTER is not part of this text: it is
+    delivered separately as per-turn instructions (see the manager dispatch
+    handler) so it lands in the system prompt, not in chat history.
     """
-    titles = task_titles or {}
     task_ids: list[str] = []
     for event in events:
         task_id = getattr(event, "task_id", None)
@@ -47,8 +79,7 @@ def _format_manager_notice(
             task_ids.append(task_id)
 
     def _task_scope(task_id: str | None) -> str:
-        title = titles.get(task_id or "")
-        return f"{title!r} ({task_id})" if title else (task_id or "?")
+        return task_id or "?"
 
     unassigned_count = sum(1 for event in events if getattr(event, "task_id", None) is None)
     if len(task_ids) == 1 and not unassigned_count:
@@ -57,7 +88,7 @@ def _format_manager_notice(
         scope = f"{len(task_ids)} tasks: " + ", ".join(_task_scope(t) for t in task_ids)
     else:
         scope = "this manager"
-    lines = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
+    lines: list[str] = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
     if unassigned_count:
         lines.append(f"[{unassigned_count} manager-routed event(s) have no task]")
     # Group session events by source_key for summarization.
@@ -85,11 +116,6 @@ def _format_manager_notice(
                 lines.append(f"- {_label(event)}{event.event_type}: {event.title!r} (routed)")
         else:
             lines.append(_format_session_batch_notice(session_evts))
-    if task_states:
-        # Roster footer: the manager's whole portfolio, so it never has to
-        # re-query which tasks it owns.
-        roster = ", ".join(f"{tid} ({state})" for tid, state in sorted(task_states.items()))
-        lines.append(f"[Your tasks: {roster}]")
     return "\n".join(lines)
 
 

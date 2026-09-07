@@ -1508,6 +1508,8 @@ def _build_pi_spawn_env(
     # Always set so the harness wrap doesn't fall back to ``"all"``
     # and override an explicit ``skills: none`` from the spec.
     env["HARNESS_PI_SKILLS_FILTER"] = json.dumps(spec.skills_filter)
+    if spec.history_window_turns is not None:
+        env["HARNESS_PI_HISTORY_WINDOW_TURNS"] = str(spec.history_window_turns)
     if spec.name:
         env["HARNESS_PI_AGENT_NAME"] = spec.name
     if cwd is not None:

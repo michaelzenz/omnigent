@@ -53,6 +53,10 @@ def test_get_or_create_role_profile_uses_first_live_host(db_uri: str) -> None:
     assert profile.host_id == host_id
     assert profile.agent_profile_id == agent_id
     assert profile.role == TASK_BROKER_ROLE
+    # Engine comes from the bound bundle — fresh provisioning leaves
+    # the harness column NULL (no default, no override).
+    assert profile.harness is None
+    assert profile.model == "databricks-glm-5-2"
 
 
 def test_get_or_create_role_profile_fails_without_live_host(db_uri: str) -> None:
@@ -151,3 +155,55 @@ def test_get_or_create_role_profile_refreshes_stale_agent_id(db_uri: str) -> Non
         agent_store=agent_store,
     )
     assert profile.agent_profile_id == new_agent_id
+
+
+def test_ensure_role_profile_leaves_secretary_on_openai_agents(db_uri: str) -> None:
+    """Secretary keeps the SDK harness — only broker/manager moved to pi."""
+    from omnigent.agent_tasks.agent_builtins import TASK_SECRETARY_ROLE
+
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(
+        agent_id, name="onih-openai-agents", bundle_location="test:///bundle"
+    )
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    profile_store.upsert(
+        TASK_SECRETARY_ROLE,
+        agent_profile_id=agent_id,
+        prompt_profile_id=None,
+        harness="openai-agents",
+        host_id=None,
+        workspace="~/omnigent",
+    )
+
+    profile = ensure_role_profile(
+        role=TASK_SECRETARY_ROLE,
+        auth_user_id=None,
+        task_role_profile_store=profile_store,
+        agent_store=agent_store,
+    )
+    assert profile.harness == "openai-agents"
+
+
+def test_ensure_role_profile_keeps_deliberate_harness(db_uri: str) -> None:
+    """A deliberately configured harness is never clobbered by the default."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_id = generate_agent_id()
+    agent_store.create(agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///bundle")
+    profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
+    profile_store.upsert(
+        TASK_BROKER_ROLE,
+        agent_profile_id=agent_id,
+        prompt_profile_id=None,
+        harness="claude-native",
+        host_id=None,
+        workspace="~/omnigent",
+    )
+
+    profile = ensure_role_profile(
+        role=TASK_BROKER_ROLE,
+        auth_user_id=None,
+        task_role_profile_store=profile_store,
+        agent_store=agent_store,
+    )
+    assert profile.harness == "claude-native"

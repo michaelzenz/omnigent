@@ -185,6 +185,9 @@ class PiLaunchOptions:
     isolated_resources: bool = False
     native_tools: bool = True
     native_skills: bool = True
+    # Stateless-router mode: each turn tears down the Pi process and the
+    # prompt serializes only the last N user turns. 0 = off (full history).
+    history_window_turns: int = 0
 
 
 class _PiProviderConfig(TypedDict):
@@ -467,6 +470,7 @@ def _generate_extension_js(
     tool_schemas: list[ToolSpec],
     token: str,
     context_file: pathlib.Path | None = None,
+    history_window_turns: int = 0,
 ) -> str:
     """Generate a JavaScript Pi extension that registers Omnigent tools.
 
@@ -478,6 +482,9 @@ def _generate_extension_js(
     :param token: The tool server's bearer token
         (:attr:`_ToolServer.token`), embedded in the extension and sent
         on every request so the server can authenticate this Pi process.
+    :param history_window_turns: When > 0, the extension's ``context``
+        hook truncates the LLM context to the last N user turns
+        (stateless-router mode). 0 = full history.
     """
     # Build tool descriptors for the JS code. ``ToolSpec`` is the
     # same JSON-shaped ``dict[str, Any]`` we consume.
@@ -518,6 +525,7 @@ const BRIDGED = new Set(TOOLS.map((t) => t.name));
 const PORT = {port};
 const TOKEN = {token_json};
 const CONTEXT_FILE = {context_file_json};
+const HISTORY_WINDOW = {history_window_turns};
 
 /** Send a tool call request over TCP and return the result. */
 function callTool(toolName, args, toolCallId) {{
@@ -644,6 +652,22 @@ module.exports = function(pi) {{
         console.error("[onih-pi] provider request log write failed:", e.message);
       }} catch (_) {{}}
     }}
+  }});
+
+  // Stateless-router context window. Pi fires "context" before every LLM
+  // call and the returned messages replace what goes to the model, so the
+  // accumulated in-process session never reaches the LLM beyond the last
+  // HISTORY_WINDOW turns. A turn is counted at user-message boundaries:
+  // the kept tail includes each user message, the assistant reply, and its
+  // tool calls/results. 0 disables the window.
+  pi.on("context", async (event) => {{
+    if (!HISTORY_WINDOW || !event || !Array.isArray(event.messages)) return;
+    const userIdx = [];
+    for (let i = 0; i < event.messages.length; i++) {{
+      if (event.messages[i] && event.messages[i].role === "user") userIdx.push(i);
+    }}
+    if (userIdx.length <= HISTORY_WINDOW) return;
+    return {{ messages: event.messages.slice(userIdx[userIdx.length - HISTORY_WINDOW]) }};
   }});
 
   // Gate native (non-bridged) tool calls through Omnigent policy. Pi's
@@ -1753,22 +1777,50 @@ def _split_pi_prompt(blocks: list[_JsonObject]) -> tuple[str, list[dict[str, str
     return "\n".join(text_parts), images
 
 
-def _build_pi_prompt(messages: list[Message], *, is_first_turn: bool) -> str | list[_JsonObject]:
+def _window_history_tail(
+    messages: list[Message], window: int
+) -> list[Message]:
+    """Keep the last *window* turns, counted at user-message boundaries.
+
+    A turn is the user message PLUS everything it triggers: the assistant
+    reply, tool calls, and tool results. Everything from the first kept
+    user message onward is retained (assistant/toolResult items ride
+    along); only older complete turns are dropped.
+    """
+    user_indexes = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+    if window < 1 or len(user_indexes) <= window:
+        return messages
+    return messages[user_indexes[-window]:]
+
+
+def _build_pi_prompt(
+    messages: list[Message],
+    *,
+    is_first_turn: bool,
+    history_window_turns: int = 0,
+) -> str | list[_JsonObject]:
     """
     Build the prompt to send to Pi.
 
     On the first turn with prior history (e.g. sub-agent with
-    ``pass_history=True``), serializes the full conversation so
+    ``pass_history=True``), serializes the conversation so
     the Pi process has context. Otherwise returns just the
     latest user message content (may be multimodal).
+
+    With ``history_window_turns`` set, only the last N user turns are
+    serialized — stateless-router agents deliberately drop older context.
 
     :param messages: Omnigent conversation history for the
         turn.
     :param is_first_turn: ``True`` when this is the first turn
         against a freshly-started Pi subprocess, so the full
         history needs to be serialized into the prompt.
+    :param history_window_turns: When > 0, cap the serialized
+        context to the last N user turns.
     :returns: A string prompt or a list of content block dicts.
     """
+    if history_window_turns > 0:
+        messages = _window_history_tail(messages, history_window_turns)
     user_messages = [m for m in messages if m.get("role") == "user"]
 
     if is_first_turn and len(messages) > 1 and len(user_messages) > 1:
@@ -2836,6 +2888,7 @@ class PiExecutor(Executor):
                         tools,
                         tool_server_token,
                         context_file=context_file,
+                        history_window_turns=self._launch_options.history_window_turns,
                     )
                 )
             extra_args.extend(["--extension", ext_path])
@@ -3181,7 +3234,11 @@ class PiExecutor(Executor):
         state = self._session_states.get(session_key)
         is_first_turn = state is not None and not state._has_sent_prompt
 
-        prompt = _build_pi_prompt(messages, is_first_turn=is_first_turn)
+        prompt = _build_pi_prompt(
+            messages,
+            is_first_turn=is_first_turn,
+            history_window_turns=self._launch_options.history_window_turns,
+        )
 
         if not prompt:
             # No prompt built (e.g. empty message list on a resumed session) —

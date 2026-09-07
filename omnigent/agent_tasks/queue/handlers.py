@@ -52,6 +52,7 @@ async def _inject_notice(
     runner_router: RunnerRouter | None,
     app_state: Any | None = None,
     usage_purpose: str | None = None,
+    profile_instructions: str | None = None,
 ) -> None:
     """Inject ``item.payload`` into the target session as a synthetic user message.
 
@@ -125,6 +126,7 @@ async def _inject_notice(
             artifact_store=None,
             runner_router=runner_router,
             usage_purpose=usage_purpose,
+            profile_instructions=profile_instructions,
         )
     except Exception as exc:
         raise DispatchFailed(f"notice delivery to {target.session_id} failed: {exc}") from exc
@@ -213,6 +215,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         app_state: Any | None = None,
         manager_store: ManagerStore | None = None,
         session_creator: Any | None = None,
+        prompt_profile_store: Any | None = None,
     ) -> None:
         self._store = store
         self._conversation_store = conversation_store
@@ -220,6 +223,7 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         self._app_state = app_state
         self._manager_store = manager_store
         self._session_creator = session_creator
+        self._prompt_profile_store = prompt_profile_store
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         if item.key.scope_id is None:
@@ -289,7 +293,46 @@ class ManagerDispatchHandler(RoleDispatchHandler):
             runner_router=self._runner_router,
             app_state=self._app_state,
             usage_purpose=MANAGER_PURPOSE,
+            profile_instructions=self._roster_instructions(item, target),
         )
+
+    def _roster_instructions(self, item: AgentQueueItem, target: DispatchTarget) -> str | None:
+        """Compose the per-turn instructions for a notice turn.
+
+        The notice payload is a JSON envelope ``{"events", "roster"}``:
+        events become the user message; the roster is appended to the
+        manager's manual and delivered as per-turn instructions so it lands
+        in the system prompt instead of chat history. Legacy plain-text
+        payloads (pre-envelope) are treated as events-only.
+        """
+        import json
+
+        from omnigent.agent_tasks.queue.packagers import parse_notice_payload
+
+        events_text, roster_text = parse_notice_payload(item.payload)
+        # Rewrite the payload in place: the injector persists events_text as
+        # the user message; the roster rides the instructions channel.
+        item.payload = events_text
+        if not roster_text:
+            return None
+        manual = self._manager_manual(target.session_id)
+        if manual:
+            return f"{manual}\n\n{roster_text}"
+        return roster_text
+
+    def _manager_manual(self, session_id: str | None) -> str | None:
+        """Load the manager's fixed prompt-profile manual (its instructions)."""
+        import asyncio
+
+        if session_id is None or self._prompt_profile_store is None:
+            return None
+        conv = self._conversation_store.get_conversation(session_id)
+        if conv is None or conv.prompt_profile_id is None:
+            return None
+        profile = self._prompt_profile_store.get(conv.prompt_profile_id)
+        if profile is None or not profile.instructions:
+            return None
+        return profile.instructions
 
 
 # A callable that launches/reconnects a session runner for a conversation.

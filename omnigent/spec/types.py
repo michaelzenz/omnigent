@@ -1602,13 +1602,24 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     timers: bool = True
     spawn: bool = True
     agent_session_sharing: SharePolicy = SharePolicy.NON_PUBLIC
-    # Agent-level tool allowlist. When set, only tools whose names
-    # appear in this list are exposed to the model; all others are
-    # filtered out at schema assembly and rejected at dispatch.
-    # ``None`` (default) exposes all globally-enabled tools. The
-    # allowlist can only narrow the tool surface — globally disabled
-    # tools (admin tool-preferences panel) remain blocked even if
-    # listed here. Applies to all tool names uniformly, including
-    # MCP namespaced names (e.g. ``"github__list_issues"``).
-    allowed_tools: list[str] | None = None
+    # Agent-level allowlist for BUILTIN tools only (plain names:
+    # builtins, spec-local, sys_os_*). When set, only listed builtin
+    # tools are exposed to the model; unlisted tools are filtered at
+    # schema assembly, so the model never sees them. Namespaced MCP tools
+    # (``server__tool``) are NOT governed by this list — they pass
+    # through and are restricted by the per-server ``tools:`` gate in
+    # the host's ``~/.omnigent/mcp-servers.yaml``. ``None`` (default)
+    # exposes all globally-enabled builtins. The allowlist can only
+    # narrow the surface — globally disabled tools (admin
+    # tool-preferences panel) remain blocked even if listed here.
+    allowed_builtin_tools: list[str] | None = None
+    # Rolling context window for stateless router-style agents (e.g.
+    # PuppyGarden broker/manager on the pi harness). When set, the Pi
+    # extension's "context" hook truncates every LLM call to the last N
+    # turns — a turn is counted at user-message boundaries but the kept
+    # tail includes the assistant reply and its tool calls/results, so
+    # the model always sees complete recent exchanges. Prior context is
+    # deliberately dropped because these agents keep state in the task
+    # store, not in chat history. ``None`` (default) = full history.
+    history_window_turns: int | None = None
     source_rel_dir: str | None = field(default=None, compare=False)

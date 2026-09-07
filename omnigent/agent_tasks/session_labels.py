@@ -20,8 +20,7 @@ def presentation_labels_for_harness(harness: str | None) -> dict[str, str]:
     them. Secretary/broker/worker/manager bootstraps share this so a role
     switched to a native harness picks up the composer picker consistently.
     """
-    from omnigent.agent_tasks.constants import resolve_task_harness
     from omnigent.native_coding_agents import native_coding_agent_for_harness
 
-    native_agent = native_coding_agent_for_harness(resolve_task_harness(harness or ""))
+    native_agent = native_coding_agent_for_harness(harness or "")
     return dict(native_agent.presentation_labels) if native_agent is not None else {}

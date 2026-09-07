@@ -8,7 +8,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.bootstrap import BootstrapParams
 from omnigent.agent_tasks.event_host import host_tag
 from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.manager_discovery import _LIVE_TASK_STATES
@@ -235,14 +234,12 @@ async def adopt_external_session(
     task_event_store: TaskEventStore,
     worker_store: WorkerStore,
     conversation_store: ConversationStore,
-    params: BootstrapParams | None = None,
     proposal_event: TaskEvent | None = None,
     session_creator: Any | None = None,
     app_state: Any | None = None,
     user_id: str | None = None,
 ) -> tuple[TaskEvent, TaskEvent]:
     """Bind a watcher-discovered external session to a task."""
-    del params
     task = task_store.get(task_id)
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)

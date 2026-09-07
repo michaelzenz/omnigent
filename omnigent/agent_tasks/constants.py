@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
-# Broker: triages and routes stalled events.
-DEFAULT_BROKER_HARNESS = "openai-agents"
-DEFAULT_BROKER_MODEL = "databricks-glm-5-2"
+import os
 
-# Task manager/worker/reviewer agents.
-DEFAULT_TASK_HARNESS = "openai-agents"
-DEFAULT_TASK_MODEL = "databricks-glm-5-2"
+# Tag-similarity router (the ingress scorer + tag_matches search + broker
+# suggested candidates). DEPRECATED: the manager now picks tasks from the
+# rank-ordered roster injected into each notice and reads details via the
+# batch endpoint. Flip to True (or set OMNIGENT_PUPPYGARDEN_TAG_ROUTER=1)
+# to restore scorer auto-routing while it is being retired.
+TAG_ROUTER_ENABLED = os.environ.get("OMNIGENT_PUPPYGARDEN_TAG_ROUTER", "").lower() in {
+    "1",
+    "true",
+}
+
+# How many candidate tasks the manager may inspect (batch-read details for)
+# before deciding — guidance mirrored in the manager manual.
+MANAGER_CANDIDATE_INSPECT_LIMIT = 10
+
+# Token budget for the rank-ordered task roster injected into each manager
+# notice (~4 chars/token). Roster lines beyond the budget are summarized
+# with a count so the manager can list them via the tasks API.
+MANAGER_ROSTER_MAX_TOKENS = 20_000
+
+# Role engine/harness comes from the bound execution-target bundle
+# (executor.config.harness) — roles carry no harness default and users
+# cannot change the execution model. The role row's harness column is
+# only a rarely-used explicit override and stays NULL for builtin roles.
+
 DEFAULT_TASK_WORKSPACE = "~/"
 
 AUTO_ROUTE_MIN_CONFIDENCE = 0.6
@@ -41,12 +60,3 @@ DISPATCHABLE_ITEM_STATES = frozenset({"pending"})
 # attach flow spawns a new manager. Permissive at v2 launch; tune from logged
 # attach decisions.
 MANAGER_TASK_CAPACITY = 1_000_000
-
-
-def resolve_task_harness(harness: str) -> str:
-    """Return a runnable harness id for managed task agents."""
-    if harness == "cursor":
-        return "cursor-native"
-    if harness == "claude":
-        return "claude-native"
-    return harness

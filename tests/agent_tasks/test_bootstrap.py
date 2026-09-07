@@ -27,7 +27,6 @@ def _resolve(profile: TaskRoleProfile | None, **overrides: str | None):
     return resolve_bootstrap_params(
         host_id="host",
         workspace="~/",
-        harness=overrides.get("harness"),
         model=overrides.get("model"),
         role_profile=profile,
     )

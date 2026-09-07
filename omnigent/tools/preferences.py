@@ -81,15 +81,22 @@ def filter_tool_schemas(
     return result
 
 
-def filter_tool_schemas_by_allowlist(
+def filter_builtins_by_allowlist(
     schemas: list[dict[str, Any]],
     allowed: list[str] | None,
 ) -> list[dict[str, Any]]:
-    """Keep only schemas whose tool name is in the agent-level allowlist.
+    """Keep only schemas whose name is in the agent-level builtin allowlist.
 
     ``None`` (no allowlist configured) returns schemas unchanged.
     A tool not in the allowlist is dropped — the global disabled set
     is applied separately and still blocks listed tools.
+
+    CONTRACT: *schemas* must be a builtin-only list (spec builtins,
+    spec-local, sys_os_*, relay tools, or client tools) — call this at
+    the assembly point, BEFORE namespaced MCP schemas are merged in.
+    MCP tools are governed by the per-server ``tools:`` gate in the
+    host's ``~/.omnigent/mcp-servers.yaml``, never by this allowlist;
+    passing a merged list here would drop the MCP entries.
     """
     if not allowed:
         return schemas
