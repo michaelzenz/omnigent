@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { MessageSquareIcon, XIcon, UnlinkIcon, ArrowLeftRightIcon } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  MessageSquareIcon,
+  XIcon,
+  UnlinkIcon,
+  ArrowLeftRightIcon,
+} from "lucide-react";
+import { Link } from "@/lib/routing";
 import { Button } from "@/components/ui/button";
 import { useDeleteTaskAsset, useUntrackWorker } from "@/hooks/useAgentTasks";
 import type { TaskAssetCategory, TaskAssetSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
@@ -93,78 +100,92 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
     <>
       <ul className="space-y-2 p-2" data-testid="task-card-workers">
         {workers.map((worker) => {
-          const label = worker.provider_name ?? "Worker";
+          const label = worker.title ?? worker.provider_name ?? "Worker";
           const selected = isWorkerSelected(taskId, worker.worker_id);
           const canOpen = Boolean(worker.target_id && worker.kind !== "external");
           return (
             <li key={worker.worker_id}>
               <div
                 className={cn(
-                  "flex w-full items-start justify-between gap-2 rounded-lg border border-border bg-background p-2 text-left",
+                  "flex w-full flex-col gap-1.5 rounded-lg border border-border bg-background p-2 text-left",
                   canOpen && "hover:border-primary/50 hover:bg-muted/40",
                   selected && "border-primary ring-1 ring-primary/30",
                   !canOpen && "opacity-90",
                 )}
               >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">
-                    {label}
-                    {worker.kind === "external" && (
-                      <span className="ml-1.5 inline-block rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
-                        external
-                      </span>
-                    )}
-                  </span>
-                  <span className="line-clamp-2 block text-xs text-muted-foreground">
+                {/* Title gets its own full-width row; the situation notice and
+                    action buttons share the row below so a fourth button never
+                    squeezes the title. */}
+                <span className="block min-w-0 truncate text-sm font-medium">
+                  {label}
+                  {worker.kind === "external" && (
+                    <span className="ml-1.5 inline-block rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                      external
+                    </span>
+                  )}
+                </span>
+                <span className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {worker.failure_reason ?? worker.situation}
                   </span>
-                </span>
-                <div className="flex shrink-0 items-center gap-1">
-                  {canOpen ? (
+                  <span className="flex shrink-0 items-center gap-1">
+                    {canOpen ? (
+                      <>
+                        <Link
+                          to={`/c/${worker.target_id}`}
+                          aria-label={`Open ${label} chat page`}
+                          title="Open chat page"
+                          className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <ArrowUpRightIcon className="size-4" aria-hidden />
+                        </Link>
+                        <button
+                          type="button"
+                          aria-label={`Open ${label} chat`}
+                          className={cn(
+                            "inline-flex size-7 items-center justify-center rounded-md border",
+                            selected
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border",
+                          )}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (worker.target_id && worker.kind !== "external") {
+                              openWorker(taskId, worker.worker_id, worker.target_id, label);
+                            }
+                          }}
+                        >
+                          <MessageSquareIcon className="size-4" aria-hidden />
+                        </button>
+                      </>
+                    ) : null}
                     <button
                       type="button"
-                      aria-label={`Open ${label} chat`}
-                      className={cn(
-                        "inline-flex size-7 items-center justify-center rounded-md border",
-                        selected
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border",
-                      )}
+                      title="Rebind to another task"
+                      aria-label={`Rebind ${label}`}
+                      className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950"
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (worker.target_id && worker.kind !== "external") {
-                          openWorker(taskId, worker.worker_id, worker.target_id, label);
-                        }
+                        setRebindWorker({ id: worker.worker_id, name: label });
                       }}
                     >
-                      <MessageSquareIcon className="size-4" aria-hidden />
+                      <ArrowLeftRightIcon className="size-4" aria-hidden />
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    title="Rebind to another task"
-                    aria-label={`Rebind ${label}`}
-                    className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setRebindWorker({ id: worker.worker_id, name: label });
-                    }}
-                  >
-                    <ArrowLeftRightIcon className="size-4" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    title="Untrack"
-                    aria-label={`Untrack ${label}`}
-                    className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setConfirmUntrack(worker.worker_id);
-                    }}
-                  >
-                    <UnlinkIcon className="size-4" aria-hidden />
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      title="Untrack"
+                      aria-label={`Untrack ${label}`}
+                      className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setConfirmUntrack(worker.worker_id);
+                      }}
+                    >
+                      <UnlinkIcon className="size-4" aria-hidden />
+                    </button>
+                  </span>
+                </span>
               </div>
             </li>
           );

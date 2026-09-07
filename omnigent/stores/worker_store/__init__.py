@@ -66,5 +66,6 @@ class WorkerStore(ABC):
         needs_response: bool | None = None,
         failure_reason: str | None = _UNSET,
         last_observed_at: int | None = _UNSET,
+        title: str | None = _UNSET,
     ) -> Worker | None:
         """Update mutable worker fields."""

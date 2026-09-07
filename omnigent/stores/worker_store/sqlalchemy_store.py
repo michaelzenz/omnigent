@@ -23,6 +23,7 @@ def _worker_to_entity(row: SqlWorker) -> Worker:
         target_id=row.target_id,
         state=row.state,
         needs_response=row.needs_response,
+        title=row.title,
         provider_name=row.provider_name,
         provider_configuration=row.provider_configuration,
         failure_reason=row.failure_reason,
@@ -134,6 +135,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
         needs_response: bool | None = None,
         failure_reason: str | None = _UNSET,
         last_observed_at: int | None = _UNSET,
+        title: str | None = _UNSET,
     ) -> Worker | None:
         if kind is not None and kind not in _WORKER_KINDS:
             raise ValueError(f"unknown worker kind: {kind!r}")
@@ -155,6 +157,8 @@ class SqlAlchemyWorkerStore(WorkerStore):
                 row.failure_reason = failure_reason
             if last_observed_at is not _UNSET:
                 row.last_observed_at = last_observed_at
+            if title is not _UNSET:
+                row.title = title
             row.updated_at = now_epoch()
             session.flush()
             return _worker_to_entity(row)

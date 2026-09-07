@@ -88,6 +88,8 @@ export interface TaskWorkerLane {
     | "initialization_failed"
     | "terminated";
   needs_response?: boolean;
+  /** Manager-maintained label of recent work; falls back to provider_name. */
+  title?: string | null;
   provider_name?: string | null;
   host_id?: string | null;
   workspace?: string | null;
