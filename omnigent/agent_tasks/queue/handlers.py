@@ -149,12 +149,14 @@ class BrokerDispatchHandler(RoleDispatchHandler):
         runner_router: RunnerRouter | None,
         *,
         app_state: Any | None = None,
+        prompt_profile_store: Any | None = None,
     ) -> None:
         self._store = store
         self._user_role_session_store = user_role_session_store
         self._conversation_store = conversation_store
         self._runner_router = runner_router
         self._app_state = app_state
+        self._prompt_profile_store = prompt_profile_store
 
     async def resolve_target(self, item: AgentQueueItem) -> DispatchTarget:
         session = self._user_role_session_store.get(
@@ -189,7 +191,25 @@ class BrokerDispatchHandler(RoleDispatchHandler):
             runner_router=self._runner_router,
             app_state=self._app_state,
             usage_purpose=BROKER_PURPOSE,
+            profile_instructions=self._broker_manual(target.session_id),
         )
+
+    def _broker_manual(self, session_id: str | None) -> str | None:
+        """Load the broker's fixed prompt-profile manual (its instructions).
+
+        Notice turns bypass the session-events route, where fixed-profile
+        loading normally happens — without this the broker runs every
+        notice turn with no manual at all.
+        """
+        if session_id is None or self._prompt_profile_store is None:
+            return None
+        conv = self._conversation_store.get_conversation(session_id)
+        if conv is None or conv.prompt_profile_id is None:
+            return None
+        profile = self._prompt_profile_store.get(conv.prompt_profile_id)
+        if profile is None or not profile.instructions:
+            return None
+        return profile.instructions
 
 
 class ManagerDispatchHandler(RoleDispatchHandler):
