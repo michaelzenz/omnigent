@@ -346,6 +346,7 @@ class SshHostInstallationStore:
         next_attempt_at: int | None = None,
         last_error: str | None = None,
         increment_attempt: bool = False,
+        reset_attempt: bool = False,
         release: bool = False,
     ) -> bool:
         """Persist a phase transition only for the current lease holder."""
@@ -358,6 +359,8 @@ class SshHostInstallationStore:
         }
         if increment_attempt:
             values["attempt"] = SqlSshHostInstallation.attempt + 1
+        if reset_attempt:
+            values["attempt"] = 0
         if release:
             values["lease_owner"] = None
             values["lease_expires_at"] = None

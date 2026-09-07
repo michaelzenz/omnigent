@@ -138,3 +138,33 @@ def test_pause_unfinished_marks_only_in_flight_rows(tmp_path: Path) -> None:
 def test_validate_package_index_url_rejects_non_https() -> None:
     assert validate_package_index_url("http://pypi.example.com/simple") is not None
     assert validate_package_index_url("https://pypi.example.com/simple") is None
+
+
+def test_set_phase_resets_attempt(tmp_path: Path) -> None:
+    """The ready transition clears the failure counter."""
+    store = _store(tmp_path)
+    profile = _profile()
+    store.sync_connections({profile.id: profile}, bundle_version="test", owner="alice@example.com")
+
+    leased = store.acquire(profile.id, lease_owner="host-1", lease_seconds=30)
+    assert leased is not None
+    # Simulate failures accumulating.
+    assert store.set_phase(
+        profile.id, lease_owner="host-1", generation=leased.generation,
+        phase="backoff", increment_attempt=True,
+    )
+    assert store.set_phase(
+        profile.id, lease_owner="host-1", generation=leased.generation,
+        phase="backoff", increment_attempt=True,
+    )
+    assert store.snapshots("alice@example.com")[profile.id].attempt == 2
+
+    # Connection succeeds -> ready resets the counter.
+    assert store.set_phase(
+        profile.id, lease_owner="host-1", generation=leased.generation,
+        phase="ready", reset_attempt=True, last_error=None,
+    )
+    row = store.snapshots("alice@example.com")[profile.id]
+    assert row.phase == "ready"
+    assert row.attempt == 0
+    assert row.last_error is None

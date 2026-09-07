@@ -992,6 +992,7 @@ class SshAttachExecutor:
                     "ready",
                     next_attempt_at=_now() + _READY_RECHECK_SECONDS,
                     last_error=None,
+                    reset_attempt=True,
                     release=True,
                 )
                 return
@@ -1080,6 +1081,7 @@ class SshAttachExecutor:
                     "ready",
                     next_attempt_at=_now() + _READY_RECHECK_SECONDS,
                     last_error=None,
+                    reset_attempt=True,
                     release=True,
                 )
                 await self._push_log(
@@ -1123,6 +1125,7 @@ class SshAttachExecutor:
         next_attempt_at: int | None = None,
         last_error: str | None = None,
         increment_attempt: bool = False,
+        reset_attempt: bool = False,
         release: bool = False,
     ) -> None:
         result = await self._post(
@@ -1134,6 +1137,7 @@ class SshAttachExecutor:
                 "next_attempt_at": next_attempt_at,
                 "last_error": last_error,
                 "increment_attempt": increment_attempt,
+                "reset_attempt": reset_attempt,
                 "release": release,
             },
         )
