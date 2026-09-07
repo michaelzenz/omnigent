@@ -123,6 +123,24 @@ with `{"resolution":"reject_item"}`.
 - **Ack** an event that needs no item — `POST /v1/agent-tasks/{id}/ack`
 marks events reconciled without creating a task item.
 
+**Step 2b — link the session to the task (turn-finished events).**
+`session.turn.finished` events come from a real session that worked on
+something. When you route one to a task, also attach that session to the
+task as a worker — the user can then find every session that worked on
+the task from the task card:
+
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/sessions/<session_id>/adopt",
+  body={"task_id": "<task_id>"}
+)
+```
+
+Call it unconditionally when you
+route a turn-finished event. The session's id is in the event's payload
+(`session_id`), not the event id.
+
 **Step 3 — create new items (with worker assignment).** For events that
 don't fit any existing item, create one and assign a worker lane at
 creation time:
