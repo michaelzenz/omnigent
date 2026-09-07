@@ -79,6 +79,10 @@ class TaskEventStore(ABC):
         """List events ordered by ``created_at DESC, id DESC``."""
 
     @abstractmethod
+    def count_events_by_state(self) -> dict[str, int]:
+        """Return event counts keyed by state name for the current workspace."""
+
+    @abstractmethod
     def update_event(
         self,
         event_id: str,
