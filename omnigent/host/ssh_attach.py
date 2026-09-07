@@ -40,7 +40,10 @@ _LEASE_SECONDS = 30
 _LEASE_RENEW_SECONDS = 10
 _READY_RECHECK_SECONDS = 15
 _HOST_READY_TIMEOUT_SECONDS = 90
-_MAX_BACKOFF_SECONDS = 15 * 60
+# Retry failed reconciles on a short fixed interval: the desktop daemon polls
+# the server every 2s anyway, and a long exponential backoff turns a transient
+# SSH outage (e.g. laptop sleep) into an hour of not even probing.
+_RETRY_SECONDS = 5
 _POLL_INTERVAL_S = 2.0
 
 CommandRunner = Callable[[list[str], float], Awaitable[tuple[int, bytes, bytes]]]
@@ -182,6 +185,12 @@ _WHEEL_BUILD_EXCLUDE_DIRS = frozenset(
         "dist",
         "build",
         ".omnigent",
+        # Build outputs written back INTO the source tree by the wheel build
+        # itself. Without these the freshness check below sees the just-built
+        # metadata as "source changed" and rebuilds on every cycle.
+        "*.egg-info",
+        "*.dist-info",
+        "_build_info.py",
     }
 )
 
@@ -190,8 +199,10 @@ def _newest_source_mtime(root: Path, exclude: frozenset[str]) -> float:
     """Newest mtime among files under root, skipping generated/build dirs."""
     newest = 0.0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in exclude]
+        dirnames[:] = [d for d in dirnames if d not in exclude and not _glob_excluded(d, exclude)]
         for name in filenames:
+            if _glob_excluded(name, exclude):
+                continue
             try:
                 mtime = Path(dirpath, name).stat().st_mtime
             except OSError:
@@ -199,6 +210,15 @@ def _newest_source_mtime(root: Path, exclude: frozenset[str]) -> float:
             if mtime > newest:
                 newest = mtime
     return newest
+
+
+def _glob_excluded(name: str, exclude: frozenset[str]) -> bool:
+    """Match *name* against literal or fnmatch-style entries in *exclude*."""
+    from fnmatch import fnmatch
+
+    return any(
+        name == pattern or ("*" in pattern and fnmatch(name, pattern)) for pattern in exclude
+    )
 
 
 async def _run_local_command(args: list[str], timeout_s: float) -> tuple[int, bytes, bytes]:
@@ -322,22 +342,79 @@ class SshHostOperations:
             level="info",
             message=f"Probing SSH connection to {alias}...",
         )
-        code, stdout, stderr = await ssh_run(alias_profile(alias), "true", timeout_s=15)
-        if code != 0:
-            error_msg = (stderr or stdout).decode().strip() or "SSH is unreachable"
+        if await self._probe(alias):
             self._log(
                 connection_id,
                 phase="waiting_for_ssh",
-                level="error",
-                message=f"SSH unreachable: {error_msg}",
+                level="info",
+                message="SSH connection established",
             )
-            raise RuntimeError(error_msg)
+            return
+        # A pooled ControlMaster can outlive its network (laptop sleep, VPN
+        # drop): the mux socket still accepts, but every channel through it
+        # fails fast — and a mux'd ssh never re-dials via ProxyCommand. Recycle
+        # the master once before declaring the alias unreachable.
+        recycled = await self._recycle_control_master(alias)
+        if recycled:
+            self._log(
+                connection_id,
+                phase="waiting_for_ssh",
+                level="info",
+                message="Recycled a dead SSH control master; re-probing...",
+            )
+        if await self._probe(alias):
+            self._log(
+                connection_id,
+                phase="waiting_for_ssh",
+                level="info",
+                message="SSH connection established",
+            )
+            return
         self._log(
             connection_id,
             phase="waiting_for_ssh",
-            level="info",
-            message="SSH connection established",
+            level="error",
+            message="SSH is unreachable",
         )
+        raise RuntimeError("SSH is unreachable")
+
+    async def _probe(self, alias: str) -> bool:
+        """One cheap reachability probe through the pooled master."""
+        code, _, _ = await ssh_run(alias_profile(alias), "true", timeout_s=15)
+        return code == 0
+
+    async def _recycle_control_master(self, alias: str) -> bool:
+        """Tear down the alias's pooled ControlMaster, if one exists.
+
+        :returns: ``True`` when a live master was found and killed, so the
+            caller knows a re-probe is meaningful rather than futile.
+        """
+        import subprocess as _subprocess
+
+        from omnigent.ssh_session import control_path_for_alias
+
+        control_path = control_path_for_alias(alias)
+        if not control_path.exists():
+            return False
+
+        def _control_ctl(*args: str) -> int:
+            proc = _subprocess.run(
+                ["ssh", "-o", f"ControlPath={control_path}", *args, alias],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            return proc.returncode
+
+        check_rc = _control_ctl("-O", "check")
+        exit_rc = _control_ctl("-O", "exit")
+        # A live master answered one of the control commands — it may be the
+        # zombie holding the dead network, so killing it lets the next dial
+        # go through the proxy fresh.
+        recycled = check_rc == 0 or exit_rc == 0
+        with suppress(FileNotFoundError):
+            control_path.unlink()
+        return recycled
 
     async def ensure_installed(self, connection_id: str, alias: str, version: str) -> None:
         self._log(
@@ -948,9 +1025,7 @@ class SshAttachExecutor:
                 )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — all stage failures enter durable backoff
-            attempt = row.attempt + 1
-            delay = min(_MAX_BACKOFF_SECONDS, 2 ** min(attempt, 10))
+        except Exception as exc:  # noqa: BLE001 — stage failures retry on the short fixed interval
             _logger.warning("SSH attach %s reconciliation failed: %s", connection_id, exc)
             await self._push_log(ctx, connection_id, "backoff", "error", str(exc))
             await self._phase(
@@ -958,7 +1033,7 @@ class SshAttachExecutor:
                 connection_id,
                 row.generation,
                 "backoff",
-                next_attempt_at=_now() + delay,
+                next_attempt_at=_now() + _RETRY_SECONDS,
                 last_error=str(exc)[:4000],
                 increment_attempt=True,
                 release=True,
