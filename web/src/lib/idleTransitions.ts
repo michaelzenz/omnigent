@@ -11,7 +11,7 @@
 // unarchiving diffs against real prior state, not a phantom transition.
 
 import type { Conversation } from "@/hooks/useConversations";
-import { isBrokerSession } from "@/lib/agentTasksApi";
+import { isBackgroundRoleSession } from "@/lib/agentTasksApi";
 
 // Statuses that mean "the agent stopped working and is waiting on the
 // user" — the moment worth surfacing. "running" is excluded (still
@@ -116,10 +116,10 @@ export function computeUnreadBadgeIds(
   const unread = new Set<string>();
   for (const conversation of conversations) {
     if (conversation.archived) continue;
-    // The broker is a background agent — its chat is not a reading surface,
-    // so it never counts toward the unread badge (its output lands on the
-    // PuppyGarden board, not in the sidebar).
-    if (isBrokerSession(conversation.labels)) continue;
+    // PuppyGarden background roles (broker, managers) are not reading
+    // surfaces — their output lands on the board, so they never count toward
+    // the unread badge.
+    if (isBackgroundRoleSession(conversation.labels)) continue;
     if (windowFocused && conversation.id === activeId) continue;
     const awaiting = (conversation.pending_elicitations_count ?? 0) > 0;
     if (awaiting || isUnseen(conversation.id, conversation.updated_at, conversation.status)) {

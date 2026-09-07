@@ -8,6 +8,10 @@ ADOPTION_DISMISSED_LABEL = "omnigent.task.adoption_dismissed"
 ROLE_LABEL = "omnigent.role"
 BROKER_ROLE_VALUE = "task_broker"
 SECRETARY_ROLE_VALUE = "task_secretary"
+# Manager sessions carry the same role label so the web sidebar can suppress
+# their unread dot / badge count — manager output lands on the board's task
+# cards, not a chat surface the user reads.
+MANAGER_ROLE_VALUE = "task_manager"
 
 
 def presentation_labels_for_harness(harness: str | None) -> dict[str, str]:

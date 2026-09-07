@@ -238,6 +238,25 @@ describe("computeUnreadBadgeIds", () => {
     expect(next.size).toBe(0);
   });
 
+  it("excludes manager sessions even when unseen or awaiting input", () => {
+    const manager = {
+      ...convB("manager", { pending: 1 }),
+      labels: { "omnigent.role": "task_manager" },
+    };
+    const next = computeUnreadBadgeIds([manager], undefined, true, unseenIds("manager"));
+    expect(next.size).toBe(0);
+  });
+
+  it("does not exclude other role-label values", () => {
+    // The secretary is an interactive Q&A surface — it badges normally.
+    const secretary = {
+      ...convB("secretary", { pending: 1 }),
+      labels: { "omnigent.role": "task_secretary" },
+    };
+    const next = computeUnreadBadgeIds([secretary], undefined, true, unseenIds("secretary"));
+    expect(next.has("secretary")).toBe(true);
+  });
+
   it("suppresses the actively-viewed session (focused + active)", () => {
     // Focused AND viewing 'a' -> the user is looking at it, so not unread,
     // even though the predicate flags it and it has a pending elicitation.
