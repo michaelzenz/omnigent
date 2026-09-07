@@ -47,6 +47,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.project_store import ProjectStore
 from omnigent.stores.ssh_host_installation_store import SshHostInstallationStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -577,7 +578,23 @@ def _first_party_origin_on_asgi(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
+def app_project_store() -> ProjectStore | None:
+    """Project store wired into the test app; tests may override locally.
+
+    Defaults to ``None`` — matching servers launched without the projects
+    feature. Tests that exercise project filing override this fixture to
+    hand the app a real store.
+    """
+    return None
+
+
+@pytest.fixture()
+def app(
+    runtime_init: None,
+    db_uri: str,
+    tmp_path: Path,
+    app_project_store: ProjectStore | None,
+) -> FastAPI:
     """
     Build the FastAPI app with real stores and real workflow
     execution (mock LLM is patched in via runtime_init fixture).
@@ -618,6 +635,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
         worker_provider_store=SqlAlchemyWorkerProviderStore(db_uri),
         host_store=HostStore(db_uri),
         ssh_host_installation_store=SshHostInstallationStore(db_uri),
+        project_store=app_project_store,
     )
 
 

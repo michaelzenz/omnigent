@@ -10,7 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
-from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
+from omnigent.agent_tasks.constants import TERMINAL_EVENT_STATES, UNRECONCILED_EVENT_STATES
 from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.ingress import ingress_event
@@ -318,6 +318,24 @@ def create_task_events_router(
         return {
             "object": "list",
             "data": [_event_to_response(event) for event in events[:limit]],
+        }
+
+    # Declared before /task-events/{event_id}: otherwise FastAPI would match
+    # "stats" as an event_id.
+    @router.get("/task-events/stats")
+    async def get_task_event_stats() -> dict[str, Any]:
+        """Count events per state, excluding terminal states.
+
+        Terminal events (reconciled/dismissed/failed) are settled and only
+        wait for GC, so board summaries surface the in-flight pipeline only.
+        """
+        counts = await asyncio.to_thread(task_event_store.count_events_by_state)
+        return {
+            "object": "list",
+            "data": [
+                {"state": state, "count": counts[state]}
+                for state in sorted(set(counts) - TERMINAL_EVENT_STATES)
+            ],
         }
 
     @router.get("/task-events/{event_id}")

@@ -19,6 +19,7 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
@@ -33,6 +34,17 @@ from tests.server.routes.agent_task_api import (
 
 def _uid(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex
+
+
+@pytest.fixture()
+def app_project_store(db_uri: str) -> SqlAlchemyProjectStore:
+    """Wire a project store into the app for role-session filing tests.
+
+    Production always constructs one, so role bootstraps pass a real
+    ``project_id`` through the create path — the shared default (``None``)
+    would silently skip that path.
+    """
+    return SqlAlchemyProjectStore(db_uri)
 
 
 def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -947,6 +959,40 @@ async def test_reset_secretary_session_starts_without_synthetic_items(
     assert profile["conversation_id"] == reset_body["conversation_id"]
     # Only the session is reset; the role keeps the model it was given.
     assert profile["model"] == "composer-2.5"
+
+
+async def test_reset_secretary_files_session_under_puppygarden_project(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure/reset secretary sessions land in the owner's PuppyGarden project.
+
+    Regression: the internal create path was called without the project
+    store, so an explicitly-requested ``project_id`` (which
+    ``ensure_puppygarden_project`` always produces in production) was
+    rejected as "Project not found".
+    """
+    _patch_workspace_validation(monkeypatch)
+    await _put_secretary_profile(client, db_uri=db_uri)
+
+    ensure_resp = await client.post(agent_role_session_url(TASK_SECRETARY_ROLE))
+    assert ensure_resp.status_code == 200
+    conversation_id = ensure_resp.json()["conversation_id"]
+
+    project_store = SqlAlchemyProjectStore(db_uri)
+    projects = project_store.list(user_id=None)
+    puppygarden = [p for p in projects if p.name == "PuppyGarden"]
+    assert len(puppygarden) == 1
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(conversation_id)
+    assert conv is not None and conv.project_id == puppygarden[0].id
+
+    reset_resp = await client.post(agent_role_session_reset_url(TASK_SECRETARY_ROLE))
+    assert reset_resp.status_code == 200
+    reset_id = reset_resp.json()["conversation_id"]
+    assert reset_id != conversation_id
+    reset_conv = SqlAlchemyConversationStore(db_uri).get_conversation(reset_id)
+    assert reset_conv is not None and reset_conv.project_id == puppygarden[0].id
 
 
 async def test_ensure_secretary_session_auto_provisions_profile(

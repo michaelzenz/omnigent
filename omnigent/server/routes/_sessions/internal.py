@@ -44,6 +44,7 @@ from omnigent.stores import AgentStore, ConversationStore, PromptProfileStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.file_store import FileStore
 from omnigent.stores.permission_store import PermissionStore
+from omnigent.stores.project_store import ProjectStore
 
 _logger = logging.getLogger("omnigent.server.routes.sessions")
 
@@ -76,6 +77,7 @@ async def create_session_internal(
     file_store: FileStore | None,
     artifact_store: ArtifactStore | None,
     prompt_profile_store: PromptProfileStore | None,
+    project_store: ProjectStore | None,
     body: SessionCreateRequest,
     request: Request,
     user_id: str | None,
@@ -90,7 +92,10 @@ async def create_session_internal(
     Background callers pass a minimal ``Request``-like object built by
     ``_make_internal_request`` whose ``app.state`` carries the server's
     host registry and stores. ``prompt_profile_store`` is forwarded explicitly
-    because managed role sessions select their hidden role manual at creation.
+    because managed role sessions select their hidden role manual at creation,
+    and ``project_store`` because role bootstraps file their sessions into the
+    owner's project — without it, an explicitly-requested ``project_id`` is
+    rejected as not found.
     """
     resp, _project_warnings = await _create_session_from_existing_agent(
         conversation_store,
@@ -105,6 +110,7 @@ async def create_session_internal(
         file_store=file_store,
         artifact_store=artifact_store,
         prompt_profile_store=prompt_profile_store,
+        project_store=project_store,
     )
     conv = conversation_store.get_conversation(resp.id)
     _terminal_first_create = (

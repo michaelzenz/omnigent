@@ -488,6 +488,31 @@ async def test_ambiguous_inbox_clusters_stalled_events(
     assert cluster["suggested_candidates"][0]["task_id"] == paused_id
 
 
+async def test_event_stats_counts_inflight_states(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """GET stats counts events per state and drops terminal states."""
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    for index, state in enumerate(
+        ["awaiting_grouping", "awaiting_grouping", "routed", "reconciled", "dismissed", "failed"],
+    ):
+        event_store.create_event(
+            _uid(f"stats-event-{index}"),
+            "build.finished",
+            f"Stats event {index}",
+            state=state,
+            tags=[EventTag(tag_type="repo", tag="omnigent-fork")],
+        )
+
+    resp = await client.get("/v1/task-events/stats")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["object"] == "list"
+    counts = {row["state"]: row["count"] for row in body["data"]}
+    assert counts == {"awaiting_grouping": 2, "routed": 1}
+
+
 async def test_match_tasks_ranks_pending_tasks(
     client: httpx.AsyncClient,
     db_uri: str,

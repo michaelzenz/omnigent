@@ -755,6 +755,18 @@ export async function fetchDispatchStoplist(): Promise<string[]> {
   return body.data;
 }
 
+export interface TaskEventStat {
+  state: string;
+  count: number;
+}
+
+/** In-flight event counts per state (terminal states excluded server-side). */
+export async function fetchTaskEventStats(): Promise<TaskEventStat[]> {
+  const res = await authenticatedFetch("/v1/task-events/stats");
+  const body = await readJson<{ data: TaskEventStat[] }>(res);
+  return body.data;
+}
+
 export async function setRoleDispatchStopped(role: string, stopped: boolean): Promise<void> {
   const res = await authenticatedFetch("/v1/agent-queues/dispatch-stoplist", {
     method: "PUT",

@@ -221,10 +221,9 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@", replacement: path.resolve(__dirname, "./src") },
-      // npm (unlike pnpm) can't resolve radix-ui per-component subpaths
-      // (e.g. "radix-ui/tooltip"); remap them to the installed
-      // @radix-ui/react-* packages.
-      { find: /^radix-ui\/([a-z-]+)$/, replacement: "@radix-ui/react-$1" },
+      // "radix-ui/<component>" subpaths resolve through the radix-ui monolith's
+      // own exports map; no alias needed (the old @radix-ui/react-* remap
+      // broke under pnpm's strict layout, where those packages aren't linked).
     ],
   },
   test: {

@@ -29,7 +29,7 @@ import {
   type AgentTextThreadTurn,
   type AgentTextThreadView,
 } from "@/hooks/useAgentTextThreads";
-import { isSendMessageShortcut } from "@/lib/sendMessagePreferences";
+import { readSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chatStore";
 import type { AgentTextCommentsUI } from "./AgentTextCommentsContext";
@@ -149,7 +149,8 @@ function FollowUpComposer({
           resize(event.target);
         }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || !isSendMessageShortcut(event)) return;
+          if (event.nativeEvent.isComposing || event.key !== "Enter" || event.shiftKey) return;
+          if (readSubmitWithModEnter() && !(event.metaKey || event.ctrlKey)) return;
           event.preventDefault();
           onSend();
         }}

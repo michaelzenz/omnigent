@@ -49,6 +49,9 @@ BROKER_CANDIDATE_LIMIT = 5
 
 UNRECONCILED_EVENT_STATES = frozenset({"routed"})
 AMBIGUOUS_EVENT_STATES = frozenset({"awaiting_grouping"})
+# Events in these states are settled: nothing will process them again, and the
+# event GC eventually purges them. Board summaries exclude them.
+TERMINAL_EVENT_STATES = frozenset({"reconciled", "dismissed", "failed"})
 CLASSIFIED_FYI_EVENT_STATE = "classified_fyi"
 FYI_CLUSTER_OPEN_STATE = "pending"
 DISPATCHABLE_ITEM_STATES = frozenset({"pending"})
