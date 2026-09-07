@@ -23,6 +23,7 @@ from omnigent.stores.agent_task.tags import tags_to_payload
 from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.manager_store import ManagerStore
+from omnigent.stores.project_store import ProjectStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
@@ -32,6 +33,22 @@ from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
 _logger = logging.getLogger(__name__)
 
 SESSION_ADOPTED = "session.adopted"
+
+
+def _project_name(
+    project_store: ProjectStore | None,
+    project_id: str | None,
+    owner_user_id: str | None,
+) -> str | None:
+    """Resolve a session's project name, or None when unprojected/unresolvable."""
+    if project_store is None or not project_id:
+        return None
+    try:
+        project = project_store.get(project_id, user_id=owner_user_id)
+    except Exception:  # noqa: BLE001
+        _logger.exception("failed to resolve project %s", project_id)
+        return None
+    return project.name if project is not None else None
 
 
 def _extract_last_turn_text(
@@ -92,6 +109,7 @@ class SessionAdoptionContext:
     host_store: HostStore | None = None
     runner_router: RunnerRouter | None = None
     agent_queue_store: AgentQueueStore | None = None
+    project_store: ProjectStore | None = None
 
 
 _context: SessionAdoptionContext | None = None
@@ -335,10 +353,16 @@ def emit_turn_finished_event_unbound(
     last_user_message, last_agent_response = _extract_last_turn_text(
         _context.conversation_store, session_id
     )
+    project_name = _project_name(
+        _context.project_store,
+        conv.project_id if conv is not None else None,
+        owner_user_id or None,
+    )
     payload = json.dumps(
         {
             "session_id": session_id,
             "session_title": session_title,
+            "project_name": project_name,
             "status": "idle",
             "last_user_message": last_user_message,
             "last_agent_response": last_agent_response,
@@ -422,6 +446,14 @@ def emit_turn_finished_event(
 
     conv = _context.conversation_store.get_conversation(session_id)
     session_title = conv.title if conv is not None else session_id
+    # The session's project is owned by the task owner (sessions are created
+    # under the task owner's identity).
+    task_owner = next(iter(tasks_by_id.values())).owner_user_id
+    project_name = _project_name(
+        _context.project_store,
+        conv.project_id if conv is not None else None,
+        task_owner,
+    )
     last_user_message, last_agent_response = _extract_last_turn_text(
         _context.conversation_store, session_id
     )
@@ -429,6 +461,7 @@ def emit_turn_finished_event(
         {
             "session_id": session_id,
             "session_title": session_title,
+            "project_name": project_name,
             "status": status,
             "last_user_message": last_user_message,
             "last_agent_response": last_agent_response,

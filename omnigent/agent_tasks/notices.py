@@ -210,12 +210,17 @@ def _format_turn_finished_notice(event) -> str:
             payload = {}
     session_title = payload.get("session_title", "?")
     session_id = payload.get("session_id", "?")
-    return (
-        f"- {event.event_type}: Session '{session_title}' finished a turn\n"
-        f"  Session ID: {session_id}\n"
-        f"  Read the recent session transcript to see what was done. "
-        f"Reconcile into task items if relevant."
+    lines = [f"- {event.event_type}: Session '{session_title}' finished a turn\n"]
+    if payload.get("project_name"):
+        lines.append(f"  Project: {payload['project_name']}\n")
+    lines.extend(
+        [
+            f"  Session ID: {session_id}\n",
+            f"  Read the recent session transcript to see what was done. "
+            f"Reconcile into task items if relevant.",
+        ]
     )
+    return "".join(lines)
 
 
 def _format_execution_detail(event) -> str:
