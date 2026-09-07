@@ -437,7 +437,22 @@ def emit_turn_finished_event(
     )
     title = f"Session turn finished: {session_title}"
 
+    # Idempotency: a turn-finished event is a signal, not a log. Skip a
+    # manager that already has an unconsumed one for this session — the
+    # manager triages the pending signal on its next notice turn.
+    pending_managers = {
+        ev.manager_id
+        for ev in _context.task_event_store.list_events(
+            event_type=SESSION_TURN_FINISHED_EVENT_TYPE
+        )
+        if ev.source_key == session_id
+        and ev.state in ("awaiting_grouping", "routed")
+        and ev.manager_id is not None
+    }
+
     for manager_id, owner in manager_owner.items():
+        if manager_id in pending_managers:
+            continue
         try:
             event = _context.task_event_store.create_event(
                 uuid.uuid4().hex,
