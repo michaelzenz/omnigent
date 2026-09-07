@@ -1600,6 +1600,7 @@ def create_app(
                 conversation_store=conversation_store,
                 runner_router=runner_router,
                 app_state=app_inst.state,
+                prompt_profile_store=prompt_profile_store,
             )
             manager_handler: ManagerDispatchHandler | None = None
             if task_store is not None:
