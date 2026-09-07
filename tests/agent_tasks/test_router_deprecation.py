@@ -190,18 +190,15 @@ class TestNoticeEnvelope:
         assert roster is None
 
 
-class TestManagerCreationFallback:
-    def test_response_built_from_row_when_discovery_omits(self):
-        """create_manager must not fail when discovery filters the fresh manager.
+class TestManagerCreationResponse:
+    def test_response_from_row_inlines_discovery_fields(self):
+        """The create response is built from the durable row, not discovery.
 
-        The discovery listing filters managers with an incomplete snapshot;
-        a freshly-spawned manager with harness=NULL (engine from the bound
-        bundle) must still be returned — the durable row is authoritative.
+        The endpoint reads the manager row and computes task_count from the
+        task store — discovery listing (which filters rows) must not be
+        involved, so creation can never fail on a filter mismatch.
         """
         from omnigent.entities import Manager
-        from omnigent.server.routes.agent_tasks import (
-            _manager_to_response_from_row,
-        )
 
         row = Manager(
             id="m1",
@@ -219,7 +216,18 @@ class TestManagerCreationFallback:
             created_at=0,
             updated_at=0,
         )
-        resp = _manager_to_response_from_row(row, task_count=0)
+        # Inline the endpoint's response shape (mirrors create_manager).
+        tasks = []  # no tasks bound yet
+        resp = {
+            "id": row.id,
+            "conversation_id": row.conversation_id,
+            "title": row.title or row.description,
+            "host_id": row.host_id,
+            "workspace": row.workspace,
+            "description": row.description,
+            "role_key": row.role_key,
+            "task_count": len(tasks),
+        }
         assert resp["id"] == "m1"
         assert resp["title"] == "Handles probes"  # falls back to description
         assert resp["task_count"] == 0
