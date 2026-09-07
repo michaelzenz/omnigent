@@ -3566,13 +3566,33 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Directly adopt a session to a task (Worker binding).
 
-            Replaces the old propose → accept → reject flow. The broker calls
-            this when it triages a low-score orphan and decides which task to
-            bind the session to.
+            Idempotent: a session already bound to this task returns the
+            existing worker instead of creating a duplicate.
             """
             user_id = require_user(request, auth_provider)
             await _require_session_or_404(session_id, user_id)
             task = await _get_task_or_404(body.task_id, user_id)
+
+            def _existing_binding() -> Worker | None:
+                worker = (
+                    worker_store.get_by_target_id(session_id)
+                    if worker_store is not None
+                    else None
+                )
+                if worker is None or worker.task_id != task.id:
+                    return None
+                return worker
+
+            existing = await asyncio.to_thread(_existing_binding)
+            if existing is not None:
+                return {
+                    "object": "agent.task.session_adoption",
+                    "session_id": session_id,
+                    "task_id": body.task_id,
+                    "worker_id": existing.id,
+                    "already_bound": True,
+                }
+
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise OmnigentError("Session not found", code=ErrorCode.NOT_FOUND)
