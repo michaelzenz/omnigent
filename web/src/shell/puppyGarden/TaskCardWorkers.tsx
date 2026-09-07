@@ -539,6 +539,7 @@ export function TaskCardWorkers({
       title: "",
       description: null,
       state: "active",
+      manager_id: null,
       manager_conversation_id: null,
     },
     derived: { has_running_workers: false },
