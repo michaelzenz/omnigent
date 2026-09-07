@@ -76,23 +76,23 @@ portfolio that is not yet reconciled. Events with a known task are labeled
 select an existing task or create one before reconciling them. You don't need
 to poll.
 
-**Step 1 — pick the task.** Honor a task label when present. For an unlabeled
-manager-routed event, or when the right task is genuinely unclear, search your
-own portfolio:
+**Step 1 — pick the task from the roster.** Each notice turn carries a
+`[Task roster]` section in its instructions: your portfolio as
+`task_id — title (state)`, ranked (board order), token-budgeted
+(older/lower-ranked lines are summarized with a count — list them via
+`GET /v1/agent-tasks?manager_conversation_id=<your session id>`). The
+message itself carries the routed events. Honor a `[task:<id>]` label when
+the event is already bound. Otherwise:
 
-```
-puppygarden_api(
-  method="GET",
-  path="/v1/agent-tasks/search",
-  query={"q": "<event keywords>", "session_id": "<optional session>", "event_id": "<optional event>"}
-)
-```
-
-Three lists come back: `recent` (your most recently touched tasks, no
-state filter — drift usually means one of these), `matches` (text match
-over title/goal/description/internal_note), `tag_matches` (tag overlap,
-when `event_id` is given). Pass `session_id` to put the session's bound
-task first.
+- **Pick up to 10 candidates** by title relevance from the roster. Do not
+  check every task — 10 is the cap (`MANAGER_CANDIDATE_INSPECT_LIMIT`).
+- **Read their details in one call** with the batch endpoint:
+  `POST /v1/agent-tasks/batch` with `{"task_ids": [...]}` — goal,
+  description, and internal_note come back per task.
+- **Decide**: pick the best-fit task, or conclude nothing fits.
+- (Legacy) `GET /v1/agent-tasks/search?q=<keywords>` still works for
+  free-text search when the roster titles are not enough; its tag-match
+  list is deprecated and always empty.
 
 **Step 2 — reconcile into the task's items.** For each routed event,
 decide whether it extends an existing pending/queued item, needs a split,
@@ -278,9 +278,13 @@ See `<host.puppygarden.root>/docs/POLL_PLUGINS.md`, you can create arbitrary pol
 
 Use `sys_scheduled_task_create` to schedule a recurring agent session on an RRULE schedule. For example, "check this PR every hour" or "remind me tomorrow at 9am". Automations run full agent sessions with MCP tools, have a catch-up toggle for missed runs, and can be managed via `sys_scheduled_task_list` / `sys_scheduled_task_update` / `sys_scheduled_task_delete`.
 
-**ALWAYS PROCESS AN EVENT**: follow the above manual.
+**ALWAYS PROCESS AN EVENT**: follow the above manual. After triage a batch,
+every event in it must have landed somewhere: reconciled into a task item,
+acked on a task, or **dismissed**. Never leave an event in `routed` —
+undismissed leftovers are re-packaged and re-delivered to you forever.
 
-If a routed event needs no further action, dismiss it directly:
+If a routed event needs no further action (or it was already reconciled via
+another path), dismiss it:
 
 ```
 puppygarden_api(
@@ -288,6 +292,10 @@ puppygarden_api(
   path="/v1/task-events/<event_id>/dismiss"
 )
 ```
+
+Dismiss is safe to call unconditionally: an event already reconciled, acked,
+or otherwise settled is returned unchanged — dismiss only applies to events
+still awaiting triage.
 
 
 

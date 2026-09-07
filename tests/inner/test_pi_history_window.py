@@ -87,12 +87,12 @@ class TestBuildPiPromptWindow:
 
 
 class TestExtensionSourceWindow:
-    """The generated Pi extension carries the ``context`` hook.
+    """The generated Pi extension carries the ``context`` + ``before_agent_start`` hooks.
 
     Pi fires ``context`` before every LLM call and the returned messages
-    replace the model input (verified against pi 0.84.2's
-    ``extensions/runner.js`` ``emitContext``), so the hook is the single
-    wire-level gate — no fresh process per turn needed.
+    replace the model input; ``before_agent_start`` can override the system
+    prompt for the turn (reset to base afterwards). Together they give the
+    notice wire-level delivery without respawning the process.
     """
 
     def _source(self, window: int) -> str:
@@ -105,15 +105,27 @@ class TestExtensionSourceWindow:
             history_window_turns=window,
         )
 
-    def test_hook_present_with_window(self):
+    def test_hooks_present_with_window(self):
         src = self._source(2)
         assert 'pi.on("context"' in src
+        assert 'pi.on("before_agent_start"' in src
         assert "const HISTORY_WINDOW = 2" in src
         assert 'event.messages[i].role === "user"' in src
 
     def test_hook_baked_off_without_window(self):
         src = self._source(0)
         assert "const HISTORY_WINDOW = 0" in src
+        # The before_agent_start injection is independent of the window —
+        # it gates on the notice marker, not on HISTORY_WINDOW.
+        assert 'pi.on("before_agent_start"' in src
+
+    def test_no_split_hooks(self):
+        """Notice split moved server-side (events=user msg, roster=
+        instructions) — the extension carries only the history window."""
+        src = self._source(2)
+        assert "before_agent_start" not in src
+        assert "EVENTS_MARKER" not in src
+        assert "Task roster" not in src
 
     def test_generated_source_is_valid_js_syntax(self):
         import subprocess

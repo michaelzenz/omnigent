@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from omnigent.agent_tasks.constants import TAG_ROUTER_ENABLED
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.entities import Task, TaskEvent
 from omnigent.stores.agent_task.tags import tag_fingerprint, tag_pair, tags_to_payload
@@ -145,10 +146,16 @@ def build_ambiguous_inbox(
     searchable_tasks = routable_tasks(task_store)
     rendered_clusters: list[dict[str, Any]] = []
     for cluster in clusters:
-        ranked = rank_tasks_for_events(
-            events=cluster.events,
-            tasks=searchable_tasks,
-            task_store=task_store,
+        # Tag-ranked suggested candidates are part of the deprecated
+        # scorer; suppressed unless the router flag is restored.
+        ranked = (
+            rank_tasks_for_events(
+                events=cluster.events,
+                tasks=searchable_tasks,
+                task_store=task_store,
+            )
+            if TAG_ROUTER_ENABLED
+            else []
         )
         candidate_payload = _candidate_payload(ranked)
         rendered_clusters.append(

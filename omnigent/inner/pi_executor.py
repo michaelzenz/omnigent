@@ -654,12 +654,12 @@ module.exports = function(pi) {{
     }}
   }});
 
-  // Stateless-router context window. Pi fires "context" before every
-  // LLM call and the returned messages replace what goes to the model,
-  // so the accumulated in-process session never reaches the LLM beyond
-  // the last HISTORY_WINDOW turns. A turn is counted at user-message
-  // boundaries: the kept tail includes each user message, the assistant
-  // reply, and its tool calls/results. 0 disables the window.
+  // Stateless-router context window. Pi fires "context" before every LLM
+  // call and the returned messages replace what goes to the model, so the
+  // accumulated in-process session never reaches the LLM beyond the last
+  // HISTORY_WINDOW turns. A turn is counted at user-message boundaries:
+  // the kept tail includes each user message, the assistant reply, and its
+  // tool calls/results. 0 disables the window.
   pi.on("context", async (event) => {{
     if (!HISTORY_WINDOW || !event || !Array.isArray(event.messages)) return;
     const userIdx = [];

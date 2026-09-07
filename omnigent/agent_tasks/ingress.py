@@ -6,6 +6,7 @@ import logging
 import uuid
 from typing import Any
 
+from omnigent.agent_tasks.constants import TAG_ROUTER_ENABLED
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     is_ingress_candidate,
@@ -166,6 +167,16 @@ async def ingress_event(
 
     event_tags = event.tags or []
     if not event_tags:
+        return await _stall(
+            event=event,
+            task_event_store=task_event_store,
+            owner_user_id=owner_user_id,
+        )
+
+    if not TAG_ROUTER_ENABLED:
+        # Router deprecated: unbound tagged events skip the scorer and fall
+        # to the next step in the chain (stall → broker → manager), where
+        # the manager picks the task from the rank-ordered notice roster.
         return await _stall(
             event=event,
             task_event_store=task_event_store,

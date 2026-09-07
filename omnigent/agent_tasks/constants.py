@@ -2,6 +2,27 @@
 
 from __future__ import annotations
 
+import os
+
+# Tag-similarity router (the ingress scorer + tag_matches search + broker
+# suggested candidates). DEPRECATED: the manager now picks tasks from the
+# rank-ordered roster injected into each notice and reads details via the
+# batch endpoint. Flip to True (or set OMNIGENT_PUPPYGARDEN_TAG_ROUTER=1)
+# to restore scorer auto-routing while it is being retired.
+TAG_ROUTER_ENABLED = os.environ.get("OMNIGENT_PUPPYGARDEN_TAG_ROUTER", "").lower() in {
+    "1",
+    "true",
+}
+
+# How many candidate tasks the manager may inspect (batch-read details for)
+# before deciding — guidance mirrored in the manager manual.
+MANAGER_CANDIDATE_INSPECT_LIMIT = 10
+
+# Token budget for the rank-ordered task roster injected into each manager
+# notice (~4 chars/token). Roster lines beyond the budget are summarized
+# with a count so the manager can list them via the tasks API.
+MANAGER_ROSTER_MAX_TOKENS = 20_000
+
 # Role engine/harness comes from the bound execution-target bundle
 # (executor.config.harness) — roles carry no harness default and users
 # cannot change the execution model. The role row's harness column is

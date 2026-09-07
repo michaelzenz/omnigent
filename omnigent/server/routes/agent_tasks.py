@@ -39,7 +39,7 @@ from omnigent.agent_tasks.broker_session import (
     ensure_role_profile,
     get_or_create_role_profile,
 )
-from omnigent.agent_tasks.constants import MANAGER_TASK_CAPACITY
+from omnigent.agent_tasks.constants import MANAGER_TASK_CAPACITY, TAG_ROUTER_ENABLED
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.dispatch import (
     dispatch_worker_for_item,
@@ -1769,7 +1769,9 @@ def create_agent_tasks_router(
         candidates = _filter_tasks_for_user(await asyncio.to_thread(task_store.list), user_id)
         matches = rank_tasks_by_text(candidates, q, limit=limit) if q.strip() else []
         tag_matches: list = []
-        if event_id:
+        if event_id and TAG_ROUTER_ENABLED:
+            # Tag matching is part of the deprecated scorer; suppressed
+            # unless the router flag is restored.
             events = await asyncio.to_thread(
                 load_events, [event_id], task_event_store=task_event_store
             )
