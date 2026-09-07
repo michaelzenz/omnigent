@@ -193,6 +193,7 @@ from omnigent.server.routes._sessions.helpers import (
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
     _resolve_harness,
+    _run_compact_locked,
     _session_status_from_cache,
     _signal_harness_elicitation_resolved_by_id,
     _stop_session_host_runner,
@@ -1414,6 +1415,17 @@ def register_events_routes(
             )
             if runner_result is not None and runner_result.status_code == 200:
                 return {"queued": False}
+            if runner_result is not None and runner_result.status_code == 409:
+                try:
+                    runner_body = runner_result.json()
+                except ValueError:
+                    runner_body = {}
+                if runner_body.get("error") == "no_live_process":
+                    # The harness reports no live inner session (e.g. after an
+                    # interrupt or failed turn abandoned the executor). The
+                    # stored history is still compactable server-side, so fall
+                    # through to in-process compaction instead of erroring.
+                    runner_result = None
             if runner_result is not None and runner_result.status_code != 204:
                 raise OmnigentError(
                     f"Compaction failed: runner returned {runner_result.status_code}",
@@ -1460,10 +1472,18 @@ def register_events_routes(
                     "run /compact again.",
                     code=ErrorCode.RUNNER_UNAVAILABLE,
                 )
-            raise OmnigentError(
-                "/compact is not available for this session type.",
-                code=ErrorCode.INVALID_INPUT,
+            # No live runner handled the control (None after the 409
+            # no_live_process demotion above): the harness's own context is
+            # gone, but the stored history is still compactable in-process.
+            # Restores the pre-unified-dispatch fallback that upstream's
+            # runner-first rewrite dropped for fork harnesses (onih-pi).
+            await _run_compact_locked(
+                session_id,
+                conv,
+                agent_store,
+                agent_cache,
             )
+            return {"queued": False}
         if body.type == "compaction":
             import uuid as _uuid
 
