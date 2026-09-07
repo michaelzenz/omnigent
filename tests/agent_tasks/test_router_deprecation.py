@@ -188,3 +188,38 @@ class TestNoticeEnvelope:
         events, roster = parse_notice_payload("legacy plain notice")
         assert events == "legacy plain notice"
         assert roster is None
+
+
+class TestManagerCreationFallback:
+    def test_response_built_from_row_when_discovery_omits(self):
+        """create_manager must not fail when discovery filters the fresh manager.
+
+        The discovery listing filters managers with an incomplete snapshot;
+        a freshly-spawned manager with harness=NULL (engine from the bound
+        bundle) must still be returned — the durable row is authoritative.
+        """
+        from omnigent.entities import Manager
+        from omnigent.server.routes.agent_tasks import (
+            _manager_to_response_from_row,
+        )
+
+        row = Manager(
+            id="m1",
+            owner_user_id="u",
+            role_key="manager:default",
+            title=None,
+            description="Handles probes",
+            conversation_id="conv1",
+            host_id="h",
+            workspace="~/",
+            harness=None,  # NULL — engine from the bundle
+            model="databricks-glm-5-2",
+            agent_profile_id="ag",
+            prompt_profile_id=None,
+            created_at=0,
+            updated_at=0,
+        )
+        resp = _manager_to_response_from_row(row, task_count=0)
+        assert resp["id"] == "m1"
+        assert resp["title"] == "Handles probes"  # falls back to description
+        assert resp["task_count"] == 0
