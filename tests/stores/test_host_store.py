@@ -1410,3 +1410,39 @@ def test_register_managed_host_refuses_cross_owner_recredential(db_uri: str) -> 
     assert resolved.sandbox_id == "sb-m7"
     # Bob's token never armed Alice's host: it does not match the stored digest.
     assert store.resolve_launch_token("58f80f7592c6a72ba121eb5aedde8a82", "bob-token-7") is None
+
+
+def test_ssh_attached_host_connects_with_launch_token(db_uri: str) -> None:
+    """SSH-attached hosts carry launch tokens but no sandbox columns.
+
+    register_ssh_host leaves sandbox_provider/sandbox_id NULL by design; the
+    managed-token revalidation must still accept them (regression: PR #6127's
+    sandbox_id IS NOT NULL filter locked every SSH-attached host out).
+    """
+    store = HostStore(db_uri)
+    host_id = "aa11bb22cc33dd44ee55ff6677889900"
+    store.register_ssh_host(
+        host_id=host_id,
+        name="arca-attached",
+        owner="alice@example.com",
+        token="ssh-attach-token",
+        token_expires_at=now_epoch() + 3600,
+    )
+
+    connected = store.upsert_on_connect(
+        host_id=host_id,
+        name="arca-attached",
+        user_id="alice@example.com",
+        managed_token="ssh-attach-token",
+    )
+
+    assert connected.status == "online"
+    assert connected.sandbox_id is None
+
+    with pytest.raises(ValueError, match="no longer valid"):
+        store.upsert_on_connect(
+            host_id=host_id,
+            name="arca-attached",
+            user_id="alice@example.com",
+            managed_token="wrong-token",
+        )

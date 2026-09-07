@@ -329,7 +329,6 @@ class HostStore:
                             SqlHost.token_hash == hash_host_launch_token(managed_token),
                             SqlHost.token_expires_at.is_not(None),
                             SqlHost.token_expires_at >= now,
-                            SqlHost.sandbox_id.is_not(None),
                         )
                         .values(
                             name=name,
