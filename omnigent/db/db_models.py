@@ -1775,7 +1775,7 @@ class SqlSshHostInstallation(OmnigentBase):
 
 
 class SqlSshSettings(OmnigentBase):
-    """Workspace-level SSH provisioning settings."""
+    """Per-user SSH provisioning settings."""
 
     __tablename__ = "ssh_settings"
 
@@ -1786,6 +1786,7 @@ class SqlSshSettings(OmnigentBase):
         server_default="0",
         default=current_workspace_id,
     )
+    user_id: Mapped[str] = mapped_column(String(256), primary_key=True, nullable=False)
     package_index_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     npm_registry_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     remote_namespace: Mapped[str] = mapped_column(String(16), nullable=False)

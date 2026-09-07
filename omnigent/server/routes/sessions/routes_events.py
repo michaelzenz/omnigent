@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import secrets
 import weakref
 from collections.abc import Callable
@@ -1417,7 +1418,7 @@ def register_events_routes(
                 return {"queued": False}
             if runner_result is not None and runner_result.status_code == 409:
                 try:
-                    runner_body = runner_result.json()
+                    runner_body = json.loads(runner_result.body)
                 except ValueError:
                     runner_body = {}
                 if runner_body.get("error") == "no_live_process":
