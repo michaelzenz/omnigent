@@ -109,6 +109,7 @@ from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import (
     FyiCluster,
+    Manager,
     Task,
     TaskAsset,
     TaskEventExecution,
@@ -1000,6 +1001,21 @@ def _manager_to_response(manager: ManagerInfo) -> dict[str, Any]:
     }
 
 
+def _manager_to_response_from_row(manager, *, task_count: int) -> dict[str, Any]:
+    """Serialize a manager from its durable row (portfolio not loaded)."""
+    return {
+        "id": manager.id,
+        "conversation_id": manager.conversation_id,
+        "title": manager.title or manager.description,
+        "host_id": manager.host_id,
+        "workspace": manager.workspace,
+        "description": manager.description,
+        "role_key": manager.role_key,
+        "task_count": task_count,
+        "capacity": MANAGER_TASK_CAPACITY,
+    }
+
+
 def create_agent_tasks_router(
     task_store: TaskStore,
     task_event_store: TaskEventStore,
@@ -1650,10 +1666,21 @@ def create_agent_tasks_router(
         )
         info = next((item for item in managers if item.manager_id == manager.id), None)
         if info is None:
-            raise OmnigentError(
-                "created manager is unavailable",
-                code=ErrorCode.INTERNAL_ERROR,
+            # The manager row exists and its session was created — discovery
+            # filtering (or a transient read) must not fail the creation.
+            # Re-read the durable row and build the response from it.
+            _logger.warning(
+                "created manager %s missing from active-managers listing; "
+                "responding from the durable row",
+                manager.id,
             )
+            row = await asyncio.to_thread(manager_store.get, manager.id)
+            if row is None:
+                raise OmnigentError(
+                    "created manager is unavailable",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            return _manager_to_response_from_row(row, task_count=0)
         return _manager_to_response(info)
 
     @router.patch("/agent-tasks/managers/self")
