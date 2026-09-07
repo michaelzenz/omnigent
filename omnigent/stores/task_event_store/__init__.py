@@ -83,6 +83,10 @@ class TaskEventStore(ABC):
         """Return event counts keyed by state name for the current workspace."""
 
     @abstractmethod
+    def count_routed_events_by_manager(self) -> dict[str, int]:
+        """Count ``routed`` events per destination manager (manager_id keyed)."""
+
+    @abstractmethod
     def update_event(
         self,
         event_id: str,

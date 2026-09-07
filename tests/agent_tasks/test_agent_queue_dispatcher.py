@@ -431,3 +431,36 @@ async def test_stoplist_role_queues_are_skipped(store: SqlAlchemyAgentQueueStore
     store.set_role_dispatch_stopped("manager", False)
     assert await _two_role_dispatcher(handler).run_once() == 1
     assert [item.id for item in handler.delivered] == [_uid("a"), _uid("b")]
+
+
+@pytest.mark.asyncio
+async def test_stoplist_scope_queues_are_skipped(store: SqlAlchemyAgentQueueStore) -> None:
+    """A scope-qualified stop key stops one queue; sibling queues still dispatch."""
+    stopped_scope = _uid("slot-c")
+    free_scope = _uid("slot-d")
+    stopped_key = AgentQueueKey(role="manager", owner_user_id=_OWNER, scope_id=stopped_scope)
+    free_key = AgentQueueKey(role="manager", owner_user_id=_OWNER, scope_id=free_scope)
+    store.enqueue(_uid("c"), stopped_key, "item.dispatch")
+    store.enqueue(_uid("d"), free_key, "item.dispatch")
+    store.set_role_dispatch_stopped(f"manager:{stopped_scope}", True)
+
+    handler = _RecordingHandler()
+    dispatcher = AgentQueueDispatcher(
+        DispatcherContext(
+            store=store,
+            handlers={"manager": handler},
+            read_status=_FakeStatus("idle"),
+            grace_period_s=0.0,
+        )
+    )
+    assert await dispatcher.run_once() == 1
+    assert [item.id for item in handler.delivered] == [_uid("d")]
+
+    stopped_item = store.get_item(_uid("c"))
+    assert stopped_item is not None
+    assert stopped_item.state == "queued"
+
+    # Clearing the scoped stop resumes that queue on its own.
+    store.set_role_dispatch_stopped(f"manager:{stopped_scope}", False)
+    assert await dispatcher.run_once() == 1
+    assert [item.id for item in handler.delivered] == [_uid("d"), _uid("c")]

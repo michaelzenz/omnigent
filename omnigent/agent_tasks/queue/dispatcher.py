@@ -206,13 +206,21 @@ class AgentQueueDispatcher:
         queues = await asyncio.to_thread(store.due_queues, now=now, limit=SCAN_BATCH)
         if not queues:
             return 0
-        # The global stoplist (board config panel) silences whole roles: their
-        # queues stay in place with items queued, and come back on their own
-        # when the role is re-enabled. Read once per pass — one cheap lookup.
+        # The global stoplist (board config panel) silences dispatch targets:
+        # a bare role key ("broker") stops every queue of that role, a
+        # scope-qualified key ("manager:<manager_id>") stops one manager's
+        # queue. Queues stay in place with items queued and come back on
+        # their own when re-enabled. Read once per pass — one cheap lookup.
         stopped = await asyncio.to_thread(store.get_dispatch_stoplist)
         if stopped:
-            skipped = [queue for queue in queues if queue.role in stopped]
-            queues = [queue for queue in queues if queue.role not in stopped]
+
+            def _is_stopped(queue: AgentQueue) -> bool:
+                if queue.role in stopped:
+                    return True
+                return queue.scope_id is not None and f"{queue.role}:{queue.scope_id}" in stopped
+
+            skipped = [queue for queue in queues if _is_stopped(queue)]
+            queues = [queue for queue in queues if not _is_stopped(queue)]
             if skipped:
                 _logger.debug(
                     "agent queue dispatcher: skipping stopped roles %s (%d queues)",
@@ -228,7 +236,7 @@ class AgentQueueDispatcher:
         dispatched = 0
         for result in results:
             if isinstance(result, BaseException):
-                _logger.exception("agent queue drain failed", exc_info=result)
+                _logger.error("agent queue drain failed", exc_info=result)
                 continue
             dispatched += int(result)
         return dispatched
