@@ -215,6 +215,16 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             rows = session.execute(stmt).scalars().all()
             return [_event_to_entity(row) for row in rows]
 
+    def count_events_by_state(self) -> dict[str, int]:
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskEvent.state, func.count())
+                .where(SqlTaskEvent.workspace_id == current_workspace_id())
+                .group_by(SqlTaskEvent.state)
+            )
+            rows = session.execute(stmt).all()
+            return {decode_task_event_state(state): count for state, count in rows}
+
     def update_event(
         self,
         event_id: str,
