@@ -567,3 +567,48 @@ async def test_initialize_worker_route(
     dashboard = await client.get(f"/v1/agent-tasks/{task_id}/dashboard")
     lane = next(w for w in dashboard.json()["workers"] if w["worker_id"] == worker_id)
     assert lane["target_id"] == worker.target_id
+
+
+async def test_worker_title_round_trip(
+    client: httpx.AsyncClient,
+    worker_provider_id: str,
+    manager_id: str,
+    db_uri: str,
+) -> None:
+    """PATCH title persists, shows in the workers list and on the dashboard lane."""
+    task_id = await _bootstrapped_task(client, db_uri, manager_id)
+    _seed_live_host(db_uri, "worker-title-host")
+
+    created = await client.post(
+        f"/v1/agent-tasks/{task_id}/workers",
+        json={
+            "provider_id": worker_provider_id,
+            "host_id": _uid("worker-title-host"),
+            "workspace": "/tmp/omnigent-worker-title",
+        },
+    )
+    assert created.status_code == 200, created.text
+    worker_id = created.json()["worker_id"]
+
+    patched = await client.patch(
+        f"/v1/task-workers/{worker_id}/title",
+        json={"title": "Fixing S3 retry flakiness"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["title"] == "Fixing S3 retry flakiness"
+
+    stored = SqlAlchemyWorkerStore(db_uri).get_worker(worker_id)
+    assert stored is not None
+    assert stored.title == "Fixing S3 retry flakiness"
+
+    listed = await client.get(f"/v1/agent-tasks/{task_id}/workers")
+    assert listed.status_code == 200, listed.text
+    row = next(w for w in listed.json()["data"] if w["worker_id"] == worker_id)
+    assert row["title"] == "Fixing S3 retry flakiness"
+
+    dashboard = await client.get(f"/v1/agent-tasks/{task_id}/dashboard")
+    lane = next(w for w in dashboard.json()["workers"] if w["worker_id"] == worker_id)
+    assert lane["title"] == "Fixing S3 retry flakiness"
+
+    blank = await client.patch(f"/v1/task-workers/{worker_id}/title", json={"title": "   "})
+    assert blank.status_code == 422

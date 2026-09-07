@@ -226,6 +226,9 @@ class Worker:
     target_id: str | None = None
     state: str = "uninitialized"
     needs_response: bool = False
+    # Manager-maintained short label describing recent work; falls back to
+    # provider_name in UI when unset.
+    title: str | None = None
     provider_name: str | None = None
     provider_configuration: str | None = None
     failure_reason: str | None = None

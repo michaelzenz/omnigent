@@ -514,7 +514,7 @@ async def test_spawn_manager_notice_collects_unmanaged_tasks(
         [[unmanaged_a, "Unmanaged A"], [unmanaged_b, "Unmanaged\nB"]]
     )
     lines = payload["notice"].split("\n")
-    assert lines[0] == "Please spin up manager(s) and assign following tasks to the new managers"
+    assert lines[0] == "Assign following tasks to active managers or spin up new managers"
     # Multi-line titles are flattened onto one line; list order is store order.
     assert sorted(lines[1:]) == sorted(
         [f"[{unmanaged_a}, Unmanaged A]", f"[{unmanaged_b}, Unmanaged B]"]

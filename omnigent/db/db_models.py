@@ -2425,6 +2425,9 @@ class SqlWorker(OmnigentBase):
     target_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[str] = mapped_column(String(32), nullable=False, server_default="uninitialized")
     needs_response: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # Manager-maintained short label describing recent work; shown on the task
+    # card. Falls back to provider_name when unset.
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provider_configuration: Mapped[str | None] = mapped_column(Text, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

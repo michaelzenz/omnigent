@@ -153,6 +153,24 @@ puppygarden_api(
 `event_ids` is required for event-driven items: creating the item consumes and
 reconciles each triggering event so it is not delivered again.
 
+**Maintain the worker title.** Every worker lane has its own title (separate
+from the underlying session's title) shown on the task card. Keep it current:
+after a lane finishes meaningful work — or when its focus shifts — update the
+title to describe what it was recently working on, so the user can tell at a
+glance what each lane has been doing:
+
+```
+puppygarden_api(
+  method="PATCH",
+  path="/v1/task-workers/<worker_id>/title",
+  body={"title": "<recent work, e.g. 'Fixing S3 retry flakiness'>"}
+)
+```
+
+Keep it short (one line, max 200 chars), concrete, and in the present
+progressive form. Update it as the lane moves to new work — do not leave a
+stale title from a finished item.
+
 **Worker assignment principle — context affinity.** Workers are long-lived
 lanes: initialization starts the target session, and all later items reuse
 it. Prefer reusing a lane that already has related context — and a lane

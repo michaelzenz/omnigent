@@ -481,6 +481,22 @@ class CreateEventSubscriptionRequest(BaseModel):
     source_key: str = Field(min_length=1)
 
 
+class UpdateWorkerTitleRequest(BaseModel):
+    """Request body for ``PATCH /v1/task-workers/{worker_id}/title``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must be a non-empty string")
+        return stripped
+
+
 class QueueHoldRequest(BaseModel):
     """Optional token used to renew an existing temporary queue hold."""
 
@@ -769,6 +785,7 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
         "state": worker.state,
         "needs_response": worker.needs_response,
         "provider_name": worker.provider_name,
+        "title": worker.title,
         "host_id": launch.get("host_id"),
         "workspace": launch.get("workspace"),
         "failure_reason": worker.failure_reason,
@@ -2443,6 +2460,33 @@ def create_agent_tasks_router(
                 app_state=app_state,
                 user_id=user_id,
             )
+
+        @router.patch("/task-workers/{worker_id}/title")
+        async def update_worker_title(
+            request: Request,
+            worker_id: str,
+            body: UpdateWorkerTitleRequest,
+        ) -> dict[str, Any]:
+            """Set the manager-maintained worker title.
+
+            The title describes the worker's recent work and shows on the task
+            card instead of the static provider name. Caller must access the
+            worker's task.
+            """
+            user_id = get_user_id(request, auth_provider)
+            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
+            if worker is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            task = await _get_task_or_404(worker.task_id, user_id)
+            _ = task
+            updated = await asyncio.to_thread(
+                worker_store.update_worker,
+                worker_id,
+                title=body.title,
+            )
+            if updated is None:
+                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+            return _worker_to_response(updated)
 
         @router.post("/task-workers/{worker_id}/initialize", status_code=202)
         async def initialize_worker(request: Request, worker_id: str) -> dict[str, Any]:
