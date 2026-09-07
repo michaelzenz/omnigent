@@ -313,19 +313,19 @@ class ManagerDispatchHandler(RoleDispatchHandler):
             runner_router=self._runner_router,
             app_state=self._app_state,
             usage_purpose=MANAGER_PURPOSE,
-            profile_instructions=self._roster_instructions(item, target),
+            profile_instructions=self._manager_system_notice(item, target),
         )
 
-    def _roster_instructions(self, item: AgentQueueItem, target: DispatchTarget) -> str | None:
+    def _manager_system_notice(self, item: AgentQueueItem, target: DispatchTarget) -> str:
         """Compose the per-turn instructions for a notice turn.
 
         The notice payload is a JSON envelope ``{"events", "roster"}``:
         events become the user message; the manager's manual (plus the
         roster, when non-empty) is delivered as per-turn instructions so
         it lands in the system prompt instead of chat history. The manual
-        is sent on EVERY notice turn — the roster is an add-on, not a
-        precondition. Legacy plain-text payloads (pre-envelope) are
-        treated as events-only.
+        is REQUIRED — a notice turn without it would triage blind — so a
+        missing manual fails the dispatch. Legacy plain-text payloads
+        (pre-envelope) are treated as events-only.
         """
         from omnigent.agent_tasks.queue.packagers import parse_notice_payload
 
@@ -335,7 +335,10 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         item.payload = events_text
         manual = self._manager_manual(target.session_id)
         if not manual:
-            return roster_text or None
+            raise DispatchFailed(
+                f"manager session {target.session_id} has no prompt-profile manual; "
+                "cannot deliver a notice turn without it"
+            )
         if roster_text:
             return f"{manual}\n\n{roster_text}"
         return manual
