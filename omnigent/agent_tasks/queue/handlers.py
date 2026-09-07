@@ -320,25 +320,25 @@ class ManagerDispatchHandler(RoleDispatchHandler):
         """Compose the per-turn instructions for a notice turn.
 
         The notice payload is a JSON envelope ``{"events", "roster"}``:
-        events become the user message; the roster is appended to the
-        manager's manual and delivered as per-turn instructions so it lands
-        in the system prompt instead of chat history. Legacy plain-text
-        payloads (pre-envelope) are treated as events-only.
+        events become the user message; the manager's manual (plus the
+        roster, when non-empty) is delivered as per-turn instructions so
+        it lands in the system prompt instead of chat history. The manual
+        is sent on EVERY notice turn — the roster is an add-on, not a
+        precondition. Legacy plain-text payloads (pre-envelope) are
+        treated as events-only.
         """
-        import json
-
         from omnigent.agent_tasks.queue.packagers import parse_notice_payload
 
         events_text, roster_text = parse_notice_payload(item.payload)
         # Rewrite the payload in place: the injector persists events_text as
-        # the user message; the roster rides the instructions channel.
+        # the user message; the manual (+ roster) rides the instructions channel.
         item.payload = events_text
-        if not roster_text:
-            return None
         manual = self._manager_manual(target.session_id)
-        if manual:
+        if not manual:
+            return roster_text or None
+        if roster_text:
             return f"{manual}\n\n{roster_text}"
-        return roster_text
+        return manual
 
     def _manager_manual(self, session_id: str | None) -> str | None:
         """Load the manager's fixed prompt-profile manual (its instructions)."""
