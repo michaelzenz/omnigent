@@ -2,8 +2,9 @@
 
 Lists the owner's active managers with their task portfolios and capacity
 (`GET /v1/managers`), and picks an existing manager to attach a task to.
-Host compatibility is a correctness filter: an event from a session on host A
-must not land on a manager on host B; workspace is relaxed.
+Host match is a preference, not a requirement: same-host managers are
+preferred, but a cross-host manager is used when no same-host candidate
+fits. Workspace is relaxed.
 """
 
 from __future__ import annotations
@@ -113,17 +114,18 @@ def choose_manager_for_task(
 ) -> ManagerInfo | None:
     """Pick the best existing manager for ``probe``, or ``None`` to spawn a new one.
 
-    Filters to host-compatible managers with capacity left, then ranks by text
-    relevance between the probe task and each manager's portfolio. The best
-    portfolio score wins; ties fall to the first compatible manager (attach
-    decisions are logged so a real threshold can be tuned later).
+    Not wired yet: the attach-or-create flow does not call this today; it
+    encodes the selection policy for when that flow lands.
+
+    Filters to managers with capacity left, then ranks by text relevance
+    between the probe task and each manager's portfolio. Same-host managers
+    are preferred: they are considered first, and cross-host candidates are
+    only used when no same-host manager has capacity (host is a placement
+    preference, not a correctness requirement). Ties fall to the first
+    candidate (attach decisions are logged so a real threshold can be tuned
+    later).
     """
-    candidates = [
-        manager
-        for manager in managers
-        if manager.task_count < capacity
-        and (host_id is None or manager.host_id is None or manager.host_id == host_id)
-    ]
+    candidates = [manager for manager in managers if manager.task_count < capacity]
     if not candidates:
         return None
     scored: list[tuple[ManagerInfo, float]] = []
@@ -134,6 +136,10 @@ def choose_manager_for_task(
         )
         scored.append((manager, score))
     scored.sort(key=lambda row: (-row[1], row[0].manager_id))
+    if host_id is not None:
+        same_host = [row for row in scored if row[0].host_id == host_id]
+        if same_host:
+            return same_host[0][0]
     return scored[0][0]
 
 
