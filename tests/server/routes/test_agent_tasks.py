@@ -877,6 +877,22 @@ async def test_create_and_delete_custom_manager_role(
     assert delete_resp.status_code == 200
     assert delete_resp.json()["deleted"] is True
 
+    # The delete must stick: fetching the deleted role's profile must not
+    # lazily re-provision it (that resurrected deleted manager roles).
+    fetch_resp = await client.get(
+        f"/v1/agent-tasks/roles/{quote('manager:research', safe='')}/profile",
+    )
+    assert fetch_resp.status_code == 404, fetch_resp.text
+    list_resp = await client.get("/v1/agent-tasks/roles/profiles", params={"prefix": "manager:"})
+    assert list_resp.status_code == 200
+    listed = [profile["role"] for profile in list_resp.json()["data"]]
+    assert "manager:research" not in listed
+    # System roles are still lazily provisioned on fetch.
+    default_resp = await client.get(
+        f"/v1/agent-tasks/roles/{quote('manager:default', safe='')}/profile",
+    )
+    assert default_resp.status_code == 200
+
 
 async def test_patch_manager_role_key_pending_only(
     client: httpx.AsyncClient,
