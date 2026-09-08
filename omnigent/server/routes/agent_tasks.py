@@ -2037,6 +2037,15 @@ def create_agent_tasks_router(
         task = await asyncio.to_thread(task_store.update, task_id, **update_kwargs)
         if task is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+        # Manager resolve/unresolve moves the card within the queue:
+        # → agent-resolved sends it to the queue END (lowest rank);
+        # → any other state (pending/active/idle) brings it to the queue
+        #   START (highest rank), surfacing revived work.
+        if "state" in update_kwargs:
+            if update_kwargs["state"] == "agent-resolved":
+                await asyncio.to_thread(task_store.move_to_queue_end, task_id)
+            else:
+                await asyncio.to_thread(task_store.bump_queue_rank, task_id)
         tags = await asyncio.to_thread(task_store.get_tags, task_id)
         return _task_to_response(task, tags=tags)
 

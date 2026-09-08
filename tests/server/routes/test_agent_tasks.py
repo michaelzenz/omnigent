@@ -278,6 +278,47 @@ async def test_patch_task(client: httpx.AsyncClient) -> None:
     assert body["state"] == "pending"
 
 
+async def test_patch_task_state_bumps_queue_rank(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Resolve sends the task to the queue end; unresolve brings it to the front."""
+    resolved = (
+        await client.post(
+            "/v1/agent-tasks",
+            json=_create_payload(title="Resolved", goal="g1"),
+        )
+    ).json()
+    revived = (
+        await client.post(
+            "/v1/agent-tasks",
+            json=_create_payload(title="Revived", goal="g2"),
+        )
+    ).json()
+
+    # Resolve → queue END (lowest rank, sorts last).
+    patched = (
+        await client.patch(
+            f"/v1/agent-tasks/{resolved['id']}",
+            json={"state": "agent-resolved"},
+        )
+    ).json()
+    listed = (await client.get("/v1/agent-tasks?limit=100")).json()["data"]
+    assert listed[-1]["id"] == resolved["id"], [t["id"] for t in listed[-2:]]
+    assert patched["queue_rank"] is not None
+
+    # Unresolve (→ pending) → queue START (highest rank, sorts first).
+    revived_patch = (
+        await client.patch(
+            f"/v1/agent-tasks/{revived['id']}",
+            json={"state": "pending"},
+        )
+    ).json()
+    listed = (await client.get("/v1/agent-tasks?limit=100")).json()["data"]
+    assert listed[0]["id"] == revived["id"], [t["id"] for t in listed[:2]]
+    assert revived_patch["queue_rank"] is not None
+
+
 async def test_put_tags_replaces_all(client: httpx.AsyncClient) -> None:
     """PUT /tags replaces the full tag set."""
     created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
