@@ -113,10 +113,11 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
                   !canOpen && "opacity-90",
                 )}
               >
-                {/* Title gets its own full-width row; the situation notice and
-                    action buttons share the row below so a fourth button never
-                    squeezes the title. */}
-                <span className="block min-w-0 truncate text-sm font-medium">
+                {/* Title gets its own full-width row and wraps (no truncation) so
+                    manager-maintained titles are fully readable; the situation
+                    notice and action buttons share the row below so a fourth
+                    button never squeezes the title. */}
+                <span className="block min-w-0 break-words text-sm font-medium">
                   {label}
                   {worker.kind === "external" && (
                     <span className="ml-1.5 inline-block rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">

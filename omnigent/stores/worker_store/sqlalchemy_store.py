@@ -9,10 +9,15 @@ from sqlalchemy import asc, select, update
 from omnigent.db.db_models import SqlWorker, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import Worker
-from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
+from omnigent.stores.worker_store import (
+    WORKER_KIND_EXTERNAL,
+    WORKER_KIND_INTERNAL,
+    WORKER_KIND_MANAGED,
+    WorkerStore,
+)
 
 _UNSET: Any = object()
-_WORKER_KINDS = frozenset({WORKER_KIND_MANAGED, "external"})
+_WORKER_KINDS = frozenset({WORKER_KIND_MANAGED, WORKER_KIND_INTERNAL, WORKER_KIND_EXTERNAL})
 
 
 def _worker_to_entity(row: SqlWorker) -> Worker:

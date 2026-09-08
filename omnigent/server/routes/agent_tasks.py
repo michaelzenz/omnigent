@@ -143,7 +143,7 @@ from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
-from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
+from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
 from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
@@ -2603,8 +2603,10 @@ def create_agent_tasks_router(
                     continue
                 await asyncio.to_thread(task_item_store.update_item, item.id, state="cancelled")
 
-            # Stop managed workers; external sessions keep running.
-            if worker.kind != WORKER_KIND_EXTERNAL and worker.target_id is not None:
+            # Stop only managed workers — the system owns their sessions.
+            # Internal (adopted omnigent) and external (harness) sessions are
+            # the user's own; adoption must not grant the right to kill them.
+            if worker.kind == WORKER_KIND_MANAGED and worker.target_id is not None:
                 await _control_worker(worker, "stop_session", request)
 
             updated = await asyncio.to_thread(

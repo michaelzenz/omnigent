@@ -13,7 +13,7 @@ from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
-from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL
+from omnigent.stores.worker_store import WORKER_KIND_INTERNAL
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 from tests.server.routes.agent_task_api import patch_host_session_launch
 
@@ -128,4 +128,4 @@ async def test_adopt_session_directly(
     worker = worker_store.get_by_target_id(conv.id)
     assert worker is not None
     assert worker.task_id == task_id
-    assert worker.kind == WORKER_KIND_EXTERNAL
+    assert worker.kind == WORKER_KIND_INTERNAL

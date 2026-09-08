@@ -27,7 +27,11 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
-from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
+from omnigent.stores.worker_store import (
+    WORKER_KIND_EXTERNAL,
+    WORKER_KIND_INTERNAL,
+    WorkerStore,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -142,7 +146,10 @@ def adopt_session_to_task(
     _context.worker_store.create_worker(
         worker_id,
         task.id,
-        kind=WORKER_KIND_EXTERNAL,
+        # The session lives in this server's conversation store — an adopted
+        # *internal* lane (chat-able, server-visible status), not an
+        # external-harness session.
+        kind=WORKER_KIND_INTERNAL,
         target_id=session_id,
         state="idle",
         provider_name=conv.title or session_id,
