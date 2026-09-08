@@ -8,21 +8,17 @@ import { BoardFyiStream } from "./BoardFyiStream";
 import { TaskCard } from "./TaskCard";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 
+// Single source of truth for card order: queue_rank from the server (its list
+// endpoint orders by queue_rank desc, id desc; new tasks get the highest rank,
+// move-to-queue-end gets the lowest). No state-based grouping here — idle/
+// resolved cards keep their server-assigned position.
 function rankTasks(tasks: AgentTaskSummary[]): AgentTaskSummary[] {
-  const endOfQueue = (task: AgentTaskSummary) =>
-    task.state === "agent-resolved" || task.state === "idle";
-  const rankGroup = (group: AgentTaskSummary[]) => {
-    if (!group.some((task) => task.queue_rank != null)) return group;
-    return [...group].sort(
-      (a, b) =>
-        (b.queue_rank ?? Number.MIN_SAFE_INTEGER) - (a.queue_rank ?? Number.MIN_SAFE_INTEGER) ||
-        b.id.localeCompare(a.id),
-    );
-  };
-  return [
-    ...rankGroup(tasks.filter((task) => !endOfQueue(task))),
-    ...rankGroup(tasks.filter(endOfQueue)),
-  ];
+  if (!tasks.some((task) => task.queue_rank != null)) return tasks;
+  return [...tasks].sort(
+    (a, b) =>
+      (b.queue_rank ?? Number.MIN_SAFE_INTEGER) - (a.queue_rank ?? Number.MIN_SAFE_INTEGER) ||
+      b.id.localeCompare(a.id),
+  );
 }
 
 export function PuppyGardenBoard() {
