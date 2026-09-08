@@ -21,53 +21,53 @@ response then carries `deliveries: [{event_id, task_id}]`.
 
 ## Task events
 
-| Method | Path |
-|--------|------|
-| GET | `/v1/task-events` |
-| GET | `/v1/task-events/{id}` |
-| POST | `/v1/task-events` |
-| POST | `/v1/task-events/{id}/complete` |
-| POST | `/v1/task-events/{id}/dismiss` |
-| POST | `/v1/task-events/batch-resolve` |
-| POST | `/v1/task-events/batch-route-manager` |
-| POST | `/v1/task-events/{event_id}/reroute` |
-| GET | `/v1/task-events/ambiguous-inbox` |
-| POST | `/v1/task-events/match-tasks` |
-| POST | `/v1/task-events/fyi-clusters` |
+| Method | Path                                  |
+| ------ | ------------------------------------- |
+| GET    | `/v1/task-events`                     |
+| GET    | `/v1/task-events/{id}`                |
+| POST   | `/v1/task-events`                     |
+| POST   | `/v1/task-events/{id}/complete`       |
+| POST   | `/v1/task-events/{id}/dismiss`        |
+| POST   | `/v1/task-events/batch-resolve`       |
+| POST   | `/v1/task-events/batch-route-manager` |
+| POST   | `/v1/task-events/{event_id}/reroute`  |
+| GET    | `/v1/task-events/ambiguous-inbox`     |
+| POST   | `/v1/task-events/match-tasks`         |
+| POST   | `/v1/task-events/fyi-clusters`        |
 
 ## Tasks
 
-| Method | Path |
-|--------|------|
-| POST | `/v1/agent-tasks` |
-| POST | `/v1/agent-tasks/packages` |
-| GET | `/v1/agent-tasks` |
-| POST | `/v1/agent-tasks/batch` |
-| GET | `/v1/agent-tasks/managers` |
-| POST | `/v1/agent-tasks/managers` |
-| PATCH | `/v1/agent-tasks/managers/self` |
-| GET | `/v1/agent-tasks/{id}` |
-| PATCH | `/v1/agent-tasks/{id}` |
-| POST | `/v1/agent-tasks/{id}/move-to-queue-end` |
-| POST | `/v1/agent-tasks/{id}/manager-queue-hold` |
-| DELETE | `/v1/agent-tasks/{id}/manager-queue-hold/{token}` |
-| DELETE | `/v1/agent-tasks/{id}` |
-| DELETE | `/v1/agent-tasks/{id}/permanent` |
-| PUT | `/v1/agent-tasks/{id}/tags` |
-| GET | `/v1/agent-tasks/{id}/executions` |
-| POST | `/v1/agent-tasks/{id}/event-subscriptions` |
-| GET | `/v1/agent-tasks/{id}/event-subscriptions` |
+| Method | Path                                                         |
+| ------ | ------------------------------------------------------------ |
+| POST   | `/v1/agent-tasks`                                            |
+| POST   | `/v1/agent-tasks/packages`                                   |
+| GET    | `/v1/agent-tasks`                                            |
+| POST   | `/v1/agent-tasks/batch`                                      |
+| GET    | `/v1/agent-tasks/managers`                                   |
+| POST   | `/v1/agent-tasks/managers`                                   |
+| PATCH  | `/v1/agent-tasks/managers/self`                              |
+| GET    | `/v1/agent-tasks/{id}`                                       |
+| PATCH  | `/v1/agent-tasks/{id}`                                       |
+| POST   | `/v1/agent-tasks/{id}/move-to-queue-end`                     |
+| POST   | `/v1/agent-tasks/{id}/manager-queue-hold`                    |
+| DELETE | `/v1/agent-tasks/{id}/manager-queue-hold/{token}`            |
+| DELETE | `/v1/agent-tasks/{id}`                                       |
+| DELETE | `/v1/agent-tasks/{id}/permanent`                             |
+| PUT    | `/v1/agent-tasks/{id}/tags`                                  |
+| GET    | `/v1/agent-tasks/{id}/executions`                            |
+| POST   | `/v1/agent-tasks/{id}/event-subscriptions`                   |
+| GET    | `/v1/agent-tasks/{id}/event-subscriptions`                   |
 | DELETE | `/v1/agent-tasks/{id}/event-subscriptions/{subscription_id}` |
-| POST | `/v1/agent-tasks/{id}/bootstrap` |
-| GET | `/v1/agent-tasks/{id}/dashboard` |
-| GET | `/v1/agent-tasks/{id}/items` |
-| POST | `/v1/agent-tasks/{id}/items` |
-| POST | `/v1/agent-tasks/{id}/assets` |
-| GET | `/v1/agent-tasks/{id}/reconcile-queue` |
-| POST | `/v1/agent-tasks/{id}/ack` |
-| POST | `/v1/agent-tasks/{id}/reconcile-events` |
-| POST | `/v1/agent-tasks/{id}/accept-package` |
-| POST | `/v1/agent-tasks/{id}/reject-package` |
+| POST   | `/v1/agent-tasks/{id}/bootstrap`                             |
+| GET    | `/v1/agent-tasks/{id}/dashboard`                             |
+| GET    | `/v1/agent-tasks/{id}/items`                                 |
+| POST   | `/v1/agent-tasks/{id}/items`                                 |
+| POST   | `/v1/agent-tasks/{id}/assets`                                |
+| GET    | `/v1/agent-tasks/{id}/reconcile-queue`                       |
+| POST   | `/v1/agent-tasks/{id}/ack`                                   |
+| POST   | `/v1/agent-tasks/{id}/reconcile-events`                      |
+| POST   | `/v1/agent-tasks/{id}/accept-package`                        |
+| POST   | `/v1/agent-tasks/{id}/reject-package`                        |
 
 Task create and update bodies accept `priority` as an integer from 0 (P0,
 highest) through 3 (P3), defaulting to 2. Task responses include `priority` and
@@ -81,13 +81,13 @@ descriptions, role keys, placement, capacity, and task counts, plus the
 manager role profiles available for creation. Create one with
 `POST /v1/agent-tasks/managers` using `role_key`, `description`, and an optional
 `title`. Two optional overrides pin the manager's execution placement:
-`host_id` (must be a registered host; the host-compatibility routing check
-compares event host tags against the manager's host, so events from another
-box need a manager created with that box's `host_id`) and `workspace`. Both
-are stored on the durable manager row and reused when the session is
-re-created. A manager updates its own routing description through
-`PATCH /v1/agent-tasks/managers/self`; caller identity is supplied by the
-`puppygarden_api` runtime, not in the request body.
+`host_id` (stored on the durable manager row and reused when the session is
+re-created) and `workspace`. Host matching when routing is a preference, not
+a requirement: when several managers fit an event, prefer the one whose host
+matches the event's host tag, but cross-host routing is allowed — no manager
+is rejected for being on a different host. A manager updates its own routing
+description through `PATCH /v1/agent-tasks/managers/self`; caller identity is
+supplied by the `puppygarden_api` runtime, not in the request body.
 
 The broker routes stalled events directly with
 `POST /v1/task-events/batch-route-manager`, passing `event_ids` and
@@ -135,14 +135,14 @@ DELETE /v1/agent-tasks/{id}/event-subscriptions/{subscription_id}
 
 ## Task items
 
-| Method | Path |
-|--------|------|
-| POST | `/v1/task-items/{id}/resolve` |
-| PATCH | `/v1/task-items/{id}` |
-| POST | `/v1/task-items/{id}/dispatch` |
-| POST | `/v1/task-items/{id}/retry-dispatch` |
-| POST | `/v1/task-items/{id}/cancel` |
-| POST | `/v1/task-items/{id}/edit-lease` |
+| Method | Path                                     |
+| ------ | ---------------------------------------- |
+| POST   | `/v1/task-items/{id}/resolve`            |
+| PATCH  | `/v1/task-items/{id}`                    |
+| POST   | `/v1/task-items/{id}/dispatch`           |
+| POST   | `/v1/task-items/{id}/retry-dispatch`     |
+| POST   | `/v1/task-items/{id}/cancel`             |
+| POST   | `/v1/task-items/{id}/edit-lease`         |
 | DELETE | `/v1/task-items/{id}/edit-lease/{token}` |
 
 Task items carry a `kind`: `work` (default) dispatches to a worker lane;
@@ -159,14 +159,45 @@ and `submit_for_user_ack: true`.
 
 ## Agent queues
 
-| Method | Path |
-|--------|------|
-| GET | `/v1/agent-queues` |
-| GET | `/v1/agent-queues/{role}/items` |
-| POST | `/v1/agent-queues/{role}/pause` |
-| POST | `/v1/agent-queues/{role}/resume` |
-| PATCH | `/v1/agent-queue-items/{id}` |
-| POST | `/v1/agent-queue-items/{id}/cancel` |
+| Method | Path                                 |
+| ------ | ------------------------------------ |
+| GET    | `/v1/agent-queues`                   |
+| GET    | `/v1/agent-queues/dispatch-stoplist` |
+| PUT    | `/v1/agent-queues/dispatch-stoplist` |
+| GET    | `/v1/agent-queues/event-backlog`     |
+| POST   | `/v1/agent-queues/dismiss-backlog`   |
+| GET    | `/v1/agent-queues/{role}/items`      |
+| POST   | `/v1/agent-queues/{role}/pause`      |
+| POST   | `/v1/agent-queues/{role}/resume`     |
+| PATCH  | `/v1/agent-queue-items/{id}`         |
+| POST   | `/v1/agent-queue-items/{id}/cancel`  |
+
+`GET /v1/agent-queues/dispatch-stoplist` returns the stop keys the dispatcher
+refuses to dispatch (bare roles or `role:scope_id` composites for a single
+queue); `PUT` takes `{role, stopped, scope_id?}` and stores the composite when
+`scope_id` is set.
+
+`GET /v1/agent-queues/event-backlog` counts events waiting per dispatch queue:
+the broker row counts `awaiting_grouping` + `pending_triage` events; each
+manager row counts the `routed` events addressed to it; leftover non-terminal
+states come back under `other`.
+
+`POST /v1/agent-queues/dismiss-backlog` with `{role, scope_id?}` dismisses
+every event waiting on that queue (terminal-state rows are skipped) and
+cancels its queued notices; returns `{dismissed, cancelled_items}`.
+
+## Hosts
+
+| Method | Path                  |
+| ------ | --------------------- |
+| GET    | `/v1/hosts`           |
+| GET    | `/v1/hosts/{host_id}` |
+
+`GET /v1/hosts` lists the caller's registered hosts — `host_id`, `name`,
+`status` (`"online"`/`"offline"`), `sandbox_provider`, and
+`configured_harnesses`. Event host tags are host ids; use this to resolve them
+to names and check whether the box is connected. `status` is informational —
+routing does not require the host to be online.
 
 ## Task workers
 
@@ -175,27 +206,27 @@ returns an uninitialized `worker_id` immediately. Call `initialize` to start the
 target asynchronously; successful initialization records the target system's
 `target_id`. Items reference Workers by `worker_id`.
 
-| Method | Path |
-|--------|------|
-| GET | `/v1/worker-providers` |
-| GET | `/v1/worker-providers/{provider_id}` |
-| POST | `/v1/worker-providers` |
-| PATCH | `/v1/worker-providers/{provider_id}` |
-| DELETE | `/v1/worker-providers/{provider_id}` |
-| GET | `/v1/agent-tasks/{task_id}/workers` |
-| POST | `/v1/agent-tasks/{task_id}/workers` |
-| POST | `/v1/agent-tasks/{task_id}/workers/assign` |
-| POST | `/v1/task-workers/{worker_id}/initialize` |
-| POST | `/v1/task-workers/{worker_id}/rebind` |
-| POST | `/v1/task-workers/{worker_id}/interrupt` |
-| DELETE | `/v1/task-workers/{worker_id}` |
+| Method | Path                                       |
+| ------ | ------------------------------------------ |
+| GET    | `/v1/worker-providers`                     |
+| GET    | `/v1/worker-providers/{provider_id}`       |
+| POST   | `/v1/worker-providers`                     |
+| PATCH  | `/v1/worker-providers/{provider_id}`       |
+| DELETE | `/v1/worker-providers/{provider_id}`       |
+| GET    | `/v1/agent-tasks/{task_id}/workers`        |
+| POST   | `/v1/agent-tasks/{task_id}/workers`        |
+| POST   | `/v1/agent-tasks/{task_id}/workers/assign` |
+| POST   | `/v1/task-workers/{worker_id}/initialize`  |
+| POST   | `/v1/task-workers/{worker_id}/rebind`      |
+| POST   | `/v1/task-workers/{worker_id}/interrupt`   |
+| DELETE | `/v1/task-workers/{worker_id}`             |
 
 ## Board triage
 
-| Method | Path |
-|--------|------|
-| GET | `/v1/agent-tasks/board/pending` |
-| POST | `/v1/fyi-clusters/{id}/resolve` |
+| Method | Path                            |
+| ------ | ------------------------------- |
+| GET    | `/v1/agent-tasks/board/pending` |
+| POST   | `/v1/fyi-clusters/{id}/resolve` |
 
 ## Task agent roles
 
@@ -207,16 +238,16 @@ on the openai-agents SDK harness. Custom manager
 roles are created through `roles/manager`; the seeded default manager cannot be
 deleted. Worker configuration belongs to Worker Providers, not roles.
 
-| Method | Path |
-|--------|------|
-| GET | `/v1/agent-tasks/roles/profiles` |
-| GET | `/v1/agent-tasks/roles/{role}/profile` |
-| PUT | `/v1/agent-tasks/roles/{role}/profile` |
-| PUT | `/v1/agent-tasks/roles/{role}/prompt` |
-| POST | `/v1/agent-tasks/roles/manager` |
-| DELETE | `/v1/agent-tasks/roles/{role}` |
-| POST | `/v1/agent-tasks/roles/{role}/session` |
-| POST | `/v1/agent-tasks/roles/{role}/session/reset` |
+| Method | Path                                         |
+| ------ | -------------------------------------------- |
+| GET    | `/v1/agent-tasks/roles/profiles`             |
+| GET    | `/v1/agent-tasks/roles/{role}/profile`       |
+| PUT    | `/v1/agent-tasks/roles/{role}/profile`       |
+| PUT    | `/v1/agent-tasks/roles/{role}/prompt`        |
+| POST   | `/v1/agent-tasks/roles/manager`              |
+| DELETE | `/v1/agent-tasks/roles/{role}`               |
+| POST   | `/v1/agent-tasks/roles/{role}/session`       |
+| POST   | `/v1/agent-tasks/roles/{role}/session/reset` |
 
 ## Session adoption
 
@@ -232,35 +263,35 @@ report `activity`, `connected`, `needs_response`, and `failure_reason`;
 PuppyGarden observes those fields but does not route the user's response back
 to the external application.
 
-| Method | Path |
-|--------|------|
-| POST | `/v1/agent-tasks/sessions/{session_id}/propose-adoption` |
-| POST | `/v1/agent-tasks/sessions/{session_id}/adopt` |
-| POST | `/v1/agent-tasks/sessions/{session_id}/reject-adoption` |
-| POST | `/v1/agent-tasks/external-sessions/propose-adoption` |
-| POST | `/v1/agent-tasks/external-sessions/{session_hint}/adopt` |
-| POST | `/v1/agent-tasks/external-sessions/{session_hint}/reject-adoption` |
+| Method | Path                                                               |
+| ------ | ------------------------------------------------------------------ |
+| POST   | `/v1/agent-tasks/sessions/{session_id}/propose-adoption`           |
+| POST   | `/v1/agent-tasks/sessions/{session_id}/adopt`                      |
+| POST   | `/v1/agent-tasks/sessions/{session_id}/reject-adoption`            |
+| POST   | `/v1/agent-tasks/external-sessions/propose-adoption`               |
+| POST   | `/v1/agent-tasks/external-sessions/{session_hint}/adopt`           |
+| POST   | `/v1/agent-tasks/external-sessions/{session_hint}/reject-adoption` |
 
 ## Poller integration
 
-| Method | Path |
-|--------|------|
-| POST | `/v1/external-session-watcher/update` |
-| GET | `/v1/agent-tasks/script-plugins/health` |
-| POST | `/v1/agent-tasks/script-plugins/health` |
-| PUT | `/v1/agent-tasks/script-plugins/hosts/{host_id}/{plugin_name}` |
+| Method | Path                                                           |
+| ------ | -------------------------------------------------------------- |
+| POST   | `/v1/external-session-watcher/update`                          |
+| GET    | `/v1/agent-tasks/script-plugins/health`                        |
+| POST   | `/v1/agent-tasks/script-plugins/health`                        |
+| PUT    | `/v1/agent-tasks/script-plugins/hosts/{host_id}/{plugin_name}` |
 
 ## Automations (scheduled tasks)
 
-| Method | Path |
-|--------|------|
-| POST | `/v1/scheduled-tasks` |
-| GET | `/v1/scheduled-tasks` |
-| GET | `/v1/scheduled-tasks/{id}` |
-| PATCH | `/v1/scheduled-tasks/{id}` |
-| DELETE | `/v1/scheduled-tasks/{id}` |
-| POST | `/v1/scheduled-tasks/{id}/run` |
-| GET | `/v1/scheduled-tasks/{id}/runs` |
+| Method | Path                            |
+| ------ | ------------------------------- |
+| POST   | `/v1/scheduled-tasks`           |
+| GET    | `/v1/scheduled-tasks`           |
+| GET    | `/v1/scheduled-tasks/{id}`      |
+| PATCH  | `/v1/scheduled-tasks/{id}`      |
+| DELETE | `/v1/scheduled-tasks/{id}`      |
+| POST   | `/v1/scheduled-tasks/{id}/run`  |
+| GET    | `/v1/scheduled-tasks/{id}/runs` |
 
 Create fields: `name`, `prompt`, `rrule`, `agent_id`, `timezone`,
 `model_override`, `reasoning_effort`, `permission_mode`, `max_cost_usd`,

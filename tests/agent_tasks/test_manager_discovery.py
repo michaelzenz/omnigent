@@ -304,3 +304,53 @@ def test_list_active_managers_filters_incomplete_snapshots(
     managers = _managers(discovery_setup)
     assert [manager.manager_id for manager in managers] == [discovery_setup["manager"].id]
     assert managers[0].task_count == 1
+
+
+def test_choose_manager_prefers_same_host_over_relevance(discovery_setup: dict) -> None:
+    """Same-host candidates win even when a cross-host one scores higher."""
+    from omnigent.agent_tasks.manager_discovery import ManagerInfo, choose_manager_for_task
+
+    def _info(mid: str, host: str, title: str) -> ManagerInfo:
+        return ManagerInfo(
+            manager_id=mid,
+            conversation_id=None,
+            host_id=host,
+            workspace="/tmp/w",
+            harness="openai-agents",
+            role_key="manager:default",
+            description=title,
+            title=title,
+            agent_profile_id="agent",
+            tasks=[_probe(f"t-{mid}", title=title, goal=title)],
+        )
+
+    same_host = _info(_uid("mgr-same"), "host-a", "Retention edge cases")
+    cross_host = _info(
+        _uid("mgr-cross"), "host-b", "Retention edge cases AND the full GC pipeline"
+    )
+    probe = _probe("probe", title="GC retention", goal="retention work")
+
+    chosen = choose_manager_for_task([cross_host, same_host], probe=probe, host_id="host-a")
+    assert chosen is same_host
+
+
+def test_choose_manager_falls_back_to_cross_host(discovery_setup: dict) -> None:
+    """Cross-host managers are used when no same-host manager is available."""
+    from omnigent.agent_tasks.manager_discovery import ManagerInfo, choose_manager_for_task
+
+    cross_host = ManagerInfo(
+        manager_id=_uid("mgr-cross"),
+        conversation_id=None,
+        host_id="host-b",
+        workspace="/tmp/w",
+        harness="openai-agents",
+        role_key="manager:default",
+        description="GC portfolio",
+        title="GC portfolio",
+        agent_profile_id="agent",
+        tasks=[_probe("t-cross", title="GC retention", goal="retention")],
+    )
+    probe = _probe("probe", title="GC retention", goal="retention work")
+
+    chosen = choose_manager_for_task([cross_host], probe=probe, host_id="host-a")
+    assert chosen is cross_host

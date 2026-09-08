@@ -230,8 +230,9 @@ class BrokerPackager(Packager):
     """Stage-1 packager for broker events.
 
     Scans ``awaiting_grouping`` events each tick, groups by (owner, host) —
-    events from different hosts never share a batch, since each batch must be
-    distributable to a host-compatible manager — excludes already-claimed
+    events from different hosts never share a batch, keeping each batch's
+    context coherent (host is a routing preference, not a requirement —
+    cross-host delivery is allowed). Excludes already-claimed
     events, and clusters the remainder by tag similarity, oldest-first. The
     agent-idle check reads the broker's bound
     session from the role profile and looks up its raw status. The broker has
@@ -325,8 +326,8 @@ class BrokerPackager(Packager):
             return []
         # Group by (owner, host); events without an owner fall back to
         # "__anonymous__", events without host attribution to None. Hosts never
-        # mix inside one batch — each batch must be distributable to a
-        # host-compatible manager.
+        # mix inside one batch — each batch stays single-host so the notice
+        # reads coherently (routing itself may cross hosts).
         grouped: dict[tuple[str, str | None], list[TaskEvent]] = {}
         for event in events:
             owner = event.owner_user_id or "__anonymous__"

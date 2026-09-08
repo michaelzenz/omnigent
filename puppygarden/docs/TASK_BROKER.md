@@ -39,13 +39,15 @@ Each entry describes one active manager:
 
 - `conversation_id` is the routing target.
 - `description` is the manager-maintained summary of its scope.
-- `host_id` is a correctness constraint for events tied to a known host.
+- `host_id` is the manager's host. Host match is a preference: prefer a
+  manager whose `host_id` matches the event's host tag, but a cross-host
+  manager is acceptable when it is the best fit.
 - `task_count`, `capacity`, and `tasks` describe its current portfolio.
 - `role_key` identifies the manager role profile.
 
 Compare the cluster's subject and intent with manager descriptions. Choose the
-best semantically suitable manager whose host is compatible and which has
-capacity. Do not choose a manager merely because it exists.
+best semantically suitable manager with capacity, preferring one on the same
+host as the events. Do not choose a manager merely because it exists.
 
 ### 2. Create a manager when none fits
 
@@ -70,13 +72,40 @@ puppygarden_api(
   body={
     "role_key": "manager:default",
     "title": "<short manager title>",
-    "description": "<concise scope this manager should own>"
+    "description": "<concise scope this manager should own>",
+    "host_id": "<optional host id to pin the manager to>"
   }
 )
 ```
 
-Create a manager when no description is a suitable match, or the suitable managers run on incompatible hosts.
+Manager should manage broad scope, and not specific work like CI fix, bug fix, code dev. It should manage broad project level scope, like IAM/Observability/Storage/Dashboard service or project.
+
+`host_id` is optional placement overrides: it pin the
+manager to a specific host and working directory instead of the role profile's
+defaults. Use `host_id` when the events come from a known other host and a
+same-host manager is worth having; `host_id` must be a registered host. See below for how to get eligible hosts.
+Host matching stays a preference even after pinning — cross-host routing is
+always allowed.
+
+Create a manager when no description is a suitable match.
 The response includes the new manager's `conversation_id`.
+
+### Resolving event host tags
+
+Event host tags are host ids. To name them and check reachability, list the
+user's known hosts:
+
+```
+puppygarden_api(
+  method="GET",
+  path="/v1/hosts"
+)
+```
+
+Each entry has `host_id`, `name`, `status` (`"online"`/`"offline"`). Use it to translate a cluster's host tag into a
+human-readable host name for routing decisions, and to tell whether the box
+the events came from is currently connected. Do not treat `offline` as a
+blocker — it is context for the routing note, not a constraint.
 
 ### 3. Route the events
 
@@ -86,7 +115,7 @@ puppygarden_api(
   path="/v1/task-events/batch-route-manager",
   body={
     "event_ids": ["<id1>", "<id2>"],
-    "manager_conversation_id": "<manager_conversation_id>"
+    "manager_id": "<manager_id from the managers listing>"
   }
 )
 ```
