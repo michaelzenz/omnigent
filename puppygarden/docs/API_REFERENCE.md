@@ -215,11 +215,17 @@ deleted. Worker configuration belongs to Worker Providers, not roles.
 
 ## Session adoption
 
-Internal sessions (`sessions/{session_id}`) are adopted by conversation id.
+Internal sessions (`sessions/{session_id}`) are adopted by conversation id and
+create **internal** workers — omnigent sessions that live in this server's
+conversation store (chat-able at `/c/<id>`, server-visible status).
 External, watcher-discovered sessions (`external-sessions/{session_hint}`) use
-the hint as their target id. Watcher updates may report `activity`, `connected`,
-`needs_response`, and `failure_reason`; PuppyGarden observes those fields but
-does not route the user's response back to the external application.
+the hint as their target id and create **external** workers — non-omnigent
+sessions from external harnesses (Claude Code, Codex, ...).
+Worker kinds: `managed` (dispatched by the task system), `internal` (adopted
+omnigent session), `external` (adopted harness session). Watcher updates may
+report `activity`, `connected`, `needs_response`, and `failure_reason`;
+PuppyGarden observes those fields but does not route the user's response back
+to the external application.
 
 | Method | Path |
 |--------|------|

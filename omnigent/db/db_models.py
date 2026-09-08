@@ -2437,7 +2437,10 @@ class SqlWorker(OmnigentBase):
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("kind IN ('managed', 'external')", name="ck_workers_kind"),
+        CheckConstraint(
+            "kind IN ('managed', 'internal', 'external')",
+            name="ck_workers_kind",
+        ),
         CheckConstraint(
             "state IN ('uninitialized', 'initializing', 'idle', 'busy', "
             "'disconnected', 'initialization_failed', 'terminated', 'deleted')",

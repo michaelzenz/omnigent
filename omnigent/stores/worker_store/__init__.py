@@ -10,6 +10,12 @@ from omnigent.entities import Worker
 _UNSET: Any = object()
 
 WORKER_KIND_MANAGED = "managed"
+# Adopted local omnigent sessions (exist in the conversation store, chat-able
+# at /c/<id>); distinct from external so the UI can offer chat affordances and
+# the server can mirror live status for them.
+WORKER_KIND_INTERNAL = "internal"
+# Non-omnigent sessions discovered by the watcher (e.g. Claude Code, Codex
+# running outside this server) — not addressable as local conversations.
 WORKER_KIND_EXTERNAL = "external"
 
 
