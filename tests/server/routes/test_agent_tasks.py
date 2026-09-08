@@ -636,6 +636,68 @@ async def test_create_manager_registers_top_level_manager_role(
     assert stored.conversation_id == body["conversation_id"]
 
 
+async def test_create_manager_honors_host_and_workspace_overrides(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit host_id/workspace pin the manager's execution placement.
+
+    This is how a manager is created for a second dev box whose events are
+    host-incompatible with managers pinned to the caller's default host.
+    """
+    _patch_workspace_validation(monkeypatch)
+    host_id = _seed_live_host(db_uri, "override-manager-host")
+    profile = await client.get(agent_role_profile_url("manager:default"))
+    assert profile.status_code == 200
+
+    resp = await client.post(
+        "/v1/agent-tasks/managers",
+        json={
+            "role_key": "manager:default",
+            "description": "Owns arca-universe maintenance work.",
+            "title": "Arca manager",
+            "host_id": host_id,
+            "workspace": "/tmp/arca-workspace",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["host_id"] == host_id
+    assert body["workspace"] == "/tmp/arca-workspace"
+    conversation = SqlAlchemyConversationStore(db_uri).get_conversation(body["conversation_id"])
+    assert conversation is not None
+    assert conversation.host_id == host_id
+    stored = SqlAlchemyManagerStore(db_uri).get(body["id"])
+    assert stored is not None
+    assert stored.host_id == host_id
+    assert stored.workspace == "/tmp/arca-workspace"
+
+
+async def test_create_manager_rejects_unknown_host(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unregistered host_id fails fast instead of creating an unlaunchable manager."""
+    _patch_workspace_validation(monkeypatch)
+    _seed_live_host(db_uri, "create-manager-host-2")
+    profile = await client.get(agent_role_profile_url("manager:default"))
+    assert profile.status_code == 200
+
+    resp = await client.post(
+        "/v1/agent-tasks/managers",
+        json={
+            "role_key": "manager:default",
+            "description": "Points at a host that does not exist.",
+            "host_id": _uid("no-such-host"),
+        },
+    )
+
+    assert resp.status_code == 404, resp.text
+
+
 async def test_update_manager_self_updates_only_owned_caller(
     client: httpx.AsyncClient,
     db_uri: str,

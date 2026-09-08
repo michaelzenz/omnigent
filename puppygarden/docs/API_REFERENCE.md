@@ -80,7 +80,12 @@ Managers are first-class records backed by top-level conversations.
 descriptions, role keys, placement, capacity, and task counts, plus the
 manager role profiles available for creation. Create one with
 `POST /v1/agent-tasks/managers` using `role_key`, `description`, and an optional
-`title`. A manager updates its own routing description through
+`title`. Two optional overrides pin the manager's execution placement:
+`host_id` (must be a registered host; the host-compatibility routing check
+compares event host tags against the manager's host, so events from another
+box need a manager created with that box's `host_id`) and `workspace`. Both
+are stored on the durable manager row and reused when the session is
+re-created. A manager updates its own routing description through
 `PATCH /v1/agent-tasks/managers/self`; caller identity is supplied by the
 `puppygarden_api` runtime, not in the request body.
 

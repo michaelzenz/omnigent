@@ -354,6 +354,12 @@ class CreateManagerRequest(BaseModel):
     role_key: str = MANAGER_DEFAULT_ROLE_KEY
     description: str = Field(max_length=512)
     title: str | None = Field(default=None, max_length=200)
+    # Execution-snapshot overrides: let the caller pin the manager to a host
+    # other than the role profile's default (e.g. a second dev box whose
+    # events are host-incompatible with Mac-pinned managers). Stored on the
+    # durable row, so later heals re-create the session on the same host.
+    host_id: str | None = Field(default=None, min_length=1)
+    workspace: str | None = Field(default=None, min_length=1)
 
     @field_validator("role_key", "description")
     @classmethod
@@ -1732,9 +1738,16 @@ def create_agent_tasks_router(
                 f"Role is not a manager role: {body.role_key}",
                 code=ErrorCode.INVALID_INPUT,
             )
+        if body.host_id is not None and host_store is not None:
+            host = await asyncio.to_thread(host_store.get_host, body.host_id)
+            if host is None:
+                raise OmnigentError(
+                    f"Host not found: {body.host_id}",
+                    code=ErrorCode.NOT_FOUND,
+                )
         params = resolve_bootstrap_params(
-            host_id=None,
-            workspace=None,
+            host_id=body.host_id,
+            workspace=body.workspace,
             model=None,
             role_profile=profile,
         )
