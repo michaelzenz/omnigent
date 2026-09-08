@@ -10,6 +10,7 @@ from typing import Any
 from omnigent.agent_tasks.agent_builtins import TASK_BROKER_ROLE
 from omnigent.agent_tasks.constants import DEFAULT_TASK_WORKSPACE
 from omnigent.agent_tasks.role_keys import (
+    SYSTEM_ROLE_KEYS,
     TASK_SECRETARY_ROLE_KEY,
     is_manager_role_key,
     role_profile_title,
@@ -149,7 +150,13 @@ def get_or_create_role_profile(
     agent_store: AgentStore,
     prompt_profile_store: PromptProfileStore | None = None,
 ) -> TaskRoleProfile:
-    """Load the role definition, auto-provisioning defaults on first use."""
+    """Load the role definition, auto-provisioning defaults for system roles.
+
+    Only system roles (broker, secretary, manager:default) are lazily
+    provisioned. A missing custom role must 404 — auto-creating it would
+    resurrect deleted manager roles the moment any client fetches their
+    profile, with defaults pinned to the first live host.
+    """
     existing = task_role_profile_store.get(role)
     if (
         existing is not None
@@ -159,6 +166,11 @@ def get_or_create_role_profile(
         and agent_store.get(existing.agent_profile_id) is not None
     ):
         return existing
+    if existing is None and role not in SYSTEM_ROLE_KEYS:
+        raise OmnigentError(
+            f"Task role profile not found: {role}",
+            code=ErrorCode.NOT_FOUND,
+        )
 
     host_id = resolve_first_live_host_id(host_store, resolve_host_owner_user_id(auth_user_id))
     if host_id is None:
