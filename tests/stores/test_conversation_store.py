@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from sqlalchemy import event, text
 
+from omnigent.db.compression import encode as encode_compressed_text
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import (
     CompactionData,
@@ -28,10 +29,27 @@ from omnigent.session_lifecycle import SPAWN_PARENT_RESPONSE_ID_LABEL_KEY
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
+    _decode_session_overrides,
 )
 from omnigent.stores.host_store import HostStore
 
 # ── CRUD ──────────────────────────────────────────────
+
+
+def test_decode_session_overrides_accepts_legacy_compressed_blob() -> None:
+    raw = encode_compressed_text(
+        json.dumps(
+            {
+                "reasoning_effort": "high",
+                "model_override": "databricks-glm-5-3-flash",
+            }
+        )
+    )
+
+    overrides = _decode_session_overrides(raw)
+
+    assert overrides["reasoning_effort"] == "high"
+    assert overrides["model_override"] == "databricks-glm-5-3-flash"
 
 
 def test_fork_drops_import_provenance_labels(
