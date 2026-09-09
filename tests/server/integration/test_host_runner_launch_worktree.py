@@ -142,12 +142,18 @@ async def register_host(
         create_status: str = "ok",
         create_error: str | None = None,
         launch_status: str = "launched",
+        managed_worktree_leases: bool = False,
     ) -> _HostCapture:
         HostStore(db_uri).upsert_on_connect(_HOST_ID, "wt-host", RESERVED_USER_LOCAL)
         conn = app.state.host_registry.register(
             host_id=_HOST_ID,
             ws=_FakeWebSocket(),  # type: ignore[arg-type] — duck-typed
-            hello=HostHelloFrame(version="0.1.0-test", frame_protocol_version=1, name="wt-host"),
+            hello=HostHelloFrame(
+                version="0.1.0-test",
+                frame_protocol_version=1,
+                name="wt-host",
+                managed_worktree_leases=managed_worktree_leases,
+            ),
             owner=RESERVED_USER_LOCAL,
         )
         cap = _HostCapture()
@@ -480,3 +486,68 @@ async def test_launch_runner_rollback_preserves_existing_branch(
     assert conv is not None
     assert conv.runner_id is None
     assert conv.git_branch is None
+
+
+async def test_launch_runner_auto_create_generates_branch_and_labels(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """``auto_create`` on the launch endpoint names the branch server-side
+    and stamps the managed-worktree labels.
+
+    This is the switch-host auto-worktree path: the server generates a
+    branch name (the bounded, fail-open AI call — with the test runtime's
+    mock LLM the generated name is whatever the mock returns, so the
+    assertion is on the flow, not the exact name), creates the worktree
+    with a lease owner, and binds the session to the worktree path.
+    """
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-auto-create-agent")
+
+    resp = await _launch(
+        client,
+        session_id,
+        git={"auto_create": True, "branch_name_prompt": "fix the login retry flake"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["runner_id"]
+
+    # Exactly one create frame, off the source repo, carrying the
+    # server-generated branch and a lease owned by this session.
+    assert len(cap.create) == 1, f"expected one create_worktree frame, got {len(cap.create)}"
+    assert cap.create[0].repo_path == _SOURCE_REPO
+    assert cap.create[0].branch_name  # generated, non-empty
+    assert cap.remove == [], "worktree was rolled back on a successful launch"
+
+    # The session row points at the worktree with the generated branch,
+    # plus the same label set the create flow stamps (sidebar marker +
+    # source repo for the delete flow).
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    expected_dirname = cap.create[0].branch_name.replace("/", "-")
+    assert conv.workspace == f"{_SOURCE_REPO}-worktrees/{expected_dirname}"
+    assert conv.git_branch == cap.create[0].branch_name
+    assert conv.host_id == _HOST_ID
+    assert conv.labels.get("omnigent.auto_worktree") == "1"
+    assert conv.labels.get("omnigent.auto_worktree.source_repo") == _SOURCE_REPO
+
+
+async def test_launch_runner_auto_create_requires_lease_capable_host(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """``auto_create`` on a host without managed-worktree leases is a 400.
+
+    The managed lease is what lets a later session adopt an auto worktree
+    instead of duplicating it; a host that predates the capability cannot
+    provide it, so the request is rejected up front rather than silently
+    creating an unmanaged worktree.
+    """
+    register_host()  # default hello: managed_worktree_leases=False
+    session_id = await _bare_session(client, "wt-auto-create-old-host-agent")
+
+    resp = await _launch(client, session_id, git={"auto_create": True})
+
+    assert resp.status_code == 400, resp.text
+    assert "upgraded" in resp.json()["detail"]

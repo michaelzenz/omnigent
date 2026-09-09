@@ -874,9 +874,13 @@ export async function switchSessionAgent(sessionId: string, agentId: string): Pr
  * launch its runner: ``POST /v1/hosts/{hostId}/runners``.
  *
  * This is the fork-resume path — the clone already exists; this picks
- * its host/directory at resume time. When ``git`` is set the server
- * creates a worktree off ``workspace`` (the source repo) and binds the
- * runner to it; otherwise it binds ``workspace`` directly.
+ * its host/directory at resume time. With ``autoCreate`` the server
+ * names the branch itself (AI-generated from ``branchNamePrompt``,
+ * fail-open to a random slug), creates a leased, auto-reusable managed
+ * worktree off ``workspace``, and binds the runner to it. With a plain
+ * ``branchName`` the server creates a worktree for that branch off
+ * ``workspace`` and binds the runner to it; otherwise it binds
+ * ``workspace`` directly.
  *
  * @param hostId - Host the caller owns to launch on, e.g. ``"host_abc"``.
  * @param sessionId - The (unbound) session to bind, e.g. ``"conv_abc"``.
@@ -892,42 +896,67 @@ export async function launchRunner(
   hostId: string,
   sessionId: string,
   workspace: string,
-  git?: {
-    branchName: string;
-    baseBranch?: string;
-    existingWorktree?: boolean;
-    existingBranch?: boolean;
-    autoFetchBase?: boolean;
-  },
+  git?:
+    | {
+        /** Auto mode: the server names the branch and creates a leased,
+         *  auto-reusable managed worktree off ``workspace``. */
+        autoCreate: true;
+        /** Context for the server's AI branch naming, e.g. the session
+         *  title. Omitted → the server falls back to a random slug. */
+        branchNamePrompt?: string;
+        baseBranch?: string;
+        autoFetchBase?: boolean;
+      }
+    | {
+        autoCreate?: false;
+        branchName: string;
+        baseBranch?: string;
+        existingWorktree?: boolean;
+        existingBranch?: boolean;
+        autoFetchBase?: boolean;
+      },
 ): Promise<{ runnerId: string }> {
   const body: {
     session_id: string;
     workspace: string;
     git?: {
-      branch_name: string;
+      branch_name?: string;
       base_branch?: string;
       existing_worktree?: boolean;
       existing_branch?: boolean;
+      auto_create?: boolean;
+      branch_name_prompt?: string;
       auto_fetch_base?: boolean;
     };
   } = { session_id: sessionId, workspace };
   if (git !== undefined) {
-    const autoFetchBase = git.autoFetchBase ?? readAutoFetchWorktreeBase();
-    // `existing_worktree` binds a pre-existing worktree (no worktree is
-    // created; the branch is recorded for the sidebar + delete flow) and
-    // `existing_branch` recreates a worktree for a branch that already
-    // exists (the deleted-worktree recreate path) — neither carries a
-    // base_branch (nothing new is forked).
-    body.git = {
-      branch_name: git.branchName,
-      ...(git.existingWorktree
-        ? { existing_worktree: true }
-        : git.existingBranch
-          ? { existing_branch: true }
-          : git.baseBranch !== undefined
-            ? { base_branch: git.baseBranch, auto_fetch_base: autoFetchBase }
-            : { auto_fetch_base: autoFetchBase }),
-    };
+    if (git.autoCreate) {
+      // Auto mode: the server generates the branch name, so the client
+      // sends a prompt instead — the schema rejects the pair.
+      body.git = {
+        auto_create: true,
+        ...(git.branchNamePrompt ? { branch_name_prompt: git.branchNamePrompt } : {}),
+        ...(git.baseBranch ? { base_branch: git.baseBranch } : {}),
+        auto_fetch_base: git.autoFetchBase ?? readAutoFetchWorktreeBase(),
+      };
+    } else {
+      const autoFetchBase = git.autoFetchBase ?? readAutoFetchWorktreeBase();
+      // `existing_worktree` binds a pre-existing worktree (no worktree is
+      // created; the branch is recorded for the sidebar + delete flow) and
+      // `existing_branch` recreates a worktree for a branch that already
+      // exists (the deleted-worktree recreate path) — neither carries a
+      // base_branch (nothing new is forked).
+      body.git = {
+        branch_name: git.branchName,
+        ...(git.existingWorktree
+          ? { existing_worktree: true }
+          : git.existingBranch
+            ? { existing_branch: true }
+            : git.baseBranch !== undefined
+              ? { base_branch: git.baseBranch, auto_fetch_base: autoFetchBase }
+              : { auto_fetch_base: autoFetchBase }),
+      };
+    }
   }
   const res = await authenticatedFetch(`/v1/hosts/${encodeURIComponent(hostId)}/runners`, {
     method: "POST",
