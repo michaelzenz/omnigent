@@ -206,6 +206,12 @@ returns an uninitialized `worker_id` immediately. Call `initialize` to start the
 target asynchronously; successful initialization records the target system's
 `target_id`. Items reference Workers by `worker_id`.
 
+`PATCH /v1/task-workers/{worker_id}/title` with `{"title": "..."}` (1–200
+chars) sets the manager-maintained worker title — a short description of the
+worker's recent work that the board shows on the task card instead of the
+static provider name. The manager roster (`GET /v1/agent-tasks/{task_id}/workers`)
+returns the current `title` per worker.
+
 | Method | Path                                       |
 | ------ | ------------------------------------------ |
 | GET    | `/v1/worker-providers`                     |
@@ -219,6 +225,7 @@ target asynchronously; successful initialization records the target system's
 | POST   | `/v1/task-workers/{worker_id}/initialize`  |
 | POST   | `/v1/task-workers/{worker_id}/rebind`      |
 | POST   | `/v1/task-workers/{worker_id}/interrupt`   |
+| PATCH  | `/v1/task-workers/{worker_id}/title`       |
 | DELETE | `/v1/task-workers/{worker_id}`             |
 
 ## Board triage

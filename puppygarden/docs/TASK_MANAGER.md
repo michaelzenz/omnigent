@@ -1,8 +1,7 @@
 # Task manager manual
 
 You own **every task attached to you** — usually several. Maintain each
-task's `internal_note` and tags so the ingress scorer can route inbound
-events, and keep its user-facing `description` as a concise Markdown
+task's `internal_note` and tags, and keep its user-facing `description` as a concise Markdown
 Overview (refresh after material changes; summarize status and only
 meaningful recent activity; always write overview in nested bullets format; never paste raw logs).
 
@@ -65,8 +64,6 @@ puppygarden_api(
 )
 ```
 
-
-
 ## Handling routed events
 
 The manager packager wraps routed events into a dispatch notice and sends
@@ -75,6 +72,8 @@ portfolio that is not yet reconciled. Events with a known task are labeled
 `[task:<id>]`. Events routed directly by the broker have no task yet; you must
 select an existing task or create one before reconciling them. You don't need
 to poll.
+
+Note that for all below, keep description of task < 100 words, taskItem description <30 words, taskItem instruction <20 words, goal <30 words
 
 **Step 1 — pick the task from the roster.** Each notice turn carries a
 `[Task roster]` section in its instructions: your portfolio as
@@ -94,10 +93,43 @@ the event is already bound. Otherwise:
   free-text search when the roster titles are not enough; its tag-match
   list is deprecated and always empty.
 
+**Step 1b — create new task.**
+
+When a routed event belongs to none of your tasks (and no other manager's  
+task fits better — check via the same search), open a new one. It is born  
+**pending** and attached to you; the user confirms it:
+
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/agent-tasks/packages",
+  body={
+    "title": "<task title>",
+    "goal": "<endstate this task should land on>",
+    "manager_conversation_id": "<your_session_id>",
+    "internal_note": "<agent context — routing rationale>",
+    "items": [
+      {
+        "title": "<item title>",
+        "event_ids": ["<id>"],
+        "description": "<why this item exists>",
+        "instructions": "<worker instructions>",
+        "internal_note": "<agent context>"
+      }
+    ]
+  }
+)
+```
+
+Pass your own session id as `manager_conversation_id` so the task is  
+attached to you from birth.
+
 **Step 2 — reconcile into the task's items.** For each routed event,
 decide whether it extends an existing pending/queued item, needs a split,
 or is already handled. Not all events in one batch belong to the same
 item — or even the same task.
+
+Your job is to maintain the status of the tasks you own, and suggest next steps for user to act on(taskItems). Instead of having one taskItem per event, you need to reconcile events into next action items. The goal is to maintain the tasks user is working on, and summarize concise next action item for each task, and auto dismiss/resolve tasks and taskItems.
 
 - **Extend** an existing item — pass `item_id` in the reconcile call:
   ```
@@ -117,11 +149,9 @@ item — or even the same task.
   )
   ```
 - **Split** an existing item — create a new item for the split portion,
-and narrow the original's title/instructions.
-- **Resolve** an item that is already done — `POST /v1/task-items/{id}/resolve`
-with `{"resolution":"reject_item"}`.
-- **Ack** an event that needs no item — `POST /v1/agent-tasks/{id}/ack`
-marks events reconciled without creating a task item.
+  and narrow the original's title/instructions.
+- **Resolve** an item that is already done — `POST /v1/task-items/{id}/resolve`  
+  with `{"resolution":"reject_item"}`.
 
 **Step 2b — link the session to the task (turn-finished events).**
 `session.turn.finished` events come from a real session that worked on
@@ -194,24 +224,6 @@ puppygarden_api(
 `event_ids` is required for event-driven items: creating the item consumes and
 reconciles each triggering event so it is not delivered again.
 
-**Maintain the worker title.** Every worker lane has its own title (separate
-from the underlying session's title) shown on the task card. Keep it current:
-after a lane finishes meaningful work — or when its focus shifts — update the
-title to describe what it was recently working on, so the user can tell at a
-glance what each lane has been doing:
-
-```
-puppygarden_api(
-  method="PATCH",
-  path="/v1/task-workers/<worker_id>/title",
-  body={"title": "<recent work, e.g. 'Fixing S3 retry flakiness'>"}
-)
-```
-
-Keep it short (one line, max 200 chars), concrete, and in the present
-progressive form. Update it as the lane moves to new work — do not leave a
-stale title from a finished item.
-
 **Worker assignment principle — context affinity.** Workers are long-lived
 lanes: initialization starts the target session, and all later items reuse
 it. Prefer reusing a lane that already has related context — and a lane
@@ -219,58 +231,56 @@ may serve **several of your tasks** when the context is shared (a lane
 working in one repo). Fewer lanes with deeper context beats many shallow
 lanes.
 
-**You propose; the user dispatches.** Creating an item with
-`submit_for_user_ack: true` puts it on the task card. The user clicks go
-(ack) — only then does the queue dispatch to the lane. If the lane halts
-(retries exhausted, disconnected, init failed, or the user stopped the
-session), a red **!** appears on every task referencing it; when the user
+**Maintain the worker title.** Every worker lane has its own title (separate
+from the underlying session's title) shown on the task card instead of the
+static provider name. Keep it current: after a lane finishes meaningful work —
+or when its focus shifts — update the title to a short, concrete phrase for
+what it has been doing (e.g. "Fixing S3 retry flakiness"; one line, max 20 words). Update it as the lane moves to new work — do not leave a stale title
+from a finished item:
+
+```
+puppygarden_api(
+  method="PATCH",
+  path="/v1/task-workers/<worker_id>/title",
+  body={"title": "<recent work>"}
+)
+```
+
+The worker roster (`GET /v1/agent-tasks/<task_id>/workers`) returns the
+current `title` per worker — read it before choosing an assignment.
+
+**You propose; the user dispatches.** Creating an item with  
+`submit_for_user_ack: true` puts it on the task card. The user clicks go  
+(ack) — only then does the queue dispatch to the lane. If the lane halts  
+(retries exhausted, disconnected, init failed, or the user stopped the  
+session), a red **!** appears on every task referencing it; when the user  
 gets it working again, it un-halts and the badge clears.
+
+**Step 4 - ALWAYS PROCESS AN EVENT**:
+
+After you finish, ALWAYS dismiss it(this is idempotent so it's safe):
+
+```
+puppygarden_api(
+  method="POST",
+  path="/v1/task-events/<event_id>/dismiss"
+)
+```
 
 ## Task lifecycle
 
 You steer each task through its states via `PATCH /v1/agent-tasks/<id>`:
 
 - `pending` — tasks you create are **born pending**: the user reviews and
-confirms to activate. (User-created tasks are born active.)
+  confirms to activate. (User-created tasks are born active.)
 - `agent-resolved` — the task looks done. It sorts to the board's end
-with a distinct badge. **Not final**: when a new relevant event lands,
-move it back to `pending`. Prefer this over endless `active` — the
-board should show what needs attention.
+  with a distinct badge. **Not final**: when a new relevant event lands,
+  move it back to `pending`. Prefer this over endless `active` — the
+  board should show what needs attention.
 - `idle` — do not set manually; tasks auto-idle after a quiet week.
 
-Typical flow: create task (pending) → user confirms (active) → work →
+Typical flow: create task (pending) → user confirms (active) → work →  
 `agent-resolved` when done → revive to `pending` on new events.
-
-## Creating new tasks
-
-When a routed event belongs to none of your tasks (and no other manager's
-task fits better — check via the same search), open a new one. It is born
-**pending** and attached to you; the user confirms it:
-
-```
-puppygarden_api(
-  method="POST",
-  path="/v1/agent-tasks/packages",
-  body={
-    "title": "<task title>",
-    "goal": "<endstate this task should land on>",
-    "manager_conversation_id": "<your_session_id>",
-    "internal_note": "<agent context — routing rationale>",
-    "items": [
-      {
-        "title": "<item title>",
-        "event_ids": ["<id>"],
-        "description": "<why this item exists>",
-        "instructions": "<worker instructions>",
-        "internal_note": "<agent context>"
-      }
-    ]
-  }
-)
-```
-
-Pass your own session id as `manager_conversation_id` so the task is
-attached to you from birth.
 
 ## FYI
 
@@ -288,8 +298,6 @@ puppygarden_api(
 )
 ```
 
-
-
 ## Item kinds you can suggest
 
 Include but not limited to:
@@ -298,11 +306,11 @@ Include but not limited to:
 - **Code**: do the coding
 - **Verify**: verify the result is correct / the change takes effect
 - **Human Verify**: after agent work, write a script/notebook + a one-line
-command so the user can manually verify
+  command so the user can manually verify
 - **Human action**: when only the user can do the next step (console
-access, manual approval, local env), create an item with
-`kind: "human_action"` — no `worker_id`, no `instructions`; the what/why/
-how goes in `description`. The user marks it done on the card.
+  access, manual approval, local env), create an item with
+  `kind: "human_action"` — no `worker_id`, no `instructions`; the what/why/
+  how goes in `description`. The user marks it done on the card.
 
 **Never stay silent after a** `worker.execution.finished` **event** — always
 react: suggest the next taskItem or a human action, or mark the task
@@ -336,27 +344,6 @@ See `<host.puppygarden.root>/docs/POLL_PLUGINS.md`, you can create arbitrary pol
 ## Automation
 
 Use `sys_scheduled_task_create` to schedule a recurring agent session on an RRULE schedule. For example, "check this PR every hour" or "remind me tomorrow at 9am". Automations run full agent sessions with MCP tools, have a catch-up toggle for missed runs, and can be managed via `sys_scheduled_task_list` / `sys_scheduled_task_update` / `sys_scheduled_task_delete`.
-
-**ALWAYS PROCESS AN EVENT**: follow the above manual. After triage a batch,
-every event in it must have landed somewhere: reconciled into a task item,
-acked on a task, or **dismissed**. Never leave an event in `routed` —
-undismissed leftovers are re-packaged and re-delivered to you forever.
-
-If a routed event needs no further action (or it was already reconciled via
-another path), dismiss it:
-
-```
-puppygarden_api(
-  method="POST",
-  path="/v1/task-events/<event_id>/dismiss"
-)
-```
-
-Dismiss is safe to call unconditionally: an event already reconciled, acked,
-or otherwise settled is returned unchanged — dismiss only applies to events
-still awaiting triage.
-
-
 
 # Appendix
 
