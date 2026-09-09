@@ -5285,6 +5285,18 @@ async def _forward_event_to_runner(
         _parent_routing_on = _parent_conv is not None and subagent_routing_enabled(
             _parent_conv.subagent_routing_override
         )
+    # "Follow current model selection" (parent subagent-routing off): a child
+    # with no model of its own runs the parent's persisted model, so
+    # model-pinned harnesses (server-proxied pi) resolve instead of failing
+    # at first turn. Smart-routing parents are excluded — the router's
+    # verdict below wins over any inherited model.
+    if (
+        effective_runner_override is None
+        and _parent_conv is not None
+        and not _parent_routing_on
+        and _parent_conv.model_override
+    ):
+        effective_runner_override = _parent_conv.model_override
     # Per-event override wins over the persisted column so a client that
     # just toggled routing off (PATCH in flight) is respected this turn.
     _effective_cost_control = (
