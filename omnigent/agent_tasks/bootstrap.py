@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.constants import DEFAULT_TASK_WORKSPACE
+from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
 from omnigent.entities import Manager, Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -383,6 +384,10 @@ async def spawn_manager_session(
         workspace=params.workspace,
         harness_override=params.harness,
         model_override=params.model,
+        # Same role label as the heal path: marks the session as a PuppyGarden
+        # background role so the web sidebar suppresses its unread dot and
+        # keeps it out of the dock badge.
+        labels={ROLE_LABEL: MANAGER_ROLE_VALUE},
         prompt_profile=(
             {"mode": "fixed", "profile_id": params.prompt_profile_id}
             if params.prompt_profile_id
