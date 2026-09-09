@@ -250,7 +250,10 @@ export function TaskCardSidebar({
   const [tab, setTab] = useState<"assets" | "workers">("assets");
   return (
     <aside
-      className="min-w-0 rounded-lg border border-border bg-muted/20"
+      // self-start: the card body is a stretch grid, so without this the
+      // rail stretches to the tallest sibling's row height and its bottom
+      // border floats far below the content.
+      className="min-w-0 self-start rounded-lg border border-border bg-muted/20"
       data-testid="task-card-sidebar"
     >
       <div
