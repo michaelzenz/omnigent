@@ -139,6 +139,10 @@ TASK_STATE: dict[str, int] = {
     "agent-resolved": 5,
 }
 
+# Named constant for the one state with time-tracking semantics (resolved_at);
+# referenced outside this module without depending on the dict.
+AGENT_RESOLVED_STATE_CODE = TASK_STATE["agent-resolved"]
+
 TASK_EVENT_STATE: dict[str, int] = {
     "received": 1,
     "awaiting_grouping": 4,

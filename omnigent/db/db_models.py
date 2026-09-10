@@ -2246,6 +2246,10 @@ class SqlTask(OmnigentBase):
     queue_rank: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # When the task entered agent-resolved (NULL otherwise). The GC archives
+    # agent-resolved tasks whose resolved_at is older than the configured
+    # retention.
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         CheckConstraint("state IN (1, 2, 3, 4, 5)", name="ck_tasks_state"),
