@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Any, Literal
 
@@ -112,7 +113,6 @@ from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import (
     FyiCluster,
-    Manager,
     Task,
     TaskAsset,
     TaskEventExecution,
@@ -126,7 +126,7 @@ from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
-from omnigent.server.auth import LEVEL_OWNER, AuthProvider
+from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL, AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_access, require_user
 from omnigent.server.routes.task_events import _event_to_response
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -136,6 +136,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.prompt_profile_store import PromptProfileStore
+from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -145,6 +146,8 @@ from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
 from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
 from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
+
+_logger = logging.getLogger(__name__)
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
 
@@ -1036,6 +1039,7 @@ def create_agent_tasks_router(
     agent_store: AgentStore,
     conversation_store: ConversationStore | None = None,
     manager_store: ManagerStore | None = None,
+    scheduled_task_store: ScheduledTaskStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     user_role_session_store: UserRoleSessionStore | None = None,
     host_store: HostStore | None = None,
@@ -1762,6 +1766,25 @@ def create_agent_tasks_router(
             app_state=request.app.state,
             user_id=user_id,
         )
+        # Create the manager's daily task-sweep automation. Best-effort: a
+        # failed sweep create must not fail the manager create (the manager
+        # works without it; the sweep is portfolio hygiene).
+        if scheduled_task_store is not None:
+            try:
+                from omnigent.server.scheduled.manager_sweep import ensure_manager_sweep_task
+
+                ensure_manager_sweep_task(
+                    manager_id=manager.id,
+                    manager_conversation_id=manager.conversation_id,
+                    manager_agent_id=manager.agent_profile_id or manager.id,
+                    owner_user_id=None if owner == RESERVED_USER_LOCAL else owner,
+                    store=scheduled_task_store,
+                )
+            except Exception:
+                _logger.exception(
+                    "manager sweep automation create failed for manager %s (non-fatal)",
+                    manager.id,
+                )
         row = await asyncio.to_thread(manager_store.get, manager.id)
         if row is None:
             raise OmnigentError(
@@ -1840,6 +1863,22 @@ def create_agent_tasks_router(
 
         if conversation_store is not None and manager.conversation_id is not None:
             await conversation_store.delete_conversation(manager.conversation_id)
+        # Remove the manager's daily sweep automation — with the manager row
+        # gone, the scheduled fire would find no session to sweep.
+        if scheduled_task_store is not None:
+            try:
+                from omnigent.server.scheduled.manager_sweep import delete_manager_sweep_task
+
+                delete_manager_sweep_task(
+                    manager_id=manager.id,
+                    owner_user_id=None if owner == RESERVED_USER_LOCAL else owner,
+                    store=scheduled_task_store,
+                )
+            except Exception:
+                _logger.exception(
+                    "manager sweep automation delete failed for manager %s (non-fatal)",
+                    manager.id,
+                )
         deleted = await asyncio.to_thread(manager_store.delete, manager.id)
         if not deleted:
             raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
@@ -3643,9 +3682,7 @@ def create_agent_tasks_router(
 
             def _existing_binding() -> Worker | None:
                 worker = (
-                    worker_store.get_by_target_id(session_id)
-                    if worker_store is not None
-                    else None
+                    worker_store.get_by_target_id(session_id) if worker_store is not None else None
                 )
                 if worker is None or worker.task_id != task.id:
                     return None
