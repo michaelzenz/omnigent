@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Loader2Icon } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2Icon, SearchIcon, XIcon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
+import { Input } from "@/components/ui/input";
+import { useBoardSearch } from "./useBoardSearch";
 import type { AgentTaskSummary } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { BoardConfigPanel } from "./BoardConfigPanel";
@@ -49,6 +52,39 @@ export function PuppyGardenBoard() {
   );
   const orderKey = allTasks.map((task) => task.id).join("|");
 
+  // Floating search: filters cards on title/description/goal/id (always) and
+  // assets/worker titles/session ids/item text (for cards whose dashboard is
+  // already loaded — search never triggers dashboard fetches).
+  const [searchQuery, setSearchQuery] = useState("");
+  const queryClient = useQueryClient();
+  // Dashboards load asynchronously while the user types; subscribe to cache
+  // changes so newly-loaded dashboards re-run the filter (a dashboard that
+  // matches makes its card reappear without any user action).
+  const [dashboardsVersion, setDashboardsVersion] = useState(0);
+  useEffect(() => {
+    if (!searchQuery.trim()) return;
+    const cache = queryClient.getQueryCache();
+    const unsubscribe = cache.subscribe(() => setDashboardsVersion((v) => v + 1));
+    return unsubscribe;
+  }, [searchQuery, queryClient]);
+  const dashboards = useMemo(() => {
+    const map = new Map<string, unknown>();
+    if (!searchQuery.trim()) return map;
+    for (const task of allTasks) {
+      const cached = queryClient.getQueryData<unknown>(["agent-task-dashboard", task.id]);
+      if (cached) map.set(task.id, cached);
+    }
+    return map;
+    // dashboardsVersion re-runs this when any dashboard query lands/updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allTasks, searchQuery, queryClient, dashboardsVersion]);
+  const filteredTasks = useBoardSearch(allTasks, searchQuery, dashboards);
+  const searching = searchQuery.trim().length > 0;
+  // New query: back to the first page so results start at the top.
+  useEffect(() => {
+    setRenderLimit(BOARD_PAGE_SIZE);
+  }, [searchQuery]);
+
   // Rendered in pages: only the first `renderLimit` cards mount. New tasks
   // take the top ranks so freshly-created work is always on the first page;
   // the sentinel mounts the next page as the user scrolls toward it. Keeps
@@ -56,8 +92,8 @@ export function PuppyGardenBoard() {
   const [renderLimit, setRenderLimit] = useState(BOARD_PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const visibleTasks = useMemo(
-    () => allTasks.slice(0, Math.min(renderLimit, allTasks.length)),
-    [allTasks, renderLimit],
+    () => filteredTasks.slice(0, Math.min(renderLimit, filteredTasks.length)),
+    [filteredTasks, renderLimit],
   );
 
   useEffect(() => {
@@ -166,6 +202,42 @@ export function PuppyGardenBoard() {
       onClick={() => dismissToRole()}
       data-testid="puppy-garden-board-scroll"
     >
+      <div
+        className="sticky top-0 z-20 -mx-3 mb-0 bg-background/95 px-3 py-2 backdrop-blur-sm sm:-mx-4 sm:px-4"
+        data-testid="board-search-bar"
+      >
+        <div className="relative mx-auto w-full max-w-[100rem]">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setSearchQuery("");
+              }
+            }}
+            onClick={(event) => event.stopPropagation()}
+            placeholder="Search tasks — title, goal, assets, workers, session id…"
+            className="h-8 pl-8 pr-8"
+            aria-label="Search tasks"
+            data-testid="board-search-input"
+          />
+          {searching ? (
+            <button
+              type="button"
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                setSearchQuery("");
+              }}
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
       <div className="mx-auto flex w-full min-w-0 max-w-[100rem] flex-col gap-5">
         {fixtureMode ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
@@ -183,6 +255,14 @@ export function PuppyGardenBoard() {
         {hasTasks ? (
           <>
             <section className="space-y-5" data-testid="board-active-tasks">
+              {filteredTasks.length === 0 ? (
+                <p
+                  className="py-6 text-center text-sm text-muted-foreground"
+                  data-testid="board-search-empty"
+                >
+                  No tasks match "{searchQuery.trim()}".
+                </p>
+              ) : null}
               {visibleTasks.map((task, index) => (
                 <TaskCard
                   key={task.id}
@@ -202,14 +282,23 @@ export function PuppyGardenBoard() {
                 />
               ))}
             </section>
-            {visibleTasks.length < allTasks.length ? (
+            {visibleTasks.length < filteredTasks.length ? (
               <div
                 ref={sentinelRef}
                 className="flex items-center justify-center py-3 text-xs text-muted-foreground"
                 data-testid="board-pagination-sentinel"
               >
-                Showing {visibleTasks.length} of {allTasks.length} tasks — scroll for more
+                Showing {visibleTasks.length} of {filteredTasks.length}
+                {searching ? " matching" : ""} tasks — scroll for more
               </div>
+            ) : null}
+            {searching ? (
+              <p
+                className="py-1 text-center text-xs text-muted-foreground"
+                data-testid="board-search-count"
+              >
+                {filteredTasks.length} of {allTasks.length} tasks match.
+              </p>
             ) : null}
           </>
         ) : (
