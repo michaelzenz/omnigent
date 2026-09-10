@@ -179,6 +179,17 @@ class AdoptSessionRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
 
     task_id: str
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def _title_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must be a non-empty string")
+        return stripped
 
 
 class ProposeExternalAdoptionRequest(BaseModel):
@@ -492,22 +503,6 @@ class CreateEventSubscriptionRequest(BaseModel):
 
     source: str = Field(min_length=1)
     source_key: str = Field(min_length=1)
-
-
-class UpdateWorkerTitleRequest(BaseModel):
-    """Request body for ``PATCH /v1/task-workers/{worker_id}/title``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(min_length=1, max_length=200)
-
-    @field_validator("title")
-    @classmethod
-    def _non_empty(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("title must be a non-empty string")
-        return stripped
 
 
 class QueueHoldRequest(BaseModel):
@@ -2530,33 +2525,6 @@ def create_agent_tasks_router(
                 user_id=user_id,
             )
 
-        @router.patch("/task-workers/{worker_id}/title")
-        async def update_worker_title(
-            request: Request,
-            worker_id: str,
-            body: UpdateWorkerTitleRequest,
-        ) -> dict[str, Any]:
-            """Set the manager-maintained worker title.
-
-            The title describes the worker's recent work and shows on the task
-            card instead of the static provider name. Caller must access the
-            worker's task.
-            """
-            user_id = get_user_id(request, auth_provider)
-            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
-            if worker is None:
-                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-            task = await _get_task_or_404(worker.task_id, user_id)
-            _ = task
-            updated = await asyncio.to_thread(
-                worker_store.update_worker,
-                worker_id,
-                title=body.title,
-            )
-            if updated is None:
-                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-            return _worker_to_response(updated)
-
         @router.post("/task-workers/{worker_id}/initialize", status_code=202)
         async def initialize_worker(request: Request, worker_id: str) -> dict[str, Any]:
             user_id = require_user(request, auth_provider)
@@ -3700,6 +3668,15 @@ def create_agent_tasks_router(
 
             existing = await asyncio.to_thread(_existing_binding)
             if existing is not None:
+                if body.title is not None and body.title != existing.title:
+                    updated = await asyncio.to_thread(
+                        worker_store.update_worker,
+                        existing.id,
+                        title=body.title,
+                    )
+                    if updated is None:
+                        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    existing = updated
                 return {
                     "object": "agent.task.session_adoption",
                     "session_id": session_id,
@@ -3717,6 +3694,7 @@ def create_agent_tasks_router(
                     session_id=session_id,
                     task=task,
                     conv=conv,
+                    title=body.title,
                     owner_user_id=_effective_user_id(user_id),
                 )
 
@@ -3761,7 +3739,7 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Bind a watcher-discovered external session to a task."""
             user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(body.task_id, user_id)
+            await _get_task_or_404(body.task_id, user_id)
             proposal = await asyncio.to_thread(
                 find_open_external_adoption_proposal,
                 task_event_store,

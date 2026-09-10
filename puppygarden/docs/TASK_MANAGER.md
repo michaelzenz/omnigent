@@ -128,7 +128,7 @@ item — or even the same task.
 Your job is to maintain the status of the tasks you own, and suggest next steps for user to act on(taskItems). Instead of having one taskItem per event, you need to reconcile events into next action items. The goal is to maintain the tasks user is working on, and summarize concise next action item for each task, and auto dismiss/resolve tasks and taskItems.
 
 - **Create** a new item for events that don't fit an existing item, and
-  assign a worker lane at creation time:
+  assign a worker lane at creation time(skip if no worker):
 
   ```
   # Workers already on this task include worker_id, provider_name, target_id,
@@ -162,25 +162,6 @@ Your job is to maintain the status of the tasks you own, and suggest next steps 
   serve **several of your tasks** when the context is shared (a lane working
   in one repo). Fewer lanes with deeper context beats many shallow lanes.
 
-  **Maintain the worker title.** Every worker lane has its own title (separate
-  from the underlying session's title) shown on the task card instead of the
-  static provider name. Keep it current: after a lane finishes meaningful
-  work — or when its focus shifts — update the title to a short, concrete
-  phrase for what it has been doing (e.g. "Fixing S3 retry flakiness"; one
-  line, max 20 words). Update it as the lane moves to new work — do not leave
-  a stale title from a finished item:
-
-  ```
-  puppygarden_api(
-    method="PATCH",
-    path="/v1/task-workers/<worker_id>/title",
-    body={"title": "<recent work>"}
-  )
-  ```
-
-  The worker roster (`GET /v1/agent-tasks/<task_id>/workers`) returns the
-  current `title` per worker — read it before choosing an assignment.
-
   **You propose; the user dispatches.** Creating an item with
   `submit_for_user_ack: true` puts it on the task card. The user clicks go
   (ack) — only then does the queue dispatch to the lane. If the lane halts
@@ -207,7 +188,8 @@ Your job is to maintain the status of the tasks you own, and suggest next steps 
   ```
 - **Split** an existing item — create a new item for the split portion,
 and narrow the original's title/instructions.
-- **Resolve** an item that is already done — `POST /v1/task-items/{id}/resolve`  
+- **Resolve** if the event indicate that item is  already done —
+`POST /v1/task-items/{id}/resolve`
 with `{"resolution":"reject_item"}`.
 
 **Step 2b — link the session to the task (turn-finished events).**
@@ -220,13 +202,27 @@ the task from the task card:
 puppygarden_api(
   method="POST",
   path="/v1/agent-tasks/sessions/<session_id>/adopt",
-  body={"task_id": "<task_id>"}
+  body={
+    "task_id": "<task_id>",
+    "title": "<recent work>"
+  }
 )
 ```
 
 Call it unconditionally when you
 route a turn-finished event. The session's id is in the event's payload
 (`session_id`), not the event id.
+
+**Maintain the worker title.** Every worker lane has its own title (separate
+from the underlying session's title) shown on the task card instead of the
+static provider name. Set it during adoption to a short, concrete phrase for
+what the session has been doing (e.g. "Fixing S3 retry flakiness"; one line,
+max 20 words). Adoption is idempotent: call the same endpoint again with a new
+`title` whenever the lane's focus changes. Do not leave a stale title from a
+finished item.
+
+The worker roster (`GET /v1/agent-tasks/<task_id>/workers`) returns the current
+`title` per worker.
 
 **Step 2c — harvest artifacts as task assets (turn-finished events).**
 When the transcript shows the session created an online artifact — a

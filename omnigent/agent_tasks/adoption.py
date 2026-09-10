@@ -50,7 +50,7 @@ def _project_name(
         return None
     try:
         project = project_store.get(project_id, user_id=owner_user_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _logger.exception("failed to resolve project %s", project_id)
         return None
     return project.name if project is not None else None
@@ -198,6 +198,7 @@ def adopt_session_to_task(
     session_id: str,
     task: Task,
     conv: Conversation,
+    title: str | None = None,
     score: float = 0.0,
     owner_user_id: str | None = None,
 ) -> str:
@@ -217,6 +218,7 @@ def adopt_session_to_task(
         kind=WORKER_KIND_INTERNAL,
         target_id=session_id,
         state="idle",
+        title=title,
         provider_name=conv.title or session_id,
     )
     if conv.workspace:

@@ -35,6 +35,7 @@ class WorkerStore(ABC):
         target_id: str | None = None,
         state: str = "uninitialized",
         needs_response: bool = False,
+        title: str | None = None,
         provider_name: str | None = None,
         provider_configuration: str | None = None,
     ) -> Worker:
