@@ -85,17 +85,19 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
     label: string;
     count: number;
   } | null>(null);
-  // Mirror the server's spawn-manager-notice eligibility (live_tasks = active +
-  // idle with no manager) so the count and the button enablement match what
-  // the endpoint would collect.
+  // Mirror the server's spawn-manager-notice eligibility (live_tasks = active
+  // + pending + idle + agent-resolved with no manager) so the count and the
+  // button enablement match what the endpoint would collect.
   const { data: unmanagedTasks = [] } = useQuery({
     queryKey: ["agent-tasks", "unmanaged"],
     queryFn: async () => {
-      const [active, idle] = await Promise.all([
+      const [pending, active, idle, agentResolved] = await Promise.all([
+        fetchAgentTasks("pending"),
         fetchAgentTasks("active"),
         fetchAgentTasks("idle"),
+        fetchAgentTasks("agent-resolved"),
       ]);
-      return [...active, ...idle].filter((task) => !task.manager_id);
+      return [...pending, ...active, ...idle, ...agentResolved].filter((task) => !task.manager_id);
     },
     enabled,
   });

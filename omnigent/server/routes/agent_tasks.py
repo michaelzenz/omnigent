@@ -89,7 +89,6 @@ from omnigent.agent_tasks.role_keys import (
 from omnigent.agent_tasks.task_match import (
     _LIVE_TASK_STATES,
     collect_event_tags,
-    live_tasks,
     load_events,
     rank_tasks_for_events,
     ranked_task_payload,
@@ -1648,8 +1647,9 @@ def create_agent_tasks_router(
         def _collect() -> list[Task]:
             return [
                 task
-                for task in live_tasks(task_store)
-                if not task.manager_id
+                for task in task_store.list()
+                if task.state != "archived"
+                and not task.manager_id
                 and (task.owner_user_id is None or task.owner_user_id == owner)
             ]
 
