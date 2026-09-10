@@ -30,15 +30,15 @@ class TaskRoleDefaults:
 
 TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
     TASK_BROKER_ROLE: TaskRoleDefaults(
-        model="databricks-glm-5-2",
+        model="databricks-glm-5-3-flash",
         description="Triages incoming events and routes work to tasks.",
     ),
     TASK_SECRETARY_ROLE: TaskRoleDefaults(
-        model="databricks-glm-5-2",
+        model="databricks-glm-5-3-flash",
         description="Helps the user steer PuppyGarden.",
     ),
     MANAGER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
-        model="databricks-glm-5-2",
+        model="databricks-glm-5-3-flash",
         description="Owns a task, plans work, and supervises Workers.",
     ),
 }

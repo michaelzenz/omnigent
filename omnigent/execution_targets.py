@@ -33,6 +33,7 @@ OMNIHARNESS_DISPLAY_NAME = ONIH_DISPLAY_NAME
 # Imported lazily to keep the dependency one-directional.
 _PUPPYGARDEN_RO_ROLE_KEYS: frozenset[str] = frozenset()
 _is_manager_role_key: Callable[[str], bool] | None = None
+_SECRETARY_ROLE_KEY: str | None = None
 _PUPPYGARDEN_RO_INITIALIZED = False
 
 
@@ -42,11 +43,14 @@ def _ensure_puppygarden_ro_predicates() -> None:
         return
     from omnigent.agent_tasks.role_keys import (
         TASK_BROKER_ROLE_KEY,
+        TASK_SECRETARY_ROLE_KEY,
         is_manager_role_key,
     )
 
     _PUPPYGARDEN_RO_ROLE_KEYS = frozenset({TASK_BROKER_ROLE_KEY})
     _is_manager_role_key = is_manager_role_key
+    global _SECRETARY_ROLE_KEY
+    _SECRETARY_ROLE_KEY = TASK_SECRETARY_ROLE_KEY
     _PUPPYGARDEN_RO_INITIALIZED = True
 
 
@@ -56,14 +60,16 @@ def execution_target_for_role(role: str) -> str:
     Broker and all manager roles (``manager:default``, custom manager
     templates) use the restricted read-only ``onih-puppygarden`` profile
     (file read, search, MCP access, PuppyGarden APIs only). The secretary
-    role and any other role use the general-purpose
-    ``onih-openai-agents`` profile.
+    role runs the ``onih-pi`` profile (Pi agent runtime); any other role
+    uses the general-purpose ``onih-openai-agents`` profile.
     """
     _ensure_puppygarden_ro_predicates()
     if role in _PUPPYGARDEN_RO_ROLE_KEYS or (
         _is_manager_role_key is not None and _is_manager_role_key(role)
     ):
         return ONIH_PUPPYGARDEN_RO_TARGET
+    if role == _SECRETARY_ROLE_KEY:
+        return ONIH_PI_TARGET
     return ONIH_OPENAI_AGENTS_TARGET
 
 
