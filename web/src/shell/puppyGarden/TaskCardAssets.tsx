@@ -349,10 +349,11 @@ export function TaskCardSidebar({
   const [tab, setTab] = useState<"assets" | "workers">("assets");
   return (
     <aside
-      // Grid default stretch: the rail matches the card body's row height
-      // (set by the tallest sibling), so its bottom aligns with the rest of
-      // the card. The tab strip stays pinned and the content column scrolls
-      // within the remaining height instead of pushing the rail taller.
+      // Grid default stretch: the rail's bottom always lands on the card
+      // bottom (the row height comes from the tallest sibling). Two grid
+      // rows — pinned tab strip, then the scroll viewport filling ALL the
+      // remaining height — so the visible scroll area equals the rail and
+      // there is no blank strip between the last row and the bottom border.
       className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] rounded-lg border border-border bg-muted/20"
       data-testid="task-card-sidebar"
     >
@@ -385,7 +386,7 @@ export function TaskCardSidebar({
           </button>
         ))}
       </div>
-      <div className="max-h-[32rem] min-h-0 overflow-y-auto">
+      <div className="min-h-0 overflow-y-auto">
         {tab === "assets" ? (
           <TaskCardAssets taskId={taskId} assets={assets} hostId={hostId} />
         ) : (
