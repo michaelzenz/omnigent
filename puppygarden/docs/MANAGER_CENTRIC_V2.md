@@ -51,7 +51,7 @@ By event kind, first rule that applies:
 2. **No subscription** → tag-similarity scorer: confident match → the matched task's manager; otherwise → broker.
 
 **Broker** (rules 2 and 4-else): cluster similar events (host-aware — never mix hosts) → split into subclusters when useful → distribute each to the correct manager → or spin up a new manager (scope, capacity, or host compatibility) → FYI the unplaceable.
-**Manager** receives the event → selects among its tasks using the three-list search (recent ≤3, text matches, tag matches; for bound-session events, the attached tasks ranked by recency) → reconciles (extend/split/resolve items, update Overview, ack) → or creates a new task, born **pending**.
+**Manager** receives the event → selects among its tasks using the three-list search (recent ≤3, text matches, tag matches; for bound-session events, the attached tasks ranked by recency) → reconciles (extend/split/resolve items, update Overview, ack) → or creates a new task, born **active** (born-pending is deprecating).
 
 ### 3.2 Walkthrough: session drift
 
@@ -59,7 +59,7 @@ By event kind, first rule that applies:
 2. S is unbound → surfaces **directly to the broker** → broker distributes to M (the owner's manager).
 3. M reconciles into task A — extend/split/resolve items, update Overview, ack — and may attach S to A so later turns route directly (rule 1). If A goes quiet for over a week, it turns idle automatically (display-only, end of queue).
 4. User pivots to new work B in the **same** session → next `turn.finished(S)` → via S's binding (rule 1) or via the broker if still unbound → M.
-5. M's three-list search shows nothing fits → **M creates task B, born pending**; the user confirms → B activates, attached to M.
+5. M's three-list search shows nothing fits → **M creates task B, born active**, attached to M (born-pending is deprecating).
 6. When A/B looks done, M marks it **agent-resolved** — same board card style as pending with a distinct badge, sorted to the end of the queue. Not final: a new relevant event moves it back to pending.
 
 A wrong route costs one manager ack (or a re-route, PR 10).
@@ -141,7 +141,7 @@ Today the manager queue key is `manager/<user>/<task_id>` (`packagers.py:490`), 
 
 **PR 5: Manager-side task creation +** `agent-resolved` **state** (M)
 
-* Managers call `POST /v1/agent-tasks/packages`; the task is **born pending** (user confirms → active) and attached to the calling manager (`manager_conversation_id` = calling manager's session). Server resolves the calling session (`puppygarden_api` is runner-dispatched, so the session is known) and validates it is a live manager.
+* Managers call `POST /v1/agent-tasks` with `state: "active"` (born-pending via `/agent-tasks/packages` is deprecating); the task is attached to the calling manager. (`manager_conversation_id` on the legacy packages path = calling manager's session; the server resolves it because `puppygarden_api` is runner-dispatched.)
 * New task state `agent-resolved`: the manager believes the task is resolved → it sorts to the end of the board queue, sharing the pending card UI with a distinct badge (rendered in PR 11). Not final: the manager moves it back to `pending` when a new relevant event arrives.
 * Schema migration: extend `ck_tasks_state` (smallint 1–4 today) with value 5 for `agent-resolved`.
 * Manager transitions via PATCH /v1/agent-tasks/<id> (exists today): pending ↔ agent-resolved. (idle is automatic after >1 quiet week — display-only.)
@@ -246,7 +246,7 @@ Decided:
 * ✓ **Manager search**: three lists — recent (no state filter), text matches, tag matches.
 * ✓ **FYI**: broker-owned; both broker and managers can add events to FYI clusters.
 * ✓ **Workers shared across tasks**: one worker = one lane; tasks keep lane references; lane halts (including user-stopped sessions) broadcast to all referencing tasks with a red **!** badge.
-* ✓ **Task lifecycle**: manager-created tasks born pending, user-created tasks born active; new agent-resolved state — pending-style card, distinct badge, end of queue; not final — new events move it back to `pending`. Tasks auto-idle after >1 week without manager updates (display-only).
+* ✓ **Task lifecycle**: tasks born active (born-pending deprecating); new agent-resolved state — pending-style card, distinct badge, end of queue; not final — new events move it back to `pending`. Tasks auto-idle after >1 week without manager updates (display-only).
 
 Still open:
 

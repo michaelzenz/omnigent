@@ -253,7 +253,7 @@ export function TaskCard({
         <div className="space-y-4 p-4">
           <EditableGoal taskId={taskId} goal={effectiveGoal} />
           <section className="min-w-0 space-y-2">
-            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
               Overview
             </h3>
             {effectiveDescription ? (
