@@ -422,10 +422,14 @@ class CreateTaskItemRequest(BaseModel):
 
 
 class CreateTaskAssetRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``."""
+    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``.
 
-    kind: Literal["url"] = "url"
-    category: Literal["code", "tests", "documents", "logs", "other"] = "other"
+    ``kind="workspace"`` assets reference a working directory (``url`` holds
+    the absolute path); the card opens them in the user's configured editor.
+    """
+
+    kind: Literal["url", "workspace"] = "url"
+    category: Literal["code", "tests", "documents", "logs", "other", "workspace"] = "other"
     title: str
     url: str
 
@@ -2749,20 +2753,22 @@ def create_agent_tasks_router(
             task_id: str,
             body: CreateTaskAssetRequest,
         ) -> dict[str, Any]:
-            """Attach a URL or other asset reference to one managed task."""
+            """Attach a URL, workspace, or other asset reference to one task.
+
+            Idempotent: a re-post of an identical asset returns the existing
+            row instead of duplicating it.
+            """
             user_id = require_user(request, auth_provider)
             await _get_task_or_404(task_id, user_id)
 
-            def _create() -> TaskAsset:
-                return task_asset_store.create_asset(
-                    task_id,
-                    kind=body.kind,
-                    category=body.category,
-                    title=body.title,
-                    url=body.url,
-                )
-
-            created = await asyncio.to_thread(_create)
+            created = await asyncio.to_thread(
+                task_asset_store.upsert_asset,
+                task_id,
+                kind=body.kind,
+                category=body.category,
+                title=body.title,
+                url=body.url,
+            )
             return _asset_to_response(created)
 
         @router.delete("/agent-tasks/{task_id}/assets/{asset_id}")

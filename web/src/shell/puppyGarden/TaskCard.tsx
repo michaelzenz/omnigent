@@ -398,6 +398,7 @@ export function TaskCard({
             taskId={taskId}
             assets={dashboard.assets ?? []}
             workers={dashboard.workers}
+            hostId={dashboard.workers.find((w) => w.host_id)?.host_id ?? null}
           />
         </div>
       ) : null}

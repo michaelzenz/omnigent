@@ -65,6 +65,65 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
             session.refresh(row)
             return _asset_to_entity(row)
 
+    def upsert_asset(
+        self,
+        task_id: str,
+        *,
+        kind: str,
+        category: str = "other",
+        title: str,
+        url: str,
+    ) -> TaskAsset:
+        workspace_id = current_workspace_id()
+        with self._session() as session:
+            next_id = session.scalar(
+                select(func.coalesce(func.max(SqlTaskAsset.id), 0) + 1).where(
+                    SqlTaskAsset.workspace_id == workspace_id,
+                ),
+            )
+            assert next_id is not None
+            dialect = session.bind.dialect.name
+            values = dict(
+                workspace_id=workspace_id,
+                id=next_id,
+                task_id=task_id,
+                kind=kind,
+                category=category,
+                title=title,
+                url=url,
+                created_at=now_epoch(),
+            )
+            if dialect == "mysql":
+                from sqlalchemy.dialects.mysql import insert as mysql_insert
+
+                stmt = mysql_insert(SqlTaskAsset).values(**values).on_duplicate_key_update(
+                    kind=kind, category=category, title=title
+                )
+            else:
+                if dialect == "postgresql":
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                    insert_cls = pg_insert
+                else:
+                    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                    insert_cls = sqlite_insert
+                stmt = insert_cls(SqlTaskAsset).values(**values).on_conflict_do_update(
+                    index_elements=["workspace_id", "task_id", "url"],
+                    set_={"kind": kind, "category": category, "title": title},
+                )
+            session.execute(stmt)
+            session.commit()
+        row = session.scalars(
+            select(SqlTaskAsset)
+            .where(SqlTaskAsset.workspace_id == workspace_id)
+            .where(SqlTaskAsset.task_id == task_id)
+            .where(SqlTaskAsset.url == url)
+            .limit(1)
+        ).first()
+        assert row is not None
+        return _asset_to_entity(row)
+
     def list_assets_for_task(self, task_id: str) -> list[TaskAsset]:
         with self._session() as session:
             stmt = (

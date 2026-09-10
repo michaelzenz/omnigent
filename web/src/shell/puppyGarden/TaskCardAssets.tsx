@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRightIcon,
+  FolderOpenIcon,
   MessageSquareIcon,
   XIcon,
   UnlinkIcon,
@@ -11,15 +12,29 @@ import { Button } from "@/components/ui/button";
 import { useDeleteTaskAsset, useUntrackWorker } from "@/hooks/useAgentTasks";
 import type { TaskAssetCategory, TaskAssetSummary, TaskWorkerLane } from "@/lib/agentTasksApi";
 import { cn } from "@/lib/utils";
+import {
+  getEditorCapabilities,
+  getHostIdentity,
+  isElectronShell,
+  openProject,
+  type ProjectEditor,
+} from "@/lib/nativeBridge";
+import { fetchSshConnections } from "@/lib/sshApi";
+import type { SshConnection } from "@/lib/sshConnectionPreferences";
+import { useQuery } from "@tanstack/react-query";
+import { readWorkspaceEditor } from "@/lib/puppyGardenPreferences";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { RebindWorkerDialog } from "./RebindWorkerDialog";
 
 interface TaskCardAssetsProps {
   taskId: string;
   assets: TaskAssetSummary[];
+  /** Session host id, for SSH-remote workspace launches. */
+  hostId?: string | null;
 }
 
 const CATEGORIES: { value: TaskAssetCategory; label: string }[] = [
+  { value: "workspace", label: "Workspaces" },
   { value: "code", label: "Code" },
   { value: "tests", label: "Tests" },
   { value: "documents", label: "Documents" },
@@ -27,8 +42,9 @@ const CATEGORIES: { value: TaskAssetCategory; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-export function TaskCardAssets({ taskId, assets }: TaskCardAssetsProps) {
+export function TaskCardAssets({ taskId, assets, hostId }: TaskCardAssetsProps) {
   const deleteAsset = useDeleteTaskAsset(taskId);
+  const openWorkspace = useWorkspaceAssetOpener();
   if (!assets.length) return <p className="p-3 text-sm text-muted-foreground">No assets yet.</p>;
 
   return (
@@ -43,14 +59,33 @@ export function TaskCardAssets({ taskId, assets }: TaskCardAssetsProps) {
             </h4>
             <ul className="space-y-1.5">
               {rows.map((asset) => {
+                const isWorkspace = asset.kind === "workspace";
                 const openable = asset.kind === "url" && asset.url;
+                const workspaceOpenable =
+                  isWorkspace && openWorkspace != null && Boolean(asset.url);
+                const handleOpenWorkspace = () => {
+                  if (workspaceOpenable && asset.url) openWorkspace(asset.url, hostId);
+                };
                 return (
                   <li
                     key={asset.id}
                     data-testid={`task-asset-${asset.id}`}
                     className="flex items-start gap-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs"
                   >
-                    {openable ? (
+                    {workspaceOpenable ? (
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 items-start gap-1.5 break-words text-left font-medium text-primary hover:underline"
+                        title={`Open in ${readWorkspaceEditor() === "cursor" ? "Cursor" : "VS Code"}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleOpenWorkspace();
+                        }}
+                      >
+                        <FolderOpenIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        <span className="min-w-0 break-words">{asset.title}</span>
+                      </button>
+                    ) : openable ? (
                       <a
                         href={asset.url ?? undefined}
                         target="_blank"
@@ -87,6 +122,68 @@ export function TaskCardAssets({ taskId, assets }: TaskCardAssetsProps) {
       })}
     </div>
   );
+}
+
+/**
+ * Launch a workspace asset in the user's configured default editor, mirroring
+ * the chat page's "Open project" button: Electron shell only, editor detected
+ * by the desktop shell, SSH alias resolved for remote hosts. Returns the click
+ * handler, or null when the launch isn't possible (browser shell or no
+ * detected editor).
+ */
+function useWorkspaceAssetOpener(): ((path: string, hostId?: string | null) => void) | null {
+  const [capabilities, setCapabilities] = useState<{
+    cursor: boolean;
+    vscode: boolean;
+  } | null>(null);
+  const [localHostId, setLocalHostId] = useState<string | null>(null);
+  const [launching, setLaunching] = useState(false);
+
+  useEffect(() => {
+    if (!isElectronShell()) return;
+    void getEditorCapabilities().then((caps) => {
+      if (caps) setCapabilities(caps);
+    });
+    void getHostIdentity().then((identity) => {
+      if (identity) setLocalHostId(identity.hostId);
+    });
+  }, []);
+
+  const { data: sshData } = useQuery({
+    queryKey: ["ssh-connections"],
+    queryFn: fetchSshConnections,
+    staleTime: 30_000,
+    enabled: isElectronShell(),
+  });
+
+  if (!isElectronShell() || !capabilities) return null;
+
+  return (workspacePath: string, hostId?: string | null) => {
+    if (launching) return;
+    const editor: ProjectEditor = readWorkspaceEditor();
+    const hasEditor = editor === "cursor" ? capabilities.cursor : capabilities.vscode;
+    if (!hasEditor) return;
+    const isRemote = Boolean(hostId) && (!localHostId || hostId !== localHostId);
+    const conn = isRemote
+      ? (sshData?.connections ?? []).find(
+          (c: SshConnection) => c.hostId === (hostId ?? null) && c.status === "online",
+        )
+      : null;
+    if (isRemote && !conn) return;
+    void (async () => {
+      setLaunching(true);
+      try {
+        const result = await openProject({
+          editor,
+          workspace: workspacePath,
+          sshAlias: conn?.alias ?? undefined,
+        });
+        if (!result.ok && result.error) console.warn("open workspace failed:", result.error);
+      } finally {
+        setLaunching(false);
+      }
+    })();
+  };
 }
 
 function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLane[] }) {
@@ -242,10 +339,12 @@ export function TaskCardSidebar({
   taskId,
   assets,
   workers,
+  hostId,
 }: {
   taskId: string;
   assets: TaskAssetSummary[];
   workers: TaskWorkerLane[];
+  hostId?: string | null;
 }) {
   const [tab, setTab] = useState<"assets" | "workers">("assets");
   return (
@@ -288,7 +387,7 @@ export function TaskCardSidebar({
       </div>
       <div className="max-h-[32rem] min-h-0 overflow-y-auto">
         {tab === "assets" ? (
-          <TaskCardAssets taskId={taskId} assets={assets} />
+          <TaskCardAssets taskId={taskId} assets={assets} hostId={hostId} />
         ) : (
           <WorkersTab taskId={taskId} workers={workers} />
         )}
