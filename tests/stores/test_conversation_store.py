@@ -411,6 +411,35 @@ def test_reported_model_round_trips_beside_the_request(
     assert fetched.reported_model == "claude-opus-4-8[1m]"
 
 
+def test_update_conversation_clears_reported_model_on_unset(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """``_unset_reported_model`` voids the harness report.
+
+    The switch-host flow uses this when it releases the runner: the report
+    described the released harness, so keeping it would make the picker show
+    a model the next turn will not use.
+    """
+    conv = conversation_store.create_conversation()
+    reported = conversation_store.update_conversation(
+        conv.id, reported_model="claude-opus-4-8[1m]"
+    )
+    assert reported is not None
+    assert reported.reported_model == "claude-opus-4-8[1m]"
+
+    cleared = conversation_store.update_conversation(conv.id, _unset_reported_model=True)
+    assert cleared is not None
+    assert cleared.reported_model is None
+
+    # Idempotent: clearing again is a no-op, and it never touches the request.
+    pinned = conversation_store.update_conversation(conv.id, model_override="sonnet")
+    assert pinned is not None and pinned.model_override == "sonnet"
+    again = conversation_store.update_conversation(conv.id, _unset_reported_model=True)
+    assert again is not None
+    assert again.reported_model is None
+    assert again.model_override == "sonnet"
+
+
 def test_update_archived_round_trip(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
