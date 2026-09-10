@@ -125,6 +125,7 @@ async def _inject_notice(
             file_store=None,
             artifact_store=None,
             runner_router=runner_router,
+            uses_omniharness=True,
             usage_purpose=usage_purpose,
             profile_instructions=profile_instructions,
         )

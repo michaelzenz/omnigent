@@ -28,6 +28,7 @@ SECRETARY_PURPOSE = "task_secretary"
 
 ROLE_PURPOSES: dict[str, str] = {
     "task_broker": BROKER_PURPOSE,
+    "task_manager": MANAGER_PURPOSE,
     "task_secretary": SECRETARY_PURPOSE,
 }
 
