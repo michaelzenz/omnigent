@@ -90,6 +90,14 @@ class TaskStore(ABC):
         """Move a task to the end of the board queue."""
 
     @abstractmethod
+    def archive_expired_resolved(self, *, before_ts: int) -> int:
+        """Archive agent-resolved tasks resolved before ``before_ts``.
+
+        Returns the number archived. Only agent-resolved rows are touched —
+        live tasks are never swept by the GC.
+        """
+
+    @abstractmethod
     def count_by_manager_role_key(
         self,
         manager_role_key: str,

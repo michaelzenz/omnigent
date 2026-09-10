@@ -81,6 +81,9 @@ class Task:
     updated_at: int | None = None
     priority: int = 2
     queue_rank: int = 0
+    # When the task entered agent-resolved (None otherwise); maintained by
+    # task_store.update on state transitions. Drives GC auto-archive.
+    resolved_at: int | None = None
 
 
 @dataclass

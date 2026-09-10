@@ -1880,7 +1880,11 @@ def create_app(
             from omnigent.agent_tasks.event_gc import run_event_gc
 
             event_gc_task = asyncio.create_task(
-                run_event_gc(task_event_store, agent_queue_store),
+                run_event_gc(
+                    task_event_store,
+                    agent_queue_store,
+                    task_store=task_store,
+                ),
                 name="event-gc",
             )
             app_inst.state.event_gc_task = event_gc_task

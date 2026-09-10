@@ -13,6 +13,7 @@ Configurable via ``~/.omnigent/config.yaml``:
         stale_routed_retention_s: 604800  # 7 days
         queue_retention_s: 1814400        # 3 weeks
         adoption_proposal_retention_s: 86400  # 1 day
+        resolved_archive_after_s: 604800  # 1 week; 0 disables
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import yaml
 from omnigent.host.identity import CONFIG_PATH
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_store import TaskStore
 
 _logger = logging.getLogger(__name__)
 
@@ -36,6 +38,8 @@ _DEFAULT_RECONCILED_RETENTION_S = 1_814_400.0  # 3 weeks
 _DEFAULT_STALE_ROUTED_RETENTION_S = 604_800.0  # 7 days
 _DEFAULT_QUEUE_RETENTION_S = 1_814_400.0  # 3 weeks
 _DEFAULT_ADOPTION_PROPOSAL_RETENTION_S = 86_400.0  # 1 day
+# Auto-archive agent-resolved tasks after 1 week in that state.
+_DEFAULT_RESOLVED_ARCHIVE_AFTER_S = 604_800.0
 
 
 # Thin indirections so tests can patch the loop's sleep/clock without globally
@@ -55,6 +59,7 @@ class EventGcConfig:
     stale_routed_retention_s: float
     queue_retention_s: float
     adoption_proposal_retention_s: float = _DEFAULT_ADOPTION_PROPOSAL_RETENTION_S
+    resolved_archive_after_s: float = _DEFAULT_RESOLVED_ARCHIVE_AFTER_S
 
 
 def load_event_gc_config(config_path: Path = CONFIG_PATH) -> EventGcConfig:
@@ -63,6 +68,7 @@ def load_event_gc_config(config_path: Path = CONFIG_PATH) -> EventGcConfig:
     stale_routed_retention_s = _DEFAULT_STALE_ROUTED_RETENTION_S
     queue_retention_s = _DEFAULT_QUEUE_RETENTION_S
     adoption_proposal_retention_s = _DEFAULT_ADOPTION_PROPOSAL_RETENTION_S
+    resolved_archive_after_s = _DEFAULT_RESOLVED_ARCHIVE_AFTER_S
     if config_path.exists():
         try:
             with config_path.open(encoding="utf-8") as handle:
@@ -89,12 +95,17 @@ def load_event_gc_config(config_path: Path = CONFIG_PATH) -> EventGcConfig:
                     v = _positive_float(gc_section.get("adoption_proposal_retention_s"))
                     if v is not None:
                         adoption_proposal_retention_s = v
+                    # 0 disables auto-archiving; accept non-negative here.
+                    v = gc_section.get("resolved_archive_after_s")
+                    if isinstance(v, (int, float)) and v >= 0:
+                        resolved_archive_after_s = float(v)
     return EventGcConfig(
         interval_s=interval_s,
         reconciled_retention_s=reconciled_retention_s,
         stale_routed_retention_s=stale_routed_retention_s,
         queue_retention_s=queue_retention_s,
         adoption_proposal_retention_s=adoption_proposal_retention_s,
+        resolved_archive_after_s=resolved_archive_after_s,
     )
 
 
@@ -108,10 +119,12 @@ async def run_event_gc(
     task_event_store: TaskEventStore,
     agent_queue_store: AgentQueueStore,
     *,
+    task_store: TaskStore | None = None,
     config: EventGcConfig | None = None,
     config_path: Path = CONFIG_PATH,
 ) -> None:
-    """Periodically purge old events and queue items until cancelled."""
+    """Periodically purge old events, queue items, and stale resolved tasks
+    until cancelled."""
     if config is None:
         config = load_event_gc_config(config_path)
     while True:
@@ -143,15 +156,24 @@ async def run_event_gc(
                 before_ts=now - int(config.queue_retention_s),
                 states=["done", "cancelled"],
             )
-            if n_reconciled or n_broadcast or n_stale or n_proposals or n_items:
+            # Auto-archive agent-resolved tasks past the retention window.
+            # Skipped when no store is wired or the retention is set to 0.
+            n_archived = 0
+            if task_store is not None and config.resolved_archive_after_s > 0:
+                n_archived = task_store.archive_expired_resolved(
+                    before_ts=now - int(config.resolved_archive_after_s),
+                )
+            if n_reconciled or n_broadcast or n_stale or n_proposals or n_items or n_archived:
                 _logger.info(
                     "event GC: purged %d reconciled/dismissed events, %d broadcast events, "
-                    "%d stale routed events, %d adoption proposals, %d queue items",
+                    "%d stale routed events, %d adoption proposals, %d queue items; "
+                    "auto-archived %d agent-resolved tasks",
                     n_reconciled,
                     n_broadcast,
                     n_stale,
                     n_proposals,
                     n_items,
+                    n_archived,
                 )
         except asyncio.CancelledError:
             raise
