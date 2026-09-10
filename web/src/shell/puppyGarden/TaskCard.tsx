@@ -229,7 +229,13 @@ export function TaskCard({
               variant="outline"
               size="sm"
               disabled={isLast || moveToEnd.isPending}
-              title={isLast ? "This task is already last" : "Move task to queue end"}
+              title={
+                isLast
+                  ? "This task is already last"
+                  : state === "agent-resolved"
+                    ? "Move task to queue end"
+                    : "Move below other open tasks (stays above resolved)"
+              }
               onClick={async (event) => {
                 event.stopPropagation();
                 event.currentTarget.blur();

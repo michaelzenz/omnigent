@@ -10,7 +10,8 @@ import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 
 // Single source of truth for card order: queue_rank from the server (its list
 // endpoint orders by queue_rank desc, id desc; new tasks get the highest rank,
-// move-to-queue-end gets the lowest). No state-based grouping here — idle/
+// move-to-queue-end parks a live card directly above the resolved block and
+// sinks a resolved card to the lowest). No state-based grouping here — idle/
 // resolved cards keep their server-assigned position.
 function rankTasks(tasks: AgentTaskSummary[]): AgentTaskSummary[] {
   if (!tasks.some((task) => task.queue_rank != null)) return tasks;
