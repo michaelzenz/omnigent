@@ -92,6 +92,11 @@ def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
                 "host_id": host_id,
                 "pending_launches": _AutoResolveDict(),
                 "pending_stats": {},
+                # The launch path reads these for the server-proxied Pi gate:
+                # an empty owner never matches RESERVED_USER_LOCAL, and a
+                # hello with inference_proxy=False skips the proxy config.
+                "owner": "someone-else",
+                "hello": type("FakeHello", (), {"inference_proxy": False})(),
             },
         )()
         return HostLaunchTarget(

@@ -1843,6 +1843,9 @@ def create_app(
                 tunnel_registry=tunnel_registry,
                 file_store=file_store,
                 artifact_store=artifact_store,
+                manager_store=manager_store,
+                session_creator=_session_creator,
+                app_state=app_inst.state,
             )
             on_fire = build_on_fire(fire_deps)
             # The manual "run now" trigger reuses the same fire path (dispatch /
@@ -1866,6 +1869,15 @@ def create_app(
                     "without recurring tasks (%s)",
                     exc,
                 )
+            try:
+                from omnigent.server.scheduled.manager_sweep import rebuild_sweep_registry
+
+                rebuild_sweep_registry(
+                    owner_user_id=None,
+                    store=scheduled_task_store,
+                )
+            except Exception:
+                _logger.exception("manager sweep registry rebuild failed; continuing")
 
             # Run completion is event-driven (persist_scheduled_run_completion
             # fires from _publish_status the instant a fired conversation's turn
@@ -3255,6 +3267,7 @@ def create_app(
                 agent_store,
                 conversation_store=conversation_store,
                 manager_store=manager_store,
+                scheduled_task_store=scheduled_task_store,
                 task_role_profile_store=task_role_profile_store,
                 user_role_session_store=user_role_session_store,
                 host_store=host_store,

@@ -90,6 +90,13 @@ _PENDING_FIRES: set[asyncio.Task[None]] = set()
 # create/grant/dispatch work that continues after on_fire returns.
 _IN_FLIGHT_TASKS: set[tuple[int, str]] = set()
 
+# Scheduled-task ids that are manager sweep automations. Recorded at creation
+# (manager_sweep.ensure_manager_sweep_task) so the fire path can route them to
+# the manager-session dispatch — sweeps invoke the manager's EXISTING session
+# rather than creating a fresh one per firing.
+_MANAGER_SWEEP_TASK_IDS: set[str] = set()
+_MANAGER_SWEEP_FIRE_TASKS: set[asyncio.Task[None]] = set()
+
 
 # ``launch_dispatch(conv, task)`` — launch the runner for a freshly created
 # session and dispatch the task's prompt so the agent runs. Injectable so the
@@ -121,12 +128,25 @@ class FireDeps:
     permission_store: Any | None
     host_store: Any | None
     host_registry: Any | None
+    manager_store: Any | None = None
+    session_creator: Any | None = None
+    app_state: Any | None = None
     policy_store: Any | None = None
     agent_cache: Any | None = None
     runner_router: Any | None = None
     tunnel_registry: Any | None = None
     file_store: Any | None = None
     artifact_store: Any | None = None
+
+
+def is_manager_sweep_task_id(scheduled_task_id: str) -> bool:
+    """Whether this task id is a manager sweep automation.
+
+    Sweep ids are recorded in a module-level set at creation (they carry no
+    schema marker), so the fire path can route them to the manager-session
+    dispatch instead of creating a fresh session.
+    """
+    return scheduled_task_id in _MANAGER_SWEEP_TASK_IDS
 
 
 def _prompt_event(prompt: str) -> SessionEventInput:
@@ -137,10 +157,101 @@ def _prompt_event(prompt: str) -> SessionEventInput:
     )
 
 
+def _make_manager_sweep_dispatch(deps: FireDeps) -> LaunchDispatch:
+    """Build the manager-sweep dispatch seam: dispatch into the manager's
+    EXISTING session, waking/healing it through the same resolution the
+    manager queue handler uses — never creating a fresh session per firing.
+
+    The conv passed in is a placeholder (the fire path's session-create step
+    is skipped for sweeps); the real target comes from the manager store via
+    the task's deterministic name.
+    """
+
+    async def _dispatch(_conv: Conversation, task: ScheduledTask) -> None:
+        from omnigent.server.routes._sessions.helpers import _get_runner_client
+        from omnigent.server.routes._sessions.orchestration import (
+            _dispatch_session_event_to_runner,
+            _ensure_runner_relay,
+            ensure_runner_connected,
+        )
+
+        if deps.manager_store is None:
+            raise RuntimeError("manager store is not configured")
+
+        owner = task.user_id or RESERVED_USER_LOCAL
+        manager_id = task.name.rsplit(":", 1)[-1]
+        manager = await asyncio.to_thread(deps.manager_store.get, manager_id)
+        if manager is None:
+            raise RuntimeError(f"manager {manager_id!r} no longer exists")
+        if manager.conversation_id is not None:
+            conv = await asyncio.to_thread(
+                deps.conversation_store.get_conversation, manager.conversation_id
+            )
+        else:
+            conv = None
+        if conv is None:
+            # The session pointer is dead (deleted / stale) — heal it the same
+            # way event arrival does: re-create from the manager row's stored
+            # snapshot, same durable id, then sweep the fresh session.
+            from omnigent.agent_tasks.bootstrap import ensure_manager_session
+
+            if deps.session_creator is None or deps.app_state is None:
+                raise RuntimeError("manager session heal is not configured")
+            healed = await ensure_manager_session(
+                manager,
+                manager_store=deps.manager_store,
+                conversation_store=deps.conversation_store,
+                session_creator=deps.session_creator,
+                app_state=deps.app_state,
+            )
+            session_id = healed.conversation_id
+            if session_id is None:
+                raise RuntimeError(f"manager {manager_id!r} heal produced no session")
+            conv = await asyncio.to_thread(deps.conversation_store.get_conversation, session_id)
+            if conv is None:
+                raise RuntimeError(f"manager {manager_id!r} healed session {session_id!r} missing")
+        else:
+            session_id = manager.conversation_id
+
+        runner_client = await _get_runner_client(session_id, deps.runner_router, conversation=conv)
+        if runner_client is None:
+            runner_client, conv = await ensure_runner_connected(
+                session_id=session_id,
+                conv=conv,
+                app_state=None,
+                conversation_store=deps.conversation_store,
+                runner_router=deps.runner_router,
+            )
+        if runner_client is None:
+            raise RuntimeError(f"manager {manager_id!r} session is offline and could not wake")
+
+        _ensure_runner_relay(
+            session_id,
+            conv.runner_id,
+            runner_client,
+            deps.conversation_store,
+        )
+        await _dispatch_session_event_to_runner(
+            session_id,
+            conv,
+            _prompt_event(task.prompt),
+            deps.conversation_store,
+            runner_client,
+            agent_name=None,
+            file_store=deps.file_store,
+            artifact_store=deps.artifact_store,
+            created_by=owner,
+            runner_router=deps.runner_router,
+        )
+
+    return _dispatch
+
+
 def build_on_fire(
     deps: FireDeps,
     *,
     launch_dispatch: LaunchDispatch | None = None,
+    manager_sweep_dispatch: LaunchDispatch | None = None,
 ) -> Callable[[int, str], Awaitable[None]]:
     """Build the real ``on_fire`` callback bound to server ``deps``.
 
@@ -148,6 +259,9 @@ def build_on_fire(
     :param launch_dispatch: Seam that launches the runner and dispatches the
         prompt for a created session. Defaults to the real connected-host
         implementation; tests inject a fake.
+    :param manager_sweep_dispatch: Seam for manager-sweep tasks — dispatches
+        into the manager's EXISTING session instead of creating one. Defaults
+        to the real manager-session implementation; tests inject a fake.
     :returns: An ``async on_fire(workspace_id, scheduled_task_id)`` suitable for
         :class:`ScheduledTaskScheduler`.
     """
@@ -157,8 +271,18 @@ def build_on_fire(
         preflight = _make_connected_host_preflight(deps)
     else:
         dispatch = launch_dispatch
+    sweep_dispatch = (
+        manager_sweep_dispatch
+        if manager_sweep_dispatch is not None
+        else _make_manager_sweep_dispatch(deps)
+    )
 
     async def on_fire(workspace_id: int, scheduled_task_id: str) -> None:
+        if is_manager_sweep_task_id(scheduled_task_id):
+            await _trigger_manager_sweep_fire(
+                deps, workspace_id, scheduled_task_id, sweep_dispatch
+            )
+            return
         await _trigger_fire(
             deps,
             workspace_id,
@@ -203,6 +327,11 @@ def build_run_now(
         dispatch = launch_dispatch
 
     async def run_now(workspace_id: int, scheduled_task_id: str) -> bool:
+        if is_manager_sweep_task_id(scheduled_task_id):
+            await _trigger_manager_sweep_fire(
+                deps, workspace_id, scheduled_task_id, _make_manager_sweep_dispatch(deps)
+            )
+            return True
         return await _trigger_fire(
             deps,
             workspace_id,
@@ -213,6 +342,64 @@ def build_run_now(
         )
 
     return run_now
+
+
+async def _trigger_manager_sweep_fire(
+    deps: FireDeps,
+    workspace_id: int,
+    scheduled_task_id: str,
+    dispatch: LaunchDispatch,
+) -> None:
+    """Synchronously guard a sweep fire, then dispatch in the background.
+
+    Mirrors :func:`_trigger_fire` but for manager sweeps: the run never
+    creates a session — ``dispatch`` wakes the manager's existing session and
+    injects the sweep prompt. Uses the same in-flight overlap guard and
+    run-recording so the sweep reads like any other scheduled run.
+    """
+    with workspace_scope(workspace_id):
+        task = await asyncio.to_thread(deps.scheduled_task_store.get, scheduled_task_id)
+        if task is None:
+            _logger.info("manager sweep: task %s no longer exists — skipping", scheduled_task_id)
+            return
+        if task.state != "active":
+            _logger.info("manager sweep: task %s is %s — skipping", scheduled_task_id, task.state)
+            return
+
+    key = (workspace_id, scheduled_task_id)
+    if key in _IN_FLIGHT_TASKS:
+        _logger.info("manager sweep: task %s already in flight — skipping", scheduled_task_id)
+        return
+    _IN_FLIGHT_TASKS.add(key)
+
+    scheduled_at = int(time.time())
+
+    async def _run() -> None:
+        try:
+            # The sweep dispatch resolves the real manager session from the
+            # manager store; the conv argument is unused by it. Build the
+            # minimal stand-in inline rather than touching the DB.
+            placeholder = Conversation(
+                id=f"sweep-{scheduled_task_id}",
+                agent_id=task.agent_id,
+                title=task.name,
+            )
+            await dispatch(placeholder, task)
+        except Exception:
+            _logger.exception("manager sweep: task %s failed", scheduled_task_id)
+            await _record_run(
+                deps,
+                task,
+                None,
+                scheduled_at,
+                status="failed",
+                error="manager sweep dispatch failed",
+                error_code="sweep_dispatch_failed",
+            )
+            return
+        await _record_run(deps, task, None, scheduled_at, status="running")
+
+    _MANAGER_SWEEP_FIRE_TASKS.add(asyncio.create_task(_run()))
 
 
 async def _trigger_fire(
