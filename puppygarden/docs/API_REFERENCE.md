@@ -113,6 +113,13 @@ Task assets retain their format `kind` and add a grouping `category`: `code`,
 `tests`, `documents`, `logs`, or `other` (the default). Asset create and all
 asset/dashboard responses round-trip both fields.
 
+Assets may carry `source_worker_id` — the worker lane the asset was harvested
+from (adoption auto-attach stamps the adopted worker; manual adds omit it and
+it stays NULL). The card renders it as an expandable "from <worker>" chip with
+a jump-to-chat button; a source id whose lane no longer exists renders as
+"worker removed". On a same-URL re-harvest the provenance re-points to the
+latest harvester; a provenance-less re-post preserves the existing value.
+
 ## Event subscriptions
 
 A task's subscription to an event `(source, source_key)` pair. When an ingress

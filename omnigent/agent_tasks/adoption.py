@@ -169,7 +169,11 @@ def _workspace_asset_title(workspace: str) -> str:
     return folder
 
 
-def _ensure_workspace_asset(task_id: str, workspace: str) -> None:
+def _ensure_workspace_asset(
+    task_id: str,
+    workspace: str,
+    source_worker_id: str | None = None,
+) -> None:
     """Attach a deduped ``kind=workspace`` asset for an adopted session's cwd.
 
     Idempotent: a re-adoption (or adoption of an already-bound session) finds
@@ -190,6 +194,7 @@ def _ensure_workspace_asset(task_id: str, workspace: str) -> None:
             category="workspace",
             title=title,
             url=workspace,
+            source_worker_id=source_worker_id,
         )
 
 
@@ -222,7 +227,7 @@ def adopt_session_to_task(
         provider_name=conv.title or session_id,
     )
     if conv.workspace:
-        _ensure_workspace_asset(task.id, conv.workspace)
+        _ensure_workspace_asset(task.id, conv.workspace, source_worker_id=worker_id)
     return worker_id
 
 
@@ -320,8 +325,9 @@ async def adopt_external_session(
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
 
+    external_worker_id = _generate_worker_id()
     worker_store.create_worker(
-        _generate_worker_id(),
+        external_worker_id,
         task.id,
         kind=WORKER_KIND_EXTERNAL,
         target_id=session_hint,
@@ -332,7 +338,7 @@ async def adopt_external_session(
     # workspace from — their watchers report updates without one. Attach the
     # task's own workspace when known so the card still gets a jump target.
     if task.workspace:
-        _ensure_workspace_asset(task.id, task.workspace)
+        _ensure_workspace_asset(task.id, task.workspace, source_worker_id=external_worker_id)
     adopted_event = task_event_store.create_event(
         uuid.uuid4().hex,
         SESSION_ADOPTED,

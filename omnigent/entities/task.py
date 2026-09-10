@@ -284,6 +284,8 @@ class TaskAsset:
     created_at: int
     url: str | None = None
     category: str = "other"
+    # Worker lane this asset was harvested from; None = human-added.
+    source_worker_id: str | None = None
 
 
 @dataclass

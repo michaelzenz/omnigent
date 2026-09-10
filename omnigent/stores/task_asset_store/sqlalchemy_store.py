@@ -20,6 +20,7 @@ def _asset_to_entity(row: SqlTaskAsset) -> TaskAsset:
         category=row.category,
         title=row.title,
         url=row.url,
+        source_worker_id=row.source_worker_id,
         created_at=row.created_at,
     )
 
@@ -40,6 +41,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
         category: str = "other",
         title: str,
         url: str | None = None,
+        source_worker_id: str | None = None,
     ) -> TaskAsset:
         now = now_epoch()
         workspace_id = current_workspace_id()
@@ -58,6 +60,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 category=category,
                 title=title,
                 url=url,
+                source_worker_id=source_worker_id,
                 created_at=now,
             )
             session.add(row)
@@ -73,6 +76,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
         category: str = "other",
         title: str,
         url: str,
+        source_worker_id: str | None = None,
     ) -> TaskAsset:
         workspace_id = current_workspace_id()
         with self._session() as session:
@@ -93,11 +97,21 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 url=url,
                 created_at=now_epoch(),
             )
+            if source_worker_id is not None:
+                values["source_worker_id"] = source_worker_id
+            # A provided provenance re-points the chip to the latest harvester;
+            # omitted provenance leaves any existing value untouched (a manual
+            # re-post of the same URL must not clear it).
+            conflict_update = {"kind": kind, "category": category, "title": title}
+            if source_worker_id is not None:
+                conflict_update["source_worker_id"] = source_worker_id
             if dialect == "mysql":
                 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
-                stmt = mysql_insert(SqlTaskAsset).values(**values).on_duplicate_key_update(
-                    kind=kind, category=category, title=title
+                stmt = (
+                    mysql_insert(SqlTaskAsset)
+                    .values(**values)
+                    .on_duplicate_key_update(**conflict_update)
                 )
             else:
                 if dialect == "postgresql":
@@ -110,7 +124,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                     insert_cls = sqlite_insert
                 stmt = insert_cls(SqlTaskAsset).values(**values).on_conflict_do_update(
                     index_elements=["workspace_id", "task_id", "url"],
-                    set_={"kind": kind, "category": category, "title": title},
+                    set_=conflict_update,
                 )
             session.execute(stmt)
             session.commit()

@@ -22,6 +22,7 @@ class TaskAssetStore(ABC):
         category: str = "other",
         title: str,
         url: str | None = None,
+        source_worker_id: str | None = None,
     ) -> TaskAsset:
         """Insert a task asset."""
 
@@ -34,6 +35,7 @@ class TaskAssetStore(ABC):
         category: str = "other",
         title: str,
         url: str,
+        source_worker_id: str | None = None,
     ) -> TaskAsset:
         """Insert the asset, or — when an asset with the same URL already
         exists on the task — relabel that row in place and return it.

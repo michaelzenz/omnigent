@@ -90,6 +90,19 @@ function itemTexts(item: {
   );
 }
 
+/** Searchable text for one asset including its provenance worker (the ring in
+ * the sidebar uses this so a chip-text match also rings the asset row). */
+export function assetProvenanceTexts(
+  asset: { title?: string; url?: string | null; source_worker_id?: string | null },
+  lanes: TaskWorkerLane[],
+): string[] {
+  const texts = assetTexts(asset);
+  const lane = asset.source_worker_id
+    ? lanes.find((candidate) => candidate.worker_id === asset.source_worker_id)
+    : undefined;
+  return lane ? [...texts, ...laneTexts(lane)] : texts;
+}
+
 function matchesAny(texts: string[], query: string): boolean {
   return texts.some((text) => text.toLowerCase().includes(query));
 }
@@ -107,7 +120,7 @@ function dashboardMatches(dashboard: unknown, query: string): boolean {
   };
   if (d.task?.manager_conversation_id?.toLowerCase().includes(query)) return true;
   for (const asset of d.assets ?? []) {
-    if (matchesAny(assetTexts(asset), query)) return true;
+    if (matchesAny(assetProvenanceTexts(asset, d.workers ?? []), query)) return true;
   }
   for (const worker of d.workers ?? []) {
     if (matchesAny(laneTexts(worker), query)) return true;

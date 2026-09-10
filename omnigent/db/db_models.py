@@ -2473,6 +2473,9 @@ class SqlTaskAsset(OmnigentBase):
     category: Mapped[str] = mapped_column(String(32), nullable=False, server_default="other")
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Worker lane the asset was harvested from (adoption auto-attach);
+    # NULL for human-added assets.
+    source_worker_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
 
     __table_args__ = (

@@ -442,6 +442,9 @@ class CreateTaskAssetRequest(BaseModel):
     category: Literal["code", "tests", "documents", "logs", "other", "workspace"] = "other"
     title: str
     url: str
+    # Worker lane the asset was harvested from (harvesters stamp it; human
+    # adds omit it).
+    source_worker_id: str | None = None
 
     @field_validator("title", "url")
     @classmethod
@@ -991,6 +994,7 @@ def _asset_to_response(asset: TaskAsset) -> dict[str, Any]:
         "category": asset.category,
         "title": asset.title,
         "url": asset.url,
+        "source_worker_id": asset.source_worker_id,
         "created_at": asset.created_at,
     }
 
@@ -2740,6 +2744,7 @@ def create_agent_tasks_router(
                 category=body.category,
                 title=body.title,
                 url=body.url,
+                source_worker_id=body.source_worker_id,
             )
             return _asset_to_response(created)
 
