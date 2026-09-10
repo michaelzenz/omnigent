@@ -2182,6 +2182,11 @@ def register_core_routes(
             # used by /clear and /switch to move the runner between sessions.
             if body.runner_id == "":
                 try:
+                    await asyncio.to_thread(
+                        conversation_store.update_conversation,
+                        session_id,
+                        _unset_reported_model=True,
+                    )
                     await asyncio.to_thread(conversation_store.clear_runner_id, session_id)
                 except ConversationNotFoundError as exc:
                     raise _session_not_found() from exc

@@ -3860,6 +3860,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
         reported_model: str | None = None,
+        _unset_reported_model: bool = False,
         prompt_profile_mode: str | None = None,
         prompt_profile_id: str | None = None,
         _unset_prompt_profile: bool = False,
@@ -3882,7 +3883,10 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param reported_model: The model the harness last reported the
             session is actually on, verbatim, e.g.
             ``"claude-opus-4-8[1m]"``. ``None`` leaves unchanged.
-            No ``_unset`` variant — reports only ever move forward.
+        :param _unset_reported_model: When ``True``, clear
+            ``reported_model`` to ``None`` — used when the runner is
+            released, since the report described the released harness.
+            (Reports otherwise only ever move forward.)
         :param cost_control_mode_override: Per-session cost-control
             switch, ``"on"`` or ``"off"``. ``None`` leaves unchanged.
         :param _unset_cost_control_mode_override: When ``True``, clear
@@ -3946,6 +3950,9 @@ class SqlAlchemyConversationStore(ConversationStore):
                 overrides_changed = True
             if reported_model is not None:
                 overrides["reported_model"] = reported_model
+                overrides_changed = True
+            if _unset_reported_model:
+                overrides["reported_model"] = None
                 overrides_changed = True
             if _unset_cost_control_mode_override:
                 overrides["cost_control_mode_override"] = None
