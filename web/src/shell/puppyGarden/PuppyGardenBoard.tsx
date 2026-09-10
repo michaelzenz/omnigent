@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
 import type { AgentTaskSummary } from "@/lib/agentTasksApi";
@@ -13,6 +13,10 @@ import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 // move-to-queue-end parks a live card directly above the resolved block and
 // sinks a resolved card to the lowest). No state-based grouping here — idle/
 // resolved cards keep their server-assigned position.
+// Cards mounted per board page; the sentinel mounts the next page when the
+// user scrolls within 800px of the bottom.
+const BOARD_PAGE_SIZE = 8;
+
 function rankTasks(tasks: AgentTaskSummary[]): AgentTaskSummary[] {
   if (!tasks.some((task) => task.queue_rank != null)) return tasks;
   return [...tasks].sort(
@@ -45,6 +49,32 @@ export function PuppyGardenBoard() {
   );
   const orderKey = allTasks.map((task) => task.id).join("|");
 
+  // Rendered in pages: only the first `renderLimit` cards mount. New tasks
+  // take the top ranks so freshly-created work is always on the first page;
+  // the sentinel mounts the next page as the user scrolls toward it. Keeps
+  // the DOM (and each card's dashboard poll) bounded on large boards.
+  const [renderLimit, setRenderLimit] = useState(BOARD_PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const visibleTasks = useMemo(
+    () => allTasks.slice(0, Math.min(renderLimit, allTasks.length)),
+    [allTasks, renderLimit],
+  );
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || renderLimit >= allTasks.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setRenderLimit((current) => Math.min(current + BOARD_PAGE_SIZE, allTasks.length));
+        }
+      },
+      { rootMargin: "800px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [renderLimit, allTasks.length]);
+
   const captureAnchor = useCallback(() => {
     const root = scrollRef.current;
     if (!root) return;
@@ -58,6 +88,22 @@ export function PuppyGardenBoard() {
       };
     }
   }, []);
+  // scroll fires far more often than the anchor needs recalculating; run the
+  // DOM measurement at most once per frame.
+  const anchorRafRef = useRef<number | null>(null);
+  const captureAnchorThrottled = useCallback(() => {
+    if (anchorRafRef.current != null) return;
+    anchorRafRef.current = requestAnimationFrame(() => {
+      anchorRafRef.current = null;
+      captureAnchor();
+    });
+  }, [captureAnchor]);
+  useEffect(
+    () => () => {
+      if (anchorRafRef.current != null) cancelAnimationFrame(anchorRafRef.current);
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     if (previousOrderRef.current && previousOrderRef.current !== orderKey) {
@@ -116,7 +162,7 @@ export function PuppyGardenBoard() {
       ref={scrollRef}
       className="h-full min-w-0 overflow-y-auto p-3 sm:p-4"
       style={{ overflowAnchor: "none" }}
-      onScroll={captureAnchor}
+      onScroll={captureAnchorThrottled}
       onClick={() => dismissToRole()}
       data-testid="puppy-garden-board-scroll"
     >
@@ -135,24 +181,37 @@ export function PuppyGardenBoard() {
           <BoardConfigPanel disabled={fixtureMode} />
         </div>
         {hasTasks ? (
-          <section className="space-y-5" data-testid="board-active-tasks">
-            {allTasks.map((task, index) => (
-              <TaskCard
-                key={task.id}
-                taskId={task.id}
-                title={task.title}
-                description={task.description}
-                goal={task.goal}
-                createdAt={task.created_at}
-                priority={task.priority}
-                state={task.state}
-                managerRoleKey={task.manager_role_key}
-                managerId={task.manager_id}
-                isLast={index === allTasks.length - 1}
-                onMovedToEnd={markExplicitMove}
-              />
-            ))}
-          </section>
+          <>
+            <section className="space-y-5" data-testid="board-active-tasks">
+              {visibleTasks.map((task, index) => (
+                <TaskCard
+                  key={task.id}
+                  taskId={task.id}
+                  title={task.title}
+                  description={task.description}
+                  goal={task.goal}
+                  createdAt={task.created_at}
+                  priority={task.priority}
+                  state={task.state}
+                  managerRoleKey={task.manager_role_key}
+                  managerId={task.manager_id}
+                  isLast={
+                    index === visibleTasks.length - 1 && visibleTasks.length === allTasks.length
+                  }
+                  onMovedToEnd={markExplicitMove}
+                />
+              ))}
+            </section>
+            {visibleTasks.length < allTasks.length ? (
+              <div
+                ref={sentinelRef}
+                className="flex items-center justify-center py-3 text-xs text-muted-foreground"
+                data-testid="board-pagination-sentinel"
+              >
+                Showing {visibleTasks.length} of {allTasks.length} tasks — scroll for more
+              </div>
+            ) : null}
+          </>
         ) : (
           <p className="text-sm text-muted-foreground">No tasks yet.</p>
         )}

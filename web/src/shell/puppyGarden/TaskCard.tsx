@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CheckIcon, Loader2Icon, MessageSquareIcon, PencilIcon, XIcon } from "lucide-react";
@@ -159,12 +159,40 @@ export function TaskCard({
   isLast = false,
   onMovedToEnd,
 }: TaskCardProps) {
-  const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
+  // Off-screen cards skip the dashboard fetch/poll (the heaviest per-card
+  // work: an aggregate query per card, refetched every 10s for every card on
+  // the board). The observer preloads slightly ahead of the viewport so a
+  // card is ready before it scrolls in.
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [inView, setInView] = useState(false);
+  const isPending = state === "pending";
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => setInView(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const {
+    data: dashboard,
+    isLoading,
+    error,
+  } = useTaskDashboard(taskId, {
+    enabled: inView && !isPending,
+  });
   const { target, openManager, isManagerSelected, dismissToRole } = usePuppyGardenChat();
   const moveToEnd = useMoveTaskToQueueEnd(taskId);
   const acceptPackage = useAcceptAgentTaskPackage(taskId);
   const rejectPackage = useRejectAgentTaskPackage(taskId);
-  const isPending = state === "pending";
   const managerSelected = !isPending && isManagerSelected(taskId);
   const selectedWorkerId =
     target.kind === "worker" && target.taskId === taskId ? target.workerId : null;
@@ -183,6 +211,7 @@ export function TaskCard({
 
   return (
     <article
+      ref={cardRef}
       className={cn(
         "puppy-task-card @container flex min-w-0 flex-col rounded-xl border-2 border-[#888] bg-card shadow-[0_2px_4px_rgba(0,0,0,0.12)]",
         managerSelected && "ring-2 ring-primary ring-offset-1",

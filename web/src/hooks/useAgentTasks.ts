@@ -81,13 +81,18 @@ export function useAgentTaskList(state = "active") {
   });
 }
 
-export function useTaskDashboard(taskId: string): UseQueryResult<TaskDashboard> {
+export function useTaskDashboard(
+  taskId: string,
+  options?: { enabled?: boolean },
+): UseQueryResult<TaskDashboard> {
   const fixtureDashboard = useFixtureDashboard(taskId);
   const live = useQuery({
     queryKey: ["agent-task-dashboard", taskId],
     queryFn: () => fetchTaskDashboard(taskId),
     refetchInterval: 10_000,
-    enabled: !fixtureEnabled,
+    // Off-screen cards don't fetch or poll their dashboard; scrolling back
+    // re-enables and TanStack refetches the stale data automatically.
+    enabled: (options?.enabled ?? true) && !fixtureEnabled,
   });
 
   if (fixtureEnabled) {
