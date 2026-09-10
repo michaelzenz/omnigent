@@ -2472,9 +2472,11 @@ class SqlTaskAsset(OmnigentBase):
     created_at: Mapped[int] = mapped_column(Integer)
 
     __table_args__ = (
-        CheckConstraint("kind IN ('url')", name="ck_task_assets_kind"),
         CheckConstraint(
-            "category IN ('code', 'tests', 'documents', 'logs', 'other')",
+            "kind IN ('url', 'workspace')", name="ck_task_assets_kind"
+        ),
+        CheckConstraint(
+            "category IN ('code', 'tests', 'documents', 'logs', 'other', 'workspace')",
             name="ck_task_assets_category",
         ),
         Index("ix_task_assets_task", "workspace_id", "task_id", "id"),

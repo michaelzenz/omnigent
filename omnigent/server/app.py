@@ -3360,6 +3360,7 @@ def create_app(
                 runner_router=runner_router,
                 agent_queue_store=agent_queue_store,
                 project_store=project_store,
+                task_asset_store=task_asset_store,
             )
         )
     if policy_store is not None:
