@@ -11189,6 +11189,12 @@ def create_runner_app(
             return JSONResponse(status_code=409, content={"error": "session_busy"})
         try:
             client = await process_manager.get_client(session_id, "any")
+            # Spinner bracket: the harness RPC is synchronous and can take
+            # minutes on a large context — without in_progress the web UI
+            # shows nothing until the whole compact has finished.
+            _publish_event(
+                session_id, {"type": "response.compaction.in_progress", "task_id": session_id}
+            )
             response = await client.post(
                 f"/v1/sessions/{session_id}/events",
                 json={"type": "compact"},
@@ -11196,9 +11202,29 @@ def create_runner_app(
             )
             response.raise_for_status()
             event = response.json()
+            if event.get("already_compacted"):
+                # Benign no-op from the harness (second /compact right after a
+                # successful one). Dismiss the spinner without a completion
+                # marker or a context-ring change — nothing was compacted.
+                _publish_event(
+                    session_id, {"type": "response.compaction.failed", "task_id": session_id}
+                )
+                return JSONResponse(status_code=200, content=event)
             await _handle_harness_compaction(session_id, event)
+            # Completion: total_tokens drives the web UI's context-ring update.
+            _publish_event(
+                session_id,
+                {
+                    "type": "response.compaction.completed",
+                    "task_id": session_id,
+                    "total_tokens": event.get("total_tokens"),
+                },
+            )
             return JSONResponse(status_code=200, content=event)
         except NoLiveHarnessError:
+            _publish_event(
+                session_id, {"type": "response.compaction.failed", "task_id": session_id}
+            )
             return JSONResponse(status_code=409, content={"error": "no_live_harness"})
         except httpx.HTTPStatusError as exc:
             # Surface the harness's own error body — str(exc) is only the
@@ -11211,6 +11237,9 @@ def create_runner_app(
                 harness_status,
                 exc.response.text[:500] or "<empty>",
             )
+            _publish_event(
+                session_id, {"type": "response.compaction.failed", "task_id": session_id}
+            )
             return JSONResponse(
                 status_code=harness_status if 400 <= harness_status < 500 else 502,
                 content={"error": "harness_compaction_failed", "detail": exc.response.text},
@@ -11218,6 +11247,9 @@ def create_runner_app(
         except Exception as exc:  # noqa: BLE001
             await process_manager.release(session_id)
             _logger.warning("Native harness compaction failed for %s", session_id, exc_info=True)
+            _publish_event(
+                session_id, {"type": "response.compaction.failed", "task_id": session_id}
+            )
             return JSONResponse(
                 status_code=502,
                 content={"error": "harness_compaction_failed", "detail": str(exc)},
