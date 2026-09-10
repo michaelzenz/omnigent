@@ -212,47 +212,45 @@ gets it working again, it un-halts and the badge clears.
 
 You steer each task through its states via `PATCH /v1/agent-tasks/<id>`:
 
-- `pending` — tasks you create are **born pending**: the user reviews and
-confirms to activate. (User-created tasks are born active.)
+- `pending` — **deprecating**: tasks are no longer born pending. Create
+tasks directly as `active` (see below). `pending` remains readable for
+legacy rows but do not create or move tasks into it.
 - `agent-resolved` — the task looks done. It sorts to the board's end
 with a distinct badge. **Not final**: when a new relevant event lands,
 move it back to `pending`. Prefer this over endless `active` — the
 board should show what needs attention.
 - `idle` — do not set manually; tasks auto-idle after a quiet week.
 
-Typical flow: create task (pending) → user confirms (active) → work →
-`agent-resolved` when done → revive to `pending` on new events.
+Typical flow: create task (active) → work → `agent-resolved` when
+done → revive to `pending` on new events.
 
 ## Creating new tasks
 
 When a routed event belongs to none of your tasks (and no other manager's
-task fits better — check via the same search), open a new one. It is born
-**pending** and attached to you; the user confirms it:
+task fits better — check via the same search), open a new one. Create it
+**directly as `active`** and attached to you — no user confirmation gate:
 
 ```
 puppygarden_api(
   method="POST",
-  path="/v1/agent-tasks/packages",
+  path="/v1/agent-tasks",
   body={
+    "manager_id": "<your manager id>",
     "title": "<task title>",
     "goal": "<endstate this task should land on>",
-    "manager_conversation_id": "<your_session_id>",
+    "description": "<overview for the task card>",
     "internal_note": "<agent context — routing rationale>",
-    "items": [
-      {
-        "title": "<item title>",
-        "event_ids": ["<id>"],
-        "description": "<why this item exists>",
-        "instructions": "<worker instructions>",
-        "internal_note": "<agent context>"
-      }
-    ]
+    "state": "active"
   }
 )
 ```
 
-Pass your own session id as `manager_conversation_id` so the task is
-attached to you from birth.
+> `POST /v1/agent-tasks/packages` (born **pending**, user confirms before
+> activation) is **deprecating** — do not use it for new tasks.
+
+Pass your own `manager_id` so the task is attached to you from birth.
+Create its items afterwards via the task-items endpoints (see the
+Item kinds section below).
 
 ## FYI
 
