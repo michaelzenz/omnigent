@@ -2996,3 +2996,165 @@ async def test_events_effort_change_on_cursor_native_session_is_disabled_noop(
     assert resp.status_code == 204, (
         f"cursor-native effort_change must 204 (disabled); got {resp.status_code}: {resp.text}"
     )
+
+
+class _JsonPostHarnessClient:
+    """Harness client whose ``post`` returns a scripted JSON payload.
+
+    ``compact_live_harness`` POSTs ``{"type": "compact"}`` to the harness
+    and reads a JSON body back (unlike the turn stream, which is SSE) —
+    this stub replays a canned payload and records the posted bodies.
+    """
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+        self.posted: list[dict[str, Any]] = []
+
+    async def post(self, url: str, *, json: dict[str, Any], timeout: Any = None) -> Any:
+        del url
+        self.posted.append(json)
+        payload = self._payload
+
+        class _Response:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict[str, Any]:
+                return payload
+
+        return _Response()
+
+
+@pytest.mark.asyncio
+async def test_compact_harness_publishes_compaction_sse_bracket() -> None:
+    """
+    ``POST /compact-harness`` brackets the harness RPC with compaction SSE.
+
+    The onih-pi compact path is synchronous (the RPC can take minutes on a
+    large context) and previously published nothing — the web UI showed no
+    spinner while compacting and no completion notice afterwards. The
+    handler must emit ``response.compaction.in_progress`` before the RPC,
+    ``response.compaction.completed`` (with ``total_tokens`` for the
+    context ring) after a successful persist, and ``failed`` on harness
+    errors so the spinner never strands.
+    """
+    from omnigent.runner.app import _session_event_queues_ref
+    from omnigent.spec.types import ExecutorSpec
+
+    session_id = "b41c9e02a7de4f0e8d6c3f1a2b4d5e6f"
+    harness_payload = {
+        "summary": "## Goal\ncompact succeeded",
+        "total_tokens": 22076,
+        "compacted_messages": [{"type": "message", "role": "user", "content": []}],
+    }
+    client = _JsonPostHarnessClient(harness_payload)
+    async def _resolve_spec(*_a: Any, **_k: Any) -> AgentSpec:
+        return AgentSpec(
+            spec_version=1,
+            name="t",
+            executor=ExecutorSpec(type="omnigent", config={"harness": "pi"}),
+        )
+
+    pm = _FakeProcessManager(client)  # type: ignore[arg-type]
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        spec_resolver=_resolve_spec,  # type: ignore[arg-type]
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+
+    async with _runner_client(app) as http:
+        create_resp = await http.post(
+            "/v1/sessions",
+            json={"session_id": session_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        _drain_session_event_queue(_session_event_queues_ref.get(session_id))
+
+        resp = await http.post(f"/v1/sessions/{session_id}/compact-harness")
+
+    assert resp.status_code == 200, resp.text
+    assert client.posted == [{"type": "compact"}]
+
+    queue = _session_event_queues_ref.get(session_id)
+    assert queue is not None
+    events: list[dict[str, Any]] = []
+    while not queue.empty():
+        item = queue.get_nowait()
+        if isinstance(item, dict):
+            events.append(item)
+    types = [e.get("type") for e in events]
+    assert types == [
+        "response.compaction.in_progress",
+        "response.compaction.completed",
+    ], f"Expected in_progress → completed bracket; got {types!r}"
+    completed = events[-1]
+    # total_tokens drives the web UI's context-ring update — a completed
+    # event without it leaves the ring stale until the next turn.
+    assert completed.get("total_tokens") == 22076
+
+
+@pytest.mark.asyncio
+async def test_compact_harness_publishes_failed_on_harness_error() -> None:
+    """
+    Harness 4xx on ``/compact-harness`` publishes ``compaction.failed``.
+
+    The spinner emitted before the RPC must be dismissed when the harness
+    rejects the compact (e.g. no live inner session), otherwise the web UI
+    shows "Compacting…" forever.
+    """
+    from omnigent.runner.app import _session_event_queues_ref
+    from omnigent.spec.types import ExecutorSpec
+
+    session_id = "c52d0f13b8ef4f1f9e7d4a2b3c5e6f7a"
+
+    class _FailingHarnessClient:
+        async def post(self, url: str, *, json: dict[str, Any], timeout: Any = None) -> Any:
+            del url, json
+
+            import httpx as _httpx
+
+            request = _httpx.Request("POST", "http://harness.local/events")
+            response = _httpx.Response(409, json={"error": "no_live_process"}, request=request)
+            raise _httpx.HTTPStatusError(
+                "client error", request=request, response=response
+            )
+
+    async def _resolve_spec2(*_a: Any, **_k: Any) -> AgentSpec:
+        return AgentSpec(
+            spec_version=1,
+            name="t",
+            executor=ExecutorSpec(type="omnigent", config={"harness": "pi"}),
+        )
+
+    pm = _FakeProcessManager(_FailingHarnessClient())  # type: ignore[arg-type]
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        spec_resolver=_resolve_spec2,  # type: ignore[arg-type]
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+
+    async with _runner_client(app) as http:
+        create_resp = await http.post(
+            "/v1/sessions",
+            json={"session_id": session_id, "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        _drain_session_event_queue(_session_event_queues_ref.get(session_id))
+
+        resp = await http.post(f"/v1/sessions/{session_id}/compact-harness")
+
+    assert resp.status_code == 409, resp.text
+
+    queue = _session_event_queues_ref.get(session_id)
+    assert queue is not None
+    types: list[str] = []
+    while not queue.empty():
+        item = queue.get_nowait()
+        if isinstance(item, dict):
+            types.append(str(item.get("type")))
+    assert types == [
+        "response.compaction.in_progress",
+        "response.compaction.failed",
+    ], f"Expected in_progress → failed bracket on harness error; got {types!r}"
