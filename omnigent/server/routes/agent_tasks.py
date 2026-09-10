@@ -2107,7 +2107,11 @@ def create_agent_tasks_router(
 
     @router.post("/agent-tasks/{task_id}/move-to-queue-end")
     async def move_task_to_queue_end(request: Request, task_id: str) -> dict[str, Any]:
-        """Move one task to the end of the stable board ordering."""
+        """Move one task toward the end of the stable board ordering.
+
+        A live task parks directly above the first resolved card (the end of
+        the work section); a resolved task sinks to the absolute end.
+        """
         user_id = require_user(request, auth_provider)
         await _get_task_or_404(task_id, user_id)
         task = await asyncio.to_thread(task_store.move_to_queue_end, task_id)

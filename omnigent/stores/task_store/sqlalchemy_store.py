@@ -284,16 +284,76 @@ class SqlAlchemyTaskStore(TaskStore):
             return _to_entity(row)
 
     def move_to_queue_end(self, task_id: str) -> Task | None:
+        """Move a task toward the end of the board queue.
+
+        State-aware: a resolved (``agent-resolved``) card sinks to the
+        absolute end; a live card parks directly above the first resolved
+        card — the end of the work section — so it stays visible instead of
+        burying itself under resolved cards.
+        """
         with self._session() as session:
             row = session.get(SqlTask, (current_workspace_id(), task_id))
             if row is None:
                 return None
-            next_rank = session.scalar(
-                select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
-                    SqlTask.workspace_id == current_workspace_id()
+            resolved_state = encode_task_state("agent-resolved")
+            if row.state == resolved_state:
+                next_rank = session.scalar(
+                    select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
+                        SqlTask.workspace_id == current_workspace_id()
+                    )
+                )
+                row.queue_rank = int(next_rank if next_rank is not None else -1)
+                session.flush()
+                return _to_entity(row)
+            # Live card: target the slot directly above the first resolved
+            # card (board order is queue_rank DESC, so the first resolved
+            # item carries the highest rank among resolved tasks).
+            resolved_max = session.scalar(
+                select(func.max(SqlTask.queue_rank)).where(
+                    SqlTask.workspace_id == current_workspace_id(),
+                    SqlTask.state == resolved_state,
                 )
             )
-            row.queue_rank = int(next_rank if next_rank is not None else -1)
+            if resolved_max is None:
+                # No resolved cards: absolute end, unchanged behavior.
+                next_rank = session.scalar(
+                    select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
+                        SqlTask.workspace_id == current_workspace_id()
+                    )
+                )
+                row.queue_rank = int(next_rank if next_rank is not None else -1)
+                session.flush()
+                return _to_entity(row)
+            resolved_max = int(resolved_max)
+            # Excluding the moved task: when it already sits directly above
+            # the resolved block the assignment below reuses its own rank —
+            # a no-op instead of pointless renumbering.
+            next_above = session.scalar(
+                select(func.min(SqlTask.queue_rank)).where(
+                    SqlTask.workspace_id == current_workspace_id(),
+                    SqlTask.queue_rank > resolved_max,
+                    SqlTask.id != task_id,
+                )
+            )
+            if next_above is None or int(next_above) - resolved_max >= 2:
+                # A free slot exists directly above the resolved block
+                # (nothing occupies resolved_max + 1, or a gap leaves room).
+                row.queue_rank = resolved_max + 1
+            else:
+                # Adjacent ranks leave no integer between them: renumber the
+                # tail at or below the insertion point down by one — an
+                # order-preserving bijection — freeing resolved_max for the
+                # moved card. The moved task is included in the shift (it may
+                # sit inside the tail) and re-pinned afterwards.
+                session.execute(
+                    update(SqlTask)
+                    .where(
+                        SqlTask.workspace_id == current_workspace_id(),
+                        SqlTask.queue_rank <= resolved_max,
+                    )
+                    .values(queue_rank=SqlTask.queue_rank - 1)
+                )
+                row.queue_rank = resolved_max
             session.flush()
             return _to_entity(row)
 
