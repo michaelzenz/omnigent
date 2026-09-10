@@ -4,6 +4,7 @@ import { Loader2Icon, SearchIcon, XIcon } from "lucide-react";
 import { useAgentTaskList } from "@/hooks/useAgentTasks";
 import { Input } from "@/components/ui/input";
 import { useBoardSearch } from "./useBoardSearch";
+import { BoardSearchProvider } from "./boardSearchHighlight";
 import type { AgentTaskSummary } from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { BoardConfigPanel } from "./BoardConfigPanel";
@@ -202,109 +203,111 @@ export function PuppyGardenBoard() {
       onClick={() => dismissToRole()}
       data-testid="puppy-garden-board-scroll"
     >
-      <div
-        className="sticky top-0 z-20 -mx-3 mb-0 bg-background/95 px-3 py-2 backdrop-blur-sm sm:-mx-4 sm:px-4"
-        data-testid="board-search-bar"
-      >
-        <div className="relative mx-auto w-full max-w-[100rem]">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.stopPropagation();
-                setSearchQuery("");
-              }
-            }}
-            onClick={(event) => event.stopPropagation()}
-            placeholder="Search tasks — title, goal, assets, workers, session id…"
-            className="h-8 pl-8 pr-8"
-            aria-label="Search tasks"
-            data-testid="board-search-input"
-          />
-          {searching ? (
-            <button
-              type="button"
-              aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                setSearchQuery("");
+      <BoardSearchProvider query={searchQuery}>
+        <div
+          className="sticky top-0 z-20 -mx-3 mb-0 bg-background/95 px-3 py-2 backdrop-blur-sm sm:-mx-4 sm:px-4"
+          data-testid="board-search-bar"
+        >
+          <div className="relative mx-auto w-full max-w-[100rem]">
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setSearchQuery("");
+                }
               }}
-            >
-              <XIcon className="size-3.5" />
-            </button>
+              onClick={(event) => event.stopPropagation()}
+              placeholder="Search tasks — title, goal, assets, workers, session id…"
+              className="h-8 pl-8 pr-8"
+              aria-label="Search tasks"
+              data-testid="board-search-input"
+            />
+            {searching ? (
+              <button
+                type="button"
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSearchQuery("");
+                }}
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div className="mx-auto flex w-full min-w-0 max-w-[100rem] flex-col gap-5">
+          {fixtureMode ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              Fixture mode — dummy board data.
+            </div>
           ) : null}
-        </div>
-      </div>
-      <div className="mx-auto flex w-full min-w-0 max-w-[100rem] flex-col gap-5">
-        {fixtureMode ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-            Fixture mode — dummy board data.
+          <BoardFyiStream />
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h1 className="text-xl font-semibold">PuppyGarden</h1>
+              <p className="text-sm text-muted-foreground">Live board</p>
+            </div>
+            <BoardConfigPanel disabled={fixtureMode} />
           </div>
-        ) : null}
-        <BoardFyiStream />
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h1 className="text-xl font-semibold">PuppyGarden</h1>
-            <p className="text-sm text-muted-foreground">Live board</p>
-          </div>
-          <BoardConfigPanel disabled={fixtureMode} />
-        </div>
-        {hasTasks ? (
-          <>
-            <section className="space-y-5" data-testid="board-active-tasks">
-              {filteredTasks.length === 0 ? (
-                <p
-                  className="py-6 text-center text-sm text-muted-foreground"
-                  data-testid="board-search-empty"
+          {hasTasks ? (
+            <>
+              <section className="space-y-5" data-testid="board-active-tasks">
+                {filteredTasks.length === 0 ? (
+                  <p
+                    className="py-6 text-center text-sm text-muted-foreground"
+                    data-testid="board-search-empty"
+                  >
+                    No tasks match "{searchQuery.trim()}".
+                  </p>
+                ) : null}
+                {visibleTasks.map((task, index) => (
+                  <TaskCard
+                    key={task.id}
+                    taskId={task.id}
+                    title={task.title}
+                    description={task.description}
+                    goal={task.goal}
+                    createdAt={task.created_at}
+                    priority={task.priority}
+                    state={task.state}
+                    managerRoleKey={task.manager_role_key}
+                    managerId={task.manager_id}
+                    isLast={
+                      index === visibleTasks.length - 1 && visibleTasks.length === allTasks.length
+                    }
+                    onMovedToEnd={markExplicitMove}
+                  />
+                ))}
+              </section>
+              {visibleTasks.length < filteredTasks.length ? (
+                <div
+                  ref={sentinelRef}
+                  className="flex items-center justify-center py-3 text-xs text-muted-foreground"
+                  data-testid="board-pagination-sentinel"
                 >
-                  No tasks match "{searchQuery.trim()}".
+                  Showing {visibleTasks.length} of {filteredTasks.length}
+                  {searching ? " matching" : ""} tasks — scroll for more
+                </div>
+              ) : null}
+              {searching ? (
+                <p
+                  className="py-1 text-center text-xs text-muted-foreground"
+                  data-testid="board-search-count"
+                >
+                  {filteredTasks.length} of {allTasks.length} tasks match.
                 </p>
               ) : null}
-              {visibleTasks.map((task, index) => (
-                <TaskCard
-                  key={task.id}
-                  taskId={task.id}
-                  title={task.title}
-                  description={task.description}
-                  goal={task.goal}
-                  createdAt={task.created_at}
-                  priority={task.priority}
-                  state={task.state}
-                  managerRoleKey={task.manager_role_key}
-                  managerId={task.manager_id}
-                  isLast={
-                    index === visibleTasks.length - 1 && visibleTasks.length === allTasks.length
-                  }
-                  onMovedToEnd={markExplicitMove}
-                />
-              ))}
-            </section>
-            {visibleTasks.length < filteredTasks.length ? (
-              <div
-                ref={sentinelRef}
-                className="flex items-center justify-center py-3 text-xs text-muted-foreground"
-                data-testid="board-pagination-sentinel"
-              >
-                Showing {visibleTasks.length} of {filteredTasks.length}
-                {searching ? " matching" : ""} tasks — scroll for more
-              </div>
-            ) : null}
-            {searching ? (
-              <p
-                className="py-1 text-center text-xs text-muted-foreground"
-                data-testid="board-search-count"
-              >
-                {filteredTasks.length} of {allTasks.length} tasks match.
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">No tasks yet.</p>
-        )}
-      </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">No tasks yet.</p>
+          )}
+        </div>
+      </BoardSearchProvider>
     </div>
   );
 }

@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Highlight, anyTextMatches, useSearchQuery } from "./boardSearchHighlight";
+import { rowTexts } from "./useBoardSearch";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Link } from "@/lib/routing";
 import type { TaskWorkerRow, TaskWorkerLane } from "@/lib/agentTasksApi";
@@ -8,6 +10,7 @@ import { TaskCardItemStateBadge } from "./TaskCardItemStateBadge";
 import { TaskCardExecutionRowActions, TaskCardRowActions } from "./TaskCardRowActions";
 import { WorkStateBadge, executionSubtitle } from "./TaskCardSessions";
 import { relativeTime } from "@/lib/relativeTime";
+import { cn } from "@/lib/utils";
 
 function rowKey(row: TaskWorkerRow): string {
   return row.kind === "item" ? `item:${row.item.id}` : `exec:${row.execution.id}`;
@@ -32,6 +35,7 @@ export function TaskCardWorkerRows({
   workerKind,
 }: TaskCardWorkerRowsProps) {
   const visibleRows = visibleWorkerRows(rows);
+  const searchQuery = useSearchQuery();
   const [folded, setFolded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(visibleRows.map((row) => [rowKey(row), row.default_folded])),
   );
@@ -48,10 +52,15 @@ export function TaskCardWorkerRows({
         const title = rowTitle(row);
         const runningExecution = row.kind === "execution" && row.execution.status === "running";
 
+        const matched = searchQuery !== "" && anyTextMatches(rowTexts(row), searchQuery);
         return (
           <li
             key={key}
-            className="rounded-md border border-border/70 bg-background shadow-sm"
+            className={cn(
+              "rounded-md border border-border/70 bg-background shadow-sm",
+              matched &&
+                "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10",
+            )}
             data-testid={`worker-row-${key}`}
             data-folded={isFolded ? "true" : "false"}
           >
@@ -67,7 +76,9 @@ export function TaskCardWorkerRows({
                 ) : (
                   <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
                 )}
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  <Highlight text={title} />
+                </span>
                 {row.kind === "execution" ? (
                   <WorkStateBadge status={row.execution.status} />
                 ) : (

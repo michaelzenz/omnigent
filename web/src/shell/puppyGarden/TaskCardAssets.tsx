@@ -23,6 +23,8 @@ import { fetchSshConnections } from "@/lib/sshApi";
 import type { SshConnection } from "@/lib/sshConnectionPreferences";
 import { useQuery } from "@tanstack/react-query";
 import { readWorkspaceEditor } from "@/lib/puppyGardenPreferences";
+import { Highlight, anyTextMatches, useSearchQuery } from "./boardSearchHighlight";
+import { assetTexts, laneTexts } from "./useBoardSearch";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { RebindWorkerDialog } from "./RebindWorkerDialog";
 
@@ -45,6 +47,7 @@ const CATEGORIES: { value: TaskAssetCategory; label: string }[] = [
 export function TaskCardAssets({ taskId, assets, hostId }: TaskCardAssetsProps) {
   const deleteAsset = useDeleteTaskAsset(taskId);
   const openWorkspace = useWorkspaceAssetOpener();
+  const searchQuery = useSearchQuery();
   if (!assets.length) return <p className="p-3 text-sm text-muted-foreground">No assets yet.</p>;
 
   return (
@@ -66,11 +69,22 @@ export function TaskCardAssets({ taskId, assets, hostId }: TaskCardAssetsProps) 
                 const handleOpenWorkspace = () => {
                   if (workspaceOpenable && asset.url) openWorkspace(asset.url, hostId);
                 };
+                // Search highlight: ring the row when the asset matched (by
+                // title or url); if only the url matched, surface the url text
+                // (highlighted) so the reason for the match is visible.
+                const assetMatched =
+                  searchQuery !== "" && anyTextMatches(assetTexts(asset), searchQuery);
+                const urlIsMatch =
+                  assetMatched && asset.url != null && !anyTextMatches([asset.title], searchQuery);
                 return (
                   <li
                     key={asset.id}
                     data-testid={`task-asset-${asset.id}`}
-                    className="flex items-start gap-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs"
+                    className={cn(
+                      "flex flex-col gap-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs",
+                      assetMatched &&
+                        "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10",
+                    )}
                   >
                     {workspaceOpenable ? (
                       <button
@@ -83,7 +97,9 @@ export function TaskCardAssets({ taskId, assets, hostId }: TaskCardAssetsProps) 
                         }}
                       >
                         <FolderOpenIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                        <span className="min-w-0 break-words">{asset.title}</span>
+                        <span className="min-w-0 break-words">
+                          <Highlight text={asset.title} />
+                        </span>
                       </button>
                     ) : openable ? (
                       <a
@@ -93,10 +109,12 @@ export function TaskCardAssets({ taskId, assets, hostId }: TaskCardAssetsProps) 
                         className="min-w-0 flex-1 break-words font-medium text-primary hover:underline"
                         onClick={(event) => event.stopPropagation()}
                       >
-                        {asset.title}
+                        <Highlight text={asset.title} />
                       </a>
                     ) : (
-                      <span className="min-w-0 flex-1 break-words font-medium">{asset.title}</span>
+                      <span className="min-w-0 flex-1 break-words font-medium">
+                        <Highlight text={asset.title} />
+                      </span>
                     )}
                     <button
                       type="button"
@@ -113,6 +131,11 @@ export function TaskCardAssets({ taskId, assets, hostId }: TaskCardAssetsProps) 
                     >
                       <XIcon className="size-3.5" />
                     </button>
+                    {urlIsMatch && asset.url ? (
+                      <span className="break-all text-[11px] text-muted-foreground">
+                        <Highlight text={asset.url} />
+                      </span>
+                    ) : null}
                   </li>
                 );
               })}
@@ -189,6 +212,7 @@ function useWorkspaceAssetOpener(): ((path: string, hostId?: string | null) => v
 function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLane[] }) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
   const untrack = useUntrackWorker();
+  const searchQuery = useSearchQuery();
   const [confirmUntrack, setConfirmUntrack] = useState<string | null>(null);
   const [rebindWorker, setRebindWorker] = useState<{ id: string; name: string } | null>(null);
   if (!workers.length) return <p className="p-3 text-sm text-muted-foreground">No workers yet.</p>;
@@ -200,6 +224,7 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
           const label = worker.title ?? worker.provider_name ?? "Worker";
           const selected = isWorkerSelected(taskId, worker.worker_id);
           const canOpen = Boolean(worker.target_id && worker.kind !== "external");
+          const matched = searchQuery !== "" && anyTextMatches(laneTexts(worker), searchQuery);
           return (
             <li key={worker.worker_id}>
               <div
@@ -207,6 +232,8 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
                   "flex w-full flex-col gap-1.5 rounded-lg border border-border bg-background p-2 text-left",
                   canOpen && "hover:border-primary/50 hover:bg-muted/40",
                   selected && "border-primary ring-1 ring-primary/30",
+                  matched &&
+                    "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10",
                   !canOpen && "opacity-90",
                 )}
               >
@@ -215,7 +242,7 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
                     notice and action buttons share the row below so a fourth
                     button never squeezes the title. */}
                 <span className="block min-w-0 break-words text-sm font-medium">
-                  {label}
+                  <Highlight text={label} />
                   {worker.kind === "external" && (
                     <span className="ml-1.5 inline-block rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
                       external

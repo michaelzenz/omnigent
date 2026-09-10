@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Highlight } from "./boardSearchHighlight";
 import { Loader2Icon } from "lucide-react";
 import { Link } from "@/lib/routing";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +65,9 @@ export function TaskCardSessions({ dashboard }: TaskCardSessionsProps) {
                     <Badge variant="outline" className="shrink-0 text-[10px]">
                       {session.kind}
                     </Badge>
-                    <span className="min-w-0 truncate">{session.label}</span>
+                    <span className="min-w-0 truncate">
+                      <Highlight text={session.label} />
+                    </span>
                   </div>
                 </Link>
               </li>
