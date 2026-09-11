@@ -187,6 +187,7 @@ import {
 import GithubMono from "@lobehub/icons/es/Github/components/Mono";
 import { useSession } from "@/hooks/useSession";
 import { useGithubInfo } from "@/hooks/useGithub";
+import { useLiveGitBranch } from "@/hooks/useLiveGitBranch";
 import { useOpenGithubTab } from "@/shell/FileViewerContext";
 import { usePromptProfiles } from "@/hooks/usePromptProfiles";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
@@ -2788,8 +2789,11 @@ function ComposerStatusLine({
   const codexPlanMode = useChatStore((s) => s.codexPlanMode);
   // Seeded from the session snapshot on bind (chatStore.sessionBindingPatch),
   // alongside contextWindow — so the branch reads from the same store as
-  // the other status-line values rather than a separate fetch.
+  // the other status-line values rather than a separate fetch. The recorded
+  // branch is write-once at session creation, so this poll is what keeps it
+  // honest after a branch switch inside the worktree.
   const gitBranch = useChatStore((s) => s.gitBranch);
+  useLiveGitBranch(conversationId);
 
   // Host binding drives whether the HostBadge has anything to show — read it
   // from the same source the badge does so the tray's render guard matches.

@@ -1179,6 +1179,22 @@ export async function getSessionSlim(
   return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
 }
 
+/**
+ * Live git branch of a session's workspace, read from the host on every
+ * call. ``null`` when the workspace is not a git checkout or the host
+ * could not be asked.
+ */
+export async function getSessionGitBranch(
+  sessionId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<string | null> {
+  const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/git-branch`, {
+    signal: options.signal,
+  });
+  const wire = await readJsonOrThrow<{ git_branch?: string | null }>(res);
+  return wire.git_branch ?? null;
+}
+
 /** One page of a session's committed items, in chronological order. */
 export interface SessionItemsPage {
   /** Items oldest-to-newest, ready to feed `itemsToBlocks`. */
