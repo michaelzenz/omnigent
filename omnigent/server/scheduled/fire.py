@@ -149,6 +149,33 @@ def is_manager_sweep_task_id(scheduled_task_id: str) -> bool:
     return scheduled_task_id in _MANAGER_SWEEP_TASK_IDS
 
 
+async def _is_manager_sweep_fire(
+    deps: FireDeps,
+    workspace_id: int,
+    scheduled_task_id: str,
+) -> bool:
+    """Whether a firing task is a manager sweep automation.
+
+    Fast path: the in-memory id registry. Fallback: the task's durable name
+    prefix — the registry is process-local and starts empty if the boot-time
+    rebuild failed, and a misrouted sweep would otherwise go down the default
+    fire path and create a fresh session per firing. A confirmed fallback hit
+    warms the registry.
+    """
+    if is_manager_sweep_task_id(scheduled_task_id):
+        return True
+    from omnigent.server.scheduled.manager_sweep import manager_id_from_sweep_name
+
+    with workspace_scope(workspace_id):
+        task = await asyncio.to_thread(deps.scheduled_task_store.get, scheduled_task_id)
+    if task is None:
+        return False
+    if manager_id_from_sweep_name(task.name) is None:
+        return False
+    _MANAGER_SWEEP_TASK_IDS.add(scheduled_task_id)
+    return True
+
+
 def _prompt_event(prompt: str) -> SessionEventInput:
     """Build the user-message event that carries a task's prompt to the runner."""
     return SessionEventInput(
@@ -212,6 +239,8 @@ def _make_manager_sweep_dispatch(deps: FireDeps) -> LaunchDispatch:
                 raise RuntimeError(f"manager {manager_id!r} healed session {session_id!r} missing")
         else:
             session_id = manager.conversation_id
+        if session_id is None:  # unreachable: both branches above guarantee a session
+            raise RuntimeError(f"manager {manager_id!r} session could not be resolved")
 
         runner_client = await _get_runner_client(session_id, deps.runner_router, conversation=conv)
         if runner_client is None:
@@ -278,7 +307,7 @@ def build_on_fire(
     )
 
     async def on_fire(workspace_id: int, scheduled_task_id: str) -> None:
-        if is_manager_sweep_task_id(scheduled_task_id):
+        if await _is_manager_sweep_fire(deps, workspace_id, scheduled_task_id):
             await _trigger_manager_sweep_fire(
                 deps, workspace_id, scheduled_task_id, sweep_dispatch
             )
@@ -327,7 +356,7 @@ def build_run_now(
         dispatch = launch_dispatch
 
     async def run_now(workspace_id: int, scheduled_task_id: str) -> bool:
-        if is_manager_sweep_task_id(scheduled_task_id):
+        if await _is_manager_sweep_fire(deps, workspace_id, scheduled_task_id):
             await _trigger_manager_sweep_fire(
                 deps, workspace_id, scheduled_task_id, _make_manager_sweep_dispatch(deps)
             )
@@ -379,8 +408,12 @@ async def _trigger_manager_sweep_fire(
             # The sweep dispatch resolves the real manager session from the
             # manager store; the conv argument is unused by it. Build the
             # minimal stand-in inline rather than touching the DB.
+            now = int(time.time())
             placeholder = Conversation(
                 id=f"sweep-{scheduled_task_id}",
+                created_at=now,
+                updated_at=now,
+                root_conversation_id=f"sweep-{scheduled_task_id}",
                 agent_id=task.agent_id,
                 title=task.name,
             )
@@ -399,7 +432,13 @@ async def _trigger_manager_sweep_fire(
             return
         await _record_run(deps, task, None, scheduled_at, status="running")
 
-    _MANAGER_SWEEP_FIRE_TASKS.add(asyncio.create_task(_run()))
+    fire_task = asyncio.create_task(_run())
+    _MANAGER_SWEEP_FIRE_TASKS.add(fire_task)
+    fire_task.add_done_callback(_MANAGER_SWEEP_FIRE_TASKS.discard)
+    # Release the overlap guard when the fire settles — without this a sweep
+    # can only ever fire once per server boot (every later firing is skipped
+    # as "already in flight").
+    fire_task.add_done_callback(lambda _task: _IN_FLIGHT_TASKS.discard(key))
 
 
 async def _trigger_fire(

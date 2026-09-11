@@ -106,6 +106,27 @@ def ensure_manager_sweep_task(
     return task.id
 
 
+def rebuild_sweep_registry(*, owner_user_id: str | None, store: ScheduledTaskStore) -> int:
+    """Re-register every active sweep task with the fire path's registry.
+
+    ``fire._MANAGER_SWEEP_TASK_IDS`` is process-local, so a server boot starts
+    cold; without this rebuild a sweep fire would fail the id check and fall
+    through to the default scheduled-task path — creating a fresh session per
+    firing instead of prompting the manager's existing one. Sweeps carry no
+    schema marker, so the rebuild scans for the deterministic name prefix.
+
+    :returns: How many sweep tasks were (re-)registered.
+    """
+    from omnigent.server.scheduled.fire import _MANAGER_SWEEP_TASK_IDS
+
+    count = 0
+    for task in store.list(owner_user_id=owner_user_id):
+        if task.state == "active" and manager_id_from_sweep_name(task.name) is not None:
+            _MANAGER_SWEEP_TASK_IDS.add(task.id)
+            count += 1
+    return count
+
+
 def delete_manager_sweep_task(
     *,
     manager_id: str,
