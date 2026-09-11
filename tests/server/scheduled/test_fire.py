@@ -107,6 +107,12 @@ class FakeScheduledTaskStore:
         self.get_workspace_ids.append(current_workspace_id())
         return self._rows.get(scheduled_task_id)
 
+    def list(self, *, owner_user_id: str | None = None) -> list[ScheduledTask]:
+        rows = list(self._rows.values())
+        if owner_user_id is None:
+            return rows
+        return [row for row in rows if row.user_id == owner_user_id]
+
     def update(self, scheduled_task_id: str, **kwargs: Any) -> ScheduledTask | None:
         self.update_workspace_ids.append(current_workspace_id())
         self.updates.append({"id": scheduled_task_id, **kwargs})
@@ -310,6 +316,144 @@ async def _drain() -> None:
             if not any(not t.done() for t in fire_mod._PENDING_FIRES):
                 return
         await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def _drain_sweeps() -> None:
+    """Await every in-flight manager-sweep fire task to completion."""
+    for _ in range(50):
+        pending = [t for t in fire_mod._MANAGER_SWEEP_FIRE_TASKS if not t.done()]
+        if not pending:
+            await asyncio.sleep(0)
+            if not any(not t.done() for t in fire_mod._MANAGER_SWEEP_FIRE_TASKS):
+                return
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+def _clear_sweep_state() -> None:
+    """Reset the process-global sweep registries between tests."""
+    fire_mod._MANAGER_SWEEP_TASK_IDS.clear()
+    fire_mod._IN_FLIGHT_TASKS.clear()
+
+
+@pytest.mark.asyncio
+async def test_sweep_fire_routes_by_name_when_registry_cold() -> None:
+    """A sweep fires into the manager dispatch even with a cold id registry.
+
+    The registry is process-local; if the boot-time rebuild fails (or a sweep
+    is created before the server restarted), the fire must still route by the
+    task's deterministic name prefix instead of falling through to the default
+    fire path — which would create a fresh session per firing.
+    """
+    _clear_sweep_state()
+    task = _task(
+        id="sweep_1",
+        name="puppygarden-manager-sweep:mgr1",
+        prompt="sweep prompt",
+        workspace=None,
+        host_id=None,
+    )
+    store = FakeScheduledTaskStore(rows={"sweep_1": task})
+    swept: list[Any] = []
+    launched: list[Any] = []
+
+    async def _sweep(conv: Any, task: Any) -> None:
+        swept.append(task)
+
+    async def _launch(conv: Any, task: Any) -> None:
+        launched.append(conv)
+
+    on_fire = build_on_fire(_deps(store), launch_dispatch=_launch, manager_sweep_dispatch=_sweep)
+    await on_fire(0, "sweep_1")
+    await _drain()
+    await _drain_sweeps()
+
+    assert len(swept) == 1
+    assert swept[0].id == "sweep_1"
+    assert launched == []
+    # The fallback hit warmed the registry for subsequent fires.
+    assert fire_mod.is_manager_sweep_task_id("sweep_1")
+
+
+@pytest.mark.asyncio
+async def test_sweep_fire_releases_overlap_guard() -> None:
+    """A sweep can fire more than once — the in-flight guard is released.
+
+    Without the done-callback discard, the (workspace, task) key stayed in
+    ``_IN_FLIGHT_TASKS`` forever and every firing after the first was skipped
+    as "already in flight" — one sweep per server boot.
+    """
+    _clear_sweep_state()
+    task = _task(
+        id="sweep_1",
+        name="puppygarden-manager-sweep:mgr1",
+        prompt="sweep prompt",
+        workspace=None,
+        host_id=None,
+    )
+    store = FakeScheduledTaskStore(rows={"sweep_1": task})
+    swept: list[Any] = []
+
+    async def _sweep(conv: Any, task: Any) -> None:
+        swept.append(task.id)
+
+    on_fire = build_on_fire(_deps(store), launch_dispatch=None, manager_sweep_dispatch=_sweep)
+    await on_fire(0, "sweep_1")
+    await _drain_sweeps()
+    await on_fire(0, "sweep_1")
+    await _drain_sweeps()
+
+    assert swept == ["sweep_1", "sweep_1"]
+    assert (0, "sweep_1") not in fire_mod._IN_FLIGHT_TASKS
+
+
+@pytest.mark.asyncio
+async def test_regular_task_not_routed_to_sweep() -> None:
+    """A normal task name never takes the sweep dispatch."""
+    _clear_sweep_state()
+    store = FakeScheduledTaskStore(rows={"task_1": _task()})
+    swept: list[Any] = []
+    launched: list[Any] = []
+
+    async def _sweep(conv: Any, task: Any) -> None:
+        swept.append(task)
+
+    async def _launch(conv: Any, task: Any) -> None:
+        launched.append(conv)
+
+    on_fire = build_on_fire(_deps(store), launch_dispatch=_launch, manager_sweep_dispatch=_sweep)
+    await on_fire(0, "task_1")
+    await _drain()
+
+    assert len(launched) == 1
+    assert swept == []
+
+
+def test_rebuild_sweep_registry_registers_active_sweeps() -> None:
+    """The boot-time rebuild registers active sweeps by name prefix only."""
+    _clear_sweep_state()
+    rows = {
+        "sweep_a": _task(
+            id="sweep_a", name="puppygarden-manager-sweep:mgrA", workspace=None, host_id=None
+        ),
+        "sweep_paused": _task(
+            id="sweep_paused",
+            name="puppygarden-manager-sweep:mgrB",
+            state="paused",
+            workspace=None,
+            host_id=None,
+        ),
+        "normal": _task(id="normal", name="nightly", workspace="/repo", host_id="host_1"),
+    }
+    store = FakeScheduledTaskStore(rows=rows)
+
+    from omnigent.server.scheduled.manager_sweep import rebuild_sweep_registry
+
+    count = rebuild_sweep_registry(owner_user_id=None, store=store)
+
+    assert count == 1
+    assert fire_mod.is_manager_sweep_task_id("sweep_a")
+    assert not fire_mod.is_manager_sweep_task_id("sweep_paused")
+    assert not fire_mod.is_manager_sweep_task_id("normal")
 
 
 @pytest.mark.asyncio
@@ -696,7 +840,10 @@ async def test_fire_runs_under_task_workspace_scope() -> None:
     await on_fire(42, "task_1")
     await _drain()
 
-    assert store.get_workspace_ids == [42, 42]
+    # Two reads from the fire body + one from the manager-sweep routing
+    # fallback (registry miss on a non-sweep task) — all under the task's
+    # workspace scope.
+    assert store.get_workspace_ids == [42, 42, 42]
     assert conv_store.create_workspace_ids == [42]
     assert perm.grant_workspace_ids == [42]
     assert store.update_workspace_ids == [42]
