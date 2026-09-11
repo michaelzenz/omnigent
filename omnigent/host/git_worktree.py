@@ -24,6 +24,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 try:
     import fcntl
@@ -423,6 +424,7 @@ def acquire_auto_worktree_streaming(
     auto_fetch_base: bool = False,
     lease_seconds: int = _AUTO_LEASE_SECONDS,
     reuse_existing_branch: bool = False,
+    reuse_path: str | None = None,
     on_log: Callable[[str], None] | None = None,
     on_reclaim: Callable[[str, str], bool] | None = None,
 ) -> CreatedWorktree:
@@ -444,14 +446,47 @@ def acquire_auto_worktree_streaming(
                 label="git fetch failed",
             )
         _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
-    base_ref = branch_name if reuse_existing_branch else (base_branch or "HEAD")
-    # Follow the selected linked worktree's HEAD rather than the main work
-    # tree's branch when auto creation has no explicit base ref.
-    base_cwd = repo_path if base_branch is None and not reuse_existing_branch else repo_root
-    base_result = _run_git(
-        ["rev-parse", "--verify", "--end-of-options", base_ref],
-        cwd=base_cwd,
-    )
+    branch_in_refs = False
+    if reuse_existing_branch:
+        # Relocation: the session's own branch is the base — the worktree
+        # being re-acquired already sits on it. The branch may be missing
+        # from the main repo's refs (renamed, deleted, or created on another
+        # host); fall back to the caller's base ref, then HEAD, and create
+        # the branch fresh instead of failing the relocation.
+        base_ref = branch_name
+        base_result = _run_git(
+            ["rev-parse", "--verify", "--end-of-options", branch_name],
+            cwd=repo_root,
+        )
+        if base_result.returncode == 0:
+            branch_in_refs = True
+        else:
+            if base_branch is not None:
+                if on_log is not None:
+                    on_log(
+                        f"Branch {branch_name!r} is not in this repo's refs; "
+                        f"falling back to base {base_branch!r}…"
+                    )
+                _ensure_base_resolvable_streaming(repo_root, base_branch, on_log)
+                base_result = _run_git(
+                    ["rev-parse", "--verify", "--end-of-options", base_branch],
+                    cwd=repo_root,
+                )
+            if base_result.returncode != 0:
+                base_ref = "HEAD"
+                base_result = _run_git(
+                    ["rev-parse", "--verify", "--end-of-options", "HEAD"],
+                    cwd=repo_root,
+                )
+    else:
+        base_ref = base_branch or "HEAD"
+        # Follow the selected linked worktree's HEAD rather than the main
+        # work tree's branch when auto creation has no explicit base ref.
+        base_cwd = repo_path if base_branch is None else repo_root
+        base_result = _run_git(
+            ["rev-parse", "--verify", "--end-of-options", base_ref],
+            cwd=base_cwd,
+        )
     if base_result.returncode != 0:
         raise WorktreeError(f"base branch does not exist: {base_ref}")
     base_commit = base_result.stdout.strip()
@@ -461,6 +496,90 @@ def acquire_auto_worktree_streaming(
         if not isinstance(raw_entries, dict):  # pragma: no cover - context normalizes this
             raise WorktreeError("managed worktree registry is invalid")
         worktrees = {worktree.path: worktree for worktree in list_worktrees(repo_path=repo_root)}
+
+        def _lease_holder(path: str) -> tuple[str | None, bool]:
+            """Return (owner, lease_active) for a registry entry."""
+            raw = raw_entries.get(path)
+            if not isinstance(raw, dict):
+                return None, False
+            owner = raw.get("lease_owner")
+            owner = owner if isinstance(owner, str) else None
+            expires_at = raw.get("lease_expires_at")
+            active = (
+                isinstance(expires_at, int)
+                and not isinstance(expires_at, bool)
+                and expires_at > now
+            )
+            return owner, active and owner is not None
+
+        def _adopt(worktree: WorktreeInfo, branch: str) -> CreatedWorktree:
+            """Register the lease on an existing worktree and adopt it as-is."""
+            entry = raw_entries.get(worktree.path)
+            if not isinstance(entry, dict):
+                entry = {"repo_root": repo_root, "created_at": now}
+                raw_entries[worktree.path] = entry
+            entry_map = cast("dict[str, object]", entry)
+            previous_generation = entry_map.get("generation")
+            updates: dict[str, object] = {
+                "branch": branch,
+                "base_commit": base_commit,
+                "lease_owner": lease_owner,
+                "lease_expires_at": now + lease_seconds,
+                "generation": (
+                    previous_generation
+                    if isinstance(previous_generation, int)
+                    and not isinstance(previous_generation, bool)
+                    else 1
+                ),
+                "health": "ready",
+                "last_used_at": now,
+            }
+            entry_map.update(updates)
+            if on_log is not None:
+                on_log(f"Reacquired existing worktree {worktree.path}.")
+            return CreatedWorktree(worktree_path=worktree.path, branch=branch)
+
+        if reuse_existing_branch and reuse_path is not None:
+            # Relocation: adopt the session's own worktree at its recorded
+            # path when no other live session holds it — the worktree did
+            # not change, so nothing is created or switched. The returned
+            # branch is the worktree's current one (it may differ from the
+            # recorded branch after a manual switch); the caller re-syncs
+            # the session row to it.
+            live = worktrees.get(reuse_path)
+            if live is not None and not live.is_main and live.branch is not None:
+                owner, active = _lease_holder(reuse_path)
+                contested = active and owner != lease_owner
+                reclaim_failed = (
+                    not contested
+                    and owner is not None
+                    and on_reclaim is not None
+                    and not on_reclaim(owner, reuse_path)
+                )
+                if contested or reclaim_failed:
+                    if on_log is not None:
+                        on_log(f"Worktree {reuse_path} is held by another session; relocating…")
+                else:
+                    return _adopt(live, live.branch)
+        if reuse_existing_branch:
+            # Relocation fallback: adopt a live worktree that already has
+            # the branch checked out (registry entry lost, but the branch
+            # and its worktree survived). Same ownership guard applies.
+            live = next(
+                (wt for wt in worktrees.values() if wt.branch == branch_name and not wt.is_main),
+                None,
+            )
+            if live is not None and live.branch is not None:
+                owner, active = _lease_holder(live.path)
+                contested = active and owner != lease_owner
+                reclaim_failed = (
+                    not contested
+                    and owner is not None
+                    and on_reclaim is not None
+                    and not on_reclaim(owner, live.path)
+                )
+                if not contested and not reclaim_failed:
+                    return _adopt(live, live.branch)
         candidates: list[tuple[str, dict[str, object]]] = []
         for path, raw_entry in list(raw_entries.items()):
             if not isinstance(path, str) or not isinstance(raw_entry, dict):
@@ -556,7 +675,7 @@ def acquire_auto_worktree_streaming(
             )
             return CreatedWorktree(worktree_path=path, branch=branch_name)
 
-        if reuse_existing_branch:
+        if reuse_existing_branch and branch_in_refs:
             worktree_path = _resolve_worktree_path(repo_root)
             worktree_path.parent.mkdir(parents=True, exist_ok=True)
             result = _run_git_streaming(
@@ -568,6 +687,19 @@ def acquire_auto_worktree_streaming(
             if result.returncode != 0:
                 raise _git_error("git worktree add failed", result)
             created = CreatedWorktree(worktree_path=str(worktree_path), branch=branch_name)
+        elif reuse_existing_branch:
+            # The branch ref is gone (renamed, deleted, or created on another
+            # host): recreate it as a fresh branch off the resolved base
+            # commit instead of failing the relocation.
+            if on_log is not None:
+                on_log(f"Recreating branch {branch_name!r} from base…")
+            created = create_worktree_streaming(
+                repo_path=repo_root,
+                branch_name=branch_name,
+                base_branch=base_commit,
+                auto_fetch_base=False,
+                on_log=on_log,
+            )
         else:
             created = create_worktree_streaming(
                 repo_path=repo_root,

@@ -163,6 +163,113 @@ def test_create_worktree_uses_omnigent_worktree_root(git_repo: Path) -> None:
     assert isinstance(created, CreatedWorktree)
 
 
+def _wipe_auto_registry() -> None:
+    """Empty the host-local managed-worktree registry file."""
+    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
+    registry.write_text("{}")
+
+
+def test_auto_worktree_relocation_adopts_same_path_worktree(git_repo: Path) -> None:
+    """Relocation re-acquires the session's own worktree, branch renamed.
+
+    The recorded branch is gone from the main repo's refs (renamed inside
+    the worktree) and the registry entry was lost — the worktree itself is
+    unchanged, so relocation must adopt it as-is (keeping its current
+    branch) instead of failing with "base branch does not exist".
+    """
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/orig-aaaaaa",
+        lease_owner="session-1",
+    )
+    worktree_path = Path(first.worktree_path)
+    # The user switches branches inside the worktree; the old ref vanishes.
+    _git(worktree_path, "switch", "-q", "-c", "agent/switched-bbbbbb")
+    _git(worktree_path, "branch", "-D", "agent/orig-aaaaaa")
+    assert not _branch_exists(git_repo, "agent/orig-aaaaaa")
+    # Host daemon reset: the managed-worktree registry entry is gone.
+    _wipe_auto_registry()
+    count_before = _worktree_count(git_repo)
+
+    relocated = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/orig-aaaaaa",
+        lease_owner="session-1",
+        reuse_existing_branch=True,
+        reuse_path=str(worktree_path),
+        base_branch="main",
+    )
+
+    assert relocated.worktree_path == first.worktree_path
+    assert relocated.branch == "agent/switched-bbbbbb"
+    assert _current_branch(worktree_path) == "agent/switched-bbbbbb"
+    assert _worktree_count(git_repo) == count_before
+
+
+def test_auto_worktree_relocation_recreates_missing_branch_from_base(
+    git_repo: Path,
+) -> None:
+    """Relocation creates the worktree instead of failing on a gone branch.
+
+    The session branch is missing from the host repo's refs and no worktree
+    holds it; with a caller-provided base ref the relocation must recreate
+    the branch off that base rather than raising "base branch does not
+    exist".
+    """
+    count_before = _worktree_count(git_repo)
+    base_commit = subprocess.run(
+        ["git", "rev-parse", "main"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    relocated = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/gone-cccccc",
+        lease_owner="session-1",
+        reuse_existing_branch=True,
+        base_branch="main",
+    )
+
+    assert _worktree_count(git_repo) == count_before + 1
+    assert _branch_exists(git_repo, "agent/gone-cccccc")
+    assert _current_branch(Path(relocated.worktree_path)) == "agent/gone-cccccc"
+    # ``worktree add -b`` creates the branch AT the base commit.
+    tip = subprocess.run(
+        ["git", "rev-parse", "agent/gone-cccccc"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert tip == base_commit
+
+
+def test_auto_worktree_relocation_skips_path_held_by_another_session(
+    git_repo: Path,
+) -> None:
+    """Relocation never steals a worktree another live session holds."""
+    other = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/other-dddddd",
+        lease_owner="session-2",
+    )
+
+    relocated = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/mine-eeeeee",
+        lease_owner="session-1",
+        reuse_existing_branch=True,
+        reuse_path=str(other.worktree_path),
+        base_branch="main",
+    )
+
+    assert relocated.worktree_path != other.worktree_path
+    assert _current_branch(Path(other.worktree_path)) == "agent/other-dddddd"
+
+
 def test_auto_worktree_reuses_only_expired_clean_entry(git_repo: Path) -> None:
     first = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),

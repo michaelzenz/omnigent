@@ -606,6 +606,47 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
     )
 
 
+async def _renew_auto_worktree_lease_on_turn_end(session_id: str) -> None:
+    """Renew a session's managed worktree lease when a turn ends.
+
+    Auto-worktree sessions lease their worktree for 24h at creation, and
+    without periodic renewal the lease lapses while a long-lived session is
+    still active — another session's relocation can then reclaim the
+    worktree out from under it. Every terminal turn edge (idle/failed)
+    renews, keeping the lease alive for the session's lifetime.
+
+    Fire-and-forget: renewal is best-effort. A failed renewal (host offline,
+    registry entry lost) is retried at the next turn, and the
+    reconnect/relocate path still recovers the worktree.
+    """
+    try:
+        from omnigent.agent_tasks.adoption import get_session_adoption_context
+        from omnigent.server.routes._host_worktree import renew_worktree_lease_on_host
+
+        ctx = get_session_adoption_context()
+        if ctx is None:
+            return
+        conv = await asyncio.to_thread(ctx.conversation_store.get_conversation, session_id)
+        if conv is None or conv.labels.get("omnigent.auto_worktree") != "1":
+            return
+        if conv.host_id is None or conv.workspace is None:
+            return
+        host_registry = get_server_host_registry()
+        if host_registry is None:
+            return
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is None or not host_conn.hello.managed_worktree_leases:
+            return
+        await renew_worktree_lease_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=conv.workspace,
+            lease_owner=session_id,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.debug("worktree lease renewal failed for %s", session_id, exc_info=True)
+
+
 async def _maybe_adopt_session(session_id: str) -> None:
     """Check if a finished-turn session needs adoption or turn-finish routing.
 
@@ -4451,6 +4492,10 @@ def _publish_status(
             adoption_task.add_done_callback(
                 lambda task: task.exception() if not task.cancelled() else None
             )
+            lease_task = asyncio.create_task(_renew_auto_worktree_lease_on_turn_end(session_id))
+            lease_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
     elif status == "failed":
         # Canonical server-side broken-turn signal: every server-originated
         # failed turn (runner disconnect mid-turn, setup/dispatch failure,
@@ -4469,6 +4514,11 @@ def _publish_status(
             error_code=error.code if error is not None else None,
             error=error.message if error is not None else None,
         )
+        with contextlib.suppress(RuntimeError):
+            lease_task = asyncio.create_task(_renew_auto_worktree_lease_on_turn_end(session_id))
+            lease_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
     # Track the in-flight response id for snapshot-based reconnect (see
     # _session_active_response_cache). A running/waiting edge that names a
     # turn opens it; any idle/failed edge closes it.
