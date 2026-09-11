@@ -55,6 +55,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
         target_id: str | None = None,
         state: str = "uninitialized",
         needs_response: bool = False,
+        title: str | None = None,
         provider_name: str | None = None,
         provider_configuration: str | None = None,
     ) -> Worker:
@@ -67,6 +68,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
             target_id=target_id,
             state=state,
             needs_response=needs_response,
+            title=title,
             provider_name=provider_name,
             provider_configuration=provider_configuration,
             created_at=now_epoch(),

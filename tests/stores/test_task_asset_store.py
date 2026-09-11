@@ -58,3 +58,44 @@ def test_delete_asset_is_scoped_to_task(store: SqlAlchemyTaskAssetStore) -> None
     # An asset id belonging to task_a cannot be deleted through task_b.
     assert store.delete_asset(task_b, asset_a.id) is False
     assert [asset.title for asset in store.list_assets_for_task(task_a)] == ["A"]
+
+
+def test_upsert_asset_provenance_lifecycle(store: SqlAlchemyTaskAssetStore) -> None:
+    """Provenance stamps on harvest, re-points on re-harvest, survives a
+    provenance-less manual re-post, and stays absent for human adds."""
+    task_id = _uid("task_prov")
+
+    harvested = store.upsert_asset(
+        task_id,
+        kind="workspace",
+        category="workspace",
+        title="feat/x",
+        url="/repo",
+        source_worker_id="w_1",
+    )
+    assert harvested.source_worker_id == "w_1"
+
+    # Re-harvest by another worker re-points the chip (same row, url identity).
+    reharvested = store.upsert_asset(
+        task_id,
+        kind="workspace",
+        category="workspace",
+        title="feat/y",
+        url="/repo",
+        source_worker_id="w_2",
+    )
+    assert reharvested.id == harvested.id
+    assert reharvested.source_worker_id == "w_2"
+
+    # Manual re-post without provenance preserves the existing chip.
+    manual = store.upsert_asset(
+        task_id, kind="workspace", category="workspace", title="feat/z", url="/repo"
+    )
+    assert manual.source_worker_id == "w_2"
+
+    # Human-added asset has no provenance.
+    human = store.create_asset(task_id, kind="url", title="doc", url="https://example.com")
+    assert human.source_worker_id is None
+
+    assets = store.list_assets_for_task(task_id)
+    assert [asset.source_worker_id for asset in assets] == ["w_2", None]

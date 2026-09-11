@@ -13,6 +13,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
+  readWorkspaceEditor,
+  writeWorkspaceEditor,
+  type WorkspaceEditor,
+} from "@/lib/puppyGardenPreferences";
+import {
   TASK_BROKER_ROLE,
   type TaskManagerSummary,
   deleteManager,
@@ -101,6 +106,9 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
     },
     enabled,
   });
+  const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditor>(() =>
+    readWorkspaceEditor(),
+  );
   const spawnNotice = useMutation({
     mutationFn: spawnManagerNotice,
     onSuccess: async () => {
@@ -331,6 +339,35 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
                 : ""}
             </p>
           ) : null}
+        </section>
+
+        <section className="space-y-2 border-t pt-3">
+          <p className="text-sm font-medium">Workspace editor</p>
+          <p className="text-xs text-muted-foreground">
+            App used to open workspace assets on task cards.
+          </p>
+          <div
+            className="flex gap-2"
+            role="radiogroup"
+            aria-label="Default workspace editor"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {(["vscode", "cursor"] as const).map((editor) => (
+              <Button
+                key={editor}
+                type="button"
+                variant={workspaceEditor === editor ? "default" : "outline"}
+                size="sm"
+                aria-pressed={workspaceEditor === editor}
+                onClick={() => {
+                  setWorkspaceEditor(editor);
+                  writeWorkspaceEditor(editor);
+                }}
+              >
+                {editor === "vscode" ? "VS Code" : "Cursor"}
+              </Button>
+            ))}
+          </div>
         </section>
       </DialogContent>
 

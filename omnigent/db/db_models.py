@@ -2246,6 +2246,10 @@ class SqlTask(OmnigentBase):
     queue_rank: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # When the task entered agent-resolved (NULL otherwise). The GC archives
+    # agent-resolved tasks whose resolved_at is older than the configured
+    # retention.
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         CheckConstraint("state IN (1, 2, 3, 4, 5)", name="ck_tasks_state"),
@@ -2469,12 +2473,17 @@ class SqlTaskAsset(OmnigentBase):
     category: Mapped[str] = mapped_column(String(32), nullable=False, server_default="other")
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Worker lane the asset was harvested from (adoption auto-attach);
+    # NULL for human-added assets.
+    source_worker_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer)
 
     __table_args__ = (
-        CheckConstraint("kind IN ('url')", name="ck_task_assets_kind"),
         CheckConstraint(
-            "category IN ('code', 'tests', 'documents', 'logs', 'other')",
+            "kind IN ('url', 'workspace')", name="ck_task_assets_kind"
+        ),
+        CheckConstraint(
+            "category IN ('code', 'tests', 'documents', 'logs', 'other', 'workspace')",
             name="ck_task_assets_category",
         ),
         Index("ix_task_assets_task", "workspace_id", "task_id", "id"),

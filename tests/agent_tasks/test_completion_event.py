@@ -19,7 +19,7 @@ from omnigent.agent_tasks.completion import (
     configure_task_completion,
     notify_worker_session_status,
 )
-from omnigent.agent_tasks.event_gc import EventGcConfig, run_event_gc
+from omnigent.agent_tasks.maintenance_gc import MaintenanceGcConfig, run_maintenance_gc
 from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.execution_reconciler import (
     reconcile_running_executions_once,
@@ -480,7 +480,7 @@ async def test_purge_old_items_keeps_queued_notice(db_uri: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_event_gc_purges_old_reconciled(
+async def test_run_maintenance_gc_purges_old_reconciled(
     db_uri: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stores = _build_stores(db_uri)
@@ -503,7 +503,7 @@ async def test_run_event_gc_purges_old_reconciled(
     reconciled = event_store.list_events(state="reconciled", task_id=seeded["task_id"])
     assert len(reconciled) == 1
 
-    config = EventGcConfig(
+    config = MaintenanceGcConfig(
         interval_s=0.01,
         reconciled_retention_s=0.0,
         stale_routed_retention_s=0.0,
@@ -520,15 +520,15 @@ async def test_run_event_gc_purges_old_reconciled(
     # Advance the GC's clock so the just-created event falls before the cutoff.
     real_now = time.time()
     monkeypatch.setattr(
-        "omnigent.agent_tasks.event_gc._now",
+        "omnigent.agent_tasks.maintenance_gc._now",
         lambda: int(real_now) + 10_000,
     )
     monkeypatch.setattr(
-        "omnigent.agent_tasks.event_gc._sleep",
+        "omnigent.agent_tasks.maintenance_gc._sleep",
         _sleep_then_cancel,
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await run_event_gc(event_store, queue_store, config=config)
+        await run_maintenance_gc(event_store, queue_store, config=config)
 
     assert len(event_store.list_events(state="reconciled", task_id=seeded["task_id"])) == 0

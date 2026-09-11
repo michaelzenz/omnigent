@@ -24,6 +24,7 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.project_store import ProjectStore
+from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
@@ -49,7 +50,7 @@ def _project_name(
         return None
     try:
         project = project_store.get(project_id, user_id=owner_user_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _logger.exception("failed to resolve project %s", project_id)
         return None
     return project.name if project is not None else None
@@ -71,6 +72,7 @@ class SessionAdoptionContext:
     runner_router: RunnerRouter | None = None
     agent_queue_store: AgentQueueStore | None = None
     project_store: ProjectStore | None = None
+    task_asset_store: TaskAssetStore | None = None
 
 
 _context: SessionAdoptionContext | None = None
@@ -103,11 +105,62 @@ def resolve_owner_user_id(
     return "__anonymous__"
 
 
+def _workspace_asset_title(workspace: str) -> str:
+    """Card label for a workspace asset: git branch name, else folder name."""
+    import contextlib
+    import os
+    import subprocess
+
+    folder = os.path.basename(os.path.normpath(workspace)) or workspace
+    with contextlib.suppress(Exception):
+        proc = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=workspace,
+            capture_output=True,
+            timeout=5,
+            check=True,
+        )
+        branch = proc.stdout.decode().strip()
+        if branch:
+            return branch
+    return folder
+
+
+def _ensure_workspace_asset(
+    task_id: str,
+    workspace: str,
+    source_worker_id: str | None = None,
+) -> None:
+    """Attach a deduped ``kind=workspace`` asset for an adopted session's cwd.
+
+    Idempotent: a re-adoption (or adoption of an already-bound session) finds
+    the existing row and does nothing. Best-effort — asset attachment must
+    never fail the adoption itself.
+    """
+    import contextlib
+
+    if _context is None or _context.task_asset_store is None:
+        return
+    title = _workspace_asset_title(workspace)
+    with contextlib.suppress(Exception):
+        # One upsert: inserts on first adoption, relabels in place when the
+        # branch renamed (the URL is the asset's identity).
+        _context.task_asset_store.upsert_asset(
+            task_id,
+            kind="workspace",
+            category="workspace",
+            title=title,
+            url=workspace,
+            source_worker_id=source_worker_id,
+        )
+
+
 def adopt_session_to_task(
     *,
     session_id: str,
     task: Task,
     conv: Conversation,
+    title: str | None = None,
     score: float = 0.0,
     owner_user_id: str | None = None,
 ) -> str:
@@ -127,8 +180,11 @@ def adopt_session_to_task(
         kind=WORKER_KIND_INTERNAL,
         target_id=session_id,
         state="idle",
+        title=title,
         provider_name=conv.title or session_id,
     )
+    if conv.workspace:
+        _ensure_workspace_asset(task.id, conv.workspace, source_worker_id=worker_id)
     return worker_id
 
 
@@ -226,14 +282,20 @@ async def adopt_external_session(
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
 
+    external_worker_id = _generate_worker_id()
     worker_store.create_worker(
-        _generate_worker_id(),
+        external_worker_id,
         task.id,
         kind=WORKER_KIND_EXTERNAL,
         target_id=session_hint,
         state="idle",
         provider_name="External session",
     )
+    # External (harness) sessions have no local conversation row to read a
+    # workspace from — their watchers report updates without one. Attach the
+    # task's own workspace when known so the card still gets a jump target.
+    if task.workspace:
+        _ensure_workspace_asset(task.id, task.workspace, source_worker_id=external_worker_id)
     adopted_event = task_event_store.create_event(
         uuid.uuid4().hex,
         SESSION_ADOPTED,

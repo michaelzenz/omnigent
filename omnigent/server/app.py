@@ -1887,15 +1887,19 @@ def create_app(
             # sweep and no periodic reconcile.
         # Background GC for old reconciled/dismissed events and completed
         # queue items so large worker-output payloads do not accumulate.
-        event_gc_task: asyncio.Task | None = None
+        maintenance_gc_task: asyncio.Task | None = None
         if agent_queue_store is not None and task_event_store is not None:
-            from omnigent.agent_tasks.event_gc import run_event_gc
+            from omnigent.agent_tasks.maintenance_gc import run_maintenance_gc
 
-            event_gc_task = asyncio.create_task(
-                run_event_gc(task_event_store, agent_queue_store),
-                name="event-gc",
+            maintenance_gc_task = asyncio.create_task(
+                run_maintenance_gc(
+                    task_event_store,
+                    agent_queue_store,
+                    task_store=task_store,
+                ),
+                name="maintenance-gc",
             )
-            app_inst.state.event_gc_task = event_gc_task
+            app_inst.state.maintenance_gc_task = maintenance_gc_task
 
         execution_reconciler_task: asyncio.Task | None = None
         if (
@@ -1944,10 +1948,10 @@ def create_app(
             # cancel. Only the per-job scheduler holds timers that need stopping.
             if scheduled_task_scheduler is not None:
                 scheduled_task_scheduler.stop()
-            if event_gc_task is not None:
-                event_gc_task.cancel()
+            if maintenance_gc_task is not None:
+                maintenance_gc_task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await event_gc_task
+                    await maintenance_gc_task
             if execution_reconciler_task is not None:
                 execution_reconciler_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -3373,6 +3377,7 @@ def create_app(
                 runner_router=runner_router,
                 agent_queue_store=agent_queue_store,
                 project_store=project_store,
+                task_asset_store=task_asset_store,
             )
         )
     if policy_store is not None:

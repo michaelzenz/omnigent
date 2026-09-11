@@ -7824,6 +7824,8 @@ async def _run_compact_locked(
     conv: Conversation,
     agent_store: AgentStore,
     agent_cache: AgentCache | None,
+    *,
+    wake_runner: Any | None = None,
 ) -> None:
     """
     Run explicit compaction while holding the per-session compact lock.
@@ -7832,6 +7834,9 @@ async def _run_compact_locked(
     :param conv: Conversation row.
     :param agent_store: Agent store for spec lookup.
     :param agent_cache: Agent cache for bundle loading.
+    :param wake_runner: Optional async callable ``(conv) -> (conv, runner_client | None)``
+        that relaunches a disconnected-but-wakeable runner (same semantics as the
+        control-event wake). Used by the Pi branch when no runner is currently bound.
     """
     lock = _compact_lock(session_id)
     async with lock:
@@ -7862,7 +7867,22 @@ async def _run_compact_locked(
 
         if spec.name == ONIH_PI_TARGET:
             runner_client = await _get_runner_client_for_resource_access(session_id)
-            if runner_client is None:
+            if runner_client is None and wake_runner is not None:
+                # No runner bound (e.g. the transport dropped since the last
+                # turn). Wake it the same way the control-event path does,
+                # then compact against the fresh binding.
+                _conv, runner_client = await wake_runner(conv)
+                if runner_client is None:
+                    raise OmnigentError(
+                        "Can't compact this session while its runner is offline. "
+                        "Reconnect the session (send a message to wake it), then "
+                        "run /compact again.",
+                        code=ErrorCode.RUNNER_UNAVAILABLE,
+                    )
+                # The wake may have healed the session pointer; refresh conv
+                # so the compaction reads current state.
+                conv = _conv
+            elif runner_client is None:
                 raise OmnigentError(
                     "Native Pi compaction requires a live runner",
                     code=ErrorCode.CONFLICT,

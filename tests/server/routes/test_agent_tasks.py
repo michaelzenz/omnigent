@@ -1248,16 +1248,23 @@ async def test_create_and_delete_task_asset(client: httpx.AsyncClient) -> None:
 
     create_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/assets",
-        json={"kind": "url", "title": "PR #123", "url": "https://example.com/pr/123"},
+        json={
+            "kind": "url",
+            "title": "PR #123",
+            "url": "https://example.com/pr/123",
+            "source_worker_id": "w_harvester",
+        },
     )
     assert create_resp.status_code == 200
     asset = create_resp.json()
     assert asset["object"] == "agent.task.asset"
     assert asset["title"] == "PR #123"
+    assert asset["source_worker_id"] == "w_harvester"
     asset_id = asset["id"]
 
     dashboard = (await client.get(f"/v1/agent-tasks/{task_id}/dashboard")).json()
     assert [a["id"] for a in dashboard["assets"]] == [asset_id]
+    assert dashboard["assets"][0]["source_worker_id"] == "w_harvester"
 
     delete_resp = await client.delete(f"/v1/agent-tasks/{task_id}/assets/{asset_id}")
     assert delete_resp.status_code == 200

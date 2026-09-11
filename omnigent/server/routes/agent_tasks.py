@@ -178,6 +178,17 @@ class AdoptSessionRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
 
     task_id: str
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def _title_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must be a non-empty string")
+        return stripped
 
 
 class ProposeExternalAdoptionRequest(BaseModel):
@@ -421,12 +432,19 @@ class CreateTaskItemRequest(BaseModel):
 
 
 class CreateTaskAssetRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``."""
+    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``.
 
-    kind: Literal["url"] = "url"
-    category: Literal["code", "tests", "documents", "logs", "other"] = "other"
+    ``kind="workspace"`` assets reference a working directory (``url`` holds
+    the absolute path); the card opens them in the user's configured editor.
+    """
+
+    kind: Literal["url", "workspace"] = "url"
+    category: Literal["code", "tests", "documents", "logs", "other", "workspace"] = "other"
     title: str
     url: str
+    # Worker lane the asset was harvested from (harvesters stamp it; human
+    # adds omit it).
+    source_worker_id: str | None = None
 
     @field_validator("title", "url")
     @classmethod
@@ -487,22 +505,6 @@ class CreateEventSubscriptionRequest(BaseModel):
 
     source: str = Field(min_length=1)
     source_key: str = Field(min_length=1)
-
-
-class UpdateWorkerTitleRequest(BaseModel):
-    """Request body for ``PATCH /v1/task-workers/{worker_id}/title``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(min_length=1, max_length=200)
-
-    @field_validator("title")
-    @classmethod
-    def _non_empty(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("title must be a non-empty string")
-        return stripped
 
 
 class QueueHoldRequest(BaseModel):
@@ -992,6 +994,7 @@ def _asset_to_response(asset: TaskAsset) -> dict[str, Any]:
         "category": asset.category,
         "title": asset.title,
         "url": asset.url,
+        "source_worker_id": asset.source_worker_id,
         "created_at": asset.created_at,
     }
 
@@ -2103,7 +2106,11 @@ def create_agent_tasks_router(
 
     @router.post("/agent-tasks/{task_id}/move-to-queue-end")
     async def move_task_to_queue_end(request: Request, task_id: str) -> dict[str, Any]:
-        """Move one task to the end of the stable board ordering."""
+        """Move one task toward the end of the stable board ordering.
+
+        A live task parks directly above the first resolved card (the end of
+        the work section); a resolved task sinks to the absolute end.
+        """
         user_id = require_user(request, auth_provider)
         await _get_task_or_404(task_id, user_id)
         task = await asyncio.to_thread(task_store.move_to_queue_end, task_id)
@@ -2522,33 +2529,6 @@ def create_agent_tasks_router(
                 user_id=user_id,
             )
 
-        @router.patch("/task-workers/{worker_id}/title")
-        async def update_worker_title(
-            request: Request,
-            worker_id: str,
-            body: UpdateWorkerTitleRequest,
-        ) -> dict[str, Any]:
-            """Set the manager-maintained worker title.
-
-            The title describes the worker's recent work and shows on the task
-            card instead of the static provider name. Caller must access the
-            worker's task.
-            """
-            user_id = get_user_id(request, auth_provider)
-            worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
-            if worker is None:
-                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-            task = await _get_task_or_404(worker.task_id, user_id)
-            _ = task
-            updated = await asyncio.to_thread(
-                worker_store.update_worker,
-                worker_id,
-                title=body.title,
-            )
-            if updated is None:
-                raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-            return _worker_to_response(updated)
-
         @router.post("/task-workers/{worker_id}/initialize", status_code=202)
         async def initialize_worker(request: Request, worker_id: str) -> dict[str, Any]:
             user_id = require_user(request, auth_provider)
@@ -2749,20 +2729,23 @@ def create_agent_tasks_router(
             task_id: str,
             body: CreateTaskAssetRequest,
         ) -> dict[str, Any]:
-            """Attach a URL or other asset reference to one managed task."""
+            """Attach a URL, workspace, or other asset reference to one task.
+
+            Idempotent: a re-post of an identical asset returns the existing
+            row instead of duplicating it.
+            """
             user_id = require_user(request, auth_provider)
             await _get_task_or_404(task_id, user_id)
 
-            def _create() -> TaskAsset:
-                return task_asset_store.create_asset(
-                    task_id,
-                    kind=body.kind,
-                    category=body.category,
-                    title=body.title,
-                    url=body.url,
-                )
-
-            created = await asyncio.to_thread(_create)
+            created = await asyncio.to_thread(
+                task_asset_store.upsert_asset,
+                task_id,
+                kind=body.kind,
+                category=body.category,
+                title=body.title,
+                url=body.url,
+                source_worker_id=body.source_worker_id,
+            )
             return _asset_to_response(created)
 
         @router.delete("/agent-tasks/{task_id}/assets/{asset_id}")
@@ -3690,6 +3673,15 @@ def create_agent_tasks_router(
 
             existing = await asyncio.to_thread(_existing_binding)
             if existing is not None:
+                if body.title is not None and body.title != existing.title:
+                    updated = await asyncio.to_thread(
+                        worker_store.update_worker,
+                        existing.id,
+                        title=body.title,
+                    )
+                    if updated is None:
+                        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    existing = updated
                 return {
                     "object": "agent.task.session_adoption",
                     "session_id": session_id,
@@ -3707,6 +3699,7 @@ def create_agent_tasks_router(
                     session_id=session_id,
                     task=task,
                     conv=conv,
+                    title=body.title,
                     owner_user_id=_effective_user_id(user_id),
                 )
 
@@ -3751,7 +3744,7 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Bind a watcher-discovered external session to a task."""
             user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(body.task_id, user_id)
+            await _get_task_or_404(body.task_id, user_id)
             proposal = await asyncio.to_thread(
                 find_open_external_adoption_proposal,
                 task_event_store,

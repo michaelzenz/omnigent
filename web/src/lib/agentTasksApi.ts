@@ -99,14 +99,17 @@ export interface TaskWorkerLane {
   executions: TaskExecutionSummary[];
 }
 
-export type TaskAssetCategory = "code" | "tests" | "documents" | "logs" | "other";
+export type TaskAssetCategory = "code" | "tests" | "documents" | "logs" | "other" | "workspace";
 
 export interface TaskAssetSummary {
   id: number;
-  kind: "url";
+  kind: "url" | "workspace";
   category?: TaskAssetCategory;
   title: string;
+  /** URL for ``kind=url``; absolute workspace path for ``kind=workspace``. */
   url: string | null;
+  /** Worker lane this asset was harvested from; null = human-added. */
+  source_worker_id?: string | null;
   created_at: number;
 }
 

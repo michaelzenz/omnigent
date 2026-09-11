@@ -287,6 +287,7 @@ def _asset_summary(asset: TaskAsset) -> dict[str, Any]:
         "category": asset.category,
         "title": asset.title,
         "url": asset.url,
+        "source_worker_id": asset.source_worker_id,
         "created_at": asset.created_at,
     }
 
