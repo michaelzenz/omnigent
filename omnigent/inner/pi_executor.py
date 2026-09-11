@@ -177,11 +177,9 @@ class ToolExecutor(Protocol):
 # pi native built-ins exposed by default (``PiLaunchOptions.native_tools`` /
 # executor.config ``native_tools``; agents may opt out per config).
 # Mirrors pi's ``ToolName`` union minus ``powershell`` (Windows shell — spawns
-# pwsh, which does not exist on mac/linux runners). Name-collision note: the
-# bridge extension registers same-named tools (``bash``, ``read``, …) and
-# extension registrations shadow builtins in pi's registry — so when natives
-# are wanted, the same-named bridged tools must be toggled off (tool group
-# ``pi_file_interaction``) or the bridged implementation wins.
+# pwsh, which does not exist on mac/linux runners). Colliding bridged tools
+# are dropped from the bridge extension (native wins); the bridged Pi-style
+# file tools were removed from the builtin catalog entirely.
 _PI_NATIVE_TOOL_NAMES = ("read", "bash", "edit", "write", "grep", "find", "ls")
 
 
