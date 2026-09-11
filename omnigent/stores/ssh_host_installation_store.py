@@ -422,7 +422,13 @@ class SshHostInstallationStore:
             return result.rowcount == 1
 
     def retry_now(self, connection_id: str, *, owner: str) -> bool:
-        """Clear backoff and queue an immediate retry for one of the owner's rows."""
+        """Queue an immediate retry for one of the owner's rows.
+
+        Marks the row ``queued`` with a generation bump, which forces the
+        executor through the full pipeline — including tearing down and
+        restarting a remote daemon that is already online (its own start
+        script kills the previous pid before relaunching).
+        """
         now = now_epoch()
         with self._session() as session:
             result = cast(

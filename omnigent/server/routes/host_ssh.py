@@ -168,6 +168,7 @@ def create_host_ssh_router(
             "generation": claimed.generation,
             "attempt": claimed.attempt,
             "desired_state": claimed.desired_state,
+            "phase": claimed.phase,
             "bundle_version": claimed.bundle_version,
             "remote_host_online": _remote_online(claimed.host_id),
         }

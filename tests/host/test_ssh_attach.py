@@ -331,7 +331,14 @@ class _FakeApi:
 
     async def post(self, path: str, json: dict):
         if path.endswith("/claim"):
-            return _Response({"claimed": True, "generation": 0, "remote_host_online": True})
+            return _Response(
+                {
+                    "claimed": True,
+                    "generation": 0,
+                    "phase": getattr(self, "claimed_phase", "queued"),
+                    "remote_host_online": getattr(self, "claimed_online", True),
+                }
+            )
         if path.endswith("/phase"):
             self.phases.append((json["phase"], json["generation"], json.get("last_error") or ""))
             return _Response({"accepted": True, "superseded": False})
@@ -761,3 +768,52 @@ def test_freshness_walk_ignores_generated_build_info(
     (pkg / "_build_info.py").write_text("BUILD_TIME_EPOCH = 0\n")
 
     assert _newest_source_mtime(root, _WHEEL_BUILD_EXCLUDE_DIRS) == baseline
+
+
+async def test_refresh_forces_full_pipeline_restart(tmp_path: Path) -> None:
+    """Refresh (retry_now) flips phase to queued, so a ready+online row goes
+    through the full pipeline — start_host kills the previous daemon."""
+    api = _FakeApi()
+    # Remote daemon is up and the row was ready — but the user hit refresh,
+    # which set phase=queued before the executor claimed.
+    api.claimed_phase = "queued"
+    api.claimed_online = True
+    operations = _operations(tmp_path)
+    start_calls: list[dict] = []
+
+    async def fake_start(connection_id: str, alias: str, **kwargs) -> None:
+        start_calls.append(kwargs)
+
+    operations.start_host = fake_start  # type: ignore[method-assign]
+    operations.ensure_installed = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    executor = SshAttachExecutor(operations=operations)
+    executor._operations = operations
+
+    await executor._reconcile(_ctx(api), _assignment(phase="ready"))  # type: ignore[arg-type]
+
+    phases = [phase for phase, _gen, _err in api.phases]
+    assert "starting_host" in phases, "refresh must run the pipeline, not short-circuit"
+    assert len(start_calls) == 1
+    assert phases[-1] == "ready"
+
+
+async def test_ready_heartbeat_still_short_circuits(tmp_path: Path) -> None:
+    """Without refresh, a ready+online row does NOT restart the daemon."""
+    api = _FakeApi()
+    api.claimed_phase = "ready"
+    api.claimed_online = True
+    operations = _operations(tmp_path)
+    start_calls: list[dict] = []
+
+    async def fake_start(connection_id: str, alias: str, **kwargs) -> None:
+        start_calls.append(kwargs)
+
+    operations.start_host = fake_start  # type: ignore[method-assign]
+    executor = SshAttachExecutor(operations=operations)
+    executor._operations = operations
+
+    await executor._reconcile(_ctx(api), _assignment(phase="ready"))  # type: ignore[arg-type]
+
+    phases = [phase for phase, _gen, _err in api.phases]
+    assert phases == ["ready"], "heartbeat must only touch ready + release"
+    assert start_calls == []

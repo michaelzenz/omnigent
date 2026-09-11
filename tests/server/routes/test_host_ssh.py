@@ -268,3 +268,35 @@ async def test_phase_reset_attempt_clears_counter(tmp_path) -> None:
         )
         assert ok.json()["accepted"] is True
         assert store.snapshots("alice@example.com")["conn-1"].attempt == 0
+
+
+async def test_claim_returns_current_phase_for_refresh(tmp_path) -> None:
+    """retry_now flips phase to queued; the claim must surface it so the
+    executor's ready short-circuit is bypassed (refresh = real restart)."""
+    app, store = _build_app(tmp_path)
+    profile = SshConnectionProfile(
+        id="conn-1", label="Box", alias="box", created_at="2026-01-01T00:00:00+00:00"
+    )
+    store.sync_connections({profile.id: profile}, bundle_version="test", owner="alice@example.com")
+    # Row settled at ready.
+    leased = store.acquire("conn-1", lease_owner="daemon-1", lease_seconds=300)
+    assert leased is not None
+    assert store.set_phase(
+        "conn-1", lease_owner="daemon-1", generation=leased.generation, phase="ready"
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Refresh: retry_now (the user route's backing store call) queues the
+        # row and bumps its generation.
+        assert store.retry_now("conn-1", owner="alice@example.com") is True
+
+        claimed = await client.post(
+            "/v1/host/ssh/connections/conn-1/claim",
+            json={"lease_seconds": 30},
+            headers=_HOST_HEADER,
+        )
+    body = claimed.json()
+    assert body["claimed"] is True
+    assert body["phase"] == "queued"
+    assert body["generation"] == 1

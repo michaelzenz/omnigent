@@ -981,10 +981,15 @@ class SshAttachExecutor:
             generation = int(claimed.get("generation") or row.generation)
             install_version = str(claimed.get("bundle_version") or row.bundle_version)
             desired_state = str(claimed.get("desired_state") or row.desired_state)
+            claimed_phase = str(claimed.get("phase") or row.phase)
             if desired_state != "connected":
                 await self._detach(ctx, ops, row)
                 return
-            if row.phase == "ready" and bool(claimed.get("remote_host_online")):
+            # Heartbeat short-circuit only when the row is still settled at
+            # ready. retry_now (refresh) flips the phase to "queued" first, so
+            # the full pipeline runs — start_host kills the previous remote
+            # daemon before relaunching, making refresh a real restart.
+            if claimed_phase == "ready" and bool(claimed.get("remote_host_online")):
                 await self._phase(
                     ctx,
                     connection_id,
